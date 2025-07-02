@@ -1,4 +1,3 @@
-
 import * as React from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -28,13 +27,8 @@ const CalibrationDialog: React.FC<CalibrationDialogProps> = ({
       setIsSubmitting(true);
       onCalibrationStart();
 
-      // Simulamos un pequeño delay para la calibración
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
       onCalibrationEnd();
-      setTimeout(() => {
-        onClose();
-      }, 500);
+      onClose();
 
     } catch (error) {
       console.error("Error durante la calibración:", error);

@@ -13,7 +13,6 @@ export interface VitalSignsResult {
     rmssd: number;
     rrVariation: number;
   } | null;
-  glucose: number; // NO ES UNA MEDICIÓN REAL. Valor siempre 0; la medición de glucosa no es posible con PPG de cámara.
   lipids: {
     totalCholesterol: number;
     triglycerides: number;
@@ -26,7 +25,6 @@ export interface VitalSignsResult {
       spo2: number;
       pressure: number;
       arrhythmia: number;
-      glucose: number;
       lipids: number;
       hemoglobin: number;
     };
@@ -46,7 +44,6 @@ export interface BiometricReading {
   hrv: number;        // Variabilidad (ms)
   sbp: number;        // Sistólica (mmHg)
   dbp: number;        // Diastólica (mmHg)
-  glucose: number;    // mg/dL (70-110 normal)
   confidence: number; // 0-1
 }
 
@@ -85,17 +82,16 @@ export class AdvancedVitalSignsProcessor {
       const [hr, hrv] = this.calculateCardiacMetrics(windowRed);
       const spo2 = this.calculateSpO2(windowRed, windowIR);
       const {sbp, dbp} = this.calculateBloodPressure(windowRed, windowGreen);
-      const glucose = this.estimateGlucose(windowRed, windowIR, windowGreen);
       
       // 5. Validación médica de resultados
-      if (!this.validateResults(hr, spo2, sbp, dbp, glucose)) {
+      if (!this.validateResults(hr, spo2, sbp, dbp)) {
         return null;
       }
       
       // 6. Calcular confianza de medición
       const confidence = this.calculateConfidence(windowRed, windowIR);
       
-      return { hr, hrv, spo2, sbp, dbp, glucose, confidence };
+      return { hr, hrv, spo2, sbp, dbp, confidence };
     }
     
     return null;
@@ -157,19 +153,12 @@ export class AdvancedVitalSignsProcessor {
     return { sbp: systolic, dbp: diastolic };
   }
 
-  private estimateGlucose(red: number[], ir: number[], green: number[]): number {
-    const ratio1 = this.calculateACDC(red).ac / this.calculateACDC(ir).ac;
-    const ratio2 = this.calculateACDC(green).dc / this.calculateACDC(red).dc;
-    return Math.max(50, Math.min(300, 90 + (ratio1 * 15) - (ratio2 * 8)));
-  }
-
-  private validateResults(hr: number, spo2: number, sbp: number, dbp: number, glucose: number): boolean {
+  private validateResults(hr: number, spo2: number, sbp: number, dbp: number): boolean {
     return (
       hr >= 40 && hr <= 180 &&
       spo2 >= 70 && spo2 <= 100 &&
       sbp >= 80 && sbp <= 180 &&
       dbp >= 50 && dbp <= 120 &&
-      glucose >= 50 && glucose <= 300 &&
       sbp > dbp && (sbp - dbp) >= 20 &&
       (hr > 60 || spo2 > 90)
     );
