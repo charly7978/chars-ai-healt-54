@@ -1,10 +1,10 @@
 <component name="ProjectRunConfigurationManager">
-  <configuration default="false" name="C:/Users/carlo/OneDrive/Documentos/GitHub/chars-ai-healt-48/.run" type="GradleRunConfiguration" factoryName="Gradle" singleton="false" nameIsGenerated="true">
+  <configuration default="false" name="C:/Users/carlo/OneDrive/Documentos/GitHub/chars-ai-healt-48/.run" type="GradleRunConfiguration" factoryName="Gradle" editBeforeRun="true" singleton="false" nameIsGenerated="true">
     <ExternalSystemSettings>
       <option name="executionName" />
       <option name="externalProjectPath" value="$PROJECT_DIR$/.run" />
       <option name="externalSystemIdString" value="GRADLE" />
-      <option name="scriptParameters" value="--include-build --configure-on-demand" />
+      <option name="scriptParameters" value="--include-build --configure-on-demand --gradle-user-home" />
       <option name="taskDescriptions">
         <list />
       </option>
