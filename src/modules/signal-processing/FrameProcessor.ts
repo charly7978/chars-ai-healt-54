@@ -198,12 +198,12 @@ export class FrameProcessor {
       console.log("FrameProcessor: No pixels detected in this frame, using default values");
       return { 
         redValue: 5, // Valor base mayor para evitar ceros (antes 0)
-        textureScore: 0.6, // Valor base mayor (antes 0.5)
-        rToGRatio: 1.2, // Valor más fisiológico
-        rToBRatio: 1.2,
         avgRed: 5,
-        avgGreen: 4,
-        avgBlue: 4
+        avgGreen: 5,
+        avgBlue: 5,
+        textureScore: 0.5,
+        rToGRatio: 1,
+        rToBRatio: 1
       };
     }
     
@@ -228,8 +228,8 @@ export class FrameProcessor {
     const avgBlue = blueSum / pixelCount;
     
     // Calculate color ratio indexes with proper physiological constraints - más permisivo
-    const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
-    const rToBRatio = avgBlue > 3 ? avgRed / avgBlue : 1.2; 
+    const rToGRatio = avgGreen > 0 ? avgRed / avgGreen : 0; 
+    const rToBRatio = avgBlue > 0 ? avgRed / avgBlue : 0; 
     
     // Light level affects detection quality
     const lightLevelFactor = this.getLightLevelQualityFactor(this.lastLightLevel);
@@ -252,12 +252,12 @@ export class FrameProcessor {
     
     return {
       redValue: avgRed,
-      avgRed,
-      avgGreen,
-      avgBlue,
-      textureScore,
-      rToGRatio,
-      rToBRatio
+      avgRed: avgRed,
+      avgGreen: avgGreen,
+      avgBlue: avgBlue,
+      textureScore: textureScore,
+      rToGRatio: rToGRatio,
+      rToBRatio: rToBRatio
     };
   }
   
