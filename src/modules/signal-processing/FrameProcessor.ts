@@ -13,7 +13,7 @@ export class FrameProcessor {
   private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
   private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
   private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
-  private readonly RG_RATIO_RANGE = [1.0, 3.0];  // Rango más estrecho
+  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
   private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
   
   // Historia para calibración adaptativa
@@ -229,7 +229,8 @@ export class FrameProcessor {
     
     // Calculate color ratio indexes with proper physiological constraints - más permisivo
     const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
-    const rToBRatio = avgBlue > 3 ? avgRed / avgBlue : 1.2; 
+    const rToBRatio = avgRed / avgBlue;
+    console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
     
     // Light level affects detection quality
     const lightLevelFactor = this.getLightLevelQualityFactor(this.lastLightLevel);
@@ -294,6 +295,7 @@ export class FrameProcessor {
   }
   
   detectROI(redValue: number, imageData: ImageData): ProcessedSignal['roi'] {
+    console.log('[DEBUG] FrameProcessor detectROI - redValue:', redValue, 'imageSize:', imageData.width+'x'+imageData.height);
     // Centered ROI by default with adaptive size
     const centerX = Math.floor(imageData.width / 2);
     const centerY = Math.floor(imageData.height / 2);
@@ -326,6 +328,7 @@ export class FrameProcessor {
       height: roiSize
     };
     
+    console.log('[DEBUG] FrameProcessor detectROI - newROI:', newROI);
     // Guardar historia de ROIs para estabilidad
     this.roiHistory.push(newROI);
     if (this.roiHistory.length > this.ROI_HISTORY_SIZE) {

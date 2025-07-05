@@ -493,20 +493,28 @@ export class AdvancedVitalSignsProcessor {
     return (Math.min(1, perfusionIndex/5) * 0.6 + Math.min(1, Math.max(0, (snr+10)/30)) * 0.4);
   }
 
-  private findPeaks(signal: number[]): number[] {
-    const threshold = 0.5 * Math.max(...signal);
+    private findPeaks(signal: number[]): number[] {
+    // Algoritmo mejorado de detección de picos con umbral dinámico y distancia mínima
+    const mean = signal.reduce((sum, val) => sum + val, 0) / signal.length;
+    const variance = signal.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / signal.length;
+    const stdDev = Math.sqrt(variance);
+    const threshold = mean + stdDev; // Umbral dinámico: media + 1 desviación
     const peaks: number[] = [];
-    
-    for (let i = 2; i < signal.length - 2; i++) {
-      if (signal[i] > threshold &&
-          signal[i] > signal[i-1] &&
-          signal[i] > signal[i+1] &&
-          signal[i] > signal[i-2] &&
-          signal[i] > signal[i+2]) {
+    const minDistance = Math.floor(this.FS * 0.5); // Mínima separación de 0.5s
+
+    let lastPeakIndex = -minDistance;
+    for (let i = 1; i < signal.length - 1; i++) {
+      if (
+        signal[i] > threshold &&
+        signal[i] > signal[i - 1] &&
+        signal[i] > signal[i + 1] &&
+        i - lastPeakIndex >= minDistance
+      ) {
         peaks.push(i);
+        lastPeakIndex = i;
       }
     }
-    
+    console.log('[DEBUG] AdvancedVitalSignsProcessor findPeaks - peaks:', peaks);
     return peaks;
   }
 

@@ -41,7 +41,7 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  const { startProcessing, stopProcessing, lastSignal, processFrame } = useSignalProcessor();
+  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState 
@@ -551,7 +551,20 @@ const Index = () => {
               {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
             </div>
           </div>
-
+          {/* Panel de estado */}
+          <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
+            <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
+            <div>Frames: {framesProcessed}</div>
+            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
+          </div>
+          {/* Panel de debug */}
+          <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
+            <summary className="cursor-pointer">Debug Signal Stats</summary>
+            <pre className="whitespace-pre-wrap text-xs">
+              {JSON.stringify(signalStats, null, 2)}
+              {'\n'}Quality Transitions:{'\n'}{JSON.stringify(qualityTransitions, null, 2)}
+            </pre>
+          </details>
           <div className="flex-1">
             <PPGSignalMeter 
               value={beatMarker}

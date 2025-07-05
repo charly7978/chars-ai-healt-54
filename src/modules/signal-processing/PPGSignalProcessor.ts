@@ -171,7 +171,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       // 1. Extract frame features with enhanced validation
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore, rToGRatio, rToBRatio } = extractionResult;
+      const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
       // DEBUGGING: Log extracted redValue and ROI
@@ -218,6 +218,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // Aplicar ganancia adaptativa basada en calidad de señal
       const adaptiveGain = Math.min(2.0, 1.0 + (extractionResult.textureScore * 0.5));
       filteredValue = filteredValue * adaptiveGain;
+
+      // Mantener un historial de valores filtrados para el cálculo de la pulsatilidad
+      this.lastValues.push(filteredValue);
+      if (this.lastValues.length > this.CONFIG.BUFFER_SIZE) {
+        this.lastValues.shift();
+      }
 
       // 3. Perform signal trend analysis with strict physiological validation
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
@@ -276,8 +282,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         redChannel: Math.min(1.0, Math.max(0, (redValue - this.CONFIG.MIN_RED_THRESHOLD) / 
                                           (this.CONFIG.MAX_RED_THRESHOLD - this.CONFIG.MIN_RED_THRESHOLD))),
         stability: this.trendAnalyzer.getStabilityScore(),
-        pulsatility: this.biophysicalValidator.calculatePulsatilityIndex(filteredValue),
-        biophysical: this.biophysicalValidator.validateBiophysicalRange(redValue, rToGRatio, rToBRatio),
+        pulsatility: this.biophysicalValidator.getPulsatilityScore(this.lastValues),
+        biophysical: this.biophysicalValidator.getBiophysicalScore({
+          red: redValue,
+          green: avgGreen ?? 0,
+          blue: avgBlue ?? 0,
+        }),
         periodicity: this.trendAnalyzer.getPeriodicityScore()
       };
 
