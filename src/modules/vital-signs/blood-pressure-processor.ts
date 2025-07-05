@@ -1,110 +1,50 @@
-import { calculateAmplitude, findPeaksAndValleys } from './utils';
+import * as tf from '@tensorflow/tfjs';
+import { BloodPressureModel, BloodPressureModelConfig, BloodPressurePrediction } from '../../ml/models/BloodPressureModel';
 
 export class BloodPressureProcessor {
-  private readonly BP_BUFFER_SIZE = 10;
-  private readonly BP_ALPHA = 0.7;
-  private systolicBuffer: number[] = [];
-  private diastolicBuffer: number[] = [];
+  private bpModel: BloodPressureModel;
+  private readonly DEFAULT_SIGNAL_LENGTH = 40; // From HeartBeatProcessor.ts
+  private readonly DEFAULT_SAMPLING_RATE = 60; // From HeartBeatProcessor.ts
+
+  constructor() {
+    const config: BloodPressureModelConfig = {
+      signalLength: this.DEFAULT_SIGNAL_LENGTH,
+      samplingRate: this.DEFAULT_SAMPLING_RATE,
+      inputShape: [this.DEFAULT_SIGNAL_LENGTH, 1], // Expecting one channel PPG
+      outputShape: [2], // [systolic, diastolic]
+      learningRate: 0.0005 // Default learning rate
+    };
+    this.bpModel = new BloodPressureModel(config);
+    // Load the model if pre-trained. This can be asynchronous.
+    // this.bpModel.load(); // Uncomment if there's a pre-trained model to load
+  }
 
   /**
-   * Calculates blood pressure using PPG signal features
+   * Calculates blood pressure using a TensorFlow.js model based on PPG signal
    */
-  public calculateBloodPressure(values: number[]): {
-    systolic: number;
-    diastolic: number;
-  } {
-    if (values.length < 30) {
-      return { systolic: 0, diastolic: 0 };
+  public async calculateBloodPressure(ppgValues: number[]): Promise<BloodPressurePrediction> {
+    if (ppgValues.length < this.DEFAULT_SIGNAL_LENGTH) {
+      console.warn('BloodPressureProcessor: Insufficient data for BP calculation. Need at least', this.DEFAULT_SIGNAL_LENGTH, 'samples.');
+      return { systolic: 0, diastolic: 0, map: 0, confidence: 0, features: {} };
     }
 
-    const { peakIndices, valleyIndices } = findPeaksAndValleys(values);
-    if (peakIndices.length < 2) {
-      return { systolic: 0, diastolic: 0 };
+    // Ensure the input array has the correct length by taking the last N samples
+    const inputSignal = new Float32Array(ppgValues.slice(-this.DEFAULT_SIGNAL_LENGTH));
+
+    try {
+      const prediction = await this.bpModel.predictBloodPressure(inputSignal);
+      return prediction;
+    } catch (error) {
+      console.error("BloodPressureProcessor: Error predicting BP with model:", error);
+      return { systolic: 0, diastolic: 0, map: 0, confidence: 0, features: {} };
     }
-
-    const fps = 30;
-    const msPerSample = 1000 / fps;
-
-    // Calculate real PTT values with improved accuracy
-    const pttValues: number[] = [];
-    for (let i = 1; i < peakIndices.length; i++) {
-      const dt = (peakIndices[i] - peakIndices[i - 1]) * msPerSample;
-      if (dt > 200 && dt < 1500) { // Physiologically valid range
-        pttValues.push(dt);
-      }
-    }
-    
-    // Enhanced weighted PTT calculation
-    let pttWeightSum = 0;
-    let pttWeightedSum = 0;
-    
-    pttValues.forEach((val, idx) => {
-      const weight = Math.pow((idx + 1) / pttValues.length, 1.5); // Exponential weighting
-      pttWeightedSum += val * weight;
-      pttWeightSum += weight;
-    });
-
-    const calculatedPTT = pttWeightSum > 0 ? pttWeightedSum / pttWeightSum : 600;
-    const normalizedPTT = Math.max(300, Math.min(1200, calculatedPTT));
-    
-    // Enhanced amplitude calculation from signal
-    const amplitude = calculateAmplitude(values, peakIndices, valleyIndices);
-    const normalizedAmplitude = Math.min(100, Math.max(0, amplitude * 6.5));
-
-    // Optimización adicional: ajustar los multiplicadores para mayor precisión
-    const pttFactor = (600 - normalizedPTT) * 0.11; // Incrementado de 0.10 a 0.11
-    const ampFactor = normalizedAmplitude * 0.38;   // Incrementado de 0.37 a 0.38
-    
-    let instantSystolic = 120 + pttFactor + ampFactor;
-    let instantDiastolic = 80 + (pttFactor * 0.68) + (ampFactor * 0.30); // Ajustando de (0.65 y 0.28)
-
-    // Enhanced physiological range enforcement
-    instantSystolic = Math.max(90, Math.min(180, instantSystolic));
-    instantDiastolic = Math.max(60, Math.min(110, instantDiastolic));
-    
-    // Maintain realistic pressure differential with improved bounds
-    const differential = instantSystolic - instantDiastolic;
-    if (differential < 25) {
-      instantDiastolic = instantSystolic - 25;
-    } else if (differential > 75) {
-      instantDiastolic = instantSystolic - 75;
-    }
-
-    // Update pressure buffers with new values
-    this.systolicBuffer.push(instantSystolic);
-    this.diastolicBuffer.push(instantDiastolic);
-    
-    if (this.systolicBuffer.length > this.BP_BUFFER_SIZE) {
-      this.systolicBuffer.shift();
-      this.diastolicBuffer.shift();
-    }
-
-    // Calculate final smoothed values with enhanced exponential moving average
-    let finalSystolic = 0;
-    let finalDiastolic = 0;
-    let smoothingWeightSum = 0;
-
-    for (let i = 0; i < this.systolicBuffer.length; i++) {
-      const weight = Math.pow(this.BP_ALPHA, this.systolicBuffer.length - 1 - i);
-      finalSystolic += this.systolicBuffer[i] * weight;
-      finalDiastolic += this.diastolicBuffer[i] * weight;
-      smoothingWeightSum += weight;
-    }
-
-    finalSystolic = smoothingWeightSum > 0 ? finalSystolic / smoothingWeightSum : instantSystolic;
-    finalDiastolic = smoothingWeightSum > 0 ? finalDiastolic / smoothingWeightSum : instantDiastolic;
-
-    return {
-      systolic: Math.round(finalSystolic),
-      diastolic: Math.round(finalDiastolic)
-    };
   }
 
   /**
    * Reset the blood pressure processor state
    */
   public reset(): void {
-    this.systolicBuffer = [];
-    this.diastolicBuffer = [];
+    // No specific state to reset for a stateless model prediction beyond buffer handling if any
+    // However, keeping this method for consistency or future stateful processing
   }
 }
