@@ -56,44 +56,92 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Weights adjusted to prioritize physiological pulse characteristics
-    const weighted =
-      redChannel * 0.1 +   // Reduced: Color is a prerequisite, not a strong indicator
-      stability * 0.2 +    // Maintained: Stability is important
-      pulsatility * 0.35 + // Increased: Pulsatility is a key indicator of a pulse
-      biophysical * 0.1 +  // Reduced: Biophysical plausibility is a good filter, but not the core signal
-      periodicity * 0.25;  // Increased: A periodic signal is crucial for heartbeat detection
-
-    // Map 0-1 range to 0-100 and clamp.
-    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
-
-    // Maintain moving average over last N frames.
-    this.qualityHistory.push(qualityValue);
-    if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
-      this.qualityHistory.shift();
+    // Validación de requisitos mínimos
+    const hasMinimalQuality = redChannel > 0.3 && stability > 0.4 && pulsatility > 0.2;
+    
+    if (!hasMinimalQuality) {
+      this.qualityHistory.push(0);
+      if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
+        this.qualityHistory.shift();
+      }
+      return {
+        isFingerDetected: false,
+        quality: 0,
+        detectorDetails: this.detectorScores
+      };
     }
-    const smoothedQuality =
-      this.qualityHistory.reduce((acc, v) => acc + v, 0) /
-      this.qualityHistory.length;
 
-    // Hysteresis logic using consecutive detections.
-    let isFingerDetected = false;
-    console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 65; // Increased threshold for higher confidence
-    if (smoothedQuality >= DETECTION_THRESHOLD) {
-      this.consecutiveDetections += 1;
-      this.consecutiveNoDetections = 0;
+    // Pesos optimizados para detección robusta
+    const weighted = Math.min(1,
+      (redChannel * 0.15) +     // Color de piel válido
+      (stability * 0.25) +      // Estabilidad de la señal
+      (pulsatility * 0.4) +     // Pulsatilidad (señal cardíaca)
+      (biophysical * 0.1) +     // Características biofísicas
+      (periodicity * 0.2)       // Periodicidad de la señal
+    );
+
+    // Suavizado exponencial para respuesta más rápida
+    const qualityValue = Math.min(100, Math.round(weighted * 100));
+    
+    // Mantener historial de calidad con suavizado
+    if (this.qualityHistory.length === 0) {
+      this.qualityHistory = Array(this.config.QUALITY_HISTORY_SIZE).fill(qualityValue);
     } else {
-      this.consecutiveNoDetections += 1;
-      this.consecutiveDetections = 0;
+      this.qualityHistory.push(qualityValue);
+      if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
+        this.qualityHistory.shift();
+      }
     }
+    
+    // Calcular calidad suavizada con mayor peso en valores recientes
+    const smoothedQuality = this.qualityHistory.reduce((acc, val, idx) => {
+      const weight = (idx + 1) / this.qualityHistory.length; // Peso progresivo
+      return acc + (val * weight);
+    }, 0) / (this.qualityHistory.length * 0.5 + 0.5); // Normalización
 
-    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
-      isFingerDetected = true;
-    } else if (
-      this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS
-    ) {
+    // Lógica de histéresis mejorada
+    const DETECTION_THRESHOLD = 60;       // Umbral principal de detección
+    const RELEASE_THRESHOLD = 45;         // Umbral más bajo para soltar (histeresis)
+    
+    let isFingerDetected = false;
+    const currentQuality = smoothedQuality;
+    
+    // Lógica de detección con histéresis
+    if (currentQuality >= DETECTION_THRESHOLD) {
+      this.consecutiveDetections = Math.min(
+        this.consecutiveDetections + 2, // Aumento más rápido
+        this.config.MIN_CONSECUTIVE_DETECTIONS * 2
+      );
+      this.consecutiveNoDetections = Math.max(0, this.consecutiveNoDetections - 1);
+    } else if (currentQuality < RELEASE_THRESHOLD) {
+      this.consecutiveNoDetections++;
+      this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
+    }
+    
+    // Tomar decisión basada en conteos consecutivos
+    const minDetections = Math.max(1, Math.floor(this.config.MIN_CONSECUTIVE_DETECTIONS * 0.7));
+    isFingerDetected = this.consecutiveDetections >= minDetections;
+    
+    // Forzar actualización si la calidad es muy baja
+    if (currentQuality < 20) {
+      this.consecutiveDetections = 0;
       isFingerDetected = false;
+    }
+    
+    // Depuración detallada
+    if (currentQuality > 30 || isFingerDetected) {
+      console.log('[SIGNAL]', {
+        quality: Math.round(currentQuality),
+        detected: isFingerDetected,
+        counts: `${this.consecutiveDetections}/${this.consecutiveNoDetections}`,
+        scores: {
+          red: Math.round(redChannel * 100) / 100,
+          stab: Math.round(stability * 100) / 100,
+          pulse: Math.round(pulsatility * 100) / 100,
+          bio: Math.round(biophysical * 100) / 100,
+          period: Math.round(periodicity * 100) / 100
+        }
+      });
     }
 
     return {
