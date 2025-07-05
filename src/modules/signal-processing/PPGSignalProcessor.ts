@@ -228,7 +228,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 3. Perform signal trend analysis with strict physiological validation
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
 
-      /* [DIAGNOSTIC] Temporarily disabled non-physiological signal rejection
       if (trendResult === "non_physiological" && !this.isCalibrating) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological signal rejected");
@@ -250,11 +249,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         }
         return;
       }
-      */
 
-      // Additional validation for color channel ratios
-      /* [DIAGNOSTIC] Temporarily disabled non-physiological color ratio rejection
-      if ((rToGRatio < 0.9 || rToGRatio > 4.0) && !this.isCalibrating) {
+      // Reactivated validation with more tolerant thresholds
+      if ((rToGRatio < 0.7 || rToGRatio > 5.0) && !this.isCalibrating) { // Rango ampliado de 0.7 a 5.0
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,
@@ -278,7 +275,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         }
         return;
       }
-      */
 
       // 4. Calculate comprehensive detector scores with medical validation
       const detectorScores = {
