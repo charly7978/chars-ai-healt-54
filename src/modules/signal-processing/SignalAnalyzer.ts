@@ -56,13 +56,13 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Weights adjusted to prioritize physiological pulse characteristics
+    // Weighted sum – weights can be tuned later or moved to config.
     const weighted =
-      redChannel * 0.1 +   // Reduced: Color is a prerequisite, not a strong indicator
-      stability * 0.2 +    // Maintained: Stability is important
-      pulsatility * 0.35 + // Increased: Pulsatility is a key indicator of a pulse
-      biophysical * 0.1 +  // Reduced: Biophysical plausibility is a good filter, but not the core signal
-      periodicity * 0.25;  // Increased: A periodic signal is crucial for heartbeat detection
+      redChannel * 0.3 +
+      stability * 0.25 +
+      pulsatility * 0.25 +
+      biophysical * 0.15 +
+      periodicity * 0.05;
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
@@ -79,7 +79,7 @@ export class SignalAnalyzer {
     // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
     console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 65; // Increased threshold for higher confidence
+    const DETECTION_THRESHOLD = 30;
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
