@@ -82,6 +82,10 @@ export class HeartBeatProcessor {
   private readonly PEAK_VALIDATION_THRESHOLD = 0.3; // Reducido para validación más permisiva
   private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.6; // Nuevo: Umbral mínimo de calidad de señal para confirmar un pico
   private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.5; // Nuevo: Umbral mínimo de confianza para confirmar un pico
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.5; // Nuevo: Amplitud mínima para considerar un pico
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.01; // Nuevo: Derivada mínima para indicar un pico agudo
+  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.8; // Nuevo: Estabilidad del buffer para confirmar pico
+  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 5; // Tamaño del buffer para confirmación de pico
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
@@ -284,12 +288,16 @@ export class HeartBeatProcessor {
     const confidence = peakDetectionResult.confidence;
     const rawDerivative = peakDetectionResult.rawDerivative;
     
-    const isConfirmedPeak = this.confirmPeak(isPeak, normalizedValue, confidence);
+    // Primero, confirmamos el pico con el buffer y la confianza inicial
+    const isConfirmedPeakCandidate = this.confirmPeak(isPeak, normalizedValue, confidence);
 
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
-    if (isConfirmedPeak && !this.isInWarmup()) {
+    // El pico es válido solo si se confirmó como candidato y pasa la validación final
+    const isValidPeak = isConfirmedPeakCandidate && this.validatePeak(normalizedValue, confidence);
+
+    if (isValidPeak && !this.isInWarmup()) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
         ? now - this.lastPeakTime
@@ -297,8 +305,6 @@ export class HeartBeatProcessor {
 
       // Validación médicamente apropiada
       if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
-        // Validación estricta según criterios médicos
-        if (this.validatePeak(normalizedValue, confidence)) {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
@@ -328,17 +334,19 @@ export class HeartBeatProcessor {
             this.peaksSinceLastTuning = 0;
           }
         } else {
-          console.log(`HeartBeatProcessor: Pico rechazado - confianza insuficiente: ${confidence}`);
-          isPeak = false;
+          console.log(`HeartBeatProcessor: Pico rechazado por MIN_PEAK_TIME_MS: ${timeSinceLastPeak} ms`);
+          isPeak = false; // Asegurar que isPeak se actualice si el pico es rechazado
         }
-      }
+    } else if (isPeak && !isValidPeak) {
+        console.log(`HeartBeatProcessor: Pico detectado pero no validado: Confianza=${confidence}, Calidad=${this.currentSignalQuality}`);
+        isPeak = false; // Asegurar que isPeak se actualice si el pico no es válido
     }
     
     // Retornar resultado con nuevos parámetros
     return {
       bpm: Math.round(this.getSmoothBPM()),
-      confidence: isPeak ? 0.95 : this.adjustConfidenceForSignalStrength(0.6),
-      isPeak: isPeak,
+      confidence: isValidPeak ? confidence : this.adjustConfidenceForSignalStrength(confidence * 0.5), // Usar la confianza real o ajustada
+      isPeak: isValidPeak, // Retornar el estado final de validación del pico
       filteredValue: filteredValue, // Usando la variable correctamente definida
       arrhythmiaCount: 0,
       signalQuality: this.currentSignalQuality // Retroalimentación de calidad
@@ -482,12 +490,28 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // Detectar pico en máximo local: derivada negativa
-    const isOverThreshold = derivative < 0;
-    // Confianza máxima en cada detección de pico
-    const confidence = 1;
 
-    return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
+    // Criterios de detección de pico mejorados: derivada negativa Y amplitud suficiente
+    const isLocalMaximum = derivative < this.DERIVATIVE_STEEPNESS_THRESHOLD; // Más estricto
+    const isSignificantAmplitude = normalizedValue > this.PEAK_AMPLITUDE_THRESHOLD; // Umbral de amplitud
+
+    const isPeakCandidate = isLocalMaximum && isSignificantAmplitude;
+
+    // Calcular confianza del pico basado en múltiples factores
+    let confidence = 0;
+    if (isPeakCandidate) {
+      // Cuanto mayor sea la amplitud y más pronunciada la caída (derivada), mayor la confianza
+      const amplitudeFactor = Math.min(1, normalizedValue / 1.0); // Normalizar a 1
+      const derivativeFactor = Math.min(1, Math.abs(derivative) / 0.05); // Normalizar a 1
+      // La calidad actual de la señal es CRÍTICA para la confianza del latido
+      const signalQualityFactor = this.currentSignalQuality; 
+
+      // Combinación ponderada de factores para la confianza
+      confidence = (amplitudeFactor * 0.4) + (derivativeFactor * 0.3) + (signalQualityFactor * 0.3);
+      confidence = Math.min(1, Math.max(0, confidence)); // Asegurar rango 0-1
+    }
+
+    return { isPeak: isPeakCandidate, confidence, rawDerivative: derivative };
   }
 
   private confirmPeak(
@@ -496,13 +520,23 @@ export class HeartBeatProcessor {
     confidence: number
   ): boolean {
     this.peakConfirmationBuffer.push(normalizedValue);
-    if (this.peakConfirmationBuffer.length > 5) {
+    if (this.peakConfirmationBuffer.length > this.PEAK_CONFIRMATION_BUFFER_SIZE) {
       this.peakConfirmationBuffer.shift();
     }
-    // Confirmación simplificada: cada pico marcado es confirmado
-    if (isPeak && !this.lastConfirmedPeak) {
-      this.lastConfirmedPeak = true;
-      return true;
+
+    // Validar el pico usando el buffer, la confianza y la calidad general de la señal
+    if (isPeak && confidence >= this.adaptiveMinConfidence && this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY) {
+      // Calcular la estabilidad del pico dentro del buffer
+      const maxIn = Math.max(...this.peakConfirmationBuffer);
+      const minIn = Math.min(...this.peakConfirmationBuffer);
+      const bufferRange = maxIn - minIn;
+      
+      const isStableEnough = (normalizedValue - minIn) / (bufferRange || 1) > this.PEAK_BUFFER_STABILITY_THRESHOLD; 
+
+      if (isStableEnough && !this.lastConfirmedPeak) {
+        this.lastConfirmedPeak = true;
+        return true;
+      }
     } else if (!isPeak) {
       this.lastConfirmedPeak = false;
     }
@@ -703,12 +737,12 @@ export class HeartBeatProcessor {
    */
   private calculateSignalQuality(normalizedValue: number, confidence: number): number {
     // Si no hay suficientes datos para una evaluación precisa
-    if (this.signalBuffer.length < 10) {
-      return Math.min(this.currentSignalQuality + 5, 30); // Incremento gradual hasta 30 durante calibración
+    if (this.signalBuffer.length < 20) { // Aumentado el tamaño mínimo del buffer para evaluación
+      return Math.min(this.currentSignalQuality + 3, 20); // Incremento gradual hasta 20 durante el calentamiento/calibración
     }
     
     // Calcular estadísticas de señal reciente
-    const recentSignals = this.signalBuffer.slice(-20);
+    const recentSignals = this.signalBuffer.slice(-30); // Ventana más grande para estabilidad
     const avgSignal = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
     const maxSignal = Math.max(...recentSignals);
     const minSignal = Math.min(...recentSignals);
@@ -720,33 +754,40 @@ export class HeartBeatProcessor {
     let rhythmQuality = 0;
     
     // 1. Calidad basada en amplitud (0-40)
-    amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40);
+    // Penalizar fuertemente las amplitudes muy bajas (señal plana o casi plana)
+    if (range < 0.005) { // Umbral para señal prácticamente plana
+        amplitudeQuality = 0; // Calidad nula si la señal es plana
+    } else {
+        amplitudeQuality = Math.min(Math.abs(normalizedValue) * 80, 40); // Mayor factor de amplificación
+    }
     
     // 2. Calidad basada en estabilidad de señal (0-30)
     if (range > 0.01) {
-      const variability = range / avgSignal;
-      if (variability < 0.5) { // Variabilidad óptima para PPG
+      const variability = range / (Math.abs(avgSignal) || 0.001); // Evitar división por cero
+      if (variability < 0.3) { // Variabilidad óptima para PPG (más estricto)
         stabilityQuality = 30;
-      } else if (variability < 1.0) {
+      } else if (variability < 0.7) { // Moderadamente inestable
         stabilityQuality = 20;
-      } else if (variability < 2.0) {
+      } else if (variability < 1.5) { // Inestable
         stabilityQuality = 10;
       } else {
-        stabilityQuality = 5;
+        stabilityQuality = 0; // Muy inestable, calidad muy baja
       }
+    } else {
+        stabilityQuality = 0; // Si el rango es casi cero, no hay estabilidad que evaluar
     }
     
     // 3. Calidad basada en ritmo (0-30)
-    if (this.bpmHistory.length >= 3) {
-      const recentBPMs = this.bpmHistory.slice(-3);
+    if (this.bpmHistory.length >= 5) { // Más muestras para evaluar el ritmo
+      const recentBPMs = this.bpmHistory.slice(-5);
       const bpmVariance = Math.max(...recentBPMs) - Math.min(...recentBPMs);
       
-      if (bpmVariance < 5) {
-        rhythmQuality = 30; // Ritmo muy estable
-      } else if (bpmVariance < 10) {
-        rhythmQuality = 20; // Ritmo estable
-      } else if (bpmVariance < 15) {
-        rhythmQuality = 10; // Ritmo variable pero aceptable
+      if (bpmVariance < 3) { // Ritmo muy estable (más estricto)
+        rhythmQuality = 30; 
+      } else if (bpmVariance < 8) { // Ritmo estable
+        rhythmQuality = 20;
+      } else if (bpmVariance < 12) { // Ritmo variable pero aceptable
+        rhythmQuality = 10;
       } else {
         rhythmQuality = 5;  // Ritmo inestable
       }
@@ -755,13 +796,18 @@ export class HeartBeatProcessor {
     // Calidad total (0-100)
     let totalQuality = amplitudeQuality + stabilityQuality + rhythmQuality;
     
-    // Penalización por baja confianza
-    if (confidence < 0.6) {
-      totalQuality *= confidence / 0.6;
+    // Penalización por baja confianza y umbral de calidad global
+    if (confidence < 0.7) { // Umbral de confianza más alto para penalizar
+      totalQuality *= confidence / 0.7;
+    }
+
+    // Penalización adicional si la señal es demasiado débil después de todas las comprobaciones
+    if (totalQuality < 15 && range < 0.02) { // Si la calidad es baja y el rango es muy pequeño
+        totalQuality = 0; // Forzar a cero si es prácticamente ruido
     }
     
     // Suavizado para evitar cambios bruscos
-    totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
+    totalQuality = this.currentSignalQuality * 0.6 + totalQuality * 0.4; // Mayor peso a la nueva lectura
     
     return Math.min(Math.max(Math.round(totalQuality), 0), 100);
   }
