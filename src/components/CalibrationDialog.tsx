@@ -18,8 +18,8 @@ const CalibrationDialog: React.FC<CalibrationDialogProps> = ({
   onCalibrationStart,
   onCalibrationEnd
 }) => {
-  const [systolic, setSystolic] = React.useState<string>("");
-  const [diastolic, setDiastolic] = React.useState<string>("");
+  const [systolic, setSystolic] = React.useState<number | ''>('');
+  const [diastolic, setDiastolic] = React.useState<number | ''>('');
   const [isSubmitting, setIsSubmitting] = React.useState(false);
 
   const handleCalibration = async () => {
