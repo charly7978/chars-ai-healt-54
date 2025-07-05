@@ -18,8 +18,8 @@ export class SignalTrendAnalyzer {
   private readonly PEAK_THRESHOLD = 0.5; // Umbral para detección de picos
   
   // Umbrales más estrictos para validación fisiológica
-  private readonly MAX_VALUE_JUMP = 15; // Reducido para detectar saltos más pequeños
-  private readonly MAX_STD_DEV = 10;    // Reducido para una señal más estable
+  private readonly MAX_VALUE_JUMP = 18; // Aumentado ligeramente para mayor sensibilidad
+  private readonly MAX_STD_DEV = 10;    // Aumentado ligeramente para aceptar más variación
   private readonly MIN_HR = 40;         // Límite inferior de frecuencia cardíaca (bpm)
   private readonly MAX_HR = 200;        // Límite superior de frecuencia cardíaca (bpm)
 
