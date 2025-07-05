@@ -1,140 +1,146 @@
 export type TrendResult = "stable" | "unstable" | "non_physiological";
 
 /**
- * Analizador de tendencias de señal PPG optimizado para detección de dedo y latido
- * Utiliza un enfoque simplificado pero efectivo para detectar patrones fisiológicos
+ * SignalTrendAnalyzer evaluates the short-term and long-term trends of a PPG signal
+ * to determine its stability, detect non-physiological patterns, and assess periodicity.
+ * This is critical for filtering out noise from motion artifacts or poor sensor contact.
  */
 export class SignalTrendAnalyzer {
   private valueHistory: number[] = [];
-  private lastPeakTime: number = 0;
-  private readonly HISTORY_SIZE = 30; // Reducido para respuesta más rápida
+  private derivativeHistory: number[] = [];
+  private readonly HISTORY_SIZE = 50; // Store ~1.6s of data at 30fps
   private readonly STABILITY_WINDOW = 15;
-  
-  // Umbrales optimizados para detección de dedo
-  private readonly MAX_VALUE_JUMP = 20;    // Umbral para cambios bruscos
-  private readonly MAX_STD_DEV = 15;       // Máxima desviación estándar permitida
-  private readonly MIN_AMPLITUDE = 2;      // Amplitud mínima para considerar señal válida
-  
+  private readonly PERIODICITY_WINDOW = 30;
+
+  // Thresholds for physiological validation
+  private readonly MAX_VALUE_JUMP = 25; // Max change between consecutive frames
+  private readonly MAX_STD_DEV = 15;    // Max standard deviation for a stable signal
+
   reset(): void {
     this.valueHistory = [];
-    this.lastPeakTime = 0;
+    this.derivativeHistory = [];
   }
-  
+
   /**
-   * Analiza la tendencia de la señal para detectar patrones anormales
+   * Analyzes the trend of the incoming signal value.
+   * @param value The latest filtered signal value.
+   * @returns A TrendResult indicating the signal's current state.
    */
   analyzeTrend(value: number): TrendResult {
-    // Validación básica de la señal
     if (this.valueHistory.length > 0) {
       const lastValue = this.valueHistory[this.valueHistory.length - 1];
       const jump = Math.abs(value - lastValue);
-      
-      // Detectar saltos bruscos no fisiológicos
+
+      // Check for sudden, non-physiological jumps
       if (jump > this.MAX_VALUE_JUMP) {
+        this.reset(); // Reset on large jump
         return "non_physiological";
       }
     }
-    
-    // Actualizar historial
-    this.valueHistory.push(value);
-    if (this.valueHistory.length > this.HISTORY_SIZE) {
-      this.valueHistory.shift();
-    }
-    
-    // Verificar estabilidad
+
+    this.updateHistory(value);
+
     if (this.valueHistory.length < this.STABILITY_WINDOW) {
+      return "unstable"; // Not enough data yet
+    }
+
+    const recentHistory = this.valueHistory.slice(-this.STABILITY_WINDOW);
+    const mean = recentHistory.reduce((a, b) => a + b, 0) / recentHistory.length;
+    const stdDev = Math.sqrt(
+      recentHistory.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b, 0) / recentHistory.length
+    );
+
+    if (stdDev > this.MAX_STD_DEV) {
       return "unstable";
     }
-    
-    const recent = this.valueHistory.slice(-this.STABILITY_WINDOW);
-    const min = Math.min(...recent);
-    const max = Math.max(...recent);
-    
-    // Señal demasiado plana
-    if ((max - min) < this.MIN_AMPLITUDE) {
-      return "unstable";
-    }
-    
+
     return "stable";
   }
-  
+
   /**
-   * Calcula un puntaje de estabilidad basado en la variación reciente
+   * Calculates a stability score based on recent signal variance.
+   * @returns A score from 0.0 (highly unstable) to 1.0 (highly stable).
    */
   getStabilityScore(): number {
     if (this.valueHistory.length < this.STABILITY_WINDOW) {
       return 0;
     }
-    
-    const recent = this.valueHistory.slice(-this.STABILITY_WINDOW);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((sum, x) => sum + Math.pow(x - mean, 2), 0) / recent.length;
-    const stdDev = Math.sqrt(variance);
-    
-    // Puntaje basado en la desviación estándar
-    return Math.max(0, 1 - (stdDev / this.MAX_STD_DEV));
+
+    const recentHistory = this.valueHistory.slice(-this.STABILITY_WINDOW);
+    const mean = recentHistory.reduce((a, b) => a + b, 0) / recentHistory.length;
+    const stdDev = Math.sqrt(
+      recentHistory.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b, 0) / recentHistory.length
+    );
+
+    // Inverse relationship: lower std dev = higher score
+    const score = 1.0 - Math.min(1.0, stdDev / this.MAX_STD_DEV);
+    return score;
   }
 
   /**
-   * Evalúa la periodicidad de la señal basándose en conteo de cruces por cero
-   * Un método más simple y directo que la autocorrelación
+   * Assesses the periodicity of the signal, which is a strong indicator of a heartbeat.
+   * Uses autocorrelation on the signal's derivative to find repeating patterns.
+   * @returns A score from 0.0 (not periodic) to 1.0 (highly periodic).
    */
   getPeriodicityScore(): number {
-    if (this.valueHistory.length < this.STABILITY_WINDOW) {
+    if (this.derivativeHistory.length < this.PERIODICITY_WINDOW) {
       return 0;
     }
-    
-    const recent = this.valueHistory.slice(-this.STABILITY_WINDOW);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    
-    // Contar cruces por cero
-    let zeroCrossings = 0;
-    for (let i = 1; i < recent.length; i++) {
-      if ((recent[i-1] < mean && recent[i] >= mean) || 
-          (recent[i-1] > mean && recent[i] <= mean)) {
-        zeroCrossings++;
+
+    const recentDerivatives = this.derivativeHistory.slice(-this.PERIODICITY_WINDOW);
+    const autocorrelation = this.autocorrelate(recentDerivatives);
+
+    let maxPeak = 0;
+    // Start from a lag that corresponds to a reasonable HR (e.g., > 40 bpm)
+    const minLag = Math.floor((60 / 200) * (this.HISTORY_SIZE / 1.6)); // 200 bpm max
+    for (let i = minLag; i < autocorrelation.length; i++) { 
+      if (autocorrelation[i] > maxPeak) {
+        maxPeak = autocorrelation[i];
       }
     }
-    
-    // Normalizar el conteo de cruces (esperamos entre 1-4 cruces para una señal de pulso típica)
-    const normalizedCrossings = Math.min(1, zeroCrossings / 4);
-    
-    return Math.max(0, Math.min(1, normalizedCrossings));
+
+    return Math.max(0, Math.min(1.0, maxPeak));
   }
-  
-  /**
-   * Calcula el BPM basado en la frecuencia dominante de la señal
-   */
-  getBPM(): number {
-    if (this.valueHistory.length < this.STABILITY_WINDOW) {
-      return 0;
-    }
-    
-    const recent = this.valueHistory.slice(-this.STABILITY_WINDOW);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    
-    // Encontrar picos locales
-    const peaks: number[] = [];
-    for (let i = 1; i < recent.length - 1; i++) {
-      if (recent[i] > recent[i-1] && recent[i] > recent[i+1] && recent[i] > mean) {
-        peaks.push(i);
+
+  private updateHistory(value: number): void {
+    if (this.valueHistory.length > 0) {
+      const lastValue = this.valueHistory[this.valueHistory.length - 1];
+      this.derivativeHistory.push(value - lastValue);
+      if (this.derivativeHistory.length > this.HISTORY_SIZE) {
+        this.derivativeHistory.shift();
       }
     }
-    
-    if (peaks.length < 2) {
-      return 0;
+
+    this.valueHistory.push(value);
+    if (this.valueHistory.length > this.HISTORY_SIZE) {
+      this.valueHistory.shift();
     }
-    
-    // Calcular BPM basado en la distancia promedio entre picos
-    let totalDiff = 0;
-    for (let i = 1; i < peaks.length; i++) {
-      totalDiff += peaks[i] - peaks[i-1];
+  }
+
+  /**
+   * Calculates the autocorrelation of a signal.
+   * @param data The input signal data.
+   * @returns The normalized autocorrelation values.
+   */
+  private autocorrelate(data: number[]): number[] {
+    const n = data.length;
+    if (n === 0) return [];
+    const mean = data.reduce((a, b) => a + b, 0) / n;
+    const variance = data.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b, 0);
+    const result = new Array(n).fill(0);
+
+    if (variance === 0) {
+      return result; // No variance, no correlation
     }
-    
-    const avgDiff = totalDiff / (peaks.length - 1);
-    const bpm = (60 * 30) / avgDiff; // Asumiendo 30 fps
-    
-    // Filtrar valores no fisiológicos
-    return bpm >= 40 && bpm <= 200 ? bpm : 0;
+
+    for (let lag = 0; lag < n; lag++) {
+      let sum = 0;
+      for (let i = 0; i < n - lag; i++) {
+        sum += (data[i] - mean) * (data[i + lag] - mean);
+      }
+      result[lag] = sum / variance;
+    }
+
+    return result;
   }
 }

@@ -28,19 +28,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   // Configuration with stricter medically appropriate thresholds
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 20,          // Aumentado para mejor análisis de tendencia
-    MIN_RED_THRESHOLD: 10,    // Umbral mínimo de rojo ligeramente mayor para evitar ruido
-    MAX_RED_THRESHOLD: 250,   // Ajustado para permitir mayor rango dinámico
-    STABILITY_WINDOW: 15,     // Ventana más grande para mejor evaluación de estabilidad
-    MIN_STABILITY_COUNT: 3,   // Reducido para una detección más rápida
-    HYSTERESIS: 1.8,          // Reducido para una respuesta más rápida
-    MIN_CONSECUTIVE_DETECTIONS: 3,    // Reducido para una detección más rápida
-    MAX_CONSECUTIVE_NO_DETECTIONS: 5, // Aumentado para evitar pérdidas temporales
-    QUALITY_LEVELS: 25,       // Más niveles para mejor granularidad
-    QUALITY_HISTORY_SIZE: 15, // Historial más grande para mejor estabilidad
-    CALIBRATION_SAMPLES: 15,  // Más muestras para mejor calibración
+    BUFFER_SIZE: 15,
+    MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
+    MAX_RED_THRESHOLD: 240,
+    STABILITY_WINDOW: 10,      // Increased for more stability assessment
+    MIN_STABILITY_COUNT: 5,   // Requires more stability for detection
+    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
+    MIN_CONSECUTIVE_DETECTIONS: 6,  // Requires more frames to confirm detection
+    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
+    QUALITY_LEVELS: 20,
+    QUALITY_HISTORY_SIZE: 10,
+    CALIBRATION_SAMPLES: 10,
     TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.7      // Aumentado para cubrir mejor el dedo
+    ROI_SIZE_FACTOR: 0.6
   };
   
   constructor(
@@ -189,13 +189,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Validación temprana de frames con umbrales más permisivos
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD) {
+      // Early rejection of invalid frames - stricter thresholds
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.9) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Señal demasiado débil, omitiendo procesamiento:", redValue);
+          console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
         }
-        
-        // Enviar señal de rechazo con información de diagnóstico
+
         const minimalSignal: ProcessedSignal = {
           timestamp: Date.now(),
           rawValue: redValue,
@@ -203,16 +202,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           quality: 0,
           fingerDetected: false,
           roi: roi,
-          perfusionIndex: 0,
-          debugInfo: {
-            reason: "señal_demasiado_debil",
-            redValue,
-            minThreshold: this.CONFIG.MIN_RED_THRESHOLD
-          }
+          perfusionIndex: 0
         };
 
-        if (this.onSignalReady) {
-          this.onSignalReady(minimalSignal);
+        this.onSignalReady(minimalSignal);
+        if (shouldLog) {
+          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Weak Signal):", minimalSignal);
         }
         return;
       }
@@ -255,17 +250,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Validación de proporciones de color con umbrales más flexibles
-      const validColorRatio = rToGRatio >= 0.6 && rToGRatio <= 6.0; // Rango más amplio
-      
-      if (!validColorRatio && !this.isCalibrating) {
+      // Reactivated validation with more tolerant thresholds
+      if ((rToGRatio < 0.7 || rToGRatio > 5.0) && !this.isCalibrating) { // Rango ampliado de 0.7 a 5.0
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Proporción de color no fisiológica detectada:", {
+          console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,
-            rToBRatio,
-            redValue,
-            avgGreen,
-            avgBlue
+            rToBRatio
           });
         }
 
@@ -276,19 +266,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           quality: 0, 
           fingerDetected: false,
           roi: roi,
-          perfusionIndex: 0,
-          debugInfo: {
-            reason: "proporcion_color_no_fisiologica",
-            rToGRatio,
-            rToBRatio,
-            redValue,
-            avgGreen,
-            avgBlue
-          }
+          perfusionIndex: 0
         };
 
-        if (this.onSignalReady) {
-          this.onSignalReady(rejectSignal);
+        this.onSignalReady(rejectSignal);
+        if (shouldLog) {
+          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Color Ratio):", rejectSignal);
         }
         return;
       }
