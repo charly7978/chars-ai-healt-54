@@ -9,7 +9,7 @@ interface AnimatedHeartRateProps {
 
 const AnimatedHeartRate = ({ bpm, isPulsing = false, size = 'md' }: AnimatedHeartRateProps) => {
   const [isBeating, setIsBeating] = useState(false);
-  const beatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const beatTimeoutRef = useRef<number | null>(null);
   
   // Size classes
   const sizeClasses = {

@@ -4,15 +4,9 @@ interface MonitorButtonProps {
   isMonitoring: boolean;
   onToggle: () => void;
   variant?: "monitor" | "reset";
-  className?: string;
 }
 
-const MonitorButton = ({ 
-  isMonitoring, 
-  onToggle, 
-  variant = "monitor",
-  className = ""
-}: MonitorButtonProps) => {
+const MonitorButton: React.FC<MonitorButtonProps> = ({ isMonitoring, onToggle, variant = "monitor" }) => {
   // Para "monitor": azul menos vivo; para "reset": gris
   const baseClass = "px-4 py-2 rounded transition-colors duration-300 w-full text-white";
   const classes =
@@ -21,7 +15,7 @@ const MonitorButton = ({
       : `${baseClass} bg-gray-500 hover:bg-gray-600`;
       
   return (
-    <button onClick={onToggle} className={`${classes} ${className}`}>
+    <button onClick={onToggle} className={classes}>
       {variant === "monitor" ? (isMonitoring ? 'Detener' : 'Iniciar') : 'Reset'}
     </button>
   );
