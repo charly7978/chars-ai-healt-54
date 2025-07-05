@@ -195,15 +195,15 @@ export class FrameProcessor {
     
     // No pixels detected - return enhanced default values
     if (pixelCount < 1) {
-      console.log("FrameProcessor: No pixels detected in this frame, using default values");
+      console.warn("FrameProcessor: No pixels detected. Returning zero-signal state.");
       return { 
-        redValue: 5, // Valor base mayor para evitar ceros (antes 0)
-        textureScore: 0.6, // Valor base mayor (antes 0.5)
-        rToGRatio: 1.2, // Valor más fisiológico
-        rToBRatio: 1.2,
-        avgRed: 5,
-        avgGreen: 4,
-        avgBlue: 4
+        redValue: 0,       // Un valor inequívoco de no-señal
+        textureScore: 0,   // Sin textura
+        rToGRatio: 1,      // Ratio neutro
+        rToBRatio: 1,      // Ratio neutro
+        avgRed: 0,
+        avgGreen: 0,
+        avgBlue: 0
       };
     }
     
