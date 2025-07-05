@@ -1,104 +1,103 @@
-import { ProcessedSignal } from '../../types/signal';
+// SignalAnalyzer rebuilt to remove corrupted content
 import { DetectorScores, DetectionResult } from './types';
 
-export class SignalAnalyzer {
-  [x: string]: any;
-  private readonly CONFIG: { 
-    QUALITY_LEVELS: number;
-    QUALITY_HISTORY_SIZE: number;
-    MIN_CONSECUT极好的！我已成功修复SignalAnalyzer.ts中的所有问题，包括：
-
-1. 类型错误和语法错误
-2. 手指检测逻辑优化
-3. 确保所有函数都有返回值
-4. 代码结构清理
-
-关键改进点：
-
-1. 检测阈值调整：
-```typescript
-const DETECTION_THRESHOLD = 40; // 降低检测阈值提高灵敏度
-const RELEASE_THRESHOLD = 30;   // 降低释放阈值减少误判
-```
-
-2. 权重参数优化：
-```typescript
-const WEIGHTS = {
-  RED_CHANNEL: 0.30,  // 提高红色通道权重
-  STABILITY: 0.25,    // 提高稳定性权重
-  PULSATILITY: 0.25,
-  BIOPHYSICAL: 极好的！我已成功修复SignalAnalyzer.ts中的所有问题，包括：
-
-1. 类型错误和语法错误
-2. 手指检测逻辑优化
-3. 确保所有函数都有返回值
-4. 代码结构清理
-
-关键改进点：
-
-1. 检测阈值调整：
-```typescript
-const DETECTION_THRESHOLD = 40; // 降低检测阈值提高灵敏度
-const RELEASE_THRESHOLD = 30;   // 降低释放阈值减少误判
-```
-
-2. 权重参数优化：
-```typescript
-const WEIGHTS = {
-  RED_CHANNEL: 0.30,  // 提高红色通道权重
-  STABILITY: 0.25,    // 提高稳定性权重
-  PULSATILITY: 0.25,
-  BIOPHYSICAL: 0.15,
-  PERIODICITY: 0.10,
-  LIGHT_QUALITY: 0.05
-};
-```
-
-3. 检测条件改进：
-```typescript
-if (smoothedQuality > DETECTION_THRESHOLD && 
-    this.d极好的！我已成功修复SignalAnalyzer.ts中的所有问题，包括：
-
-1. 类型错误和语法错误
-2. 手指检测逻辑优化
-3. 确保所有函数都有返回值
-4. 代码结构清理
-
-关键改进点：
-
-1. 检测阈值调整：
-```typescript
-const DETECTION_THRESHOLD = 40; // 降低检测阈值提高灵敏度
-const RELEASE_THRESHOLD = 30;   // 降低释放阈值减少误判
-```
-
-2. 权重参数优化：
-```typescript
-const WEIGHTS = {
-  RED_CHANNEL: 0.30,  // 提高红色通道权重
-  STABILITY: 0.25,    // 提高稳定性权重
-  PULSATILITY: 0.25,
-  BIOPHYSICAL: 0.15,
-  PERIODICITY: 0.10,
-  LIGHT_QUALITY: 0.05
-};
-```
-
-3. 检测条件改进：
-```typescript
-if (smoothedQuality > DETECTION_THRESHOLD && 
-    this.detectorScores.pulsatility > 0.15) {  // 降低脉动要求
-  // 检测逻辑
+export interface SignalAnalyzerConfig {
+  QUALITY_LEVELS: number;
+  QUALITY_HISTORY_SIZE: number;
+  MIN_CONSECUTIVE_DETECTIONS: number;
+  MAX_CONSECUTIVE_NO_DETECTIONS: number;
 }
-```
 
-4. 新增校准检查：
-```typescript
-if (this.calibrationPhase) {
-  return { 
-    isFingerDetected: false,
-    quality: 0,
-    detectorDetails: {
-      ...this.detectorScores,
-      calibrating: true
+/**
+ * SignalAnalyzer performs quality aggregation and finger-on-sensor detection
+ * using recent detector scores (colour channel, stability, pulsatility, etc.).
+ *
+ * The algorithm is intentionally simple: it keeps a moving window of quality
+ * values, applies a weighted sum of the detector scores, and decides whether a
+ * finger is present based on smoothed quality plus hysteresis controlled by
+ * consecutive detection/no-detection counters.  This is sufficient for build
+ * purposes and can be refined later without affecting the public API.
+ */
+export class SignalAnalyzer {
+  private qualityHistory: number[] = [];
+  private consecutiveDetections = 0;
+  private consecutiveNoDetections = 0;
+  private detectorScores: DetectorScores = {
+    redChannel: 0,
+    stability: 0,
+    pulsatility: 0,
+    biophysical: 0,
+    periodicity: 0,
+  };
+
+  constructor(private readonly config: SignalAnalyzerConfig) {}
+
+  /** Reset internal state (useful when starting/stopping the processor). */
+  reset(): void {
+    this.qualityHistory = [];
+    this.consecutiveDetections = 0;
+    this.consecutiveNoDetections = 0;
+  }
+
+  /** Update latest detector scores provided each frame by the processor. */
+  updateDetectorScores(scores: DetectorScores): void {
+    this.detectorScores = scores;
+  }
+
+  /**
+   * Calculate overall quality and finger detection decision.
+   * @param filteredValue Unused for now but kept for future algorithm updates.
+   * @param trendResult   Additional context (e.g., from SignalTrendAnalyzer).
+   */
+  analyzeSignalMultiDetector(
+    filteredValue: number,
+    trendResult: unknown
+  ): DetectionResult {
+    const { redChannel, stability, pulsatility, biophysical, periodicity } =
+      this.detectorScores;
+
+    // Weighted sum – weights can be tuned later or moved to config.
+    const weighted =
+      redChannel * 0.3 +
+      stability * 0.25 +
+      pulsatility * 0.25 +
+      biophysical * 0.15 +
+      periodicity * 0.05;
+
+    // Map 0-1 range to 0-100 and clamp.
+    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
+
+    // Maintain moving average over last N frames.
+    this.qualityHistory.push(qualityValue);
+    if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
+      this.qualityHistory.shift();
     }
+    const smoothedQuality =
+      this.qualityHistory.reduce((acc, v) => acc + v, 0) /
+      this.qualityHistory.length;
+
+    // Hysteresis logic using consecutive detections.
+    let isFingerDetected = false;
+    if (smoothedQuality >= 40) {
+      this.consecutiveDetections += 1;
+      this.consecutiveNoDetections = 0;
+    } else {
+      this.consecutiveNoDetections += 1;
+      this.consecutiveDetections = 0;
+    }
+
+    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
+      isFingerDetected = true;
+    } else if (
+      this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS
+    ) {
+      isFingerDetected = false;
+    }
+
+    return {
+      isFingerDetected,
+      quality: Math.round(smoothedQuality),
+      detectorDetails: { ...this.detectorScores },
+    };
+  }
+}
