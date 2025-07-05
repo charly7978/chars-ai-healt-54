@@ -46,8 +46,8 @@ export class SignalAnalyzer {
     this.CONFIG = {
       QUALITY_LEVELS: config.QUALITY_LEVELS,
       QUALITY_HISTORY_SIZE: config.QUALITY_HISTORY_SIZE,
-      MIN_CONSECUTIVE_DETECTIONS: 6,
-      MAX_CONSECUTIVE_NO_DETECTIONS: 4
+      MIN_CONSECUTIVE_DETECTIONS: 3,
+      MAX_CONSECUTIVE_NO_DETECTIONS: 3
     };
   }
   
@@ -203,16 +203,16 @@ export class SignalAnalyzer {
     const smoothedAvgQuality = this.qualityHistory.reduce((sum, q) => sum + q, 0) / this.qualityHistory.length;
 
     // Umbrales de detección más estrictos y basados en la calidad combinada
-    const detectionThreshold = 50; // Umbral más alto para detección de dedo (antes 50)
-    const releaseThreshold = 40;   // Umbral de liberación ligeramente más bajo (antes 40)
+    const detectionThreshold = 40; // Umbral más alto para detección de dedo (antes 50)
+    const releaseThreshold = 30;   // Umbral de liberación ligeramente más bajo (antes 40)
 
     // Lógica de histeresis para la detección del dedo
     if (!this.isCurrentlyDetected) {
       // Detección inicial: La calidad debe ser ALTA y la señal debe ser fisiológica y estable
       if (smoothedAvgQuality > detectionThreshold && trendResult !== 'non_physiological' &&
-          this.detectorScores.pulsatility > 0.3 && // Pulsatilidad fisiológica mínima
-          this.detectorScores.biophysical > 0.4 && // Rango biofísico aceptable
-          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality > 0.4)) { // Buena iluminación
+          this.detectorScores.pulsatility > 0.2 && // Pulsatilidad fisiológica mínima
+          this.detectorScores.biophysical > 0.3 && // Rango biofísico aceptable
+          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality > 0.3)) { // Buena iluminación
         this.consecutiveDetections++;
         this.consecutiveNoDetections = 0; // Resetear contador de no detección
       } else {
@@ -222,9 +222,9 @@ export class SignalAnalyzer {
     } else {
       // Mantenimiento de detección: La calidad debe mantenerse por encima de un umbral de liberación
       if (smoothedAvgQuality < releaseThreshold || trendResult === 'non_physiological' ||
-          this.detectorScores.pulsatility < 0.3 || // Pérdida de pulsatilidad
-          this.detectorScores.biophysical < 0.4 || // Fuera de rango biofísico
-          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality < 0.3)) { // Mala iluminación
+          this.detectorScores.pulsatility < 0.2 || // Pérdida de pulsatilidad
+          this.detectorScores.biophysical < 0.3 || // Fuera de rango biofísico
+          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality < 0.2)) { // Mala iluminación
         this.consecutiveNoDetections++;
         this.consecutiveDetections = 0; // Resetear contador de detección
       } else {

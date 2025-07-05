@@ -413,20 +413,44 @@ const Index = () => {
   }, [lastSignal]);
 
   useEffect(() => {
-    if (!lastSignal) return;
+    if (!lastSignal) {
+      console.log("[DIAG] Index.tsx: lastSignal es nulo o indefinido.");
+      return;
+    }
+
+    console.log("[DIAG] Index.tsx: Procesando lastSignal", {
+      timestamp: new Date(lastSignal.timestamp).toISOString(),
+      fingerDetected: lastSignal.fingerDetected,
+      quality: lastSignal.quality,
+      rawValue: lastSignal.rawValue,
+      filteredValue: lastSignal.filteredValue,
+      isMonitoring: isMonitoring
+    });
+
     // Actualizar calidad siempre
     setSignalQuality(lastSignal.quality);
     // Si no está monitoreando, no procesar
-    if (!isMonitoring) return;
+    if (!isMonitoring) {
+      console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
+      return;
+    }
+    
     // Umbral mínimo de calidad para medir
     const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
     // Si no hay dedo válido o calidad insuficiente, resetear indicadores
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
+      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
+        fingerDetected: lastSignal.fingerDetected,
+        quality: lastSignal.quality,
+        minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
+      });
       setHeartRate(0);
       setHeartbeatSignal(0);
       setBeatMarker(0);
       return;
     }
+
+    console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
     // Señal válida, procesar latidos y signos vitales
     const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
     setHeartRate(heartBeatResult.bpm);
