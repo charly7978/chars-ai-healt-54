@@ -1,5 +1,6 @@
 // Import TensorFlow.js with ES module syntax
 import * as tf from '@tensorflow/tfjs';
+import { serialization } from '@tensorflow/tfjs-layers';
 
 // Define layer configuration interfaces
 interface LayerConfig {
@@ -518,8 +519,8 @@ export abstract class BaseModel {
       ...(inputShape && { inputShape })
     } as const; // Use const assertion to preserve literal types
     
-    // Type assertion to handle TensorFlow.js internal types
-    return tf.layers.dense(config as tf.layers.LayerArgs);
+    // Use the correct type for layer configuration
+    return tf.layers.dense(config as unknown as serialization.ConfigDict);
   }
 
   protected addConv1DLayer(
@@ -539,8 +540,8 @@ export abstract class BaseModel {
       useBias: true
     } as const;
     
-    // Type assertion to handle TensorFlow.js internal types
-    return tf.layers.conv1d(config as tf.layers.LayerArgs);
+    // Use the correct type for layer configuration
+    return tf.layers.conv1d(config as unknown as serialization.ConfigDict);
   }
 
   protected addLSTMLayer(
