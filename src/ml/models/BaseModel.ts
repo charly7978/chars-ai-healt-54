@@ -1,14 +1,5 @@
-// Import TensorFlow.js with ES module syntax
 import * as tf from '@tensorflow/tfjs';
-
-// Type aliases for TensorFlow.js types
-type Tensor = tf.Tensor;
-type Rank = tf.Rank;
-type TensorLike = tf.Tensor | tf.TensorLike;
-interface LayersModel extends tf.LayersModel {}
-interface Sequential extends tf.Sequential {}
-interface CustomCallback extends tf.CustomCallback {}
-interface History extends tf.History {}
+import { Tensor, Rank, TensorLike } from '@tensorflow/tfjs';
 
 export interface ModelConfig {
   inputShape: number[];
