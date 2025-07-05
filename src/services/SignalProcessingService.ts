@@ -1,5 +1,5 @@
-import { BehaviorSubject, Subject, Observable, from, of } from 'rxjs';
-import { filter, map, catchError } from 'rxjs/operators';
+import { BehaviorSubject, Subject, Observable } from 'rxjs';
+import { filter, map } from 'rxjs/operators';
 
 export interface ProcessingResult {
   timestamp: number;
