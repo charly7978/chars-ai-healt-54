@@ -80,8 +80,12 @@ export class HeartBeatProcessor {
   // Variables para mejorar la detección
   private peakValidationBuffer: number[] = [];
   private readonly PEAK_VALIDATION_THRESHOLD = 0.3; // Reducido para validación más permisiva
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.6; // Nuevo: Umbral mínimo de calidad de señal para confirmar un pico
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.5; // Nuevo: Umbral mínimo de confianza para confirmar un pico
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.3; // Nuevo: Umbral mínimo de calidad de señal para confirmar un pico
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.2; // Nuevo: Umbral mínimo de confianza para confirmar un pico
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.2; // Nuevo: Amplitud mínima para considerar un pico
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.003; // Nuevo: Derivada mínima para indicar un pico agudo
+  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.8; // Nuevo: Estabilidad del buffer para confirmar pico
+  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 5; // Tamaño del buffer para confirmación de pico
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
@@ -496,7 +500,7 @@ export class HeartBeatProcessor {
     confidence: number
   ): boolean {
     this.peakConfirmationBuffer.push(normalizedValue);
-    if (this.peakConfirmationBuffer.length > 5) {
+    if (this.peakConfirmationBuffer.length > this.PEAK_CONFIRMATION_BUFFER_SIZE) {
       this.peakConfirmationBuffer.shift();
     }
     // Confirmación simplificada: cada pico marcado es confirmado
@@ -720,33 +724,38 @@ export class HeartBeatProcessor {
     let rhythmQuality = 0;
     
     // 1. Calidad basada en amplitud (0-40)
-    amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40);
+    // Penalizar fuertemente las amplitudes muy bajas (señal plana o casi plana)
+    if (range < 0.001) { // Umbral para señal prácticamente plana
+        amplitudeQuality = 0; // Calidad nula si la señal es plana
+    } else {
+        amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40); // Mayor factor de amplificación
+    }
     
     // 2. Calidad basada en estabilidad de señal (0-30)
     if (range > 0.01) {
-      const variability = range / avgSignal;
-      if (variability < 0.5) { // Variabilidad óptima para PPG
+      const variability = range / (Math.abs(avgSignal) || 0.001); // Evitar división por cero
+      if (variability < 0.5) { // Variabilidad óptima para PPG (más estricto)
         stabilityQuality = 30;
-      } else if (variability < 1.0) {
+      } else if (variability < 1.0) { // Moderadamente inestable
         stabilityQuality = 20;
-      } else if (variability < 2.0) {
+      } else if (variability < 2.0) { // Inestable
         stabilityQuality = 10;
       } else {
-        stabilityQuality = 5;
+        stabilityQuality = 0; // Muy inestable, calidad muy baja
       }
     }
     
     // 3. Calidad basada en ritmo (0-30)
-    if (this.bpmHistory.length >= 3) {
-      const recentBPMs = this.bpmHistory.slice(-3);
+    if (this.bpmHistory.length >= 5) { // Más muestras para evaluar el ritmo
+      const recentBPMs = this.bpmHistory.slice(-5);
       const bpmVariance = Math.max(...recentBPMs) - Math.min(...recentBPMs);
       
-      if (bpmVariance < 5) {
-        rhythmQuality = 30; // Ritmo muy estable
-      } else if (bpmVariance < 10) {
-        rhythmQuality = 20; // Ritmo estable
-      } else if (bpmVariance < 15) {
-        rhythmQuality = 10; // Ritmo variable pero aceptable
+      if (bpmVariance < 5) { // Ritmo muy estable (más estricto)
+        rhythmQuality = 30; 
+      } else if (bpmVariance < 10) { // Ritmo estable
+        rhythmQuality = 20;
+      } else if (bpmVariance < 15) { // Ritmo variable pero aceptable
+        rhythmQuality = 10;
       } else {
         rhythmQuality = 5;  // Ritmo inestable
       }
@@ -755,9 +764,14 @@ export class HeartBeatProcessor {
     // Calidad total (0-100)
     let totalQuality = amplitudeQuality + stabilityQuality + rhythmQuality;
     
-    // Penalización por baja confianza
-    if (confidence < 0.6) {
-      totalQuality *= confidence / 0.6;
+    // Penalización por baja confianza y umbral de calidad global
+    if (confidence < 0.5) { // Umbral de confianza más alto para penalizar
+      totalQuality *= confidence / 0.5;
+    }
+
+    // Penalización adicional si la señal es demasiado débil después de todas las comprobaciones
+    if (totalQuality < 10 && range < 0.01) { // Si la calidad es baja y el rango es muy pequeño
+        totalQuality = 0; // Forzar a cero si es prácticamente ruido
     }
     
     // Suavizado para evitar cambios bruscos
