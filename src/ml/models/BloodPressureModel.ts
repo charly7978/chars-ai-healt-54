@@ -125,10 +125,8 @@ export class BloodPressureModel extends BaseModel {
     );
 
     // Make prediction
-    const prediction = await this.model.predict(inputTensor) as tf.Tensor;
-    const predictionData = await prediction.data();
-    const systolic = predictionData[0];
-    const diastolic = predictionData[1];
+    const prediction = this.predict(inputTensor) as tf.Tensor;
+    const [systolic, diastolic] = (await prediction.data()) as Float32Array;
     
     // Calculate additional features
     const features = this.extractFeatures(processedSignal);

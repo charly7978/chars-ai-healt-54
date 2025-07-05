@@ -1,9 +1,5 @@
+import * as CryptoJS from 'crypto-js';
 import { securityService } from './SecurityService';
-
-// Importar módulos específicos de crypto-js
-import SHA256 from 'crypto-js/sha256';
-import HmacSHA256 from 'crypto-js/hmac-sha256';
-import enc from 'crypto-js/enc-utf8';
 
 export interface AnonymizationOptions {
   // Fields to be removed from the data

@@ -130,9 +130,8 @@ export class SpO2Model extends BaseModel {
     );
 
     // Make prediction
-    const prediction = await this.model.predict(inputTensor);
-    const predictionData = await prediction.data();
-    const spo2Value = predictionData[0] * 100; // Convert to percentage
+    const prediction = this.predict(inputTensor) as tf.Tensor;
+    const spo2Value = (await prediction.data())[0] * 100; // Convert to percentage
     
     // Calculate confidence based on prediction variance
     const confidence = 1.0 - (Math.abs(spo2Value - 97) / 30); // Simple confidence heuristic
