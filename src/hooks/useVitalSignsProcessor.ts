@@ -303,9 +303,10 @@ export const useVitalSignsProcessor = () => {
     forceCalibrationCompletion,
     arrhythmiaCounter,
     lastValidResults,
+    getCalibrationProgress: useCallback(() => processor.getCalibrationProgress(), [processor]),
     debugInfo: {
       processedSignals: processedSignals.current,
       signalLog: signalLog.current.slice(-10)
-    }
+    },
   };
 };

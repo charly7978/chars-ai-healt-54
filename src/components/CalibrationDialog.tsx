@@ -1,4 +1,3 @@
-
 import * as React from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -28,13 +27,10 @@ const CalibrationDialog: React.FC<CalibrationDialogProps> = ({
       setIsSubmitting(true);
       onCalibrationStart();
 
-      // Simulamos un pequeño delay para la calibración
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
+      // La lógica de calibración real se maneja en el componente padre (Index.tsx)
+      // Este diálogo solo notifica el inicio y el fin de la interacción del usuario.
       onCalibrationEnd();
-      setTimeout(() => {
-        onClose();
-      }, 500);
+      onClose(); // El diálogo se cierra una vez que la interacción del usuario ha terminado.
 
     } catch (error) {
       console.error("Error durante la calibración:", error);

@@ -52,7 +52,8 @@ const Index = () => {
     fullReset: fullResetVitalSigns,
     lastValidResults,
     startCalibration,
-    forceCalibrationCompletion
+    forceCalibrationCompletion,
+    getCalibrationProgress
   } = useVitalSignsProcessor();
 
   const enterFullScreen = async () => {
@@ -215,107 +216,11 @@ const Index = () => {
     // Iniciar la calibración en el procesador
     startCalibration();
     
-    // Establecer explícitamente valores iniciales de calibración para CADA vital sign
-    // Esto garantiza que el estado comience correctamente
-    console.log("Estableciendo valores iniciales de calibración");
-    setCalibrationProgress({
-      isCalibrating: true,
-      progress: {
-        heartRate: 0,
-        spo2: 0,
-        pressure: 0,
-        arrhythmia: 0,
-        glucose: 0,
-        lipids: 0,
-        hemoglobin: 0
-      }
-    });
+    // El progreso de la calibración será actualizado por el hook useVitalSignsProcessor
+    // y reflejado a través del estado calibrationProgress.
     
-    // Logear para verificar que el estado se estableció
-    setTimeout(() => {
-      console.log("Estado de calibración establecido:", calibrationProgress);
-    }, 100);
-    
-    // Actualizar el progreso visualmente en intervalos regulares
-    let step = 0;
-    const calibrationInterval = setInterval(() => {
-      step += 1;
-      
-      // Actualizar progreso visual (10 pasos en total)
-      if (step <= 10) {
-        const progressPercent = step * 10; // 0-100%
-        console.log(`Actualizando progreso de calibración: ${progressPercent}%`);
-        
-        // Actualizar cada valor individualmente para asegurar que se renderice
-        setCalibrationProgress({
-          isCalibrating: true,
-          progress: {
-            heartRate: progressPercent,
-            spo2: Math.max(0, progressPercent - 10),
-            pressure: Math.max(0, progressPercent - 20),
-            arrhythmia: Math.max(0, progressPercent - 15),
-            glucose: Math.max(0, progressPercent - 5),
-            lipids: Math.max(0, progressPercent - 25),
-            hemoglobin: Math.max(0, progressPercent - 30)
-          }
-        });
-      } else {
-        // Al finalizar, detener el intervalo
-        console.log("Finalizando animación de calibración");
-        clearInterval(calibrationInterval);
-        
-        // Completar calibración
-        if (isCalibrating) {
-          console.log("Completando calibración");
-          forceCalibrationCompletion();
-          setIsCalibrating(false);
-          
-          // Importante: Establecer calibrationProgress a undefined o con valores 100
-          // para que la UI refleje que ya no está calibrando
-          setCalibrationProgress({
-            isCalibrating: false,
-            progress: {
-              heartRate: 100,
-              spo2: 100,
-              pressure: 100,
-              arrhythmia: 100,
-              glucose: 100,
-              lipids: 100,
-              hemoglobin: 100
-            }
-          });
-          
-          // Opcional: vibración si está disponible
-          if (navigator.vibrate) {
-            navigator.vibrate([100, 50, 100]);
-          }
-        }
-      }
-    }, 800); // Cada paso dura 800ms (8 segundos en total)
-    
-    // Temporizador de seguridad
-    setTimeout(() => {
-      if (isCalibrating) {
-        console.log("Forzando finalización de calibración por tiempo límite");
-        clearInterval(calibrationInterval);
-        forceCalibrationCompletion();
-        setIsCalibrating(false);
-        
-        // Asegurar que se limpie el estado de calibración
-        setCalibrationProgress({
-          isCalibrating: false,
-          progress: {
-            heartRate: 100,
-            spo2: 100,
-            pressure: 100,
-            arrhythmia: 100,
-            glucose: 100,
-            lipids: 100,
-            hemoglobin: 100
-          }
-        });
-      }
-    }, 10000); // 10 segundos como máximo
+    // Eliminar la simulación visual con setInterval y setTimeout
+    // La lógica de calibración es ahora completamente manejada por el procesador
   };
 
   const finalizeMeasurement = () => {
@@ -561,6 +466,27 @@ const Index = () => {
       startMonitoring();
     }
   };
+
+  // Observar el progreso real de la calibración desde el procesador de signos vitales
+  useEffect(() => {
+    if (isCalibrating) {
+      const interval = setInterval(() => {
+        const currentProgress = getCalibrationProgress();
+        setCalibrationProgress(currentProgress);
+
+        if (!currentProgress?.isCalibrating) {
+          clearInterval(interval);
+          console.log("Calibración finalizada según el procesador.");
+          setIsCalibrating(false);
+          if (navigator.vibrate) {
+            navigator.vibrate([100, 50, 100]);
+          }
+        }
+      }, 500); // Actualizar el progreso cada 500ms
+
+      return () => clearInterval(interval);
+    }
+  }, [isCalibrating, getCalibrationProgress]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 

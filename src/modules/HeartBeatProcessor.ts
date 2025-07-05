@@ -1,3 +1,5 @@
+import { KalmanFilter } from './signal-processing/KalmanFilter';
+
 export class HeartBeatProcessor {
   // ────────── CONFIGURACIONES PRINCIPALES (Valores optimizados para precisión médica) ──────────
   private readonly DEFAULT_SAMPLE_RATE = 60;
@@ -78,12 +80,16 @@ export class HeartBeatProcessor {
   // Variables para mejorar la detección
   private peakValidationBuffer: number[] = [];
   private readonly PEAK_VALIDATION_THRESHOLD = 0.3; // Reducido para validación más permisiva
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.6; // Nuevo: Umbral mínimo de calidad de señal para confirmar un pico
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.5; // Nuevo: Umbral mínimo de confianza para confirmar un pico
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
   
   // Nueva variable para retroalimentación de calidad de señal
   private currentSignalQuality: number = 0;
+
+  private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
 
   constructor() {
     // Inicializar parámetros adaptativos con valores médicamente apropiados
@@ -93,6 +99,7 @@ export class HeartBeatProcessor {
 
     this.initAudio();
     this.startTime = Date.now();
+    this.kalmanFilterInstance = new KalmanFilter(); // Inicializar la instancia del filtro de Kalman
   }
 
   private async initAudio() {
@@ -506,8 +513,12 @@ export class HeartBeatProcessor {
    * Validación de picos basada estrictamente en criterios médicos
    */
   private validatePeak(peakValue: number, confidence: number): boolean {
-    // Validación simplificada: siempre confirmar el pico
-    return true;
+    // Un pico es válido si tiene suficiente confianza y la calidad de la señal es alta.
+    // Esto asegura que solo los picos robustos y fisiológicamente plausibles sean considerados.
+    const isHighConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
+    const isGoodSignalQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY;
+
+    return isHighConfidence && isGoodSignalQuality;
   }
 
   private updateBPM() {
@@ -539,14 +550,13 @@ export class HeartBeatProcessor {
     ) / validReadings.reduce((sum, _, i) => sum + this.recentPeakConfidences[i], 0);
     
     // Suavizado final con filtro de Kalman simple
-    this.smoothBPM = this.kalmanFilter(weightedBPM, 0.15);
+    this.smoothBPM = this.kalmanFilter(weightedBPM);
     return Math.round(this.smoothBPM);
   }
 
-  private kalmanFilter(value: number, processNoise: number): number {
-    // Implementación simplificada
-    const k = 0.2; // Factor de ganancia
-    return this.smoothBPM + k * (value - this.smoothBPM);
+  private kalmanFilter(value: number): number {
+    // Usar la instancia del filtro de Kalman importada
+    return this.kalmanFilterInstance.filter(value);
   }
 
   public getFinalBPM(): number { 
