@@ -29,9 +29,23 @@ export class BiophysicalValidator {
    * @param value Current filtered signal value
    * @returns Normalized pulsatility index between 0-1
    */
-  // LÓGICA ULTRA-SIMPLE: la pulsatilidad siempre es 1
   calculatePulsatilityIndex(value: number): number {
-    return 1;
+    if (this.lastRawValues.length < 10) return 0;
+    
+    // Calcular amplitud pico a pico en ventana reciente
+    const recentValues = this.lastRawValues.slice(-10);
+    const minVal = Math.min(...recentValues);
+    const maxVal = Math.max(...recentValues);
+    const amplitude = maxVal - minVal;
+    
+    // Calcular media y desviación estándar
+    const mean = recentValues.reduce((sum, val) => sum + val, 0) / recentValues.length;
+    const variance = recentValues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recentValues.length;
+    const stdDev = Math.sqrt(variance);
+    
+    // Índice de pulsatilidad normalizado (0-1)
+    const pulsatility = amplitude / (stdDev + 0.001); // Evitar división por cero
+    return Math.min(1, Math.max(0, pulsatility));
   }
   
   /**
@@ -233,9 +247,14 @@ export class BiophysicalValidator {
    * @param rToBRatio Red/blue ratio
    * @returns Biophysical plausibility score (0-1)
    */
-  // LÓGICA ULTRA-SIMPLE: la validación biofísica siempre es 1
   validateBiophysicalRange(redValue: number, rToGRatio: number, rToBRatio: number): number {
-    return 1;
+    // Validar rangos fisiológicos basados en investigación médica
+    const redScore = this.calculateRangeScore(redValue, 30, 220);
+    const rgScore = this.calculateRangeScore(rToGRatio, 1.2, 3.2);
+    const rbScore = this.calculateRangeScore(rToBRatio, 1.1, 3.8);
+    
+    // Ponderar los scores según importancia
+    return (redScore * 0.4 + rgScore * 0.3 + rbScore * 0.3);
   }
 
   /**

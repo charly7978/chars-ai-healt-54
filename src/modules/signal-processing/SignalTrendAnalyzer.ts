@@ -33,14 +33,41 @@ export class SignalTrendAnalyzer {
     return stabilityScore > 0.6 ? "stable" : "unstable";
   }
 
-  // LÓGICA ULTRA-SIMPLE: el score de estabilidad siempre es 1
   getStabilityScore(): number {
-    return 1;
+    if (this.valueHistory.length < 10) return 0;
+    
+    // Calcular desviación estándar normalizada
+    const mean = this.valueHistory.reduce((sum, val) => sum + val, 0) / this.valueHistory.length;
+    const variance = this.valueHistory.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / this.valueHistory.length;
+    const stdDev = Math.sqrt(variance);
+    
+    // Normalizar por amplitud media
+    const normalizedStdDev = stdDev / Math.max(0.01, Math.abs(mean));
+    
+    // Score de estabilidad inversamente proporcional a la desviación
+    return Math.max(0, 1 - normalizedStdDev * 2);
   }
   
-  // LÓGICA ULTRA-SIMPLE: el score de periodicidad siempre es 1
   getPeriodicityScore(): number {
-    return 1;
+    if (this.diffHistory.length < 5) return 0;
+    
+    // Contar cambios de dirección
+    let directionChanges = 0;
+    for (let i = 1; i < this.diffHistory.length; i++) {
+      if (Math.sign(this.diffHistory[i]) !== Math.sign(this.diffHistory[i-1])) {
+        directionChanges++;
+      }
+    }
+    
+    // Normalizar por número de muestras
+    const changeRate = directionChanges / this.diffHistory.length;
+    
+    // Score óptimo para ritmo cardíaco (2-4 cambios por segundo)
+    if (changeRate >= 0.1 && changeRate <= 0.2) {
+      return 1.0;
+    }
+    // Score decreciente fuera del rango óptimo
+    return Math.max(0, 1 - Math.abs(0.15 - changeRate) * 10);
   }
 
   addValue(value: number): void {
