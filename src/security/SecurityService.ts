@@ -1,4 +1,8 @@
-import * as CryptoJS from 'crypto-js';
+// Importar módulos específicos de crypto-js
+import AES from 'crypto-js/aes';
+import PBKDF2 from 'crypto-js/pbkdf2';
+import SHA256 from 'crypto-js/sha256';
+import enc from 'crypto-js/enc-utf8';
 import { Observable, of, from } from 'rxjs';
 import { map, catchError } from 'rxjs/operators';
 
