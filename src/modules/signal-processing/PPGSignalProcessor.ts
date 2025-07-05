@@ -171,7 +171,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       // 1. Extract frame features with enhanced validation
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore, rToGRatio, rToBRatio, lightQualityFactor } = extractionResult;
+      const { redValue, textureScore, rToGRatio, rToBRatio } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
       // DEBUGGING: Log extracted redValue and ROI
@@ -278,8 +278,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         stability: this.trendAnalyzer.getStabilityScore(),
         pulsatility: this.biophysicalValidator.calculatePulsatilityIndex(filteredValue),
         biophysical: this.biophysicalValidator.validateBiophysicalRange(redValue, rToGRatio, rToBRatio),
-        periodicity: this.trendAnalyzer.getPeriodicityScore(),
-        lightQuality: lightQualityFactor
+        periodicity: this.trendAnalyzer.getPeriodicityScore()
       };
 
       // Update analyzer with latest scores

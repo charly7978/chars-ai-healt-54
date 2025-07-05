@@ -13,7 +13,7 @@ export class FrameProcessor {
   private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
   private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
   private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
-  private readonly RG_RATIO_RANGE = [0.9, 3.5];  // Rango más estrecho
+  private readonly RG_RATIO_RANGE = [1.0, 3.0];  // Rango más estrecho
   private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
   
   // Historia para calibración adaptativa
@@ -199,12 +199,11 @@ export class FrameProcessor {
       return { 
         redValue: 5, // Valor base mayor para evitar ceros (antes 0)
         textureScore: 0.6, // Valor base mayor (antes 0.5)
-        rToGRatio: 1.1, // Valor más fisiológico
+        rToGRatio: 1.2, // Valor más fisiológico
         rToBRatio: 1.2,
         avgRed: 5,
         avgGreen: 4,
-        avgBlue: 4,
-        lightQualityFactor: 0.1 // Valor bajo para indicar mala calidad de luz sin dedo
+        avgBlue: 4
       };
     }
     
@@ -258,8 +257,7 @@ export class FrameProcessor {
       avgBlue,
       textureScore,
       rToGRatio,
-      rToBRatio,
-      lightQualityFactor: lightLevelFactor
+      rToBRatio
     };
   }
   

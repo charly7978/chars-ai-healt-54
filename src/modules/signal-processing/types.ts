@@ -1,3 +1,4 @@
+
 import { ProcessedSignal, ProcessingError } from '../../types/signal';
 
 export interface SignalProcessorConfig {
@@ -30,7 +31,6 @@ export interface DetectorScores {
   pulsatility: number;
   biophysical: number;
   periodicity: number;
-  lightQuality?: number;
   [key: string]: number;
 }
 
@@ -42,7 +42,6 @@ export interface FrameData {
   textureScore: number;
   rToGRatio: number;
   rToBRatio: number;
-  lightQualityFactor: number;
 }
 
 export interface DetectionResult {
