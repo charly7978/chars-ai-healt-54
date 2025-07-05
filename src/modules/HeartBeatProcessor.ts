@@ -1,22 +1,28 @@
 import { KalmanFilter } from './signal-processing/KalmanFilter';
 
 export class HeartBeatProcessor {
-  // ────────── CONFIGURACIONES PRINCIPALES (Valores optimizados para precisión médica) ──────────
-  private readonly DEFAULT_SAMPLE_RATE = 60;
-  private readonly DEFAULT_WINDOW_SIZE = 40;
-  private readonly DEFAULT_MIN_BPM = 30;
-  private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.02; // Reducido para captar señal más débil
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.30; // Reducido para mejor detección
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Restaurado a valor médicamente apropiado
-  private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
+  // ────────── MEDICAL-GRADE CONFIGURATION ──────────
+  private readonly DEFAULT_SAMPLE_RATE = 100; // Increased for better temporal resolution
+  private readonly DEFAULT_WINDOW_SIZE = 5 * this.DEFAULT_SAMPLE_RATE; // 5-second window
+  private readonly DEFAULT_MIN_BPM = 40; // Medical lower limit for adults
+  private readonly DEFAULT_MAX_BPM = 200; // Medical upper limit
+  
+  // Signal processing parameters
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.01; // Lowered for better sensitivity
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.85; // Increased for medical reliability
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.003; // Optimized for PPG signals
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Physiologically appropriate
+  private readonly WARMUP_TIME_MS = 2000; // Increased for stable readings
+  private readonly SIGNAL_QUALITY_WINDOW = 3 * this.DEFAULT_SAMPLE_RATE; // 3-second window
 
-  // Parámetros de filtrado ajustados para precisión médica
-  private readonly MEDIAN_FILTER_WINDOW = 3;
-  private readonly MOVING_AVERAGE_WINDOW = 3; // Aumentado para mejor filtrado
-  private readonly EMA_ALPHA = 0.5; // Restaurado para equilibrio entre estabilidad y respuesta
-  private readonly BASELINE_FACTOR = 0.8; // Restaurado para seguimiento adecuado
+  // Advanced signal processing parameters
+  private readonly MEDIAN_FILTER_WINDOW = 5; // For spike removal
+  private readonly MOVING_AVERAGE_WINDOW = 5; // For noise reduction
+  private readonly EMA_ALPHA = 0.3; // For adaptive filtering
+  private readonly BASELINE_FACTOR = 0.9; // For DC removal
+  private readonly BANDPASS_LOW_CUTOFF = 0.7; // Hz (42 BPM)
+  private readonly BANDPASS_HIGH_CUTOFF = 3.3; // Hz (200 BPM)
+  private readonly SIGNAL_QUALITY_THRESHOLD = 0.7; // Minimum signal quality score (0-1)
 
   // Parámetros de beep y vibración
   private readonly BEEP_DURATION = 450; 
@@ -558,14 +564,9 @@ export class HeartBeatProcessor {
     return Math.round(this.smoothBPM);
   }
 
-  private kalmanFilter(value: number): number {
-    // Usar la instancia del filtro de Kalman importada
-    return this.kalmanFilterInstance.filter(value);
-  }
-
-  public getFinalBPM(): number { 
-    if (this.bpmHistory.length < 5) {
-      return Math.round(this.getSmoothBPM()); 
+  private processSignal(value: number): { bpm: number; confidence: number; signalQuality: number } {
+    // Update signal buffer
+    this.updateSignalBuffer(value);
     }
     const sorted = [...this.bpmHistory].sort((a, b) => a - b);
     const cut = Math.floor(sorted.length * 0.2);
