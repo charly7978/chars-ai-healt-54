@@ -80,10 +80,10 @@ export class HeartBeatProcessor {
   // Variables para mejorar la detección
   private peakValidationBuffer: number[] = [];
   private readonly PEAK_VALIDATION_THRESHOLD = 0.3; // Reducido para validación más permisiva
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.6; // Nuevo: Umbral mínimo de calidad de señal para confirmar un pico
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.5; // Nuevo: Umbral mínimo de confianza para confirmar un pico
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.5; // Nuevo: Amplitud mínima para considerar un pico
-  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.01; // Nuevo: Derivada mínima para indicar un pico agudo
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.45; // Nuevo: Umbral mínimo de calidad de señal para confirmar un pico
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.35; // Nuevo: Umbral mínimo de confianza para confirmar un pico
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.3; // Nuevo: Amplitud mínima para considerar un pico
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.007; // Nuevo: Derivada mínima para indicar un pico agudo
   private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.8; // Nuevo: Estabilidad del buffer para confirmar pico
   private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 5; // Tamaño del buffer para confirmación de pico
   private lastSignalStrength: number = 0;
@@ -755,7 +755,7 @@ export class HeartBeatProcessor {
     
     // 1. Calidad basada en amplitud (0-40)
     // Penalizar fuertemente las amplitudes muy bajas (señal plana o casi plana)
-    if (range < 0.005) { // Umbral para señal prácticamente plana
+    if (range < 0.003) { // Umbral para señal prácticamente plana
         amplitudeQuality = 0; // Calidad nula si la señal es plana
     } else {
         amplitudeQuality = Math.min(Math.abs(normalizedValue) * 80, 40); // Mayor factor de amplificación

@@ -27,8 +27,8 @@ export class SignalAnalyzer {
   private lastDetectionTime: number = 0;
   private qualityHistory: number[] = [];
   private motionArtifactScore: number = 0;
-  private readonly DETECTION_TIMEOUT = 3000; // Reducido para respuesta más rápida (antes 5000)
-  private readonly MOTION_ARTIFACT_THRESHOLD = 0.75; // Ajustado para mejor equilibrio (era 0.7)
+  private readonly DETECTION_TIMEOUT = 5000; // Reducido para respuesta más rápida (antes 5000)
+  private readonly MOTION_ARTIFACT_THRESHOLD = 0.7; // Ajustado para mejor equilibrio (era 0.7)
   private valueHistory: number[] = []; // Track signal history for artifact detection
   // Nuevo: calibración adaptativa
   private calibrationPhase: boolean = true;
@@ -62,9 +62,9 @@ export class SignalAnalyzer {
     lightQuality?: number; // Nuevo: Calidad de la luz
   }): void {
     // Store actual scores with enhancement multipliers
-    this.detectorScores.redChannel = Math.max(0, Math.min(1, scores.redChannel * 1.2));
+    this.detectorScores.redChannel = Math.max(0, Math.min(1, scores.redChannel * 1.1));
     this.detectorScores.stability = Math.max(0, Math.min(1, scores.stability * 1.1));
-    this.detectorScores.pulsatility = Math.max(0, Math.min(1, scores.pulsatility * 1.25));
+    this.detectorScores.pulsatility = Math.max(0, Math.min(1, scores.pulsatility * 1.15));
     this.detectorScores.biophysical = Math.max(0, Math.min(1, scores.biophysical * 1.1));
     this.detectorScores.periodicity = Math.max(0, Math.min(1, scores.periodicity * 1.1));
     
@@ -94,11 +94,11 @@ export class SignalAnalyzer {
       const normalizedChange = meanValue > 0 ? maxChange / meanValue : 0;
       
       // Update motion artifact score with smoothing
-      this.motionArtifactScore = this.motionArtifactScore * 0.7 + (normalizedChange > 0.55 ? 0.3 : 0); // Umbral aumentado (antes 0.5)
+      this.motionArtifactScore = this.motionArtifactScore * 0.7 + (normalizedChange > 0.5 ? 0.3 : 0); // Umbral aumentado (antes 0.5)
       
       // Aplicar penalización de artefacto más suave
       if (this.motionArtifactScore > this.MOTION_ARTIFACT_THRESHOLD) {
-        this.detectorScores.stability *= 0.7; // Penalización más suave (antes 0.6)
+        this.detectorScores.stability *= 0.6; // Penalización más suave (antes 0.6)
       }
     }
     
@@ -145,11 +145,11 @@ export class SignalAnalyzer {
     // Ajustar umbral según variabilidad - menor variabilidad requiere umbral más alto
     // para evitar falsos positivos, mayor variabilidad requiere umbral más bajo
     if (cv < 0.05) { // Muy estable
-      this.adaptiveThreshold = 0.04; // Umbral más alto para evitar falsos positivos
+      this.adaptiveThreshold = 0.035; // Umbral más alto para evitar falsos positivos
     } else if (cv < 0.1) { // Estable
-      this.adaptiveThreshold = 0.025; // Umbral moderado
+      this.adaptiveThreshold = 0.02; // Umbral moderado
     } else { // Variable
-      this.adaptiveThreshold = 0.02; // Umbral más bajo para mejorar detección
+      this.adaptiveThreshold = 0.015; // Umbral más bajo para mejorar detección
     }
     
     console.log("SignalAnalyzer: Calibración adaptativa completada", {
@@ -203,16 +203,16 @@ export class SignalAnalyzer {
     const smoothedAvgQuality = this.qualityHistory.reduce((sum, q) => sum + q, 0) / this.qualityHistory.length;
 
     // Umbrales de detección más estrictos y basados en la calidad combinada
-    const detectionThreshold = 60; // Umbral más alto para detección de dedo (antes 50)
-    const releaseThreshold = 45;   // Umbral de liberación ligeramente más bajo (antes 40)
+    const detectionThreshold = 50; // Umbral más alto para detección de dedo (antes 50)
+    const releaseThreshold = 40;   // Umbral de liberación ligeramente más bajo (antes 40)
 
     // Lógica de histeresis para la detección del dedo
     if (!this.isCurrentlyDetected) {
       // Detección inicial: La calidad debe ser ALTA y la señal debe ser fisiológica y estable
       if (smoothedAvgQuality > detectionThreshold && trendResult !== 'non_physiological' &&
-          this.detectorScores.pulsatility > 0.4 && // Pulsatilidad fisiológica mínima
-          this.detectorScores.biophysical > 0.5 && // Rango biofísico aceptable
-          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality > 0.5)) { // Buena iluminación
+          this.detectorScores.pulsatility > 0.3 && // Pulsatilidad fisiológica mínima
+          this.detectorScores.biophysical > 0.4 && // Rango biofísico aceptable
+          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality > 0.4)) { // Buena iluminación
         this.consecutiveDetections++;
         this.consecutiveNoDetections = 0; // Resetear contador de no detección
       } else {
@@ -224,7 +224,7 @@ export class SignalAnalyzer {
       if (smoothedAvgQuality < releaseThreshold || trendResult === 'non_physiological' ||
           this.detectorScores.pulsatility < 0.3 || // Pérdida de pulsatilidad
           this.detectorScores.biophysical < 0.4 || // Fuera de rango biofísico
-          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality < 0.4)) { // Mala iluminación
+          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality < 0.3)) { // Mala iluminación
         this.consecutiveNoDetections++;
         this.consecutiveDetections = 0; // Resetear contador de detección
       } else {
