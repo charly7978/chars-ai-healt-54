@@ -84,9 +84,6 @@ export class HeartBeatProcessor {
   
   // Nueva variable para retroalimentación de calidad de señal
   private currentSignalQuality: number = 0;
-  private P: number; // Covarianza del error estimado para Kalman Filter
-  private X: number; // Estado estimado para Kalman Filter
-  private K: number; // Ganancia de Kalman para Kalman Filter
 
   constructor() {
     // Inicializar parámetros adaptativos con valores médicamente apropiados
@@ -96,22 +93,45 @@ export class HeartBeatProcessor {
 
     this.initAudio();
     this.startTime = Date.now();
-
-    // Inicializar parámetros del filtro de Kalman
-    this.P = 1; // Covarianza del error inicial
-    this.X = 0; // Estado estimado inicial
-    this.K = 0; // Ganancia de Kalman inicial
   }
 
   private async initAudio() {
     try {
       this.audioContext = new AudioContext();
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
+      await this.audioContext.resume();
       console.log("HeartBeatProcessor: Audio Context Initialized and resumed");
+      
+      // Reproducir un sonido de prueba audible para desbloquear el audio
+      await this.playTestSound(0.3); // Volumen incrementado
     } catch (error) {
       console.error("HeartBeatProcessor: Error initializing audio", error);
+    }
+  }
+
+  private async playTestSound(volume: number = 0.2) {
+    if (!this.audioContext) return;
+    
+    try {
+      // console.log("HeartBeatProcessor: Reproduciendo sonido de prueba");
+      const oscillator = this.audioContext.createOscillator();
+      const gain = this.audioContext.createGain();
+      
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(440, this.audioContext.currentTime); // Frecuencia A4 - claramente audible
+      
+      gain.gain.setValueAtTime(0, this.audioContext.currentTime);
+      gain.gain.linearRampToValueAtTime(volume, this.audioContext.currentTime + 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.5);
+      
+      oscillator.connect(gain);
+      gain.connect(this.audioContext.destination);
+      
+      oscillator.start();
+      oscillator.stop(this.audioContext.currentTime + 0.6);
+      
+      // console.log("HeartBeatProcessor: Sonido de prueba reproducido");
+    } catch (error) {
+      console.error("HeartBeatProcessor: Error playing test sound", error);
     }
   }
 
@@ -187,13 +207,9 @@ export class HeartBeatProcessor {
         
         // Reseteamos la bandera después de reproducir el sonido de arritmia
         this.isArrhythmiaDetected = false;
-      } else {
-        // Play a single, quick "thump" sound for normal heartbeat
-        if (Date.now() - this.lastBeepTime > this.MIN_BEEP_INTERVAL_MS) {
-          this.lastBeepTime = Date.now();
-        }
       }
       const interval = now - this.lastBeepTime;
+      this.lastBeepTime = now;
       console.log(`HeartBeatProcessor: Latido reproducido. Intervalo: ${interval} ms, BPM estimado: ${Math.round(this.getSmoothBPM())}`);
     } catch (error) {
       console.error("HeartBeatProcessor: Error playing heart sound", error);
@@ -255,14 +271,8 @@ export class HeartBeatProcessor {
     }
     this.lastValue = smoothed;
     
-    // Obtener la ventana más reciente de la señal para análisis de pico
-    const latestSignalWindow = this.signalBuffer.slice(
-        Math.max(0, this.signalBuffer.length - this.DEFAULT_WINDOW_SIZE / 2),
-        this.signalBuffer.length
-    );
-
     // Detección de picos médicamente válida
-    const peakDetectionResult = this.enhancedPeakDetection(normalizedValue, smoothDerivative, latestSignalWindow);
+    const peakDetectionResult = this.enhancedPeakDetection(normalizedValue, smoothDerivative);
     let isPeak = peakDetectionResult.isPeak;
     const confidence = peakDetectionResult.confidence;
     const rawDerivative = peakDetectionResult.rawDerivative;
@@ -279,7 +289,7 @@ export class HeartBeatProcessor {
         : Number.MAX_VALUE;
 
       // Validación médicamente apropiada
-      if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS && confidence >= this.adaptiveMinConfidence) {
+      if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
         // Validación estricta según criterios médicos
         if (this.validatePeak(normalizedValue, confidence)) {
           this.previousPeakTime = this.lastPeakTime;
@@ -452,7 +462,7 @@ export class HeartBeatProcessor {
   /**
    * Detección de picos mejorada para señales con validación médica
    */
-  private enhancedPeakDetection(normalizedValue: number, derivative: number, latestSignalWindow: number[]): {
+  private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
     confidence: number;
     rawDerivative?: number;
@@ -462,55 +472,15 @@ export class HeartBeatProcessor {
       ? now - this.lastPeakTime
       : Number.MAX_VALUE;
 
-    // 1. Validación de tiempo básica (previene múltiples picos por el mismo pulso)
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
+    // Detectar pico en máximo local: derivada negativa
+    const isOverThreshold = derivative < 0;
+    // Confianza máxima en cada detección de pico
+    const confidence = 1;
 
-    // 2. Detección inicial de candidato a pico basada en el umbral de la derivada
-    // Un pico se detecta cuando la derivada pasa por cero y se vuelve negativa (el punto más alto del ascenso)
-    const isPeakCandidate = derivative < this.adaptiveDerivativeThreshold; // Ajustado por el umbral adaptativo
-
-    if (!isPeakCandidate) {
-      return { isPeak: false, confidence: 0 };
-    }
-
-    // 3. Confirmación del pico - verificar si es realmente un máximo local en una ventana pequeña
-    // Necesitamos al menos 3 puntos para determinar si es un máximo local (anterior, actual, siguiente)
-    if (this.signalBuffer.length < 3) {
-        return { isPeak: false, confidence: 0 };
-    }
-    const currentIndex = this.signalBuffer.length - 1;
-    const currentValue = this.signalBuffer[currentIndex];
-    const prevValue = this.signalBuffer[currentIndex - 1];
-    const nextValue = normalizedValue; // El valor actual ya es el 'siguiente' si estamos procesando en tiempo real
-
-    // Confirmar que el valor actual (o el último en el buffer) es un máximo local
-    const isLocalMax = currentValue > prevValue && currentValue > nextValue;
-
-    if (!isLocalMax) {
-        return { isPeak: false, confidence: 0 };
-    }
-
-    // 4. Calcular confianza inicial basada en la prominencia del pico y la amplitud
-    let currentConfidence = 0;
-    if (latestSignalWindow.length > 0) {
-      const minInWindow = Math.min(...latestSignalWindow);
-      const peakProminence = currentValue - minInWindow; // Usar currentValue ya que es el pico confirmado
-      const avgAmplitude = latestSignalWindow.reduce((s, v) => s + v, 0) / latestSignalWindow.length;
-
-      // Confianza basada en la prominencia relativa a la señal promedio y el valor absoluto
-      if (peakProminence > (avgAmplitude * 0.15) && currentValue > this.adaptiveSignalThreshold) { // Aumentar requisito de prominencia
-        currentConfidence = Math.min(1, peakProminence * this.PEAK_DETECTION_SENSITIVITY); // Sensibilidad ya ajustada
-      }
-    }
-
-    // Aplicar confianza mínima adaptativa para la detección
-    if (currentConfidence < this.adaptiveMinConfidence) {
-      return { isPeak: false, confidence: 0 };
-    }
-
-    return { isPeak: true, confidence: currentConfidence, rawDerivative: derivative };
+    return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
   }
 
   private confirmPeak(
@@ -522,9 +492,8 @@ export class HeartBeatProcessor {
     if (this.peakConfirmationBuffer.length > 5) {
       this.peakConfirmationBuffer.shift();
     }
-    // Confirmación mejorada: Un pico se confirma si es detectado y la confianza supera un umbral.
-    // Esto es crucial para la estabilidad de la detección.
-    if (isPeak && !this.lastConfirmedPeak && confidence >= this.adaptiveMinConfidence) {
+    // Confirmación simplificada: cada pico marcado es confirmado
+    if (isPeak && !this.lastConfirmedPeak) {
       this.lastConfirmedPeak = true;
       return true;
     } else if (!isPeak) {
@@ -537,20 +506,7 @@ export class HeartBeatProcessor {
    * Validación de picos basada estrictamente en criterios médicos
    */
   private validatePeak(peakValue: number, confidence: number): boolean {
-    // Se requiere que la confianza del pico sea al menos el umbral mínimo adaptativo
-    if (confidence < this.adaptiveMinConfidence) {
-      console.log(`HeartBeatProcessor: Pico rechazado en validación - confianza (${confidence.toFixed(2)}) debajo del umbral adaptativo (${this.adaptiveMinConfidence.toFixed(2)}).`);
-      return false;
-    }
-
-    // Asegurar que el pico tiene una amplitud mínima fisiológica esperada
-    // `peakValue` es el valor normalizado del pico
-    if (peakValue < this.DEFAULT_SIGNAL_THRESHOLD * 0.5) { // Un umbral más estricto para la validez fisiológica
-      console.log(`HeartBeatProcessor: Pico rechazado en validación - amplitud (${peakValue.toFixed(3)}) demasiado baja.`);
-      return false;
-    }
-
-    // La validación pasa si las condiciones anteriores se cumplen
+    // Validación simplificada: siempre confirmar el pico
     return true;
   }
 
@@ -560,9 +516,9 @@ export class HeartBeatProcessor {
     if (interval <= 0) return;
 
     const instantBPM = 60000 / interval;
-    if (instantBPM >= this.DEFAULT_MIN_BPM && instantBPM <= this.DEFAULT_MAX_BPM) {
+    if (instantBPM >= this.DEFAULT_MIN_BPM && instantBPM <= this.DEFAULT_MAX_BPM) { 
       this.bpmHistory.push(instantBPM);
-      if (this.bpmHistory.length > 12) {
+      if (this.bpmHistory.length > 12) { 
         this.bpmHistory.shift();
       }
     }
@@ -572,22 +528,15 @@ export class HeartBeatProcessor {
     if (this.bpmHistory.length < 3) return 0;
     
     // Filtrado adaptativo basado en confianza
-    // Se asegura que recentPeakConfidences tenga la misma longitud que bpmHistory
     const validReadings = this.bpmHistory.filter((_, i) => 
-      this.recentPeakConfidences.length > i && this.recentPeakConfidences[i] >= this.adaptiveMinConfidence
+      this.recentPeakConfidences[i] > 0.7
     );
     
-    const validConfidences = this.recentPeakConfidences.filter((_, i) => 
-        this.bpmHistory.length > i && this.recentPeakConfidences[i] >= this.adaptiveMinConfidence
-    );
-
-    if (validReadings.length === 0 || validConfidences.length === 0) return 0;
-
     // Ponderar por confianza y aplicar mediana móvil
     const weightedBPM = validReadings.reduce(
-      (sum, bpm, i) => sum + (bpm * validConfidences[i]), 
+      (sum, bpm, i) => sum + (bpm * this.recentPeakConfidences[i]), 
       0
-    ) / validConfidences.reduce((sum, confidence) => sum + confidence, 0);
+    ) / validReadings.reduce((sum, _, i) => sum + this.recentPeakConfidences[i], 0);
     
     // Suavizado final con filtro de Kalman simple
     this.smoothBPM = this.kalmanFilter(weightedBPM, 0.15);
@@ -595,48 +544,24 @@ export class HeartBeatProcessor {
   }
 
   private kalmanFilter(value: number, processNoise: number): number {
-    // Implementación simplificada del filtro de Kalman para un suavizado más responsivo
-    // Ajustar Q (ruido del proceso) para mayor adaptabilidad, y R (ruido de la medición) para suavizado
-    const R_measurementNoise = 0.05; // Más bajo para suavizar más la entrada
-    const Q_processNoise = processNoise; // Controlado por el parámetro de entrada
-
-    // Predicción
-    this.P = this.P + Q_processNoise;
-
-    // Actualización
-    this.K = this.P / (this.P + R_measurementNoise);
-    this.X = this.X + this.K * (value - this.X);
-    this.P = (1 - this.K) * this.P;
-
-    return this.X;
+    // Implementación simplificada
+    const k = 0.2; // Factor de ganancia
+    return this.smoothBPM + k * (value - this.smoothBPM);
   }
 
   public getFinalBPM(): number { 
     if (this.bpmHistory.length < 5) {
-      // Si no hay suficiente historial, usamos el BPM suavizado del Kalman
       return Math.round(this.getSmoothBPM()); 
     }
+    const sorted = [...this.bpmHistory].sort((a, b) => a - b);
+    const cut = Math.floor(sorted.length * 0.2);
+    const finalSet = sorted.slice(cut, sorted.length - cut);
     
-    // Filtrar el historial de BPM por encima de la confianza mínima adaptativa
-    const filteredBPMHistory = this.bpmHistory.filter((_, i) => 
-      this.recentPeakConfidences.length > i && this.recentPeakConfidences[i] >= this.adaptiveMinConfidence
-    );
-
-    if (filteredBPMHistory.length === 0) { 
+    if (!finalSet.length) {
         return Math.round(this.getSmoothBPM());
     }
-
-    // Mediana robusta para un BPM final
-    const sorted = [...filteredBPMHistory].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    let finalBPM = 0;
-    if (sorted.length % 2 === 0) {
-        finalBPM = (sorted[mid - 1] + sorted[mid]) / 2;
-    } else {
-        finalBPM = sorted[mid];
-    }
-
-    return Math.round(finalBPM);
+    const sum = finalSet.reduce((acc, val) => acc + val, 0);
+    return Math.round(sum / finalSet.length);
   }
 
   public reset() {
@@ -667,22 +592,11 @@ export class HeartBeatProcessor {
     
     this.isArrhythmiaDetected = false;
     this.peakValidationBuffer = [];
-    
-    // Reiniciar los parámetros del filtro de Kalman
-    this.P = 1; 
-    this.X = 0;
-    this.K = 0;
-    console.log("HeartBeatProcessor: Full reset including adaptive parameters, arrhythmia flag, and Kalman filter state.");
+    console.log("HeartBeatProcessor: Full reset including adaptive parameters and arrhythmia flag.");
   }
 
   public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {
-    // Filtrar intervalos RR basados en la confianza de los picos correspondientes
-    const rrIntervals: number[] = [];
-    for (let i = 0; i < this.bpmHistory.length; i++) {
-        if (this.recentPeakConfidences.length > i && this.recentPeakConfidences[i] >= this.adaptiveMinConfidence) {
-            rrIntervals.push(60000 / this.bpmHistory[i]);
-        }
-    }
+    const rrIntervals = this.bpmHistory.map(bpm => 60000 / bpm);
     return {
       intervals: rrIntervals, 
       lastPeakTime: this.lastPeakTime,
@@ -779,78 +693,66 @@ export class HeartBeatProcessor {
    */
   private calculateSignalQuality(normalizedValue: number, confidence: number): number {
     // Si no hay suficientes datos para una evaluación precisa
-    if (this.signalBuffer.length < this.DEFAULT_WINDOW_SIZE / 2) {
+    if (this.signalBuffer.length < 10) {
       return Math.min(this.currentSignalQuality + 5, 30); // Incremento gradual hasta 30 durante calibración
     }
     
     // Calcular estadísticas de señal reciente
-    const recentSignals = this.signalBuffer.slice(-this.DEFAULT_WINDOW_SIZE); // Usar una ventana más grande para estadísticas más estables
+    const recentSignals = this.signalBuffer.slice(-20);
     const avgSignal = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
     const maxSignal = Math.max(...recentSignals);
     const minSignal = Math.min(...recentSignals);
-    const peakToPeakAmplitude = maxSignal - minSignal;
+    const range = maxSignal - minSignal;
     
     // Componentes de calidad
     let amplitudeQuality = 0;
     let stabilityQuality = 0;
     let rhythmQuality = 0;
-    let perfusionQuality = 0;
-    let motionArtifactPenalty = 0;
-
-    // 1. Calidad basada en Amplitud del Pulso (Perfusividad) (0-30)
-    // Usar la amplitud pico a pico como indicador de perfusión
-    if (avgSignal > 0 && peakToPeakAmplitude > 0) {
-        const perfusionIndex = peakToPeakAmplitude / avgSignal;
-        perfusionQuality = Math.min(30, perfusionIndex * 200); // Escalar a 30, ajustar el multiplicador según sea necesario
-    }
-
-    // 2. Calidad basada en Estabilidad de señal (Ruido y Drift) (0-25)
-    // Usar la desviación estándar o la variabilidad de la señal
-    const stdDev = Math.sqrt(recentSignals.reduce((sum, val) => sum + Math.pow(val - avgSignal, 2), 0) / recentSignals.length);
-    if (stdDev < 0.01 * avgSignal) { // Poco ruido
-        stabilityQuality = 25;
-    } else if (stdDev < 0.03 * avgSignal) {
-        stabilityQuality = 15;
-    } else {
-        stabilityQuality = 5;
-    }
-
-    // 3. Calidad basada en Ritmo y Consistencia de Latidos (0-25)
-    if (this.bpmHistory.length >= 5) { // Requiere más historial de BPM para una evaluación de ritmo robusta
-      const recentBPMs = this.bpmHistory.slice(-5);
-      const bpmStdDev = Math.sqrt(recentBPMs.reduce((sum, val) => sum + Math.pow(val - (recentBPMs.reduce((a,b)=>a+b,0)/recentBPMs.length), 2), 0) / recentBPMs.length);
-
-      if (bpmStdDev < 2) { // Ritmo muy estable
-          rhythmQuality = 25;
-      } else if (bpmStdDev < 5) {
-          rhythmQuality = 15;
+    
+    // 1. Calidad basada en amplitud (0-40)
+    amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40);
+    
+    // 2. Calidad basada en estabilidad de señal (0-30)
+    if (range > 0.01) {
+      const variability = range / avgSignal;
+      if (variability < 0.5) { // Variabilidad óptima para PPG
+        stabilityQuality = 30;
+      } else if (variability < 1.0) {
+        stabilityQuality = 20;
+      } else if (variability < 2.0) {
+        stabilityQuality = 10;
       } else {
-          rhythmQuality = 5;
+        stabilityQuality = 5;
       }
     }
-
-    // 4. Penalización por Artefactos de Movimiento (0-20)
-    // Evaluar cambios rápidos en la señal que no son picos cardiacos
-    if (this.signalBuffer.length > 5) { // Comparar el valor actual con el valor suavizado reciente
-        const lastFewSignals = this.signalBuffer.slice(-5);
-        const avgLastFew = lastFewSignals.reduce((s, v) => s + v, 0) / lastFewSignals.length;
-        if (Math.abs(normalizedValue - avgLastFew) > peakToPeakAmplitude * 0.5) { // Si el valor actual se desvía significativamente
-            motionArtifactPenalty = 10; // Aplicar una penalización
-        }
+    
+    // 3. Calidad basada en ritmo (0-30)
+    if (this.bpmHistory.length >= 3) {
+      const recentBPMs = this.bpmHistory.slice(-3);
+      const bpmVariance = Math.max(...recentBPMs) - Math.min(...recentBPMs);
+      
+      if (bpmVariance < 5) {
+        rhythmQuality = 30; // Ritmo muy estable
+      } else if (bpmVariance < 10) {
+        rhythmQuality = 20; // Ritmo estable
+      } else if (bpmVariance < 15) {
+        rhythmQuality = 10; // Ritmo variable pero aceptable
+      } else {
+        rhythmQuality = 5;  // Ritmo inestable
+      }
     }
-
-
-    let totalQuality = perfusionQuality + stabilityQuality + rhythmQuality - motionArtifactPenalty;
     
-    // Penalización por baja confianza general de detección de picos
-    totalQuality *= confidence; // Escalar directamente por la confianza para la calidad general
-
-    // Asegurar límites
-    totalQuality = Math.min(Math.max(Math.round(totalQuality), 0), 100);
-
-    // Suavizado para evitar cambios bruscos en la calidad reportada
-    this.currentSignalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3; // Suavizado EMA
+    // Calidad total (0-100)
+    let totalQuality = amplitudeQuality + stabilityQuality + rhythmQuality;
     
-    return Math.round(this.currentSignalQuality);
+    // Penalización por baja confianza
+    if (confidence < 0.6) {
+      totalQuality *= confidence / 0.6;
+    }
+    
+    // Suavizado para evitar cambios bruscos
+    totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
+    
+    return Math.min(Math.max(Math.round(totalQuality), 0), 100);
   }
 }

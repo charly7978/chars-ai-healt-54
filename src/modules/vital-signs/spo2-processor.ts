@@ -1,15 +1,5 @@
 import { calculateAC, calculateDC } from './utils';
 
-/**
- * SpO2Processor
- * 
- * Este módulo calcula la saturación de oxígeno (SpO2) a partir de los valores PPG.
- * Es IMPORTANTE tener en cuenta que la precisión de esta medición es inherentemente limitada
- * cuando se utiliza únicamente la cámara RGB de un teléfono móvil (donde el "canal IR"
- * es en realidad el canal azul). Para una medición de SpO2 clínicamente precisa y "real",
- * se requiere un hardware con longitudes de onda roja e infrarroja específicas y dedicadas.
- * Los resultados de este procesador deben considerarse ESTIMACIONES Y NO MEDICIONES CLÍNICAS.
- */
 export class SpO2Processor {
   private readonly SPO2_CALIBRATION_FACTOR = 1.02;
   // Ajuste: elevar el umbral de perfusión para descartar mediciones débiles

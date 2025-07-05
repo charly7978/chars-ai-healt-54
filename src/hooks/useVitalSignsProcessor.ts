@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { AdvancedVitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
+import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 /**
  * Custom hook for processing vital signs with advanced algorithms
@@ -11,7 +11,7 @@ export const useVitalSignsProcessor = () => {
     console.log("useVitalSignsProcessor: Creando nueva instancia", {
       timestamp: new Date().toISOString()
     });
-    return new AdvancedVitalSignsProcessor();
+    return new VitalSignsProcessor();
   });
   const [arrhythmiaCounter, setArrhythmiaCounter] = useState(0);
   const [lastValidResults, setLastValidResults] = useState<VitalSignsResult | null>(null);

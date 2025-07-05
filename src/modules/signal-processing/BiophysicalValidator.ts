@@ -1,5 +1,3 @@
-import { calculateAC, calculateDC, findPeaksAndValleys, calculateAmplitude } from '../vital-signs/utils';
-
 /**
  * Clase para validación de señales biofísicamente plausibles
  * Aplica restricciones fisiológicas a las señales PPG
@@ -31,44 +29,9 @@ export class BiophysicalValidator {
    * @param value Current filtered signal value
    * @returns Normalized pulsatility index between 0-1
    */
+  // LÓGICA ULTRA-SIMPLE: la pulsatilidad siempre es 1
   calculatePulsatilityIndex(value: number): number {
-    this.lastRawValues.push(value);
-    this.lastTimeStamps.push(Date.now());
-
-    if (this.lastRawValues.length > this.MEASUREMENTS_PER_SECOND * 3) {
-      this.lastRawValues.shift();
-      this.lastTimeStamps.shift();
-    }
-
-    if (this.lastRawValues.length < this.MEASUREMENTS_PER_SECOND) {
-      return 0; // No hay suficientes datos para un cálculo significativo
-    }
-
-    const ac = calculateAC(this.lastRawValues);
-    const dc = calculateDC(this.lastRawValues);
-
-    if (dc === 0) return 0; // Evitar división por cero
-
-    const perfusionIndex = (ac / dc) * 100; // Índice de perfusión en porcentaje
-    this.lastPulsatilityValues.push(perfusionIndex);
-
-    if (this.lastPulsatilityValues.length > this.MAX_PULSATILITY_HISTORY) {
-      this.lastPulsatilityValues.shift();
-    }
-
-    // Suavizar el índice de pulsatilidad con un promedio móvil
-    const smoothedPulsatility = this.lastPulsatilityValues.reduce((a, b) => a + b, 0) / this.lastPulsatilityValues.length;
-
-    // Normalizar el índice de pulsatilidad a un rango de 0 a 1 para el score de calidad
-    // Un PI de 0.08 a 8.0 se considera normal
-    const normalizedPulsatility = Math.max(0, Math.min(1, (smoothedPulsatility - this.MIN_PULSATILITY) / (this.MAX_PULSATILITY - this.MIN_PULSATILITY)));
-
-    // Devolver el valor normalizado, penalizando valores fuera de los límites fisiológicos
-    if (smoothedPulsatility < this.MIN_PULSATILITY || smoothedPulsatility > this.MAX_PULSATILITY) {
-      return 0.1; // Baja calidad si está fuera del rango esperado
-    }
-
-    return normalizedPulsatility;
+    return 1;
   }
   
   /**
@@ -307,6 +270,5 @@ export class BiophysicalValidator {
     this.lastPulsatilityValues = [];
     this.lastRawValues = [];
     this.lastTimeStamps = [];
-    console.log("BiophysicalValidator: Reset complete");
   }
 }

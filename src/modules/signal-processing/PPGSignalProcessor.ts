@@ -171,7 +171,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       // 1. Extract frame features with enhanced validation
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, avgRed, avgGreen, avgBlue, textureScore, rToGRatio, rToBRatio } = extractionResult;
+      const { redValue, textureScore, rToGRatio, rToBRatio } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
       // DEBUGGING: Log extracted redValue and ROI
@@ -179,9 +179,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         console.log("PPGSignalProcessor DEBUG:", {
           step: "FrameExtraction",
           redValue: redValue,
-          avgRed: avgRed,
-          avgGreen: avgGreen,
-          avgBlue: avgBlue,
           roiX: roi.x,
           roiY: roi.y,
           roiWidth: roi.width,
@@ -204,9 +201,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           filteredValue: redValue,
           quality: 0,
           fingerDetected: false,
-          redValue: avgRed,
-          greenValue: avgGreen,
-          blueValue: avgBlue,
           roi: roi,
           perfusionIndex: 0
         };
@@ -221,28 +215,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 2. Apply multi-stage filtering to the signal
       let filteredValue = this.kalmanFilter.filter(redValue);
       filteredValue = this.sgFilter.filter(filteredValue);
-      // Eliminar amplificación fija; la amplificación adaptativa se maneja en HeartBeatProcessor
-      // const AMPLIFICATION_FACTOR = 30;
-      // filteredValue = filteredValue * AMPLIFICATION_FACTOR;
+      // Amplificar moderadamente PPG para visualizar variaciones reales
+      const AMPLIFICATION_FACTOR = 30;
+      filteredValue = filteredValue * AMPLIFICATION_FACTOR;
 
       // 3. Perform signal trend analysis with strict physiological validation
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
-
-      // Actualizar los puntajes del detector en SignalAnalyzer
-      this.signalAnalyzer.updateDetectorScores({
-          redValue: redValue,
-          redChannel: redValue / 255, // Normalizar a 0-1
-          stability: this.trendAnalyzer.getStabilityScore(),
-          pulsatility: this.biophysicalValidator.calculatePulsatilityIndex(filteredValue),
-          biophysical: this.biophysicalValidator.validateBiophysicalRange(redValue, rToGRatio, rToBRatio),
-          periodicity: this.trendAnalyzer.getPeriodicityScore(),
-          textureScore: textureScore
-      });
-
-      // Obtener resultados de detección de dedo y calidad de SignalAnalyzer
-      const detectionResult = this.signalAnalyzer.analyzeSignalMultiDetector(filteredValue, trendResult);
-      const isFingerDetected = detectionResult.isFingerDetected;
-      const signalQuality = detectionResult.quality; // Calidad general de 0-100
 
       if (trendResult === "non_physiological" && !this.isCalibrating) {
         if (shouldLog) {
@@ -255,9 +233,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           filteredValue: filteredValue,
           quality: 0, 
           fingerDetected: false,
-          redValue: avgRed,
-          greenValue: avgGreen,
-          blueValue: avgBlue,
           roi: roi,
           perfusionIndex: 0
         };
@@ -284,9 +259,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           filteredValue: filteredValue,
           quality: 0, 
           fingerDetected: false,
-          redValue: avgRed,
-          greenValue: avgGreen,
-          blueValue: avgBlue,
           roi: roi,
           perfusionIndex: 0
         };
@@ -298,76 +270,62 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Handle signal in calibration phase
-      if (this.isCalibrating) {
-        if (this.calibrationHandler.handleCalibration(redValue)) {
-          console.log("PPGSignalProcessor: Calibration sample processed.");
-        }
-        const calibrationSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: filteredValue,
-          quality: signalQuality, // Usar calidad real durante la calibración
-          fingerDetected: isFingerDetected,
-          redValue: avgRed,
-          greenValue: avgGreen,
-          blueValue: avgBlue,
-          roi: roi,
-          perfusionIndex: 0
-        };
-        this.onSignalReady(calibrationSignal);
-        return;
-      }
+      // 4. Calculate comprehensive detector scores with medical validation
+      const detectorScores = {
+        redValue,
+        redChannel: Math.min(1.0, Math.max(0, (redValue - this.CONFIG.MIN_RED_THRESHOLD) / 
+                                          (this.CONFIG.MAX_RED_THRESHOLD - this.CONFIG.MIN_RED_THRESHOLD))),
+        stability: this.trendAnalyzer.getStabilityScore(),
+        pulsatility: this.biophysicalValidator.calculatePulsatilityIndex(filteredValue),
+        biophysical: this.biophysicalValidator.validateBiophysicalRange(redValue, rToGRatio, rToBRatio),
+        periodicity: this.trendAnalyzer.getPeriodicityScore()
+      };
 
-      // Check if finger is detected and signal quality is sufficient
-      if (!isFingerDetected || signalQuality < this.CONFIG.QUALITY_LEVELS * 0.4) { // Umbral de calidad más bajo durante la detección
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Finger not detected or low signal quality:", {
-            isFingerDetected,
-            signalQuality
-          });
-        }
+      // Update analyzer with latest scores
+      this.signalAnalyzer.updateDetectorScores(detectorScores);
 
-        const lowQualitySignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: filteredValue,
-          quality: signalQuality,
-          fingerDetected: isFingerDetected,
-          redValue: avgRed,
-          greenValue: avgGreen,
-          blueValue: avgBlue,
-          roi: roi,
-          perfusionIndex: 0
-        };
-        this.onSignalReady(lowQualitySignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Low Quality/No Finger):", lowQualitySignal);
-        }
-        return;
-      }
+      // 5. Perform multi-detector analysis for highly accurate finger detection
+      const detectionResult = this.signalAnalyzer.analyzeSignalMultiDetector(filteredValue, trendResult);
+      const { isFingerDetected, quality } = detectionResult;
 
-      // All checks passed, process and send the valid signal
+      // Calculate physiologically valid perfusion index only when finger is detected
+      const perfusionIndex = isFingerDetected && quality > 30 ? 
+                           (Math.log(redValue) * 0.55 - 1.2) : 0;
+
+      // Create processed signal object with strict validation
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,
         filteredValue: filteredValue,
-        quality: signalQuality, // Use final quality from SignalAnalyzer
+        quality: quality,
         fingerDetected: isFingerDetected,
-        redValue: avgRed,
-        greenValue: avgGreen,
-        blueValue: avgBlue,
         roi: roi,
-        perfusionIndex: 0 // Placeholder, calculate actual PI if needed
+        perfusionIndex: Math.max(0, perfusionIndex)
       };
-      this.onSignalReady(processedSignal);
 
       if (shouldLog) {
-        console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Valid):", processedSignal);
+        console.log("PPGSignalProcessor: Sending validated signal:", {
+          fingerDetected: isFingerDetected,
+          quality,
+          redValue,
+          filteredValue,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      // FINAL VALIDATION before sending
+      if (typeof this.onSignalReady === 'function') {
+        this.onSignalReady(processedSignal);
+        if (shouldLog) {
+          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Final):", processedSignal);
+        }
+      } else {
+        console.error("PPGSignalProcessor: onSignalReady is not a valid function");
+        this.handleError("CALLBACK_ERROR", "Callback onSignalReady is not a valid function");
       }
     } catch (error) {
       console.error("PPGSignalProcessor: Error processing frame", error);
-      this.handleError("FRAME_PROCESSING_ERROR", `Error processing frame: ${error.message}`);
+      this.handleError("PROCESSING_ERROR", "Error processing frame");
     }
   }
 

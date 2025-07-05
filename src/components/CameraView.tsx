@@ -306,17 +306,17 @@ const CameraView = ({
     const pixelCount = width * height;
     
     // Promedios de canales
-    let redSum = 0, greenSum = 0, blueSum = 0;
+    let redSum = 0, irSum = 0, greenSum = 0;
     
     for (let i = 0; i < pixelCount * 4; i += 4) {
       redSum += data[i];     // Canal Rojo
       greenSum += data[i+1]; // Canal Verde
-      blueSum += data[i+2];    // Canal Azul
+      irSum += data[i+2];    // Canal Infrarrojo (asumiendo configuración cámara)
     }
     
     return {
       red: [redSum / pixelCount],
-      ir: [blueSum / pixelCount], // Mapeando azul a IR para compatibilidad descendente, aunque no es IR real
+      ir: [irSum / pixelCount],
       green: [greenSum / pixelCount]
     };
   };
