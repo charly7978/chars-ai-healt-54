@@ -203,7 +203,8 @@ export class FrameProcessor {
         rToBRatio: 1.2,
         avgRed: 5,
         avgGreen: 4,
-        avgBlue: 4
+        avgBlue: 4,
+        lightQualityFactor: 0.1 // Valor bajo para indicar mala calidad de luz sin dedo
       };
     }
     
@@ -257,7 +258,8 @@ export class FrameProcessor {
       avgBlue,
       textureScore,
       rToGRatio,
-      rToBRatio
+      rToBRatio,
+      lightQualityFactor: lightLevelFactor
     };
   }
   

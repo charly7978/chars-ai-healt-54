@@ -59,17 +59,23 @@ export class SignalAnalyzer {
     biophysical: number;
     periodicity: number;
     textureScore?: number; // Opcional para compatibilidad
+    lightQuality?: number; // Nuevo: Calidad de la luz
   }): void {
     // Store actual scores with enhancement multipliers
-    this.detectorScores.redChannel = Math.max(0, Math.min(1, scores.redChannel * 1.2)); // Aumentado (antes 1.1)
-    this.detectorScores.stability = Math.max(0, Math.min(1, scores.stability * 1.1)); // Incrementado levemente (antes 1.05)
-    this.detectorScores.pulsatility = Math.max(0, Math.min(1, scores.pulsatility * 1.25)); // Aumentado significativamente (antes 1.15)
-    this.detectorScores.biophysical = Math.max(0, Math.min(1, scores.biophysical * 1.1)); // Ahora también se aumenta (antes sin multiplicador)
-    this.detectorScores.periodicity = Math.max(0, Math.min(1, scores.periodicity * 1.1)); // Aumentado levemente (antes sin multiplicador)
+    this.detectorScores.redChannel = Math.max(0, Math.min(1, scores.redChannel * 1.2));
+    this.detectorScores.stability = Math.max(0, Math.min(1, scores.stability * 1.1));
+    this.detectorScores.pulsatility = Math.max(0, Math.min(1, scores.pulsatility * 1.25));
+    this.detectorScores.biophysical = Math.max(0, Math.min(1, scores.biophysical * 1.1));
+    this.detectorScores.periodicity = Math.max(0, Math.min(1, scores.periodicity * 1.1));
     
     // Store texture score if available
     if (typeof scores.textureScore !== 'undefined') {
       this.detectorScores.textureScore = scores.textureScore;
+    }
+    
+    // Store light quality if available
+    if (typeof scores.lightQuality !== 'undefined') {
+      this.detectorScores.lightQuality = scores.lightQuality;
     }
     
     // Track values for motion artifact detection
@@ -114,6 +120,7 @@ export class SignalAnalyzer {
       pulsatility: this.detectorScores.pulsatility,
       biophysical: this.detectorScores.biophysical,
       periodicity: this.detectorScores.periodicity,
+      lightQuality: this.detectorScores.lightQuality,
       motionArtifact: this.motionArtifactScore,
       adaptiveThreshold: this.adaptiveThreshold,
       calibrationPhase: this.calibrationPhase
@@ -163,57 +170,84 @@ export class SignalAnalyzer {
     trendResult: any
   ): DetectionResult {
     // Actualizar historial de calidad y calcular calidad media
-    this.qualityHistory.push(this.detectorScores.redChannel);
+    const combinedQualityFactors: number[] = [];
+
+    // Ponderaciones de los factores de calidad (ajustadas para mayor precisión y menos falsos positivos)
+    const WEIGHT_RED_CHANNEL = 0.25; // Aumentado ligeramente
+    const WEIGHT_STABILITY = 0.20;    // Mantener importante
+    const WEIGHT_PULSATILITY = 0.20;  // Mantener importante
+    const WEIGHT_BIOPHYSICAL = 0.15;  // Mantener importante
+    const WEIGHT_PERIODICITY = 0.10;  // Mantener importante
+    const WEIGHT_LIGHT_QUALITY = 0.10; // Nuevo: Muy importante para evitar falsos positivos por mala iluminación
+
+    // Calcular la calidad combinada
+    let weightedSum = 
+      (this.detectorScores.redChannel * WEIGHT_RED_CHANNEL) +
+      (this.detectorScores.stability * WEIGHT_STABILITY) +
+      (this.detectorScores.pulsatility * WEIGHT_PULSATILITY) +
+      (this.detectorScores.biophysical * WEIGHT_BIOPHYSICAL) +
+      (this.detectorScores.periodicity * WEIGHT_PERIODICITY);
+    
+    // Asegurarse de que lightQuality esté presente antes de usarlo
+    if (typeof this.detectorScores.lightQuality !== 'undefined') {
+      weightedSum += (this.detectorScores.lightQuality * WEIGHT_LIGHT_QUALITY);
+    }
+
+    const totalWeight = WEIGHT_RED_CHANNEL + WEIGHT_STABILITY + WEIGHT_PULSATILITY + WEIGHT_BIOPHYSICAL + WEIGHT_PERIODICITY + WEIGHT_LIGHT_QUALITY;
+    const avgQuality = (weightedSum / totalWeight) * 100; // Escalar a 0-100
+
+    this.qualityHistory.push(avgQuality);
     if (this.qualityHistory.length > this.CONFIG.QUALITY_HISTORY_SIZE) {
       this.qualityHistory.shift();
     }
-    const avgQuality = this.qualityHistory.reduce((sum, q) => sum + q, 0) / this.qualityHistory.length;
-    // Umbrales de calidad para detección inicial
-    const qualityOn = this.adaptiveThreshold;
-    const qualityOff = this.adaptiveThreshold * 0.5;
-    // Umbrales adicionales para robustez en adquisición
-    const stabilityOn = 0.4;
-    const pulseOn = 0.3;
-    // Nuevo umbral de periodicidad para evitar detecciones sin pulso real
-    const periodicityOn = 0.5;
-    // Lógica de histeresis: adquisición vs mantenimiento
+    const smoothedAvgQuality = this.qualityHistory.reduce((sum, q) => sum + q, 0) / this.qualityHistory.length;
+
+    // Umbrales de detección más estrictos y basados en la calidad combinada
+    const detectionThreshold = 60; // Umbral más alto para detección de dedo (antes 50)
+    const releaseThreshold = 45;   // Umbral de liberación ligeramente más bajo (antes 40)
+
+    // Lógica de histeresis para la detección del dedo
     if (!this.isCurrentlyDetected) {
-      // Detección inicial: calidad, tendencia válida, estabilidad, pulsatilidad y periodicidad
-      if (avgQuality > qualityOn && trendResult !== 'non_physiological' &&
-          this.detectorScores.stability > stabilityOn &&
-          this.detectorScores.pulsatility > pulseOn &&
-          this.detectorScores.periodicity > periodicityOn) {
+      // Detección inicial: La calidad debe ser ALTA y la señal debe ser fisiológica y estable
+      if (smoothedAvgQuality > detectionThreshold && trendResult !== 'non_physiological' &&
+          this.detectorScores.pulsatility > 0.4 && // Pulsatilidad fisiológica mínima
+          this.detectorScores.biophysical > 0.5 && // Rango biofísico aceptable
+          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality > 0.5)) { // Buena iluminación
         this.consecutiveDetections++;
+        this.consecutiveNoDetections = 0; // Resetear contador de no detección
       } else {
         this.consecutiveDetections = 0;
+        this.consecutiveNoDetections++; // Contar frames sin detección
       }
     } else {
-      // Mantenimiento: estabilidad, pulsatilidad y periodicidad para confirmar dedo
-      const stabilityOff = 0.3;
-      const pulseOff = 0.25;
-      const periodicityOff = 0.4;
-      if (avgQuality < qualityOff || trendResult === 'non_physiological' ||
-          this.detectorScores.stability < stabilityOff ||
-          this.detectorScores.pulsatility < pulseOff ||
-          this.detectorScores.periodicity < periodicityOff) {
+      // Mantenimiento de detección: La calidad debe mantenerse por encima de un umbral de liberación
+      if (smoothedAvgQuality < releaseThreshold || trendResult === 'non_physiological' ||
+          this.detectorScores.pulsatility < 0.3 || // Pérdida de pulsatilidad
+          this.detectorScores.biophysical < 0.4 || // Fuera de rango biofísico
+          (typeof this.detectorScores.lightQuality === 'undefined' || this.detectorScores.lightQuality < 0.4)) { // Mala iluminación
         this.consecutiveNoDetections++;
+        this.consecutiveDetections = 0; // Resetear contador de detección
       } else {
         this.consecutiveNoDetections = 0;
+        this.consecutiveDetections++; // Contar frames con detección
       }
     }
-    // Cambiar estado tras N cuadros consecutivos
-    if (!this.isCurrentlyDetected && this.consecutiveDetections >= this.CONFIG.MIN_CONSECUTIVE_DETECTIONS) {
+
+    // Actualizar estado de detección del dedo
+    if (this.consecutiveDetections >= this.CONFIG.MIN_CONSECUTIVE_DETECTIONS) {
       this.isCurrentlyDetected = true;
-    }
-    if (this.isCurrentlyDetected && this.consecutiveNoDetections >= this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS) {
+      this.lastDetectionTime = Date.now();
+    } else if (this.consecutiveNoDetections >= this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS ||
+               (this.isCurrentlyDetected && (Date.now() - this.lastDetectionTime > this.DETECTION_TIMEOUT))) {
       this.isCurrentlyDetected = false;
     }
+
     return {
       isFingerDetected: this.isCurrentlyDetected,
-      quality: Math.round(avgQuality * 100),
+      quality: Math.round(smoothedAvgQuality),
       detectorDetails: {
         ...this.detectorScores,
-        avgQuality,
+        avgQuality: smoothedAvgQuality,
         consecutiveDetections: this.consecutiveDetections,
         consecutiveNoDetections: this.consecutiveNoDetections
       }
