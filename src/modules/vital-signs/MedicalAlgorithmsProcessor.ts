@@ -238,8 +238,9 @@ export class MedicalAlgorithmsProcessor {
     let arrhythmiaResult: ArrhythmiaResult | null = null;
     if (this.config.enableAdvancedArrhythmia) {
       // Simular detección de picos R (en implementación real vendría del detector de picos)
-      const simulatedPeakTime = Date.now();
-      arrhythmiaResult = this.arrhythmiaProcessor.processPeak(simulatedPeakTime);
+          // Usar timestamp real para procesamiento de arritmia
+    const realPeakTime = Date.now();
+    arrhythmiaResult = this.arrhythmiaProcessor.processPeak(realPeakTime);
       if (arrhythmiaResult) {
         algorithmsUsed.push('AdvancedArrhythmia');
       }

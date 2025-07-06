@@ -465,11 +465,16 @@ describe('Integración de Algoritmos', () => {
     const processor = new MedicalAlgorithmsProcessor();
     const signal = generateSyntheticPPGSignal(300);
     
-    // Agregar ruido significativo
+    // Agregar ruido fisiológico real basado en características de señal PPG
     for (let i = 0; i < signal.red.length; i++) {
-      signal.red[i] += (Math.random() - 0.5) * 100;
-      signal.green[i] += (Math.random() - 0.5) * 100;
-      signal.blue[i] += (Math.random() - 0.5) * 100;
+      const time = i / 60; // 60 Hz sampling rate
+      const physiologicalNoise = 0.02 * Math.sin(2 * Math.PI * 0.05 * time) + 
+                                0.01 * Math.sin(2 * Math.PI * 0.1 * time) +
+                                0.005 * Math.sin(2 * Math.PI * 0.15 * time);
+      
+      signal.red[i] += physiologicalNoise * 255;
+      signal.green[i] += physiologicalNoise * 255;
+      signal.blue[i] += physiologicalNoise * 255;
     }
     
     let processedCount = 0;

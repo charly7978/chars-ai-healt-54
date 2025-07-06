@@ -305,19 +305,55 @@ const CameraView = ({
     const { width, height, data } = frameData;
     const pixelCount = width * height;
     
-    // Promedios de canales
-    let redSum = 0, irSum = 0, greenSum = 0;
+    // Análisis avanzado de píxeles para detección de dedo
+    let redSum = 0, greenSum = 0, blueSum = 0;
+    let validPixels = 0;
+    
+    // Umbrales para detección de piel basados en características fisiológicas
+    const skinRedMin = 50;
+    const skinRedMax = 200;
+    const skinGreenMin = 30;
+    const skinGreenMax = 180;
+    const skinBlueMin = 20;
+    const skinBlueMax = 150;
     
     for (let i = 0; i < pixelCount * 4; i += 4) {
-      redSum += data[i];     // Canal Rojo
-      greenSum += data[i+1]; // Canal Verde
-      irSum += data[i+2];    // Canal Infrarrojo (asumiendo configuración cámara)
+      const red = data[i];
+      const green = data[i + 1];
+      const blue = data[i + 2];
+      
+      // Validar si el píxel corresponde a tono de piel
+      const isSkinTone = red >= skinRedMin && red <= skinRedMax &&
+                         green >= skinGreenMin && green <= skinGreenMax &&
+                         blue >= skinBlueMin && blue <= skinBlueMax &&
+                         red > green && green > blue; // Característica de piel
+      
+      if (isSkinTone) {
+        redSum += red;
+        greenSum += green;
+        blueSum += blue;
+        validPixels++;
+      }
     }
     
+    // Si no hay suficientes píxeles de piel, usar promedio general
+    if (validPixels < pixelCount * 0.1) {
+      for (let i = 0; i < pixelCount * 4; i += 4) {
+        redSum += data[i];
+        greenSum += data[i + 1];
+        blueSum += data[i + 2];
+      }
+      validPixels = pixelCount;
+    }
+    
+    const avgRed = redSum / validPixels;
+    const avgGreen = greenSum / validPixels;
+    const avgBlue = blueSum / validPixels;
+    
     return {
-      red: [redSum / pixelCount],
-      ir: [irSum / pixelCount],
-      green: [greenSum / pixelCount]
+      red: [avgRed],
+      ir: [avgBlue], // Usar azul como aproximación de IR
+      green: [avgGreen]
     };
   };
 
