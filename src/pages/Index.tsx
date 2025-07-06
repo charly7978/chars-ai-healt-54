@@ -32,50 +32,45 @@ const Index = () => {
   const [arrhythmiaCount, setArrhythmiaCount] = useState(0);
 
   // Referencias a los procesadores
-  const fingerDetectionRef = useRef<AdvancedFingerDetection>();
-  const heartbeatDetectionRef = useRef<AdvancedHeartbeatDetection>();
-  const arrhythmiaProcessorRef = useRef<ArrhythmiaProcessor>();
-  const heartBeatProcessorRef = useRef<HeartBeatProcessor>();
+  const fingerDetectionRef = useRef<AdvancedFingerDetection | null>(null);
+  const heartbeatDetectionRef = useRef<AdvancedHeartbeatDetection | null>(null);
+  const arrhythmiaProcessorRef = useRef<ArrhythmiaProcessor | null>(null);
+  const heartBeatProcessorRef = useRef<HeartBeatProcessor | null>(null);
   const measurementTimerRef = useRef<NodeJS.Timeout | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   // Inicializar procesadores
   useEffect(() => {
-    // Configuración avanzada para detección de dedo
+    // Configuración más sensible para detección de dedo
     fingerDetectionRef.current = new AdvancedFingerDetection({
-      minPulsatilityThreshold: 0.15,
-      maxPulsatilityThreshold: 2.0,
-      minSignalAmplitude: 0.05,
-      maxSignalAmplitude: 1.0,
-      spectralAnalysisWindow: 128,
-      motionArtifactThreshold: 0.3,
-      skinToneValidation: true,
-      perfusionIndexThreshold: 0.2,
-      confidenceThreshold: 0.6
+      minPulsatilityThreshold: 0.02,    // Umbral muy bajo para detectar señales débiles
+      maxPulsatilityThreshold: 0.98,    // Umbral alto para permitir variaciones
+      minSignalAmplitude: 0.005,        // Amplitud mínima muy baja
+      maxSignalAmplitude: 0.995,        // Amplitud máxima alta
+      spectralAnalysisWindow: 30,       // Ventana pequeña para respuesta rápida
+      motionArtifactThreshold: 0.8,     // Umbral alto para permitir movimiento
+      skinToneValidation: true,         // Validación de tono de piel
+      perfusionIndexThreshold: 0.05,    // Umbral bajo para perfusión
+      confidenceThreshold: 0.3          // Umbral de confianza bajo
     });
 
-    // Configuración avanzada para detección de latidos
     heartbeatDetectionRef.current = new AdvancedHeartbeatDetection({
       samplingRate: 60,
       minHeartRate: 30,
       maxHeartRate: 220,
-      spectralAnalysisWindow: 256,
-      peakDetectionSensitivity: 0.7,
-      motionArtifactThreshold: 0.25,
-      signalQualityThreshold: 0.5,
-      confidenceThreshold: 0.6,
+      spectralAnalysisWindow: 60,
+      peakDetectionSensitivity: 0.8,
+      motionArtifactThreshold: 0.7,
+      signalQualityThreshold: 0.2,
+      confidenceThreshold: 0.4,
       adaptiveFiltering: true,
       spectralValidation: true
     });
 
-    // Procesador de arritmias
     arrhythmiaProcessorRef.current = new ArrhythmiaProcessor();
-    arrhythmiaProcessorRef.current.setArrhythmiaDetectionCallback((isDetected) => {
-      console.log("Arritmia detectada:", isDetected);
-    });
-
-    // Procesador de latidos
     heartBeatProcessorRef.current = new HeartBeatProcessor();
+
+    console.log("🚀 Procesadores avanzados inicializados con configuración sensible");
 
     return () => {
       // Cleanup
@@ -268,22 +263,61 @@ const Index = () => {
         ctx.drawImage(frame, 0, 0, frame.width, frame.height, 0, 0, canvas.width, canvas.height);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         
-        // Extraer señales RGB del centro de la imagen
+        // Extraer señales RGB del centro de la imagen con área más grande
         const centerX = Math.floor(canvas.width / 2);
         const centerY = Math.floor(canvas.height / 2);
-        const pixelIndex = (centerY * canvas.width + centerX) * 4;
+        const sampleSize = 5; // Tamaño del área de muestreo
         
-        const red = imageData.data[pixelIndex] / 255;
-        const green = imageData.data[pixelIndex + 1] / 255;
-        const blue = imageData.data[pixelIndex + 2] / 255;
+        let totalRed = 0, totalGreen = 0, totalBlue = 0;
+        let sampleCount = 0;
+        
+        // Muestrear un área cuadrada alrededor del centro
+        for (let x = centerX - sampleSize; x <= centerX + sampleSize; x++) {
+          for (let y = centerY - sampleSize; y <= centerY + sampleSize; y++) {
+            if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
+              const pixelIndex = (y * canvas.width + x) * 4;
+              totalRed += imageData.data[pixelIndex];
+              totalGreen += imageData.data[pixelIndex + 1];
+              totalBlue += imageData.data[pixelIndex + 2];
+              sampleCount++;
+            }
+          }
+        }
+        
+        // Normalizar valores RGB
+        const red = totalRed / (sampleCount * 255);
+        const green = totalGreen / (sampleCount * 255);
+        const blue = totalBlue / (sampleCount * 255);
 
         const timestamp = Date.now();
+
+        // Log de valores RGB para diagnóstico
+        if (timestamp % 1000 < 16) { // Log cada segundo aproximadamente
+          console.log("📊 RGB Values:", {
+            red: Math.round(red * 255),
+            green: Math.round(green * 255),
+            blue: Math.round(blue * 255),
+            sampleCount,
+            timestamp
+          });
+        }
 
         // Procesar detección de dedo
         const fingerResult = fingerDetectionRef.current?.processSample(red, green, blue, timestamp);
         if (fingerResult) {
+          console.log("🔍 Finger Detection Result:", {
+            isDetected: fingerResult.isFingerDetected,
+            confidence: fingerResult.confidence,
+            signalQuality: fingerResult.signalQuality,
+            pulsatilityIndex: fingerResult.pulsatilityIndex,
+            perfusionIndex: fingerResult.perfusionIndex,
+            rgb: { red: Math.round(red * 255), green: Math.round(green * 255), blue: Math.round(blue * 255) }
+          });
+          
           setIsFingerDetected(fingerResult.isFingerDetected);
           setSignalQuality(fingerResult.signalQuality * 100);
+        } else {
+          console.log("❌ No finger detection result");
         }
 
         // Procesar detección de latidos solo si hay dedo detectado con alta confianza
@@ -392,16 +426,44 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
+          {/* Indicador de posición del dedo */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className={`w-32 h-32 rounded-full border-4 flex items-center justify-center transition-all duration-300 ${
+              isFingerDetected 
+                ? 'border-green-400 bg-green-400/20' 
+                : 'border-white/50 bg-white/10'
+            }`}>
+              <div className="text-center text-white">
+                <div className="text-2xl mb-1">
+                  {isFingerDetected ? '👆' : '👆'}
+                </div>
+                <div className="text-xs">
+                  {isFingerDetected ? 'DEDO DETECTADO' : 'COLOCA DEDO'}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Header con información de estado */}
           <div className="px-4 py-2 flex justify-around items-center bg-black/20">
             <div className="text-white text-lg">
               Calidad: {Math.round(signalQuality)}%
             </div>
-            <div className="text-white text-lg">
+            <div className={`text-lg font-bold ${isFingerDetected ? 'text-green-400' : 'text-red-400'}`}>
               {isFingerDetected ? "✅ Dedo Detectado" : "❌ Sin Dedo"}
             </div>
             <div className="text-white text-lg">
               {isMonitoring ? "⏱️ " + elapsedTime + "s" : "⏸️ Pausado"}
+            </div>
+          </div>
+
+          {/* Indicador de estado de detección */}
+          <div className="px-4 py-1 bg-black/30">
+            <div className="text-center text-white text-sm">
+              {isFingerDetected ? 
+                "Coloca tu dedo sobre la cámara y manténlo quieto" : 
+                "Coloca tu dedo sobre la cámara para comenzar la medición"
+              }
             </div>
           </div>
 
