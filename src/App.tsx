@@ -59,9 +59,23 @@ const ErrorFallback = ({ error }: { error: Error }) => (
   </div>
 );
 
-// Lazy loading de los componentes para mejor rendimiento
-const Index = React.lazy(() => import("./pages/Index"));
-const NotFound = React.lazy(() => import("./pages/NotFound"));
+// Componente de prueba simple
+const TestComponent = () => (
+  <div style={{ 
+    backgroundColor: '#000', 
+    color: '#fff', 
+    height: '100vh', 
+    display: 'flex', 
+    flexDirection: 'column', 
+    justifyContent: 'center', 
+    alignItems: 'center',
+    padding: '20px'
+  }}>
+    <h1>HealthPulse Captain</h1>
+    <p>¡La aplicación está funcionando correctamente!</p>
+    <p>Timestamp: {new Date().toLocaleString()}</p>
+  </div>
+);
 
 const App = () => {
   return (
@@ -69,8 +83,7 @@ const App = () => {
       <Router>
         <Suspense fallback={<LoadingFallback />}>
           <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="*" element={<NotFound />} />
+            <Route path="/" element={<TestComponent />} />
           </Routes>
         </Suspense>
       </Router>
