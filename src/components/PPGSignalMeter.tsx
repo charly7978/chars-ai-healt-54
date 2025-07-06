@@ -77,55 +77,103 @@ const PPGSignalMeter = ({
   }, []);
 
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
-    ctx.fillStyle = '#FDF5E6';
+    // Fondo médico profesional
+    ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    
+    // Cuadrícula médica precisa
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(60, 60, 60, 0.3)';
+    ctx.strokeStyle = 'rgba(0, 255, 0, 0.15)';
     ctx.lineWidth = 0.5;
     
-    // Draw vertical grid lines
-    for (let x = 0; x <= CANVAS_WIDTH; x += GRID_SIZE_X) {
+    // Líneas verticales cada 50ms (para latidos)
+    for (let x = 0; x <= CANVAS_WIDTH; x += 50) {
       ctx.moveTo(x, 0);
       ctx.lineTo(x, CANVAS_HEIGHT);
-      if (x % (GRID_SIZE_X * 5) === 0) {
-        ctx.fillStyle = 'rgba(50, 50, 50, 0.8)';
-        ctx.font = '10px Inter';
+      if (x % 200 === 0) {
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
+        ctx.font = 'bold 12px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(x.toString(), x, CANVAS_HEIGHT - 5);
+        ctx.fillText(`${(x / 50).toFixed(1)}s`, x, CANVAS_HEIGHT - 10);
       }
     }
     
-    // Draw horizontal grid lines
-    for (let y = 0; y <= CANVAS_HEIGHT; y += GRID_SIZE_Y) {
+    // Líneas horizontales para amplitud
+    for (let y = 0; y <= CANVAS_HEIGHT; y += 50) {
       ctx.moveTo(0, y);
       ctx.lineTo(CANVAS_WIDTH, y);
-      if (y % (GRID_SIZE_Y * 5) === 0) {
-        ctx.fillStyle = 'rgba(50, 50, 50, 0.8)';
-        ctx.font = '10px Inter';
+      if (y % 100 === 0) {
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.6)';
+        ctx.font = 'bold 12px monospace';
         ctx.textAlign = 'right';
-        ctx.fillText(y.toString(), 15, y + 3);
+        const amplitude = ((CANVAS_HEIGHT / 2 - y) / verticalScale).toFixed(2);
+        ctx.fillText(amplitude, 30, y + 4);
       }
     }
     ctx.stroke();
     
-    // Draw center line (baseline)
+    // Línea central (baseline)
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(40, 40, 40, 0.5)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
     ctx.lineWidth = 1;
     ctx.moveTo(0, CANVAS_HEIGHT / 2);
     ctx.lineTo(CANVAS_WIDTH, CANVAS_HEIGHT / 2);
     ctx.stroke();
     
+    // Información de estado en tiempo real
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px monospace';
+    ctx.textAlign = 'left';
+    
+    // Estado del dedo
+    ctx.fillStyle = isFingerDetected ? '#00ff00' : '#ff4444';
+    ctx.fillText(`Dedo: ${isFingerDetected ? 'DETECTADO' : 'NO DETECTADO'}`, 10, 25);
+    
+    // Calidad de señal
+    const qualityColor = getQualityColor(quality);
+    ctx.fillStyle = qualityColor;
+    ctx.fillText(`Calidad: ${quality.toFixed(1)}%`, 10, 45);
+    
+    // Estado de arritmia
     const status = arrhythmiaStatus ? parseArrhythmiaStatus(arrhythmiaStatus) : null;
     if (status?.status === 'DETECTED') {
-      ctx.fillStyle = '#ef4444';
-      ctx.font = 'bold 24px Inter';
-      ctx.textAlign = 'left';
-      ctx.fillText(status.count > 1 
-        ? `Arritmias: ${status.count}` 
-        : '¡PRIMERA ARRITMIA DETECTADA!', 45, 95);
+      ctx.fillStyle = '#ff4444';
+      ctx.font = 'bold 16px monospace';
+      ctx.fillText(`⚠️ ARRITMIA #${status.count}`, 10, 70);
+      
+      // Mostrar métricas de arritmia si están disponibles
+      if (rawArrhythmiaData) {
+        ctx.font = '12px monospace';
+        ctx.fillStyle = '#ffaa00';
+        ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(1)}ms`, 10, 90);
+        ctx.fillText(`Variación RR: ${(rawArrhythmiaData.rrVariation * 100).toFixed(1)}%`, 10, 105);
+      }
+    } else if (status?.status === 'CALIBRATING') {
+      ctx.fillStyle = '#ffff00';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('🔬 CALIBRANDO...', 10, 70);
+    } else {
+      ctx.fillStyle = '#00ff00';
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('✅ RITMO NORMAL', 10, 70);
     }
-  }, [arrhythmiaStatus]);
+    
+    // Escala de tiempo
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('TIEMPO (segundos)', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 5);
+    
+    // Escala de amplitud
+    ctx.save();
+    ctx.translate(15, CANVAS_HEIGHT / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('AMPLITUD PPG', 0, 0);
+    ctx.restore();
+  }, [arrhythmiaStatus, isFingerDetected, quality, rawArrhythmiaData]);
 
   const detectPeaks = useCallback((points: PPGDataPoint[], now: number) => {
     if (points.length < PEAK_DETECTION_WINDOW) return;
@@ -254,9 +302,10 @@ const PPGSignalMeter = ({
     detectPeaks(points, now);
     
     if (points.length > 1) {
+      // Dibujar señal PPG principal con estilo médico
       ctx.beginPath();
-      ctx.strokeStyle = '#0EA5E9';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = isFingerDetected ? '#00ff00' : '#666666';
+      ctx.lineWidth = isFingerDetected ? 3 : 1;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
@@ -279,15 +328,18 @@ const PPGSignalMeter = ({
         
         ctx.lineTo(x2, y2);
         
+        // Resaltar segmentos de arritmia
         if (point.isArrhythmia) {
           ctx.stroke();
           ctx.beginPath();
-          ctx.strokeStyle = '#DC2626';
+          ctx.strokeStyle = '#ff4444';
+          ctx.lineWidth = 4;
           ctx.moveTo(x1, y1);
           ctx.lineTo(x2, y2);
           ctx.stroke();
           ctx.beginPath();
-          ctx.strokeStyle = '#0EA5E9';
+          ctx.strokeStyle = isFingerDetected ? '#00ff00' : '#666666';
+          ctx.lineWidth = isFingerDetected ? 3 : 1;
           ctx.moveTo(x2, y2);
           firstPoint = true;
         }
@@ -295,33 +347,60 @@ const PPGSignalMeter = ({
       
       ctx.stroke();
       
+      // Dibujar marcadores de picos cardíacos
       peaksRef.current.forEach(peak => {
         const x = canvas.width - ((now - peak.time) * canvas.width / WINDOW_WIDTH_MS);
         const y = canvas.height / 2 - peak.value;
         
         if (x >= 0 && x <= canvas.width) {
-          ctx.beginPath();
-          ctx.arc(x, y, 5, 0, Math.PI * 2);
-          ctx.fillStyle = peak.isArrhythmia ? '#DC2626' : '#0EA5E9';
-          ctx.fill();
-          
-          if (peak.isArrhythmia) {
+          // Pico normal
+          if (!peak.isArrhythmia) {
             ctx.beginPath();
-            ctx.arc(x, y, 10, 0, Math.PI * 2);
-            ctx.strokeStyle = '#FEF7CD';
-            ctx.lineWidth = 3;
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = '#00ff00';
+            ctx.fill();
+            
+            // Línea vertical del pico
+            ctx.beginPath();
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 1;
+            ctx.moveTo(x, canvas.height / 2);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+          } else {
+            // Pico de arritmia - más prominente
+            ctx.beginPath();
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.fillStyle = '#ff4444';
+            ctx.fill();
+            
+            // Anillo de alerta
+            ctx.beginPath();
+            ctx.arc(x, y, 12, 0, Math.PI * 2);
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
             ctx.stroke();
             
-            ctx.font = 'bold 18px Inter'; 
-            ctx.fillStyle = '#F97316';
+            // Línea vertical roja
+            ctx.beginPath();
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.moveTo(x, canvas.height / 2);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            
+            // Etiqueta de arritmia
+            ctx.font = 'bold 12px monospace'; 
+            ctx.fillStyle = '#ff4444';
             ctx.textAlign = 'center';
-            ctx.fillText('ARRITMIA', x, y - 25);
+            ctx.fillText('⚠️', x, y - 20);
           }
           
-          ctx.font = 'bold 16px Inter'; 
-          ctx.fillStyle = '#000000';
+          // Mostrar amplitud del pico
+          ctx.font = '10px monospace'; 
+          ctx.fillStyle = peak.isArrhythmia ? '#ff4444' : '#00ff00';
           ctx.textAlign = 'center';
-          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 15);
+          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(3), x, y + 15);
         }
       });
     }
