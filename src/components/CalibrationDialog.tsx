@@ -79,7 +79,7 @@ const CalibrationDialog: React.FC<CalibrationDialogProps> = ({
                 type="number"
                 placeholder="120"
                 value={systolic}
-                onChange={(e) => setSystolic(e.target.value)}
+                onChange={(e) => setSystolic(e.target.value === "" ? "" : Number(e.target.value))}
                 className="w-full"
               />
             </div>
@@ -90,7 +90,7 @@ const CalibrationDialog: React.FC<CalibrationDialogProps> = ({
                 type="number"
                 placeholder="80"
                 value={diastolic}
-                onChange={(e) => setDiastolic(e.target.value)}
+                onChange={(e) => setDiastolic(e.target.value === "" ? "" : Number(e.target.value))}
                 className="w-full"
               />
             </div>

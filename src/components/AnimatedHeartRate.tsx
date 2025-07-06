@@ -41,7 +41,7 @@ const AnimatedHeartRate = ({ bpm, isPulsing = false, size = 'md' }: AnimatedHear
         }, animationDuration);
         
         // Schedule next beat
-        beatTimeoutRef.current = window.setTimeout(startBeatAnimation, beatInterval);
+        beatTimeoutRef.current = window.setTimeout(startBeatAnimation, beatInterval) as any;
       };
       
       // Start initial beat animation
