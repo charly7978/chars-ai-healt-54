@@ -27,7 +27,7 @@ const Index = () => {
   const [signalQuality, setSignalQuality] = useState(0);
   const [heartRate, setHeartRate] = useState(0);
   const [spo2, setSpO2] = useState(0);
-  const [bloodPressure, setBloodPressure] = useState({ systolic: 0, diastolic: 0 });
+  const [bloodPressure, setBloodPressure] = useState({ systolic: 0, diastolic: 0, map: 0 });
   const [arrhythmiaStatus, setArrhythmiaStatus] = useState("SIN ARRITMIAS|0");
   const [arrhythmiaCount, setArrhythmiaCount] = useState(0);
 
@@ -179,7 +179,7 @@ const Index = () => {
     setElapsedTime(0);
     setHeartRate(0);
     setSpO2(0);
-    setBloodPressure({ systolic: 0, diastolic: 0 });
+    setBloodPressure({ systolic: 0, diastolic: 0, map: 0 });
     setArrhythmiaStatus("SIN ARRITMIAS|0");
     setArrhythmiaCount(0);
     
@@ -220,7 +220,7 @@ const Index = () => {
     setElapsedTime(0);
     setHeartRate(0);
     setSpO2(0);
-    setBloodPressure({ systolic: 0, diastolic: 0 });
+    setBloodPressure({ systolic: 0, diastolic: 0, map: 0 });
     setArrhythmiaStatus("SIN ARRITMIAS|0");
     setArrhythmiaCount(0);
     setIsFingerDetected(false);
@@ -297,9 +297,10 @@ const Index = () => {
             setHeartRate(hbResult.bpm);
             
             // Procesar arritmias con datos RR reales
+            const rrData = heartBeatProcessorRef.current?.getRRIntervals();
             const arrhythmiaResult = arrhythmiaProcessorRef.current?.processRRData({
-              intervals: hbResult.rrData?.intervals || [],
-              lastPeakTime: hbResult.rrData?.lastPeakTime || null
+              intervals: rrData?.intervals || [],
+              lastPeakTime: rrData?.lastPeakTime || null
             });
             
             if (arrhythmiaResult) {
@@ -324,13 +325,14 @@ const Index = () => {
             const meanArterialPressure = 70 + (hbResult.bpm - 70) * 0.2;
             const systolic = Math.round(meanArterialPressure + pulsePressure / 2);
             const diastolic = Math.round(meanArterialPressure - pulsePressure / 2);
-            setBloodPressure({ systolic, diastolic });
+            const map = Math.round(diastolic + (systolic - diastolic) / 3); // Fórmula médica estándar
+            setBloodPressure({ systolic, diastolic, map });
           }
         } else {
           // Resetear valores si no hay dedo detectado o confianza baja
           setHeartRate(0);
           setSpO2(0);
-          setBloodPressure({ systolic: 0, diastolic: 0 });
+          setBloodPressure({ systolic: 0, diastolic: 0, map: 0 });
         }
 
       } catch (error) {
