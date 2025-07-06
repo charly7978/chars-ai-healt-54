@@ -4,16 +4,21 @@ import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 interface SignalQualityIndicatorProps {
   quality: number;
   isMonitoring?: boolean;
+  className?: string;
 }
 
-const SignalQualityIndicator = ({ quality, isMonitoring = false }: SignalQualityIndicatorProps) => {
+const SignalQualityIndicator = ({ 
+  quality, 
+  isMonitoring = false,
+  className = "" 
+}: SignalQualityIndicatorProps) => {
   const displayQuality = isMonitoring ? quality : 0;
 
   // Determinar si mostrar advertencia para calidad insuficiente
   const showWarning = displayQuality > 0 && displayQuality < 30;
 
   return (
-    <div className="bg-black/30 backdrop-blur-md rounded p-2 w-full">
+    <div className={`bg-black/30 backdrop-blur-md rounded p-2 w-full ${className}`}>
       <div className="flex items-center gap-2">
         <div 
           className="w-12 h-12 rounded-full border-2 flex items-center justify-center shrink-0 transition-all duration-300"
