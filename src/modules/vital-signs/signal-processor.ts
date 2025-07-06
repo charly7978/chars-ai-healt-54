@@ -1,4 +1,3 @@
-
 /**
  * Enhanced Signal Processor based on advanced biomedical signal processing techniques
  * Implementa algoritmos de detección ultra-sensibles para señales PPG
@@ -208,46 +207,50 @@ export class SignalProcessor {
   }
   
   /**
-   * MEJORADO: Denoising wavelet extremadamente sensible
+   * MEJORADO: Denoising wavelet extremadamente sensible y adaptativo
+   * Incorpora principios de umbralización adaptativa y atenuación no lineal
    */
   private enhancedWaveletDenoise(value: number): number {
     const normalizedValue = value - this.baselineValue;
     
-    // Umbral dinámico ultra-bajo para preservar señal máxima
-    const dynamicThreshold = this.calculateDynamicThreshold() * 0.2; // 80% más bajo (antes 0.3)
+    // Cálculo de umbral dinámico mejorado: más sensible a las variaciones del ruido
+    const dynamicThreshold = this.calculateDynamicThreshold() * 0.5; // Ajuste para mayor impacto del umbral dinámico
     
-    // Preservación extrema para señales débiles
+    // Aplicación del denoising con atenuación no lineal para preservar picos
     if (Math.abs(normalizedValue) < dynamicThreshold) {
-      // Atenuación mínima para preservar señales casi imperceptibles
-      const attenuationFactor = Math.pow(Math.abs(normalizedValue) / dynamicThreshold, 0.2); // Exponente más bajo
-      return this.baselineValue + (normalizedValue * Math.pow(attenuationFactor, 0.2)); // Preservación extrema
+      // Si el valor está por debajo del umbral, atenuar agresivamente (pero no a cero) para eliminar ruido menor
+      const attenuationFactor = Math.pow(Math.abs(normalizedValue) / dynamicThreshold, 0.5); // Atenuación más marcada
+      return this.baselineValue + (normalizedValue * attenuationFactor * 0.5); // Reducir aún más el ruido residual
     }
     
-    // Preservación extrema de picos cardíacos
+    // Para picos significativos, aplicar una supresión más suave y adaptativa
     const sign = normalizedValue >= 0 ? 1 : -1;
-    // Atenuación mínima (solo 20% del umbral) 
-    const denoisedValue = sign * (Math.abs(normalizedValue) - dynamicThreshold * 0.2); // Antes 0.3
+    // Reducción del ruido proporcional al umbral, manteniendo la forma del pico
+    const denoisedValue = sign * (Math.abs(normalizedValue) - dynamicThreshold * 0.1); // Solo un 10% del umbral de supresión
     
     return this.baselineValue + denoisedValue;
   }
   
   /**
-   * MEJORADO: Umbral dinámico ultra-sensible
+   * MEJORADO: Umbral dinámico ultra-sensible y más reactivo a la señal real
    */
   private calculateDynamicThreshold(): number {
-    if (this.ppgValues.length < 5) return this.WAVELET_THRESHOLD * 0.3; // Reducido aún más
+    if (this.ppgValues.length < 10) return this.WAVELET_THRESHOLD; // Usar umbral base hasta tener suficientes datos
     
-    const recentValues = this.ppgValues.slice(-10);
+    const recentValues = this.ppgValues.slice(-20); // Ventana más grande para una estimación de ruido más estable
     const mean = recentValues.reduce((sum, val) => sum + val, 0) / recentValues.length;
     const variance = recentValues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recentValues.length;
     const stdDev = Math.sqrt(variance);
     
-    // Ultra-bajo umbral base 
-    const baseThreshold = this.WAVELET_THRESHOLD * 0.3; // Reducido (antes 0.5)
-    // Estimación de ruido mínima
-    const noiseEstimate = Math.min(stdDev * 0.05, baseThreshold); // Reducido (antes 0.08)
+    // Umbral base: una combinación de un valor fijo y la desviación estándar para adaptabilidad
+    const baseThreshold = this.WAVELET_THRESHOLD * 0.5 + stdDev * 0.1; // Se combina umbral fijo con adaptabilidad a la stdDev
     
-    return Math.max(baseThreshold * 0.1, Math.min(noiseEstimate, baseThreshold * 0.5)); // Límites reducidos
+    // Estimación de ruido más inteligente: el umbral es el mínimo entre un máximo razonable 
+    // y la desviación estándar multiplicada por un factor de sensibilidad al ruido.
+    const noiseEstimate = Math.min(stdDev * 0.2, this.WAVELET_THRESHOLD * 2); // Ajuste a 0.2 y 2 para mejor balance
+    
+    // El umbral final se adapta al ruido, pero nunca es menor a un valor muy bajo para evitar la sobre-denoización
+    return Math.max(this.WAVELET_THRESHOLD * 0.1, Math.min(noiseEstimate, baseThreshold)); // Umbral mínimo 0.1 para evitar filtrado excesivo
   }
   
   /**
@@ -298,73 +301,76 @@ export class SignalProcessor {
   }
 
   /**
-   * MEJORADO: Potenciación final de componentes cardíacos con feedback
+   * MEJORADO: Potenciación final de componentes cardíacos con feedback adaptativo
+   * Utiliza una puntuación de patrón de pico más robusta para una amplificación precisa.
    */
   private enhanceCardiacSignalWithFeedback(value: number): number {
     if (this.ppgValues.length < 15 || this.peakHistory.length < 5) return value;
-    
-    // Verificar si hay un patrón cardíaco usando todo el contexto disponible
-    const recentValues = this.ppgValues.slice(-15).map(v => v - this.baselineValue);
-    
-    let upwardTrend = 0;
-    let downwardTrend = 0;
-    
-    // Detectar patrón de subida/bajada característico del pulso
-    for (let i = 1; i < recentValues.length; i++) {
-      if (recentValues[i] > recentValues[i-1]) upwardTrend++;
-      else if (recentValues[i] < recentValues[i-1]) downwardTrend++;
-    }
-    
+
+    const normalizedValue = value - this.baselineValue;
+
     // Análisis de patrones temporales en el historial de picos
     const peakPattern = this.detectPatternInPeaks();
-    
+
     // Factor de amplificación base
     let enhancementFactor = this.PEAK_ENHANCEMENT;
-    
-    // Si hay un patrón similar a un latido (subida seguida de bajada)
-    const hasCardiacPattern = upwardTrend > 3 && downwardTrend > 3;
-    
-    // Amplificar aún más basado en contexto temporal
-    if (hasCardiacPattern || peakPattern > this.PEAK_SIMILARITY_THRESHOLD) {
-      // Amplificación extra si hay evidencia fuerte de patrón cardíaco
-      if (hasCardiacPattern && peakPattern > this.PEAK_SIMILARITY_THRESHOLD) {
-        enhancementFactor *= 1.5;
-      }
-      
-      const normalizedValue = value - this.baselineValue;
-      // Amplificar componentes cardíacos (especialmente picos)
+
+    // Amplificación adaptativa basada en la fuerza del patrón de pico detectado
+    // Un peakPattern más alto indica una señal cardíaca más clara, por lo tanto, se amplifica más.
+    if (peakPattern > this.PEAK_SIMILARITY_THRESHOLD) {
+      // Escalado no lineal: A mayor peakPattern, mayor amplificación
+      enhancementFactor *= (1 + (peakPattern - this.PEAK_SIMILARITY_THRESHOLD) * 2); // Factor de amplificación más dinámico
+
+      // Asegurar que el factor de amplificación no se dispare excesivamente
+      enhancementFactor = Math.min(enhancementFactor, this.PEAK_ENHANCEMENT * 2.5); // Límite para evitar sobre-amplificación
+
+      // Amplificar solo los componentes positivos (picos) de la señal normalizada
       if (normalizedValue > 0) {
-        // Amplificación extrema de picos positivos característicos de latidos
         return this.baselineValue + normalizedValue * enhancementFactor;
       }
     }
-    
-    return value;
+
+    return value; // Si no hay un patrón cardíaco fuerte, no amplificar adicionalmente
   }
   
   /**
-   * NUEVO: Detectar patrones regulares en los picos históricos
-   * Retorna un valor entre 0 y 1 indicando la fuerza del patrón
+   * MEJORADO: Detectar patrones regulares en los picos históricos de forma más robusta
+   * Retorna un valor entre 0 y 1 indicando la fuerza y regularidad del patrón
+   * Incorpora consistencia de amplitud y patrón de alternancia.
    */
   private detectPatternInPeaks(): number {
     if (this.peakHistory.length < this.PEAK_HISTORY_SIZE) return 0;
-    
-    // Calcular las diferencias entre valores consecutivos
+
+    const values = this.peakHistory; // Estos son los valores (amplitudes) de los picos
+
+    // 1. Consistencia de la amplitud: calcular la desviación estándar de los valores de los picos
+    const meanValue = values.reduce((sum, val) => sum + val, 0) / values.length;
+    const varianceValue = values.reduce((sum, val) => sum + Math.pow(val - meanValue, 2), 0) / values.length;
+    const stdDevValue = Math.sqrt(varianceValue);
+
+    // Mapear stdDevValue a una puntuación de consistencia (0 a 1).
+    // Un stdDevValue más pequeño (más consistente) debe dar una puntuación más alta.
+    // Usamos una función exponencial decreciente para este mapeo.
+    const amplitudeConsistencyScore = Math.exp(-0.2 * stdDevValue); // El factor 0.2 ajusta la sensibilidad
+
+    // 2. Patrón de alternancia de subida/bajada
     const deltas = [];
-    for (let i = 1; i < this.peakHistory.length; i++) {
-      deltas.push(this.peakHistory[i] - this.peakHistory[i-1]);
+    for (let i = 1; i < values.length; i++) {
+      deltas.push(values[i] - values[i-1]);
     }
-    
-    // Buscar patrones alternados de subida y bajada (característicos de latidos)
-    let alternatingPattern = 0;
+
+    let alternatingPatternCount = 0;
     for (let i = 1; i < deltas.length; i++) {
+      // Un patrón se detecta si la dirección de la señal cambia (de subida a bajada o viceversa)
       if ((deltas[i] > 0 && deltas[i-1] < 0) || (deltas[i] < 0 && deltas[i-1] > 0)) {
-        alternatingPattern++;
+        alternatingPatternCount++;
       }
     }
-    
-    // Normalizar a un valor entre 0 y 1
-    return alternatingPattern / (deltas.length - 1);
+    const alternatingPatternScore = alternatingPatternCount / (deltas.length - 1);
+
+    // 3. Combinar las dos puntuaciones con una ponderación
+    // Se da más peso al patrón de alternancia (0.7) y menos a la consistencia de amplitud (0.3).
+    return (alternatingPatternScore * 0.7) + (amplitudeConsistencyScore * 0.3);
   }
 
   /**

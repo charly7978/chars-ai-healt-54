@@ -472,6 +472,7 @@ export class HeartBeatProcessor {
 
   /**
    * Detección de picos mejorada para señales con validación médica
+   * Considera máximos locales, amplitud y derivada para mayor robustez.
    */
   private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
@@ -486,28 +487,109 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // Detectar pico en máximo local: derivada negativa
-    const isOverThreshold = derivative < 0;
-    // Confianza máxima en cada detección de pico
-    const confidence = 1;
 
-    return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
+    // Usar el buffer de la señal para análisis local de picos
+    // Asegurarse de que hay suficientes puntos en el buffer para un análisis significativo
+    if (this.signalBuffer.length < 5) { // Necesitamos al menos 5 puntos para una detección local
+      return { isPeak: false, confidence: 0 };
+    }
+
+    const currentBufferIndex = this.signalBuffer.length - 1;
+    const currentSmoothedValue = this.signalBuffer[currentBufferIndex]; // El valor original smoothed
+
+    // Calcular el valor normalizado para el análisis de pico
+    const currentNormalized = currentSmoothedValue - this.baseline;
+
+    let isLocalMaximum = true;
+    // Comprobar si el valor actual es un máximo local en una ventana pequeña
+    // Comparar con los dos puntos anteriores y los dos siguientes (si existen)
+    const windowStart = Math.max(0, currentBufferIndex - 2);
+    const windowEnd = Math.min(this.signalBuffer.length - 1, currentBufferIndex + 2);
+
+    for (let i = windowStart; i <= windowEnd; i++) {
+      if (i === currentBufferIndex) continue;
+      // Los valores en el buffer están ya smoothed, pero los picos se detectan en la señal normalizada
+      if ((this.signalBuffer[i] - this.baseline) > currentNormalized) {
+        isLocalMaximum = false;
+        break;
+      }
+    }
+
+    // Criterios para la detección de picos:
+    // 1. Es un máximo local
+    // 2. La amplitud normalizada es mayor que un umbral (no es ruido insignificante)
+    // 3. La derivada indica una caída después del pico (o un pico agudo)
+    const isPeak = isLocalMaximum &&
+                   currentNormalized > this.PEAK_AMPLITUDE_THRESHOLD &&
+                   derivative < this.DEFAULT_DERIVATIVE_THRESHOLD; // Usar el umbral de derivada
+
+    // Calcular confianza de forma más granular
+    let confidence = 0;
+    if (isPeak) {
+      // Asegurarse de que recentMax y recentMin sean reconocidos por el linter
+      const classRecentMax = this.recentMax;
+      const classRecentMin = this.recentMin;
+
+      // La confianza aumenta con la prominencia del pico y la agudeza de la derivada
+      const range = classRecentMax - classRecentMin;
+      const prominence = range > 0.01 ? currentNormalized / range : 0; // Si el rango es casi cero, la prominencia es 0
+      const steepness = Math.abs(derivative) / Math.abs(this.DEFAULT_DERIVATIVE_THRESHOLD); // Qué tan empinada es la caída
+
+      // Combinar factores de confianza
+      confidence = Math.min(1.0, prominence * 0.6 + steepness * 0.4); // Ponderar prominence y steepness
+    }
+
+    return { isPeak: isPeak, confidence: confidence, rawDerivative: derivative };
   }
 
+  /**
+   * Confirma un pico detectado basándose en múltiples criterios de robustez.
+   */
   private confirmPeak(
     isPeak: boolean,
     normalizedValue: number,
     confidence: number
   ): boolean {
+    // Añadir el valor normalizado al buffer de confirmación
     this.peakConfirmationBuffer.push(normalizedValue);
     if (this.peakConfirmationBuffer.length > this.PEAK_CONFIRMATION_BUFFER_SIZE) {
       this.peakConfirmationBuffer.shift();
     }
-    // Confirmación simplificada: cada pico marcado es confirmado
-    if (isPeak && !this.lastConfirmedPeak) {
+
+    // Si no es un pico según la detección inicial, resetear y salir
+    if (!isPeak) {
+      this.lastConfirmedPeak = false; // Resetear la bandera de último pico confirmado
+      return false;
+    }
+
+    // Criterios para confirmar un pico (más robustos):
+    // 1. La confianza del pico es suficiente.
+    // 2. La calidad de la señal general es aceptable.
+    // 3. El valor actual es significativamente mayor que los valores recientes en el buffer,
+    //    indicando un aumento claro que culmina en un pico.
+    const isHighConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
+    const isGoodSignalQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY;
+
+    // Verificar la prominencia del pico dentro del buffer de confirmación
+    let isProminentInWindow = false;
+    if (this.peakConfirmationBuffer.length === this.PEAK_CONFIRMATION_BUFFER_SIZE) {
+      const currentPeakIndex = this.PEAK_CONFIRMATION_BUFFER_SIZE - 1;
+      const currentPeakValue = this.peakConfirmationBuffer[currentPeakIndex];
+
+      // El valor actual debe ser el máximo en el buffer de confirmación y ser significativamente mayor
+      // que los valores al inicio del buffer.
+      const bufferMin = Math.min(...this.peakConfirmationBuffer.slice(0, currentPeakIndex)); // Mínimo de los valores anteriores
+      if (currentPeakValue > bufferMin * (1 + this.PEAK_BUFFER_STABILITY_THRESHOLD)) { // Usar threshold de estabilidad para prominencia
+        isProminentInWindow = true;
+      }
+    }
+
+    const isReadyToConfirm = isHighConfidence && isGoodSignalQuality && isProminentInWindow;
+
+    if (isReadyToConfirm && !this.lastConfirmedPeak) {
       this.lastConfirmedPeak = true;
       return true;
-    } else if (!isPeak) {
+    } else if (!isReadyToConfirm) {
       this.lastConfirmedPeak = false;
     }
     return false;

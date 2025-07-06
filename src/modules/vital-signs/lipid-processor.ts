@@ -1,3 +1,5 @@
+import * as tf from '@tensorflow/tfjs';
+
 /**
  * Advanced non-invasive lipid profile estimation using PPG signal analysis
  * Implementation based on research from Johns Hopkins, Harvard Medical School, and Mayo Clinic
@@ -19,16 +21,36 @@ export class LipidProcessor {
   private lastCholesterolEstimate: number = 180; // Baseline total cholesterol
   private lastTriglyceridesEstimate: number = 120; // Baseline triglycerides
   private confidenceScore: number = 0;
-  
+  private lipidModel: tf.LayersModel | null = null;
+
+  constructor() {
+    this.buildLipidModel();
+  }
+
+  private buildLipidModel(): void {
+    // Features are: areaUnderCurve, augmentationIndex, riseFallRatio, dicroticNotchPosition, dicroticNotchHeight, elasticityIndex (6 features)
+    this.lipidModel = tf.sequential({
+      layers: [
+        tf.layers.dense({ units: 64, activation: 'relu', inputDim: 6 }), // 6 features
+        tf.layers.dense({ units: 32, activation: 'relu' }),
+        tf.layers.dense({ units: 2, activation: 'linear' }) // Output: [totalCholesterol, triglycerides]
+      ]
+    });
+    this.lipidModel.compile({
+      optimizer: tf.train.adam(0.001),
+      loss: 'meanSquaredError',
+      metrics: ['mae']
+    });
+  }
+
   /**
-   * Calculate lipid profile based on PPG signal characteristics
-   * Using advanced waveform analysis and spectral parameters
+   * Calculate lipid profile based on PPG signal characteristics using a TensorFlow.js model
    */
-  public calculateLipids(ppgValues: number[]): { 
+  public async calculateLipids(ppgValues: number[]): Promise<{ 
     totalCholesterol: number; 
     triglycerides: number;
-  } {
-    if (ppgValues.length < 240) {
+  }> {
+    if (ppgValues.length < 240 || !this.lipidModel) {
       this.confidenceScore = 0;
       return { 
         totalCholesterol: 0, 
@@ -36,45 +58,50 @@ export class LipidProcessor {
       };
     }
     
-    // Use the most recent 4 seconds of data for more stable assessment
     const recentPPG = ppgValues.slice(-240);
-    
-    // Extract advanced waveform features linked to blood viscosity and arterial compliance
-    // Both are known correlates of lipid profiles from multiple clinical studies
     const features = this.extractHemodynamicFeatures(recentPPG);
-    
+
+    // Convert features to a TensorFlow.js tensor
+    const featureTensor = tf.tensor2d(
+      [[
+        features.areaUnderCurve,
+        features.augmentationIndex,
+        features.riseFallRatio,
+        features.dicroticNotchPosition,
+        features.dicroticNotchHeight,
+        features.elasticityIndex
+      ]], 
+      [1, 6]
+    );
+
+    let cholesterolEstimate: number;
+    let triglyceridesEstimate: number;
+
+    try {
+      const prediction = this.lipidModel.predict(featureTensor) as tf.Tensor;
+      [cholesterolEstimate, triglyceridesEstimate] = await prediction.data();
+      tf.dispose(prediction); // Clean up tensor
+    } catch (error) {
+      console.error("LipidProcessor: Error predicting lipids with model:", error);
+      tf.dispose(featureTensor);
+      this.confidenceScore = 0;
+      return { totalCholesterol: 0, triglycerides: 0 };
+    }
+    tf.dispose(featureTensor);
+
     // Calculate signal quality and measurement confidence
     this.confidenceScore = this.calculateConfidence(features, recentPPG);
-    
-    // Multi-parameter regression model para la estimación lipídica
-    // Ajustes en los coeficientes para mejorar la sintonía fina:
-    const baseCholesterol = 180; // Se aumenta ligeramente la base
-    const baseTriglycerides = 110; // Se mantiene como base
-    
-    // Optimización adicional: nuevos coeficientes en el modelo de regresión para lipídicos
-    const cholesterolEstimate = baseCholesterol +
-      (features.areaUnderCurve * 50) +             // Incrementado de 47 a 50
-      (features.augmentationIndex * 34) -           // Incrementado de 32 a 34
-      (features.riseFallRatio * 18) -               // Incrementado de 16 a 18
-      (features.dicroticNotchPosition * 13);         // Incrementado de 12 a 13
-    
-    const triglyceridesEstimate = baseTriglycerides +
-      (features.augmentationIndex * 24) +           // Disminuido ligeramente de 26 a 24
-      (features.areaUnderCurve * 27) -              // Incrementado de 26 a 27
-      (features.dicroticNotchHeight * 16);           // Disminuido de 18 a 16
     
     // Apply temporal smoothing with previous estimates using confidence weighting
     let finalCholesterol, finalTriglycerides;
     
     if (this.confidenceScore > this.CONFIDENCE_THRESHOLD) {
-      // Apply more weight to new measurements when confidence is high
       const confidenceWeight = Math.min(this.confidenceScore * 1.5, 0.9);
       finalCholesterol = this.lastCholesterolEstimate * (1 - confidenceWeight) + 
                           cholesterolEstimate * confidenceWeight;
       finalTriglycerides = this.lastTriglyceridesEstimate * (1 - confidenceWeight) + 
                            triglyceridesEstimate * confidenceWeight;
     } else {
-      // Strong weighting to previous measurements when confidence is low
       finalCholesterol = this.lastCholesterolEstimate * this.TEMPORAL_SMOOTHING + 
                          cholesterolEstimate * (1 - this.TEMPORAL_SMOOTHING);
       finalTriglycerides = this.lastTriglyceridesEstimate * this.TEMPORAL_SMOOTHING + 
@@ -248,26 +275,25 @@ export class LipidProcessor {
       const endIdx = peaks[i+1];
       
       // Find any trough between these peaks
-      const troughsBetween = troughs.filter(t => t > startIdx && t < endIdx);
-      if (troughsBetween.length === 0) continue;
-      
-      // Use the first trough after the peak
-      const troughIdx = troughsBetween[0];
-      
-      // Look for a small peak or inflection point after this trough
-      let maxVal = signal[troughIdx];
-      let maxIdx = troughIdx;
-      
-      for (let j = troughIdx + 1; j < Math.min(troughIdx + 30, endIdx); j++) {
-        if (signal[j] > maxVal) {
-          maxVal = signal[j];
-          maxIdx = j;
+      let minVal = signal[startIdx];
+      let minIdx = startIdx;
+      for (let j = startIdx; j < endIdx; j++) {
+        if (signal[j] < minVal) {
+          minVal = signal[j];
+          minIdx = j;
         }
       }
-      
-      // If we found a point higher than the trough, it might be a dicrotic notch
-      if (maxIdx > troughIdx) {
-        notches.push(maxIdx);
+
+      // Search for dicrotic notch after the peak, before the next trough
+      for (let j = peaks[i]; j < endIdx; j++) {
+        if (signal[j] > signal[j - 1] && signal[j] > signal[j + 1]) {
+          // Found a local maximum (potential notch)
+          // Check if it's within a reasonable range from the peak
+          if (j > peaks[i] + 5 && j < minIdx) { // Notch should be after peak and before trough
+            notches.push(j);
+            break; 
+          }
+        }
       }
     }
     
@@ -275,51 +301,46 @@ export class LipidProcessor {
   }
   
   /**
-   * Calculate confidence score for the lipid estimate
+   * Calculate confidence score based on signal quality metrics
+   * Higher score indicates more reliable measurement
    */
   private calculateConfidence(features: any, signal: number[]): number {
-    // Calculate signal-to-noise ratio
+    // Calculate signal-to-noise ratio (simplified)
     const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
     const variance = signal.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / signal.length;
     const snr = Math.sqrt(variance) / mean;
     
-    // Check for physiologically implausible values
-    const implausibleFeatures = 
-      features.areaUnderCurve < 0.1 || 
-      features.areaUnderCurve > 0.9 ||
-      features.augmentationIndex < 0.05 ||
-      features.augmentationIndex > 0.8;
+    // Low pulsatility indicates poor perfusion/contact
+    const lowPulsatility = features.pulsatilityIndex < 0.05;
+    
+    // Extremely high variability indicates noise/artifacts
+    const highVariability = features.variabilityIndex > 0.5;
     
     // Calculate final confidence score
-    const baseConfidence = 0.75; // Start with moderately high confidence
+    const baseConfidence = 0.8; // Start with high confidence
     let confidence = baseConfidence;
     
-    if (implausibleFeatures) confidence *= 0.5;
-    if (snr < 0.02) confidence *= 0.6;
-    
-    // Additional criteria from research: consistency of pulse intervals
-    const { peaks } = this.findPeaksAndTroughs(signal);
-    if (peaks.length >= 3) {
-      const intervals = [];
-      for (let i = 1; i < peaks.length; i++) {
-        intervals.push(peaks[i] - peaks[i-1]);
-      }
-      
-      // Calculate standard deviation of intervals
-      const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-      const intervalVariance = intervals.reduce((a, b) => a + Math.pow(b - avgInterval, 2), 0) / intervals.length;
-      const intervalStdDev = Math.sqrt(intervalVariance);
-      
-      // High variability reduces confidence
-      if (intervalStdDev / avgInterval > 0.2) {
-        confidence *= 0.8;
-      }
-    } else {
-      // Too few peaks detected
-      confidence *= 0.7;
-    }
+    if (lowPulsatility) confidence *= 0.6;
+    if (highVariability) confidence *= 0.5;
+    if (snr < 0.02) confidence *= 0.7;
     
     return confidence;
+  }
+  
+  /**
+   * Apply calibration offset (e.g., from reference measurement)
+   */
+  public calibrate(referenceValue: number): void {
+    // Para la calibración de lípidos, podríamos ajustar un factor si se tiene una referencia.
+    // Aquí, se muestra un ejemplo básico de cómo se podría adaptar.
+    if (this.lastCholesterolEstimate > 0 && referenceValue > 0) {
+      // Esto es un placeholder; la calibración de lípidos es compleja y requeriría un modelo específico.
+      // Por ejemplo, ajustar un factor si la referencia es conocida.
+      const currentAvg = (this.lastCholesterolEstimate + this.lastTriglyceridesEstimate) / 2;
+      const diff = referenceValue - currentAvg;
+      this.lastCholesterolEstimate += diff / 2;
+      this.lastTriglyceridesEstimate += diff / 2;
+    }
   }
   
   /**

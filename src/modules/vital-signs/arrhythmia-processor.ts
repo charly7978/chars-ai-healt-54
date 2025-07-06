@@ -1,4 +1,3 @@
-
 /**
  * Advanced Arrhythmia Processor based on peer-reviewed cardiac research
  */
@@ -233,7 +232,10 @@ export class ArrhythmiaProcessor {
    * Information theory approach from MIT research
    */
   private calculateShannonEntropy(intervals: number[]): void {
-    // Simplified histogram-based entropy calculation
+    // Esta implementación es razonablemente robusta para la mayoría de los casos.
+    // Para mayor robustez en entornos muy ruidosos, se podría considerar:
+    // 1. Mayor suavizado de los intervalos antes del binning.
+    // 2. Optimización del ancho de bin (binWidth) basado en la distribución de los datos.
     const bins: {[key: string]: number} = {};
     const binWidth = 25; // 25ms bin width
     
@@ -247,33 +249,71 @@ export class ArrhythmiaProcessor {
     
     Object.values(bins).forEach(count => {
       const probability = count / totalPoints;
-      entropy -= probability * Math.log2(probability);
+      if (probability > 0) { // Evitar log de cero
+        entropy -= probability * Math.log2(probability);
+      }
     });
     
     this.shannonEntropy = entropy;
   }
   
   /**
-   * Estimate Sample Entropy (simplified implementation)
-   * Based on Massachusetts General Hospital research
+   * Calculate Sample Entropy
+   * Based on advanced research, more robust than simplified version
+   * 
+   * Parameters:
+   *   m: embedding dimension (length of compared sequences)
+   *   r: tolerance (maximum accepted distance between similar patterns)
    */
-  private estimateSampleEntropy(intervals: number[]): number {
-    if (intervals.length < 4) return 0;
+  private estimateSampleEntropy(intervals: number[], m: number = 2, r: number = 0.2): number {
+    if (intervals.length < m + 2) return 0; // Not enough data points
+
+    const N = intervals.length;
     
-    // Simplified sample entropy estimation
-    // In a full implementation, this would use template matching
-    const normalizedIntervals = intervals.map(interval => 
-      (interval - intervals.reduce((a, b) => a + b, 0) / intervals.length) / 
-      Math.max(1, Math.sqrt(intervals.reduce((a, b) => a + Math.pow(b, 2), 0) / intervals.length))
-    );
+    // Normalize intervals to have zero mean and unit variance for robust comparison
+    const mean = intervals.reduce((a, b) => a + b, 0) / N;
+    const stdDev = Math.sqrt(intervals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / N);
     
-    let sumCorr = 0;
-    for (let i = 0; i < normalizedIntervals.length - 1; i++) {
-      sumCorr += Math.abs(normalizedIntervals[i + 1] - normalizedIntervals[i]);
+    if (stdDev === 0) return 0; // Avoid division by zero
+
+    const normalizedIntervals = intervals.map(val => (val - mean) / stdDev);
+    const rAdjusted = r * stdDev; // r is a fraction of standard deviation
+
+    let A = 0; // Count of matches for m+1 length sequences
+    let B = 0; // Count of matches for m length sequences
+
+    // Nested loops to compare patterns
+    for (let i = 0; i < N - m; i++) {
+      for (let j = i + 1; j < N - m; j++) {
+        let matchM = true; // Match for length m
+        let matchMPlus1 = true; // Match for length m+1
+
+        // Check patterns of length m
+        for (let k = 0; k < m; k++) {
+          if (Math.abs(normalizedIntervals[i + k] - normalizedIntervals[j + k]) > rAdjusted) {
+            matchM = false;
+            break;
+          }
+        }
+
+        if (matchM) {
+          B++; // Found a match of length m
+
+          // Check patterns of length m+1
+          if (i + m < N && j + m < N) {
+            if (Math.abs(normalizedIntervals[i + m] - normalizedIntervals[j + m]) <= rAdjusted) {
+              A++; // Found a match of length m+1
+            }
+          }
+        }
+      }
     }
-    
-    // Convert to entropy-like measure
-    return -Math.log(sumCorr / (normalizedIntervals.length - 1));
+
+    // Calculate Sample Entropy
+    if (B === 0) return Infinity; // No matches for length m
+    if (A === 0) return -Infinity; // No matches for length m+1
+
+    return -Math.log(A / B);
   }
 
   /**
