@@ -93,6 +93,11 @@ export class HeartBeatProcessor {
   // Nueva variable para retroalimentación de calidad de señal
   private currentSignalQuality: number = 0;
 
+  // Seguimiento de máximos y mínimos para normalización
+  private recentMax: number = 0;
+  private recentMin: number = 0;
+  private readonly NORMALIZATION_FACTOR = 0.92; // Respuesta más rápida
+
   private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
 
   constructor() {
@@ -361,6 +366,15 @@ export class HeartBeatProcessor {
     const maxSignal = Math.max(...recentSignals);
     const minSignal = Math.min(...recentSignals);
     const range = maxSignal - minSignal;
+    
+    // Actualizar máximos y mínimos con memoria histórica
+    if (this.recentMax === 0) this.recentMax = maxSignal;
+    if (this.recentMin === 0) this.recentMin = minSignal;
+    
+    this.recentMax = this.recentMax * this.NORMALIZATION_FACTOR + 
+                     maxSignal * (1 - this.NORMALIZATION_FACTOR);
+    this.recentMin = this.recentMin * this.NORMALIZATION_FACTOR + 
+                     minSignal * (1 - this.NORMALIZATION_FACTOR);
     
     // Calcular factor de amplificación proporcional a la fuerza de la señal
     let boostFactor = this.SIGNAL_BOOST_FACTOR;
@@ -688,6 +702,8 @@ export class HeartBeatProcessor {
     
     this.isArrhythmiaDetected = false;
     this.peakValidationBuffer = [];
+    this.recentMax = 0;
+    this.recentMin = 0;
     console.log("HeartBeatProcessor: Full reset including adaptive parameters and arrhythmia flag.");
   }
 
