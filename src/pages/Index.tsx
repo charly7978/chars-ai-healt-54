@@ -4,10 +4,13 @@ import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { useAdvancedVitalSigns } from "@/hooks/useAdvancedVitalSigns";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
+import { AdvancedDashboard } from "@/components/AdvancedDashboard";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
+import { Button } from "@/components/ui/button";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -40,6 +43,7 @@ const Index = () => {
   } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
+  const [showAdvancedDashboard, setShowAdvancedDashboard] = useState(false);
   
   const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
   const { 
@@ -55,6 +59,16 @@ const Index = () => {
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
+
+  // Hook avanzado para algoritmos médicos
+  const {
+    metrics: advancedMetrics,
+    isProcessing: isAdvancedProcessing,
+    processSignal: processAdvancedSignal,
+    updateConfig: updateAdvancedConfig,
+    reset: resetAdvanced,
+    config: advancedConfig
+  } = useAdvancedVitalSigns();
 
   const enterFullScreen = async () => {
     try {
@@ -448,6 +462,16 @@ const Index = () => {
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
+    
+    // Procesar con algoritmos avanzados
+    const advancedResult = processAdvancedSignal(
+      lastSignal.rawValue || 0,
+      lastSignal.filteredValue || 0,
+      lastSignal.rawValue * 0.8 || 0, // Simular canal azul
+      lastSignal.timestamp,
+      heartBeatResult.rrData
+    );
+    
     const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
@@ -620,25 +644,59 @@ const Index = () => {
             </div>
           </div>
 
-          {/* Botonera inferior: botón de iniciar/detener y de reset en fila */}
-          <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
-            <div className="w-1/2">
+          {/* Botonera inferior: botón de iniciar/detener, reset y dashboard avanzado */}
+          <div className="absolute inset-x-0 bottom-4 flex gap-2 px-4">
+            <div className="w-1/3">
               <MonitorButton 
                 isMonitoring={isMonitoring} 
                 onToggle={handleToggleMonitoring} 
                 variant="monitor"
               />
             </div>
-            <div className="w-1/2">
+            <div className="w-1/3">
               <MonitorButton 
                 isMonitoring={isMonitoring} 
                 onToggle={handleReset} 
                 variant="reset"
               />
             </div>
+            <div className="w-1/3">
+              <Button
+                variant={showAdvancedDashboard ? "default" : "secondary"}
+                onClick={() => setShowAdvancedDashboard(!showAdvancedDashboard)}
+                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {showAdvancedDashboard ? "Ocultar" : "Avanzado"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* Dashboard Avanzado como overlay */}
+      {showAdvancedDashboard && (
+        <div className="fixed inset-0 z-50 bg-black/95">
+          <AdvancedDashboard
+            metrics={advancedMetrics}
+            isMonitoring={isMonitoring}
+            elapsedTime={elapsedTime}
+            onAlgorithmToggle={(algorithm, enabled) => {
+              updateAdvancedConfig({
+                [algorithm.toLowerCase() as keyof typeof advancedConfig]: enabled
+              });
+            }}
+            onQualityThresholdChange={(threshold) => {
+              updateAdvancedConfig({ qualityThreshold: threshold });
+            }}
+          />
+          <Button
+            onClick={() => setShowAdvancedDashboard(false)}
+            className="absolute top-4 right-4 z-60 bg-red-600 hover:bg-red-700"
+          >
+            Cerrar
+          </Button>
+        </div>
+      )}
     </div>
   );
 };

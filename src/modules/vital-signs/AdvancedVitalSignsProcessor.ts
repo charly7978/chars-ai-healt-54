@@ -13,6 +13,7 @@ import { FastICAProcessor, FastICAResult } from '../signal-processing/FastICAPro
 import { EulerianMagnification, MagnificationResult } from '../signal-processing/EulerianMagnification';
 import { AdvancedSpO2Processor, SpO2Result } from './AdvancedSpO2Processor';
 import { AdvancedArrhythmiaProcessor, ArrhythmiaResult, HRVMetrics } from './AdvancedArrhythmiaProcessor';
+import { PPGMLModel } from '../../ml/models/PPGMLModel';
 
 export interface AdvancedVitalSignsConfig {
   enableCHROM: boolean;
@@ -75,6 +76,7 @@ export class AdvancedVitalSignsProcessor {
   private eulerianProcessor: EulerianMagnification;
   private spo2Processor: AdvancedSpO2Processor;
   private arrhythmiaProcessor: AdvancedArrhythmiaProcessor;
+  private mlModel: PPGMLModel;
   
   // Buffers de datos
   private redBuffer: number[] = [];
@@ -151,6 +153,9 @@ export class AdvancedVitalSignsProcessor {
       hrvWindowSize: 300,
       samplingRate: 1000
     });
+
+    // Inicializar modelo de Machine Learning
+    this.mlModel = new PPGMLModel();
   }
 
   /**
@@ -243,6 +248,22 @@ export class AdvancedVitalSignsProcessor {
       if (arrhythmiaResult) {
         algorithmsUsed.push('AdvancedArrhythmia');
       }
+    }
+
+    // 6. Procesamiento con Machine Learning
+    let mlPrediction = null;
+    if (this.redBuffer.length >= 100) {
+      // Extraer características para ML
+      const features = this.mlModel.extractFeatures(
+        this.calculateRRIntervals(),
+        this.calculateSignalQuality(),
+        this.calculatePerfusionIndex(),
+        this.calculateACDCRatio()
+      );
+      
+      // Obtener predicción del modelo
+      mlPrediction = this.mlModel.predict(features);
+      algorithmsUsed.push('MachineLearning');
     }
     
     // 6. Fusión de resultados
@@ -782,5 +803,74 @@ export class AdvancedVitalSignsProcessor {
     this.eulerianProcessor.reset();
     this.spo2Processor.reset();
     this.arrhythmiaProcessor.reset();
+    this.mlModel.reset();
+  }
+
+  /**
+   * Calcula intervalos RR basados en la señal PPG
+   */
+  private calculateRRIntervals(): number[] {
+    if (this.redBuffer.length < 10) return [];
+    
+    // Detectar picos en la señal PPG
+    const peaks: number[] = [];
+    for (let i = 1; i < this.redBuffer.length - 1; i++) {
+      if (this.redBuffer[i] > this.redBuffer[i-1] && 
+          this.redBuffer[i] > this.redBuffer[i+1] &&
+          this.redBuffer[i] > 0.5) {
+        peaks.push(i);
+      }
+    }
+    
+    // Calcular intervalos RR
+    const rrIntervals: number[] = [];
+    for (let i = 1; i < peaks.length; i++) {
+      const interval = (peaks[i] - peaks[i-1]) * (1000 / 60); // Convertir a ms
+      if (interval >= 300 && interval <= 2000) { // Rango fisiológico
+        rrIntervals.push(interval);
+      }
+    }
+    
+    return rrIntervals;
+  }
+
+  /**
+   * Calcula calidad de señal actual
+   */
+  private calculateSignalQuality(): number {
+    if (this.redBuffer.length < 10) return 0;
+    
+    const recentSignal = this.redBuffer.slice(-10);
+    const mean = recentSignal.reduce((sum, val) => sum + val, 0) / recentSignal.length;
+    const variance = recentSignal.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recentSignal.length;
+    const snr = mean / (Math.sqrt(variance) + 1e-10);
+    
+    return Math.min(100, Math.max(0, snr * 20));
+  }
+
+  /**
+   * Calcula índice de perfusión
+   */
+  private calculatePerfusionIndex(): number {
+    if (this.redBuffer.length < 10) return 0;
+    
+    const recentSignal = this.redBuffer.slice(-10);
+    const ac = Math.max(...recentSignal) - Math.min(...recentSignal);
+    const dc = recentSignal.reduce((sum, val) => sum + val, 0) / recentSignal.length;
+    
+    return ac / (dc + 1e-10);
+  }
+
+  /**
+   * Calcula ratio AC/DC
+   */
+  private calculateACDCRatio(): number {
+    if (this.redBuffer.length < 10) return 0;
+    
+    const recentSignal = this.redBuffer.slice(-10);
+    const ac = Math.max(...recentSignal) - Math.min(...recentSignal);
+    const dc = recentSignal.reduce((sum, val) => sum + val, 0) / recentSignal.length;
+    
+    return ac / (dc + 1e-10);
   }
 } 
