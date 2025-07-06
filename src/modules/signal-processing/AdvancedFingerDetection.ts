@@ -49,15 +49,15 @@ export class AdvancedFingerDetection {
   
   // Parámetros médicamente validados para detección de dedo
   private readonly DEFAULT_CONFIG: FingerDetectionConfig = {
-    minPulsatilityThreshold: 0.001,   // Umbral mínimo de pulsatilidad (0.1%) - ultra permisivo
-    maxPulsatilityThreshold: 0.999,   // Umbral máximo de pulsatilidad (99.9%) - ultra permisivo
-    minSignalAmplitude: 0.001,        // Amplitud mínima de señal (0.1%) - ultra permisivo
-    maxSignalAmplitude: 0.999,        // Amplitud máxima de señal (99.9%) - ultra permisivo
-    spectralAnalysisWindow: 30,       // Ventana de análisis espectral (0.5 segundo a 60fps) - más pequeña
-    motionArtifactThreshold: 0.8,     // Umbral de artefacto de movimiento (80%) - muy permisivo
-    skinToneValidation: false,        // Deshabilitar validación de tono de piel para mayor sensibilidad
-    perfusionIndexThreshold: 0.01,    // Umbral mínimo de índice de perfusión (1%) - ultra permisivo
-    confidenceThreshold: 0.1          // Umbral mínimo de confianza (10%) - ultra permisivo
+    minPulsatilityThreshold: 0.15,    // Umbral mínimo de pulsatilidad (15%)
+    maxPulsatilityThreshold: 0.85,    // Umbral máximo de pulsatilidad (85%)
+    minSignalAmplitude: 0.05,         // Amplitud mínima de señal (5%)
+    maxSignalAmplitude: 0.95,         // Amplitud máxima de señal (95%)
+    spectralAnalysisWindow: 300,      // Ventana de análisis espectral (5 segundos a 60fps)
+    motionArtifactThreshold: 0.3,     // Umbral de artefacto de movimiento (30%)
+    skinToneValidation: true,         // Validación de tono de piel
+    perfusionIndexThreshold: 0.2,     // Umbral mínimo de índice de perfusión (20%)
+    confidenceThreshold: 0.7          // Umbral mínimo de confianza (70%)
   };
 
   constructor(config: Partial<FingerDetectionConfig> = {}) {
@@ -240,27 +240,27 @@ export class AdvancedFingerDetection {
   }
 
   /**
-   * Validación de tono de piel basada en características fisiológicas - Versión más permisiva
+   * Validación de tono de piel basada en características fisiológicas
    */
   private validateSkinTone(): boolean {
-    const recentRed = this.redBuffer.slice(-20); // Menos muestras para respuesta más rápida
-    const recentGreen = this.greenBuffer.slice(-20);
-    const recentBlue = this.blueBuffer.slice(-20);
+    const recentRed = this.redBuffer.slice(-50);
+    const recentGreen = this.greenBuffer.slice(-50);
+    const recentBlue = this.blueBuffer.slice(-50);
     
     // Calcular promedios de tono
     const avgRed = recentRed.reduce((sum, val) => sum + val, 0) / recentRed.length;
     const avgGreen = recentGreen.reduce((sum, val) => sum + val, 0) / recentGreen.length;
     const avgBlue = recentBlue.reduce((sum, val) => sum + val, 0) / recentBlue.length;
     
-    // Características de tono de piel válido (más permisivo)
-    const redDominance = avgRed > avgGreen * 0.8 && avgRed > avgBlue * 0.8; // Más permisivo
+    // Características de tono de piel válido (basado en absorción de luz)
+    const redDominance = avgRed > avgGreen && avgRed > avgBlue;
     const greenRatio = avgGreen / (avgRed + 1e-10);
     const blueRatio = avgBlue / (avgRed + 1e-10);
     
-    // Validar rangos fisiológicos de tono de piel (más permisivo)
-    const validGreenRatio = greenRatio >= 0.4 && greenRatio <= 1.2; // Más permisivo
-    const validBlueRatio = blueRatio >= 0.2 && blueRatio <= 1.0; // Más permisivo
-    const validRedRange = avgRed >= 0.2 && avgRed <= 0.9; // Más permisivo
+    // Validar rangos fisiológicos de tono de piel
+    const validGreenRatio = greenRatio >= 0.6 && greenRatio <= 0.9;
+    const validBlueRatio = blueRatio >= 0.3 && blueRatio <= 0.7;
+    const validRedRange = avgRed >= 0.4 && avgRed <= 0.8;
     
     return redDominance && validGreenRatio && validBlueRatio && validRedRange;
   }
@@ -291,23 +291,23 @@ export class AdvancedFingerDetection {
     skinToneValidation: boolean,
     perfusionIndex: number
   ): FingerDetectionResult['bioPhysicalValidation'] {
-    // Validar pulsatilidad (ultra permisivo)
+    // Validar pulsatilidad
     const isValidPulsatility = pulsatilityIndex >= this.config.minPulsatilityThreshold && 
                                pulsatilityIndex <= this.config.maxPulsatilityThreshold;
     
-    // Validar amplitud de señal (ultra permisivo)
+    // Validar amplitud de señal
     const signalAmplitude = spectralFeatures.spectralPower;
     const isValidAmplitude = signalAmplitude >= this.config.minSignalAmplitude && 
                              signalAmplitude <= this.config.maxSignalAmplitude;
     
-    // Validar perfil espectral (ultra permisivo)
-    const isValidSpectralProfile = spectralFeatures.dominantFrequency >= 0.1 && 
-                                   spectralFeatures.dominantFrequency <= 5.0 &&
-                                   spectralFeatures.spectralEntropy > 0.01 &&
-                                   spectralFeatures.harmonicRatio > 0.01;
+    // Validar perfil espectral
+    const isValidSpectralProfile = spectralFeatures.dominantFrequency >= 0.5 && 
+                                   spectralFeatures.dominantFrequency <= 3.67 &&
+                                   spectralFeatures.spectralEntropy > 0.5 &&
+                                   spectralFeatures.harmonicRatio > 0.3;
     
     return {
-      isValidSkinTone: true, // Siempre válido (validación deshabilitada)
+      isValidSkinTone: skinToneValidation,
       isValidPulsatility,
       isValidAmplitude,
       isValidSpectralProfile
@@ -325,58 +325,55 @@ export class AdvancedFingerDetection {
     perfusionIndex: number,
     bioPhysicalValidation: FingerDetectionResult['bioPhysicalValidation']
   ): number {
-    // Factores de confianza ultra permisivos
-    const pulsatilityConfidence = Math.min(1, pulsatilityIndex / 0.1); // Umbral más bajo
-    const spectralConfidence = Math.min(1, spectralFeatures.spectralPower / 0.05); // Umbral más bajo
+    // Factores de confianza
+    const pulsatilityConfidence = Math.min(1, pulsatilityIndex / 0.5);
+    const spectralConfidence = Math.min(1, spectralFeatures.spectralPower / 0.3);
     const motionConfidence = Math.max(0, 1 - motionArtifactLevel);
-    const skinToneConfidence = 1.0; // Siempre dar confianza alta (validación deshabilitada)
-    const perfusionConfidence = Math.min(1, perfusionIndex / 0.1); // Umbral más bajo
+    const skinToneConfidence = skinToneValidation ? 1.0 : 0.0;
+    const perfusionConfidence = Math.min(1, perfusionIndex / 0.5);
     
     // Validación biofísica
     const bioPhysicalScore = Object.values(bioPhysicalValidation).filter(Boolean).length / 4;
     
-    // Ponderación de factores - dar más peso a factores básicos
-    const confidence = 0.30 * pulsatilityConfidence +
-                      0.30 * spectralConfidence +
+    // Ponderación de factores
+    const confidence = 0.25 * pulsatilityConfidence +
+                      0.25 * spectralConfidence +
                       0.20 * motionConfidence +
-                      0.10 * skinToneConfidence +
-                      0.05 * perfusionConfidence +
+                      0.15 * skinToneConfidence +
+                      0.10 * perfusionConfidence +
                       0.05 * bioPhysicalScore;
     
-    // Asegurar confianza mínima si hay alguna señal
-    const baseConfidence = Math.max(0.3, confidence);
-    
-    return Math.max(0, Math.min(1, baseConfidence));
+    return Math.max(0, Math.min(1, confidence));
   }
 
   /**
-   * Decisión final de detección - Versión simplificada y más permisiva
+   * Decisión final de detección
    */
   private makeDetectionDecision(
     confidence: number,
     bioPhysicalValidation: FingerDetectionResult['bioPhysicalValidation'],
     motionArtifactLevel: number
   ): boolean {
-    // Detección ultra permisiva - solo verificar confianza mínima
+    // Requerir confianza mínima
     if (confidence < this.config.confidenceThreshold) {
       return false;
     }
     
-    // Requerir solo 1 de 4 validaciones biofísicas (ultra permisivo)
+    // Requerir validación biofísica
     const validBioPhysicalCount = Object.values(bioPhysicalValidation).filter(Boolean).length;
-    if (validBioPhysicalCount < 1) {
+    if (validBioPhysicalCount < 3) {
       return false;
     }
     
-    // Rechazar solo si hay movimiento extremo (ultra permisivo)
-    if (motionArtifactLevel > 0.95) {
+    // Rechazar si hay demasiado movimiento
+    if (motionArtifactLevel > this.config.motionArtifactThreshold) {
       return false;
     }
     
-    // No requerir tono de piel válido (ya deshabilitado en config)
-    // if (!bioPhysicalValidation.isValidSkinTone) {
-    //   return false;
-    // }
+    // Requerir tono de piel válido
+    if (!bioPhysicalValidation.isValidSkinTone) {
+      return false;
+    }
     
     return true;
   }
