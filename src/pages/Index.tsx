@@ -305,19 +305,24 @@ const Index = () => {
         // Procesar detección de dedo
         const fingerResult = fingerDetectionRef.current?.processSample(red, green, blue, timestamp);
         if (fingerResult) {
-          console.log("🔍 Finger Detection Result:", {
-            isDetected: fingerResult.isFingerDetected,
-            confidence: fingerResult.confidence,
-            signalQuality: fingerResult.signalQuality,
-            pulsatilityIndex: fingerResult.pulsatilityIndex,
-            perfusionIndex: fingerResult.perfusionIndex,
-            rgb: { red: Math.round(red * 255), green: Math.round(green * 255), blue: Math.round(blue * 255) }
-          });
+          // Log de diagnóstico cada segundo
+          if (timestamp % 1000 < 16) {
+            console.log("🔍 Finger Detection:", {
+              isDetected: fingerResult.isFingerDetected,
+              confidence: fingerResult.confidence.toFixed(3),
+              signalQuality: fingerResult.signalQuality.toFixed(3),
+              pulsatilityIndex: fingerResult.pulsatilityIndex.toFixed(4),
+              perfusionIndex: fingerResult.perfusionIndex.toFixed(3),
+              rgb: { red: Math.round(red * 255), green: Math.round(green * 255), blue: Math.round(blue * 255) }
+            });
+          }
           
           setIsFingerDetected(fingerResult.isFingerDetected);
           setSignalQuality(fingerResult.signalQuality * 100);
         } else {
-          console.log("❌ No finger detection result");
+          if (timestamp % 1000 < 16) {
+            console.log("❌ No finger detection result");
+          }
         }
 
         // Procesar detección de latidos solo si hay dedo detectado con alta confianza
