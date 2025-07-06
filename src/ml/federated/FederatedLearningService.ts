@@ -57,7 +57,7 @@ export class FederatedLearningService {
     
     if (!clientId) {
       // Generate a new client ID and store it
-      clientId = `client_${Math.random().toString(36).substr(2, 9)}`;
+      clientId = `client_${Date.now()}_${performance.now()}`;
       localStorage.setItem(STORAGE_KEY, clientId);
     }
     

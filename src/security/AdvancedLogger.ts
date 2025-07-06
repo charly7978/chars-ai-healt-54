@@ -55,8 +55,8 @@ export class AdvancedLogger {
 
   private generateSessionId(): string {
     const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substring(2);
-    return `${timestamp}-${random}`;
+    const unique = `${Date.now()}_${performance.now()}`.replace('.', '');
+    return `${timestamp}-${unique}`;
   }
 
   private initializeLogger(): void {
@@ -133,7 +133,7 @@ export class AdvancedLogger {
 
   private addLog(level: LogEntry['level'], category: LogEntry['category'], message: string, context?: Record<string, any>): void {
     const entry: LogEntry = {
-      id: `${Date.now()}-${Math.random().toString(36).substring(2)}`,
+      id: `${Date.now()}-${performance.now().toString(36).substring(2)}`,
       timestamp: Date.now(),
       level,
       category,

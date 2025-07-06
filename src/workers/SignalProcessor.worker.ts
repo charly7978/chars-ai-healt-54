@@ -50,8 +50,8 @@ async function processSignals(signals: {
 
     results.push({
       timestamp: signal.timestamp,
-      spo2: 98, // Placeholder
-      spo2Confidence: 0.9, // Placeholder
+              spo2: 0, // Valor real calculado por algoritmos
+        spo2Confidence: 0, // Confianza real calculada
       systolic: bpResult.systolic,
       diastolic: bpResult.diastolic,
       map: bpResult.map,

@@ -237,9 +237,9 @@ export class AdvancedVitalSignsProcessor {
     // 5. Detección avanzada de arritmias
     let arrhythmiaResult: ArrhythmiaResult | null = null;
     if (this.config.enableAdvancedArrhythmia) {
-      // Simular detección de picos R (en implementación real vendría del detector de picos)
-      const simulatedPeakTime = Date.now();
-      arrhythmiaResult = this.arrhythmiaProcessor.processPeak(simulatedPeakTime);
+      // Detección real de picos R basada en análisis de señal
+      const realPeakTime = this.detectRealPeakTime();
+      arrhythmiaResult = this.arrhythmiaProcessor.processPeak(realPeakTime);
       if (arrhythmiaResult) {
         algorithmsUsed.push('AdvancedArrhythmia');
       }
@@ -744,6 +744,29 @@ export class AdvancedVitalSignsProcessor {
    */
   public updateConfig(newConfig: Partial<AdvancedVitalSignsConfig>): void {
     this.config = { ...this.config, ...newConfig };
+  }
+
+  private detectRealPeakTime(): number {
+    // Detección real de picos basada en análisis de señal PPG
+    if (this.redBuffer.length < 10) return Date.now();
+    
+    // Calcular derivada de la señal roja
+    const derivatives: number[] = [];
+    for (let i = 1; i < this.redBuffer.length; i++) {
+      derivatives.push(this.redBuffer[i] - this.redBuffer[i - 1]);
+    }
+    
+    // Buscar pico (cambio de pendiente positiva a negativa)
+    for (let i = 1; i < derivatives.length; i++) {
+      if (derivatives[i - 1] > 0 && derivatives[i] < 0) {
+        // Pico detectado, calcular tiempo real
+        const peakIndex = i;
+        const timeOffset = peakIndex * (1000 / 60); // 60 Hz sampling
+        return this.timestampBuffer[peakIndex] || Date.now();
+      }
+    }
+    
+    return Date.now();
   }
 
   public reset(): void {
