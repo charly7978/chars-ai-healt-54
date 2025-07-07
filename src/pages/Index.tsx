@@ -1,21 +1,23 @@
 import React, { useState, useRef, useEffect } from "react";
-import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
-import { useAdvancedVitalSigns } from "@/hooks/useAdvancedVitalSigns";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
-import { AdvancedDashboard } from "@/components/AdvancedDashboard";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
-import { Button } from "@/components/ui/button";
 
 const Index = () => {
+  // Estados principales
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
+  const [heartRate, setHeartRate] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const measurementTimerRef = useRef<number | null>(null);
+
+  // Estado para los signos vitales
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
     pressure: "--/--",
@@ -27,49 +29,23 @@ const Index = () => {
     },
     hemoglobin: 0
   });
-  const [heartRate, setHeartRate] = useState(0);
-  const [heartbeatSignal, setHeartbeatSignal] = useState(0);
-  const [beatMarker, setBeatMarker] = useState(0);
-  const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
-  const [elapsedTime, setElapsedTime] = useState(0);
-  const [showResults, setShowResults] = useState(false);
-  const [isCalibrating, setIsCalibrating] = useState(false);
-  const [calibrationProgress, setCalibrationProgress] = useState<VitalSignsResult['calibration']>();
-  const measurementTimerRef = useRef<number | null>(null);
-  const [lastArrhythmiaData, setLastArrhythmiaData] = useState<{
-    timestamp: number;
-    rmssd: number;
-    rrVariation: number;
-  } | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [rrIntervals, setRRIntervals] = useState<number[]>([]);
-  const [showAdvancedDashboard, setShowAdvancedDashboard] = useState(false);
-  
-  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
+
+  // Hooks para procesamiento de señales
   const { 
-    processSignal: processHeartBeat, 
-    setArrhythmiaState 
+    lastSignal, 
+    processFrame, 
+    isProcessing 
+  } = useSignalProcessor();
+  // Hooks para procesamiento de señales
+  const { 
+    processSignal: processHeartBeat
   } = useHeartBeatProcessor();
+  
   const { 
-    processSignal: processVitalSigns, 
-    reset: resetVitalSigns,
-    fullReset: fullResetVitalSigns,
-    lastValidResults,
-    startCalibration,
-    forceCalibrationCompletion,
-    getCalibrationProgress
+    processSignal: processVitalSigns
   } = useVitalSignsProcessor();
 
-  // Hook avanzado para algoritmos médicos
-  const {
-    metrics: advancedMetrics,
-    isProcessing: isAdvancedProcessing,
-    processSignal: processAdvancedSignal,
-    updateConfig: updateAdvancedConfig,
-    reset: resetAdvanced,
-    config: advancedConfig
-  } = useAdvancedVitalSigns();
-
+  // Función para manejar la pantalla completa
   const enterFullScreen = async () => {
     try {
       if (!isFullscreen) {
@@ -491,214 +467,145 @@ const Index = () => {
     }
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
-  // Referencia para activar o desactivar el sonido de arritmia
-  const arrhythmiaDetectedRef = useRef(false);
-  
-  // Nueva función para alternar medición
+  // Función para alternar el monitoreo
   const handleToggleMonitoring = () => {
-    if (isMonitoring) {
-      finalizeMeasurement();
-    } else {
-      startMonitoring();
-    }
+    setIsMonitoring(prev => !prev);
+  };
+  
+  // Función para reiniciar la medición
+  const handleReset = () => {
+    setIsMonitoring(false);
+    setHeartRate(0);
+    setVitalSigns({
+      spo2: 0,
+      pressure: "--/--",
+      arrhythmiaStatus: "--",
+      glucose: 0,
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      hemoglobin: 0
+    });
   };
 
-  // Observar el progreso real de la calibración desde el procesador de signos vitales
+  // Efecto para procesar la señal cuando está monitoreando
   useEffect(() => {
-    if (isCalibrating) {
-      const interval = setInterval(() => {
-        const currentProgress = getCalibrationProgress();
-        setCalibrationProgress(currentProgress);
-
-        if (!currentProgress?.isCalibrating) {
-          clearInterval(interval);
-          console.log("Calibración finalizada según el procesador.");
-          setIsCalibrating(false);
-          if (navigator.vibrate) {
-            navigator.vibrate([100, 50, 100]);
-          }
-        }
-      }, 500); // Actualizar el progreso cada 500ms
-
-      return () => clearInterval(interval);
+    if (!isMonitoring || !lastSignal) return;
+    
+    // Actualizar calidad de señal
+    setSignalQuality(lastSignal.quality);
+    
+    // Si no hay dedo detectado o calidad insuficiente, no procesar
+    const MIN_SIGNAL_QUALITY = 30;
+    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
+      setHeartRate(0);
+      return;
     }
-  }, [isCalibrating, getCalibrationProgress]);
+    
+    // Procesar latidos y signos vitales
+    const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
+    setHeartRate(heartBeatResult.bpm);
+    
+    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    if (vitals) {
+      setVitalSigns(vitals);
+    }
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns]);
 
-  return (
-    <div className="fixed inset-0 flex flex-col bg-black" style={{ 
-      height: '100svh',
-      width: '100vw',
-      maxWidth: '100vw',
-      maxHeight: '100svh',
-      overflow: 'hidden',
-      paddingTop: 'env(safe-area-inset-top)',
-      paddingBottom: 'env(safe-area-inset-bottom)'
-    }}>
-      {/* Debug overlay de intervalos RR */}
-      {rrIntervals.length > 0 && (
-        <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded">
-          Últimos intervalos RR: {rrIntervals.map(i => i + ' ms').join(', ')}
+return (
+  <div className="relative flex flex-col bg-black" style={{
+    height: '100svh',
+    width: '100vw',
+    maxWidth: '100vw',
+    maxHeight: '100svh',
+    overflow: 'hidden',
+    paddingTop: 'env(safe-area-inset-top)',
+    paddingBottom: 'env(safe-area-inset-bottom)'
+  }}>
+    {/* Overlay button for re-entering fullscreen if user exits */}
+    {!isFullscreen && (
+      <button 
+        onClick={enterFullScreen}
+        className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/90 text-white"
+      >
+        <div className="text-center p-4 bg-primary/20 rounded-lg backdrop-blur-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
+          </svg>
+          <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
         </div>
-      )}
-      {/* Overlay button for re-entering fullscreen if user exits */}
-      {!isFullscreen && (
-        <button 
-          onClick={enterFullScreen}
-          className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/90 text-white"
-        >
-          <div className="text-center p-4 bg-primary/20 rounded-lg backdrop-blur-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
-            </svg>
-            <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
-          </div>
-        </button>
-      )}
+      </button>
+    )}
 
-      <div className="flex-1 relative">
-        <div className="absolute inset-0">
-          <CameraView 
-            onStreamReady={handleStreamReady}
-            isMonitoring={isCameraOn}
-            isFingerDetected={lastSignal?.fingerDetected}
-            signalQuality={signalQuality}
+    <div className="flex-1 relative">
+      <div className="absolute inset-0">
+        <CameraView 
+          onStreamReady={handleStreamReady}
+          isMonitoring={isCameraOn}
+          isFingerDetected={lastSignal?.fingerDetected}
+          signalQuality={signalQuality}
+        />
+      </div>
+
+      <div className="relative z-10 h-full flex flex-col">
+        {/* Header for signal quality and finger detection status */}
+        <div className="px-4 py-2 flex justify-around items-center bg-black/20">
+          <div className="text-white text-lg">
+            Calidad: {signalQuality}%
+          </div>
+          <div className="text-white text-lg">
+            {lastSignal?.fingerDetected ? "Dedo Detectado" : "Coloque el dedo"}
+          </div>
+        </div>
+
+        {/* Main signal meter */}
+        <div className="flex-1 flex items-center justify-center">
+          <PPGSignalMeter 
+            value={0}
+            quality={signalQuality}
+            isFingerDetected={lastSignal?.fingerDetected || false}
+            onStartMeasurement={startMonitoring}
+            onReset={handleReset}
+            arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
           />
         </div>
 
-        <div className="relative z-10 h-full flex flex-col">
-          {/* Se agrega header para sensor de calidad y estado de huella digital */}
-          <div className="px-4 py-2 flex justify-around items-center bg-black/20">
-            <div className="text-white text-lg">
-              Calidad: {signalQuality}
+        {/* Vital signs display */}
+        <div className="absolute inset-x-0 bottom-20 bg-black/10 px-4 py-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-black/30 p-3 rounded-lg text-center">
+              <div className="text-white/70 text-sm">FRECUENCIA CARDÍACA</div>
+              <div className="text-white text-2xl font-bold">{heartRate || "--"} <span className="text-sm">BPM</span></div>
             </div>
-            <div className="text-white text-lg">
-              {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
+            <div className="bg-black/30 p-3 rounded-lg text-center">
+              <div className="text-white/70 text-sm">SPO2</div>
+              <div className="text-white text-2xl font-bold">{vitalSigns.spo2 || "--"} <span className="text-sm">%</span></div>
+            </div>
+            <div className="bg-black/30 p-3 rounded-lg text-center">
+              <div className="text-white/70 text-sm">PRESIÓN ARTERIAL</div>
+              <div className="text-white text-2xl font-bold">{vitalSigns.pressure || "--"} <span className="text-sm">mmHg</span></div>
             </div>
           </div>
-          {/* Panel de estado */}
-          <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
-            <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
-            <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
-          </div>
-          {/* Panel de debug */}
-          <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
-            <summary className="cursor-pointer">Debug Signal Stats</summary>
-            <pre className="whitespace-pre-wrap text-xs">
-              {JSON.stringify(signalStats, null, 2)}
-              {'\n'}Quality Transitions:{'\n'}{JSON.stringify(qualityTransitions, null, 2)}
-            </pre>
-          </details>
-          <div className="flex-1">
-            <PPGSignalMeter 
-              value={beatMarker}
-              quality={lastSignal?.quality || 0}
-              isFingerDetected={lastSignal?.fingerDetected || false}
-              onStartMeasurement={startMonitoring}
-              onReset={handleReset}
-              arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
-              rawArrhythmiaData={lastArrhythmiaData}
-              preserveResults={showResults}
+        </div>
+
+        {/* Control buttons */}
+        <div className="absolute inset-x-0 bottom-4 flex gap-2 px-4">
+          <div className="w-1/2">
+            <MonitorButton 
+              isMonitoring={isMonitoring} 
+              onToggle={handleToggleMonitoring} 
+              variant="monitor"
             />
           </div>
-
-          {/* Contenedor de los displays ampliado y con mayor espaciamiento */}
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
-            <div className="grid grid-cols-3 gap-4 place-items-center">
-              <VitalSign 
-                label="FRECUENCIA CARDÍACA"
-                value={heartRate || "--"}
-                unit="BPM"
-                highlighted={showResults}
-              />
-              <VitalSign 
-                label="SPO2"
-                value={vitalSigns.spo2 || "--"}
-                unit="%"
-                highlighted={showResults}
-              />
-              <VitalSign 
-                label="PRESIÓN ARTERIAL"
-                value={vitalSigns.pressure}
-                unit="mmHg"
-                highlighted={showResults}
-              />
-              <VitalSign 
-                label="HEMOGLOBINA"
-                value={vitalSigns.hemoglobin || "--"}
-                unit="g/dL"
-                highlighted={showResults}
-              />
-              <VitalSign 
-                label="GLUCOSA"
-                value={vitalSigns.glucose || "--"}
-                unit="mg/dL"
-                highlighted={showResults}
-              />
-              <VitalSign 
-                label="COLESTEROL/TRIGL."
-                value={`${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`}
-                unit="mg/dL"
-                highlighted={showResults}
-              />
-            </div>
-          </div>
-
-          {/* Botonera inferior: botón de iniciar/detener, reset y dashboard avanzado */}
-          <div className="absolute inset-x-0 bottom-4 flex gap-2 px-4">
-            <div className="w-1/3">
-              <MonitorButton 
-                isMonitoring={isMonitoring} 
-                onToggle={handleToggleMonitoring} 
-                variant="monitor"
-              />
-            </div>
-            <div className="w-1/3">
-              <MonitorButton 
-                isMonitoring={isMonitoring} 
-                onToggle={handleReset} 
-                variant="reset"
-              />
-            </div>
-            <div className="w-1/3">
-              <Button
-                variant={showAdvancedDashboard ? "default" : "secondary"}
-                onClick={() => setShowAdvancedDashboard(!showAdvancedDashboard)}
-                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                {showAdvancedDashboard ? "Ocultar" : "Avanzado"}
-              </Button>
-            </div>
+          <div className="w-1/2">
+            <MonitorButton 
+              isMonitoring={isMonitoring} 
+              onToggle={handleReset} 
+              variant="reset"
+            />
           </div>
         </div>
       </div>
-
-      {/* Dashboard Avanzado como overlay */}
-      {showAdvancedDashboard && (
-        <div className="fixed inset-0 z-50 bg-black/95">
-          <AdvancedDashboard
-            metrics={advancedMetrics}
-            isMonitoring={isMonitoring}
-            elapsedTime={elapsedTime}
-            onAlgorithmToggle={(algorithm, enabled) => {
-              updateAdvancedConfig({
-                [algorithm.toLowerCase() as keyof typeof advancedConfig]: enabled
-              });
-            }}
-            onQualityThresholdChange={(threshold) => {
-              updateAdvancedConfig({ qualityThreshold: threshold });
-            }}
-          />
-          <Button
-            onClick={() => setShowAdvancedDashboard(false)}
-            className="absolute top-4 right-4 z-60 bg-red-600 hover:bg-red-700"
-          >
-            Cerrar
-          </Button>
-        </div>
-      )}
     </div>
-  );
-};
+  </div>
+);
 
 export default Index;
