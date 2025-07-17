@@ -75,7 +75,7 @@
     "@eslint/js": "^9.9.0",
     "@tailwindcss/typography": "^0.5.15",
     "@tensorflow/tfjs-node": "^4.22.0",
-    "@types/node": "^22.16.0",
+    "@types/node": "^22.16.4",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react-swc": "^3.5.0",
