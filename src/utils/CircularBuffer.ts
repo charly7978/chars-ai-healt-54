@@ -37,7 +37,6 @@ export class CircularBuffer {
   private head: number = 0;
   private tail: number = 0;
   private count: number = 0;
-  private lastPeakTime: number = 0;
   private lastRRIntervals: number[] = [];
   private readonly MAX_RR_INTERVALS = 100; // Aumentado para mejor análisis espectral
   private samplingRate: number;
@@ -273,7 +272,7 @@ export class CircularBuffer {
     if (this.count < 2) return { bpm: 0, confidence: 0 };
     
     const points = this.getPoints();
-    const peaks = this.detectPeaks(points);
+    const peaks = this.detectPeaksInSignal(points);
     
     if (peaks.length < 2) return { bpm: 0, confidence: 0 };
     
@@ -304,6 +303,17 @@ export class CircularBuffer {
     const confidence = Math.max(0, 1 - (cv / 30)); // Normalizar a 0-1
     
     return { bpm, confidence };
+  }
+
+  /**
+   * Detecta picos en la señal PPG (método alternativo)
+   */
+  private detectPeaksInSignal(points: PPGDataPoint[]): PPGDataPoint[] {
+    if (points.length < 10) return [];
+    
+    const peaks: PPGDataPoint[] = [];
+    const windowSize = Math.max(5, Math.floor(this.samplingRate * 0.2)); // 200ms
+    
     for (let i = windowSize; i < points.length - windowSize; i++) {
       const current = points[i];
       let isPeak = true;
@@ -411,7 +421,7 @@ export class CircularBuffer {
     this.head = 0;
     this.tail = 0;
     this.count = 0;
-    this.lastRRInterval = [];
+    this.lastRRIntervals = [];
   }
 
   /**
@@ -436,4 +446,3 @@ export class CircularBuffer {
   }
 }
 
-export type { PPGDataPoint };
