@@ -304,17 +304,6 @@ export class CircularBuffer {
     const confidence = Math.max(0, 1 - (cv / 30)); // Normalizar a 0-1
     
     return { bpm, confidence };
-  }
-
-  /**
-   * Detecta picos en la señal PPG usando un algoritmo adaptativo
-   */
-  private detectPeaks(points: PPGDataPoint[]): PPGDataPoint[] {
-    if (points.length < 10) return [];
-    
-    const peaks: PPGDataPoint[] = [];
-    const windowSize = Math.max(5, Math.floor(this.samplingRate * 0.2)); // 200ms
-    
     for (let i = windowSize; i < points.length - windowSize; i++) {
       const current = points[i];
       let isPeak = true;
