@@ -29,7 +29,7 @@ export const useSignalProcessor = () => {
   useEffect(() => {
     console.log("useSignalProcessor: Creating new processor instance", {
       timestamp: new Date().toISOString(),
-      sessionId: `session_${Date.now()}_${performance.now()}`
+      sessionId: Math.random().toString(36).substring(2, 9)
     });
 
     // Define signal ready callback with proper physiological validation

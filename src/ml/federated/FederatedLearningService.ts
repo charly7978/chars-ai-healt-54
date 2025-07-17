@@ -57,7 +57,7 @@ export class FederatedLearningService {
     
     if (!clientId) {
       // Generate a new client ID and store it
-      clientId = `client_${Date.now()}_${performance.now()}`;
+      clientId = `client_${Math.random().toString(36).substr(2, 9)}`;
       localStorage.setItem(STORAGE_KEY, clientId);
     }
     
@@ -97,14 +97,8 @@ export class FederatedLearningService {
       });
 
       // Create a model update
-      const modelWeights = this.model.getWeights();
-      const namedWeights: tf.NamedTensorMap = {};
-      modelWeights.forEach((weight, index) => {
-        namedWeights[`weight_${index}`] = weight;
-      });
-
       const update: ModelUpdate = {
-        weights: namedWeights,
+        weights: this.model.getWeights(),
         numSamples: x.shape[0] as number,
         metadata: {
           timestamp: Date.now(),
@@ -139,9 +133,7 @@ export class FederatedLearningService {
   private addPrivacyNoise(update: ModelUpdate): void {
     if (this.privacyNoiseScale <= 0) return;
     
-    const weightNames = Object.keys(update.weights);
-    for (const weightName of weightNames) {
-      const weight = update.weights[weightName];
+    update.weights = update.weights.map(weight => {
       // Generate random noise with the same shape as the weight tensor
       const noise = tf.randomNormal(
         weight.shape,
@@ -156,8 +148,8 @@ export class FederatedLearningService {
       tf.dispose(noise);
       tf.dispose(weight);
       
-      update.weights[weightName] = noisyWeight;
-    }
+      return noisyWeight as tf.NamedTensor;
+    });
   }
 
   private compressUpdate(update: ModelUpdate): ModelUpdate {
@@ -166,11 +158,7 @@ export class FederatedLearningService {
     }
     
     // Simple compression: only keep a fraction of the weights
-    const compressedWeights: tf.NamedTensorMap = {};
-    const weightNames = Object.keys(update.weights);
-    
-    for (const weightName of weightNames) {
-      const weight = update.weights[weightName];
+    const compressedWeights = update.weights.map(weight => {
       const values = weight.dataSync();
       const compressedValues = new Float32Array(
         Math.ceil(values.length * this.config.compressionRatio!)
@@ -181,12 +169,13 @@ export class FederatedLearningService {
         compressedValues[i] = values[Math.floor(i / this.config.compressionRatio!)];
       }
       
-      compressedWeights[weightName] = tf.tensor(
+      return tf.tensor(
         compressedValues,
         [compressedValues.length],
-        weight.dtype
-      );
-    }
+        weight.dtype,
+        weight.name
+      ) as tf.NamedTensor;
+    });
     
     return {
       ...update,
@@ -209,8 +198,8 @@ export class FederatedLearningService {
       // Aggregate updates if needed
       const aggregatedUpdate = this.aggregateUpdates();
       
-      // Create anonymized update from aggregated weights
-      const anonymizedUpdate = this.createAnonymizedUpdate(aggregatedUpdate);
+      // Anonymize metadata
+      const anonymizedUpdate = this.anonymizeUpdate(aggregatedUpdate);
       
       // Encrypt the update
       const encryptedUpdate = await this.encryptUpdate(anonymizedUpdate);
@@ -279,11 +268,10 @@ export class FederatedLearningService {
     return result;
   }
 
-  private createAnonymizedUpdate(update: tf.NamedTensorMap): ModelUpdate {
-    const totalSamples = this.updatesBuffer.reduce((sum, update) => sum + update.numSamples, 0);
+  private anonymizeUpdate(update: tf.NamedTensorMap): ModelUpdate {
     return {
       weights: update,
-      numSamples: totalSamples,
+      numSamples: this.updatesBuffer.reduce((sum, update) => sum + update.numSamples, 0),
       metadata: dataAnonymizer.anonymize({
         timestamp: Date.now(),
         clientId: this.clientId,
@@ -293,7 +281,7 @@ export class FederatedLearningService {
             (sum, update) => sum + (update.metadata.metrics?.loss || 0) * update.numSamples, 0
           ) / totalSamples
         }
-      }, {}),
+      }
     };
   }
 
@@ -309,17 +297,14 @@ export class FederatedLearningService {
 
   private async encryptUpdate(update: ModelUpdate): Promise<any> {
     // Convert tensors to arrays for JSON serialization
-    const weightNames = Object.keys(update.weights);
-    const serializableWeights = weightNames.map(name => ({
-      name,
-      shape: update.weights[name].shape,
-      dtype: update.weights[name].dtype,
-      data: Array.from(update.weights[name].dataSync())
-    }));
-
     const serializableUpdate = {
       ...update,
-      weights: serializableWeights
+      weights: update.weights.map(weight => ({
+        name: weight.name,
+        shape: weight.shape,
+        dtype: weight.dtype,
+        data: Array.from(weight.dataSync())
+      }))
     };
     
     // Encrypt the entire update
@@ -400,8 +385,7 @@ export class FederatedLearningService {
   public dispose(): void {
     // Clean up resources
     this.updatesBuffer.forEach(update => {
-      const weightNames = Object.keys(update.weights);
-      weightNames.forEach(name => update.weights[name].dispose());
+      update.weights.forEach(weight => weight.dispose());
     });
     this.updatesBuffer = [];
   }

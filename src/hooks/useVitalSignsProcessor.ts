@@ -17,7 +17,7 @@ export const useVitalSignsProcessor = () => {
   const [lastValidResults, setLastValidResults] = useState<VitalSignsResult | null>(null);
   const lastArrhythmiaTime = useRef<number>(0);
   const hasDetectedArrhythmia = useRef<boolean>(false);
-  const sessionId = useRef<string>(`session_${Date.now()}_${performance.now()}`);
+  const sessionId = useRef<string>(Math.random().toString(36).substring(2, 9));
   const processedSignals = useRef<number>(0);
   const signalLog = useRef<{timestamp: number, value: number, result: any}[]>([]);
   

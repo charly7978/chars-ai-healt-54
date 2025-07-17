@@ -11,9 +11,9 @@ import { AdvancedArrhythmiaProcessor } from '../modules/vital-signs/AdvancedArrh
 import { MedicalAlgorithmsProcessor } from '../modules/vital-signs/MedicalAlgorithmsProcessor';
 
 /**
- * Genera señales PPG reales para pruebas basadas en características fisiológicas
+ * Genera señales PPG sintéticas para pruebas
  */
-function generateRealPPGSignal(length: number, heartRate: number = 75): {
+function generateSyntheticPPGSignal(length: number, heartRate: number = 75): {
   red: number[];
   green: number[];
   blue: number[];
@@ -24,34 +24,26 @@ function generateRealPPGSignal(length: number, heartRate: number = 75): {
   
   const samplingRate = 60; // 60 Hz
   const heartRateHz = heartRate / 60; // Convertir BPM a Hz
-  const respiratoryRate = 0.25; // Hz (15 respiraciones/min)
-  const perfusionRate = 0.1; // Hz
   
   for (let i = 0; i < length; i++) {
     const time = i / samplingRate;
     
-    // Señal cardíaca real basada en fisiología
+    // Señal cardíaca sintética
     const cardiacSignal = Math.sin(2 * Math.PI * heartRateHz * time);
     
-    // Componente respiratorio real
-    const respiratorySignal = 0.3 * Math.sin(2 * Math.PI * respiratoryRate * time);
-    
-    // Componente de perfusión real
-    const perfusionSignal = 0.1 * Math.sin(2 * Math.PI * perfusionRate * time);
-    
-    // Componente DC (baseline) fisiológico
+    // Componente DC (baseline)
     const dc = 0.5;
     
-    // Componente AC (pulsátil) combinado
-    const ac = 0.1 * cardiacSignal + 0.05 * respiratorySignal + 0.02 * perfusionSignal;
+    // Componente AC (pulsátil)
+    const ac = 0.1 * cardiacSignal;
     
-    // Ruido fisiológico real (no aleatorio)
-    const physiologicalNoise = 0.01 * Math.sin(2 * Math.PI * 0.05 * time);
+    // Agregar ruido
+    const noise = (Math.random() - 0.5) * 0.02;
     
-    // Valores RGB basados en absorción real de longitudes de onda
-    const redValue = Math.max(0, Math.min(255, (dc + ac + physiologicalNoise) * 255));
-    const greenValue = Math.max(0, Math.min(255, (dc + 0.8 * ac + physiologicalNoise) * 255));
-    const blueValue = Math.max(0, Math.min(255, (dc + 0.6 * ac + physiologicalNoise) * 255));
+    // Valores RGB simulados
+    const redValue = Math.max(0, Math.min(255, (dc + ac + noise) * 255));
+    const greenValue = Math.max(0, Math.min(255, (dc + 0.8 * ac + noise) * 255));
+    const blueValue = Math.max(0, Math.min(255, (dc + 0.6 * ac + noise) * 255));
     
     red.push(redValue);
     green.push(greenValue);
@@ -80,7 +72,7 @@ describe('CHROM/POS Processor', () => {
   });
   
   test('debe procesar señales PPG correctamente', () => {
-    const signal = generateRealPPGSignal(300);
+    const signal = generateSyntheticPPGSignal(300);
     
     // Procesar múltiples muestras
     for (let i = 0; i < 300; i++) {
@@ -100,7 +92,7 @@ describe('CHROM/POS Processor', () => {
   });
   
   test('debe detectar movimiento correctamente', () => {
-    const signal = generateRealPPGSignal(300);
+    const signal = generateSyntheticPPGSignal(300);
     
     // Agregar movimiento artificial
     for (let i = 150; i < 200; i++) {

@@ -1,13 +1,15 @@
 import { BloodPressureModel } from '../ml/models/BloodPressureModel';
+import { SpO2Model } from '../ml/models/SpO2Model';
 
 // Initialize models
 let bpModel: BloodPressureModel | null = null;
+let spo2Model: SpO2Model | null = null;
 
 // Configuration
 const CONFIG = {
-  signalLength: 1000,
-  samplingRate: 100,
-  batchSize: 10
+  signalLength: 1000, // Adjust based on your sampling rate and window size
+  samplingRate: 100,  // Hz
+  batchSize: 10       // Number of samples to process in a batch
 };
 
 // Initialize models
@@ -15,7 +17,10 @@ async function initializeModels() {
   if (!bpModel) {
     bpModel = new BloodPressureModel({
       signalLength: CONFIG.signalLength,
-      samplingRate: CONFIG.samplingRate
+      samplingRate: CONFIG.samplingRate,
+      inputShape: [CONFIG.signalLength, 1],
+      outputShape: [2],
+      learningRate: 0.0005
     });
     
     try {
@@ -23,6 +28,23 @@ async function initializeModels() {
       console.log('BloodPressureModel loaded successfully');
     } catch (error) {
       console.warn('Could not load BloodPressureModel, initializing new model');
+    }
+  }
+
+  if (!spo2Model) {
+    spo2Model = new SpO2Model({
+      signalLength: CONFIG.signalLength,
+      samplingRate: CONFIG.samplingRate,
+      inputShape: [CONFIG.signalLength, 2],
+      outputShape: [1],
+      learningRate: 0.001
+    });
+    
+    try {
+      await spo2Model.load();
+      console.log('SpO2Model loaded successfully');
+    } catch (error) {
+      console.warn('Could not load SpO2Model, initializing new model');
     }
   }
 }
@@ -34,24 +56,31 @@ async function processSignals(signals: {
   green: Float32Array;
   timestamp: number;
 }[]) {
-  if (!bpModel) {
+  if (!bpModel || !spo2Model) {
     throw new Error('Models not initialized');
   }
 
   const results = [];
   
   for (const signal of signals) {
+    // Process SpO2 (uses red and IR)
+    const spo2Result = await spo2Model.predictSpO2(
+      signal.red,
+      signal.ir,
+      true // preprocess
+    );
+
     // Process Blood Pressure (uses green channel)
     const bpResult = await bpModel.predictBloodPressure(
       signal.green,
-      undefined,
-      true
+      undefined, // ECG signal if available
+      true       // preprocess
     );
 
     results.push({
       timestamp: signal.timestamp,
-              spo2: 0, // Valor real calculado por algoritmos
-        spo2Confidence: 0, // Confianza real calculada
+      spo2: spo2Result.spo2,
+      spo2Confidence: spo2Result.confidence,
       systolic: bpResult.systolic,
       diastolic: bpResult.diastolic,
       map: bpResult.map,
@@ -83,6 +112,8 @@ self.onmessage = async (event: MessageEvent) => {
         break;
 
       case 'TRAIN_MODEL':
+        // Implement model training with federated learning
+        // This would involve receiving model updates and applying them
         self.postMessage({
           type: 'TRAINING_COMPLETE',
           payload: { success: true }
@@ -90,13 +121,8 @@ self.onmessage = async (event: MessageEvent) => {
         break;
 
       case 'SAVE_MODELS':
-        if (bpModel) {
-          try {
-            await bpModel.save();
-          } catch (error) {
-            console.warn('Could not save model:', error);
-          }
-        }
+        if (bpModel) await bpModel.save();
+        if (spo2Model) await spo2Model.save();
         self.postMessage({ type: 'MODELS_SAVED' });
         break;
 
