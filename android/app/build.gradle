@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 android {
     namespace "com.example.charsaihealth"
@@ -13,17 +14,29 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         multiDexEnabled true
     }
-
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    
     buildTypes {
+        debug {
+            debuggable true
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+    
+    // Habilitar la generación de APK de depuración
+    buildFeatures {
+        buildConfig = true
     }
 }
 
