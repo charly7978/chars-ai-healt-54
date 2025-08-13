@@ -21,9 +21,9 @@ export class MotionDetector {
   }> = [];
   
   private readonly HISTORY_SIZE = 20;
-  private readonly MOTION_THRESHOLD = 0.15; // Umbral estricto para movimiento
+  private readonly MOTION_THRESHOLD = 0.4; // Umbral PERMISIVO para movimiento
   private readonly STABILITY_WINDOW = 10;
-  private readonly MIN_STATIC_FRAMES = 8; // Mínimo frames estáticos requeridos
+  private readonly MIN_STATIC_FRAMES = 4; // Mínimo frames estáticos REDUCIDO
   
   analyzeMotion(
     redValue: number,
@@ -155,10 +155,10 @@ export class MotionDetector {
     // Verificar que la textura sea consistente (indica dedo real)
     const avgTexture = recentFrames.reduce((sum, f) => sum + f.textureScore, 0) / recentFrames.length;
     
-    // Criterios para colocación válida
-    const hasAdequateSignal = avgSignal > 30 && avgSignal < 200;
-    const hasConsistentSignal = signalConsistency > 0.8;
-    const hasValidTexture = avgTexture > 0.2 && avgTexture < 0.9;
+    // Criterios PERMISIVOS para colocación válida
+    const hasAdequateSignal = avgSignal > 15 && avgSignal < 220;
+    const hasConsistentSignal = signalConsistency > 0.6;
+    const hasValidTexture = avgTexture > 0.1 && avgTexture < 0.95;
     
     const isWellPlaced = hasAdequateSignal && hasConsistentSignal && hasValidTexture;
     

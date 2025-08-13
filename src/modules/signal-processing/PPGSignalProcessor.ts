@@ -30,21 +30,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
   
-  // Configuración ANTI-FALSOS POSITIVOS con validación estricta
+  // Configuración POTENTE para extracción fuerte de datos
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 15,
-    MIN_RED_THRESHOLD: 25,    // UMBRAL ALTO para filtrar ruido y falsos positivos
+    BUFFER_SIZE: 12,
+    MIN_RED_THRESHOLD: 12,    // Umbral BAJO para capturar señales débiles
     MAX_RED_THRESHOLD: 250,
-    STABILITY_WINDOW: 12,     // Ventana más grande para validación robusta
-    MIN_STABILITY_COUNT: 8,   // MÁS frames requeridos para confirmar
-    HYSTERESIS: 2.5,          // Histeresis aumentada para estabilidad
-    MIN_CONSECUTIVE_DETECTIONS: 8,  // DETECCIÓN MÁS LENTA pero más confiable
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Más rápido para rechazar falsos positivos
+    STABILITY_WINDOW: 8,      // Ventana rápida para respuesta ágil
+    MIN_STABILITY_COUNT: 4,   // Menos frames para detección rápida
+    HYSTERESIS: 1.8,          // Histeresis moderada
+    MIN_CONSECUTIVE_DETECTIONS: 4,  // DETECCIÓN RÁPIDA para extracción potente
+    MAX_CONSECUTIVE_NO_DETECTIONS: 8,  // Más tolerante a variaciones
     QUALITY_LEVELS: 25,
-    QUALITY_HISTORY_SIZE: 12, // Historia más larga para suavizado
-    CALIBRATION_SAMPLES: 15,  // Más muestras para calibración robusta
-    TEXTURE_GRID_SIZE: 8,     // Grid más fino para mejor análisis
-    ROI_SIZE_FACTOR: 0.6      // ROI más pequeño y enfocado
+    QUALITY_HISTORY_SIZE: 8,  // Historia moderada
+    CALIBRATION_SAMPLES: 10,  // Calibración rápida
+    TEXTURE_GRID_SIZE: 6,     // Grid eficiente
+    ROI_SIZE_FACTOR: 0.75     // ROI amplio para capturar más señal
   };
   
   constructor(
@@ -182,18 +182,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 1. VALIDACIÓN DE ILUMINACIÓN - Detectar luz ambiental vs dedo real
       const lightingAnalysis = this.lightingValidator.analyzeLighting(imageData);
       
-      // VETO INMEDIATO: Si es solo luz ambiental, rechazar
-      if (!lightingAnalysis.isValidForPPG || lightingAnalysis.lightingType === 'ambient') {
+      // VALIDACIÓN PERMISIVA de iluminación para extracción potente
+      if (lightingAnalysis.lightingType === 'insufficient') {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: AMBIENT LIGHT DETECTED - No finger present:", {
-            lightingType: lightingAnalysis.lightingType,
-            intensity: lightingAnalysis.intensity,
-            uniformity: lightingAnalysis.uniformity,
-            hasFingerShadow: lightingAnalysis.hasFingerShadow
-          });
+          console.log("PPGSignalProcessor: Insufficient lighting detected");
         }
         
-        const ambientLightSignal: ProcessedSignal = {
+        const insufficientSignal: ProcessedSignal = {
           timestamp: Date.now(),
           rawValue: 0,
           filteredValue: 0,
@@ -203,7 +198,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           perfusionIndex: 0
         };
         
-        this.onSignalReady(ambientLightSignal);
+        this.onSignalReady(insufficientSignal);
         return;
       }
       
@@ -227,13 +222,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // VALIDACIÓN ESTRICTA DE SEÑAL - Anti-falsos positivos
+      // VALIDACIÓN PERMISIVA para extracción potente
       if (redValue < this.CONFIG.MIN_RED_THRESHOLD) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal below STRICT threshold:", redValue, "(required:", this.CONFIG.MIN_RED_THRESHOLD, ")");
+          console.log("PPGSignalProcessor: Signal below minimum threshold:", redValue);
         }
 
-        const rejectSignal: ProcessedSignal = {
+        const weakSignal: ProcessedSignal = {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: redValue,
@@ -243,27 +238,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           perfusionIndex: 0
         };
 
-        this.onSignalReady(rejectSignal);
-        return;
-      }
-      
-      // VALIDACIÓN ADICIONAL: Verificar que no sea solo ruido de cámara
-      if (textureScore < 0.15 && rToGRatio < 1.2) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal appears to be camera noise:", { textureScore, rToGRatio });
-        }
-
-        const noiseSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: redValue,
-          quality: 0,
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(noiseSignal);
+        this.onSignalReady(weakSignal);
         return;
       }
 
@@ -305,23 +280,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // VALIDACIÓN ESTRICTA de ratio de colores - Anti-falsos positivos
-      if ((rToGRatio < 1.1 || rToGRatio > 4.5) && !this.isCalibrating) {
+      // VALIDACIÓN PERMISIVA de ratio de colores para extracción potente
+      if ((rToGRatio < 0.7 || rToGRatio > 6.0) && !this.isCalibrating) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Color ratio INVALID for finger detection:", { rToGRatio, rToBRatio });
+          console.log("PPGSignalProcessor: Color ratio out of normal range:", { rToGRatio, rToBRatio });
         }
 
-        const invalidRatioSignal: ProcessedSignal = {
+        const ratioSignal: ProcessedSignal = {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: filteredValue,
-          quality: 0, // Calidad CERO para ratios inválidos
+          quality: Math.min(25, redValue * 0.15), // Calidad parcial
           fingerDetected: false,
           roi: roi,
           perfusionIndex: 0
         };
 
-        this.onSignalReady(invalidRatioSignal);
+        this.onSignalReady(ratioSignal);
         return;
       }
 
@@ -346,74 +321,36 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 5. ANÁLISIS DE MOVIMIENTO - Validar que el dedo esté estático
       const motionAnalysis = this.motionDetector.analyzeMotion(redValue, roi, textureScore);
       
-      // VALIDACIÓN CRUZADA: Iluminación + Movimiento
-      if (!lightingAnalysis.hasFingerShadow && !motionAnalysis.isStatic) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: NO FINGER SHADOW + MOTION - Definitely no finger");
-        }
-        
-        const noFingerSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: redValue,
-          quality: 0,
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-        
-        this.onSignalReady(noFingerSignal);
-        return;
-      }
+      // Sin validación cruzada restrictiva - permitir extracción potente
       
       // 6. Perform multi-detector analysis SOLO si no hay movimiento excesivo
       const detectionResult = this.signalAnalyzer.analyzeSignalMultiDetector(filteredValue, trendResult);
       let { isFingerDetected, quality } = detectionResult;
       
-      // VETO POR MOVIMIENTO: Si hay demasiado movimiento, rechazar detección
-      if (!motionAnalysis.isStatic || motionAnalysis.motionLevel > 0.3) {
+      // TOLERANCIA AL MOVIMIENTO para extracción potente
+      if (motionAnalysis.motionLevel > 0.6) { // Umbral más alto
         if (shouldLog) {
-          console.log("PPGSignalProcessor: MOTION DETECTED - Rejecting finger detection:", {
-            isStatic: motionAnalysis.isStatic,
-            motionLevel: motionAnalysis.motionLevel,
-            stabilityScore: motionAnalysis.stabilityScore
+          console.log("PPGSignalProcessor: EXCESSIVE MOTION - Reducing quality:", {
+            motionLevel: motionAnalysis.motionLevel
           });
         }
         
-        isFingerDetected = false;
-        quality = Math.min(quality, 20); // Reducir calidad por movimiento
+        quality = Math.max(15, quality * 0.7); // Reducir calidad pero no eliminar
       }
       
-      // VETO POR COLOCACIÓN: Si la colocación no es válida, rechazar
+      // AJUSTES POR COLOCACIÓN para extracción potente
       if (!motionAnalysis.hasValidPlacement) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: INVALID PLACEMENT - Rejecting finger detection");
-        }
-        
-        isFingerDetected = false;
-        quality = 0;
+        quality = Math.max(10, quality * 0.6); // Reducir pero no eliminar
       }
       
-      // VETO FINAL POR ILUMINACIÓN: Verificación de confianza
-      if (lightingAnalysis.confidence < 0.4) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: LOW LIGHTING CONFIDENCE - Rejecting detection:", {
-            confidence: lightingAnalysis.confidence,
-            lightingType: lightingAnalysis.lightingType
-          });
-        }
-        
-        isFingerDetected = false;
-        quality = Math.min(quality, 15);
+      // AJUSTE POR ILUMINACIÓN para extracción potente
+      if (lightingAnalysis.confidence < 0.3) {
+        quality = Math.max(8, quality * 0.5); // Reducir pero mantener señal
       }
 
-      // Calculate physiologically valid perfusion index SOLO con TODAS las validaciones
-      const perfusionIndex = isFingerDetected && 
-                           quality > 50 && 
-                           motionAnalysis.isStatic && 
-                           lightingAnalysis.hasFingerShadow && 
-                           lightingAnalysis.confidence > 0.5 ? 
-                           Math.max(0, (Math.log(redValue) * 0.45 - 1.5)) : 0;
+      // Calculate perfusion index con validación PERMISIVA para extracción potente
+      const perfusionIndex = isFingerDetected && quality > 20 ? 
+                           Math.max(0, (Math.log(redValue) * 0.5 - 1.0)) : 0;
 
       // Create processed signal object with strict validation
       const processedSignal: ProcessedSignal = {
