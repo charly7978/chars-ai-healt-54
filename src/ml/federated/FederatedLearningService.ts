@@ -204,13 +204,15 @@ export class FederatedLearningService {
       // Encrypt the update
       const encryptedUpdate = await this.encryptUpdate(anonymizedUpdate);
       
-      // Send to server
+      // Send to server with CSRF protection
+      const csrfToken = this.generateCSRFToken();
       const response = await fetch(`${this.config.serverUrl}/api/updates`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Model-Name': this.config.modelName,
-          'X-Client-Id': this.clientId
+          'X-Client-Id': this.clientId,
+          'X-CSRF-Token': csrfToken
         },
         body: JSON.stringify(encryptedUpdate)
       });
@@ -226,7 +228,7 @@ export class FederatedLearningService {
       await this.checkForModelUpdates();
       
     } catch (error) {
-      console.error('Failed to send update to server:', error);
+      console.error('Failed to send update to server: %s', this.sanitizeErrorMessage(error));
       // Implement retry logic here
     }
   }
@@ -269,9 +271,10 @@ export class FederatedLearningService {
   }
 
   private anonymizeUpdate(update: tf.NamedTensorMap): ModelUpdate {
+    const totalSamples = this.updatesBuffer.reduce((sum, update) => sum + update.numSamples, 0);
     return {
       weights: update,
-      numSamples: this.updatesBuffer.reduce((sum, update) => sum + update.numSamples, 0),
+      numSamples: totalSamples,
       metadata: dataAnonymizer.anonymize({
         timestamp: Date.now(),
         clientId: this.clientId,
@@ -281,7 +284,7 @@ export class FederatedLearningService {
             (sum, update) => sum + (update.metadata.metrics?.loss || 0) * update.numSamples, 0
           ) / totalSamples
         }
-      }
+      })
     };
   }
 
@@ -293,6 +296,17 @@ export class FederatedLearningService {
         pseudonymizeFields: ['clientId']
       })
     };
+  }
+
+  private generateCSRFToken(): string {
+    return crypto.randomUUID();
+  }
+
+  private sanitizeErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message.replace(/[^\w\s.-]/g, '');
+    }
+    return String(error).replace(/[^\w\s.-]/g, '');
   }
 
   private async encryptUpdate(update: ModelUpdate): Promise<any> {

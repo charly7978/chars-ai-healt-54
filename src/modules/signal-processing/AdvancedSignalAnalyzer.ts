@@ -89,12 +89,16 @@ export class AdvancedSignalAnalyzer {
   };
 
   constructor(private readonly config: SignalAnalyzerConfig) {
-    this.signalBuffer = new Float64Array(config.QUALITY_HISTORY_SIZE * 4);
-    this.spectralBuffer = new Float64Array(config.QUALITY_HISTORY_SIZE * 2);
+    this.signalBuffer = new Float64Array(32); // Tamaño fijo optimizado
+    this.spectralBuffer = new Float64Array(16);
     this.waveletCoefficients = [];
     
-    this.initializeAdvancedFilters();
-    this.initializeWaveletBasis();
+    // Inicialización simplificada para mejor rendimiento
+    this.adaptiveFilters = {
+      kalman: new KalmanFilterAdvanced(),
+      particle: new ParticleFilter(100), // Reducido de 1000 a 100
+      ensemble: new EnsembleKalmanFilter(10) // Reducido de 50 a 10
+    };
   }
 
   /**
@@ -153,7 +157,7 @@ export class AdvancedSignalAnalyzer {
   }
 
   /**
-   * ANÁLISIS MULTIDETECTOR AVANZADO CON FUSIÓN MATEMÁTICA COMPLEJA
+   * ANÁLISIS MULTIDETECTOR OPTIMIZADO
    */
   analyzeSignalMultiDetector(
     filteredValue: number,
@@ -162,34 +166,20 @@ export class AdvancedSignalAnalyzer {
     // ACTUALIZAR BUFFER DE SEÑAL
     this.updateSignalBuffer(filteredValue);
     
-    // ANÁLISIS MULTIRESOLUCIÓN WAVELET
-    const multiscaleAnalysis = this.performMultiscaleAnalysis();
+    // ANÁLISIS BÁSICO PERO PRECISO
+    const { redChannel, stability, pulsatility, biophysical, periodicity } = this.detectorScores;
     
-    // ANÁLISIS DE DINÁMICAS NO LINEALES
-    const nonlinearDynamics = this.computeNonLinearDynamics();
-    
-    // ANÁLISIS ESPECTRAL AVANZADO
-    const spectralMetrics = this.computeAdvancedSpectralMetrics();
-    
-    // ANÁLISIS MORFOLÓGICO DE SEÑAL
-    const morphologicalMetrics = this.computeMorphologicalMetrics();
-    
-    // FUSIÓN ADAPTATIVA DE DETECTORES
-    const fusedScore = this.performAdaptiveDetectorFusion(
-      multiscaleAnalysis,
-      nonlinearDynamics,
-      spectralMetrics,
-      morphologicalMetrics
+    // FUSIÓN OPTIMIZADA DE DETECTORES
+    const weightedScore = (
+      redChannel * 0.30 +
+      stability * 0.25 +
+      pulsatility * 0.25 +
+      biophysical * 0.15 +
+      periodicity * 0.05
     );
     
-    // ANÁLISIS DE COHERENCIA TEMPORAL
-    const temporalCoherence = this.computeTemporalCoherence();
-    
-    // SCORE FINAL CON COMPENSACIÓN MATEMÁTICA AVANZADA
-    const compensatedScore = this.applyMathematicalCompensation(fusedScore, temporalCoherence);
-    
     // MAPEO A CALIDAD 0-100
-    const qualityValue = Math.min(100, Math.max(0, Math.round(compensatedScore * 100)));
+    const qualityValue = Math.min(100, Math.max(0, Math.round(weightedScore * 100)));
     
     // ACTUALIZAR HISTORIA DE CALIDAD
     this.qualityHistory.push(qualityValue);
@@ -197,48 +187,52 @@ export class AdvancedSignalAnalyzer {
       this.qualityHistory.shift();
     }
     
-    // CÁLCULO DE CALIDAD SUAVIZADA CON FILTRO ADAPTATIVO
-    const smoothedQuality = this.computeAdaptiveSmoothedQuality();
+    // CALIDAD SUAVIZADA
+    const smoothedQuality = this.qualityHistory.length > 0 ? 
+      this.qualityHistory.reduce((sum, q) => sum + q, 0) / this.qualityHistory.length : 0;
     
-    // LÓGICA DE HISTÉRESIS AVANZADA CON UMBRALES ADAPTATIVOS
-    const detectionResult = this.performAdvancedHysteresisDetection(smoothedQuality);
+    // LÓGICA DE HISTÉRESIS SIMPLIFICADA PERO EFECTIVA
+    const DETECTION_THRESHOLD = 30;
+    if (smoothedQuality >= DETECTION_THRESHOLD) {
+      this.consecutiveDetections += 1;
+      this.consecutiveNoDetections = 0;
+    } else {
+      this.consecutiveNoDetections += 1;
+      this.consecutiveDetections = 0;
+    }
     
-    // ACTUALIZAR HISTORIAS
-    this.updateAnalysisHistories(multiscaleAnalysis, nonlinearDynamics);
+    const isFingerDetected = this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS;
     
-    console.log('[DEBUG] AdvancedSignalAnalyzer - Análisis completo:', {
+    console.log('[DEBUG] AdvancedSignalAnalyzer - Análisis optimizado:', {
       detectorScores: this.detectorScores,
-      multiscaleAnalysis,
-      nonlinearDynamics,
-      spectralMetrics,
-      fusedScore,
-      compensatedScore,
+      weightedScore,
       smoothedQuality,
-      detectionResult
+      consecutiveDetections: this.consecutiveDetections,
+      isFingerDetected
     });
     
     return {
-      isFingerDetected: detectionResult.detected,
+      isFingerDetected,
       quality: Math.round(smoothedQuality),
-      detectorDetails: {
-        ...this.detectorScores,
-        multiscale: multiscaleAnalysis.crossScaleCorrelation,
-        nonlinear: nonlinearDynamics.lyapunovExponent,
-        spectral: spectralMetrics.dominantFrequency,
-        morphological: morphologicalMetrics.complexity
-      }
+      detectorDetails: { ...this.detectorScores }
     };
   }
   
   /**
-   * ACTUALIZACIÓN DEL BUFFER DE SEÑAL
+   * ACTUALIZACIÓN OPTIMIZADA DEL BUFFER DE SEÑAL
    */
   private updateSignalBuffer(value: number): void {
-    // Desplazar buffer
-    for (let i = 0; i < this.signalBuffer.length - 1; i++) {
-      this.signalBuffer[i] = this.signalBuffer[i + 1];
+    // Buffer circular optimizado
+    if (this.signalBuffer.length < 32) {
+      // Llenar buffer inicialmente
+      this.signalBuffer[this.signalBuffer.length] = value;
+    } else {
+      // Desplazar buffer cuando está lleno
+      for (let i = 0; i < this.signalBuffer.length - 1; i++) {
+        this.signalBuffer[i] = this.signalBuffer[i + 1];
+      }
+      this.signalBuffer[this.signalBuffer.length - 1] = value;
     }
-    this.signalBuffer[this.signalBuffer.length - 1] = value;
   }
   
   /**

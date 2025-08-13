@@ -29,13 +29,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // CONFIGURACIÓN AVANZADA DE NIVEL INDUSTRIAL CON UMBRALES MATEMÁTICAMENTE OPTIMIZADOS
   public readonly CONFIG: SignalProcessorConfig = {
     BUFFER_SIZE: 32,           // Aumentado para mejor análisis temporal
-    MIN_RED_THRESHOLD: 15,     // Umbral mínimo basado en análisis fisiológico
+    MIN_RED_THRESHOLD: 25,     // Umbral mínimo optimizado
     MAX_RED_THRESHOLD: 235,    // Umbral máximo para evitar saturación
     STABILITY_WINDOW: 16,      // Ventana de estabilidad optimizada
     MIN_STABILITY_COUNT: 8,    // Mayor estabilidad requerida
     HYSTERESIS: 3.14159,       // Histéresis basada en π para mayor precisión
-    MIN_CONSECUTIVE_DETECTIONS: 12,  // Detecciones consecutivas aumentadas
-    MAX_CONSECUTIVE_NO_DETECTIONS: 6,   // Pérdida de detección más conservadora
+    MIN_CONSECUTIVE_DETECTIONS: 3,   // Detecciones consecutivas optimizadas
+    MAX_CONSECUTIVE_NO_DETECTIONS: 8,   // Pérdida de detección optimizada
     QUALITY_LEVELS: 100,       // Niveles de calidad aumentados para mayor precisión
     QUALITY_HISTORY_SIZE: 64,  // Historia extendida para mejor análisis temporal
     CALIBRATION_SAMPLES: 25,   // Muestras de calibración aumentadas
