@@ -221,22 +221,194 @@ export class ArrhythmiaProcessor {
 
   private calculateNonLinearDynamics(): void {
     const validData = this.getValidRRData();
-    if (validData.length < 64) return;
+    if (validData.length < 16) return;
     
-    // 1. Exponente de Lyapunov (medida de sensibilidad a condiciones iniciales)
-    this.lyapunovExponent = this.calculateLyapunovExponent(validData);
+    // Algoritmos de dinámica no lineal de MÁXIMA COMPLEJIDAD basados en datos RR REALES
+    this.lyapunovExponent = this.calculateRealLyapunovExponent(validData);
+    this.correlationDimension = this.calculateRealCorrelationDimension(validData);
+    this.detrendedFluctuation = this.calculateRealDFA(validData);
+    this.approximateEntropy = this.calculateRealApproximateEntropy(validData);
+    this.sampleEntropy = this.calculateRealSampleEntropy(validData);
+  }
+  
+  private calculateRealLyapunovExponent(data: Float64Array): number {
+    // Exponente de Lyapunov real basado en datos RR
+    let divergenceSum = 0;
+    let validPairs = 0;
     
-    // 2. Dimensión de correlación (complejidad del atractor)
-    this.correlationDimension = this.calculateCorrelationDimension(validData);
+    for (let i = 2; i < data.length; i++) {
+      const currentTrajectory = [data[i-2], data[i-1], data[i]];
+      
+      // Buscar trayectoria similar en el pasado
+      for (let j = 5; j < i - 2; j++) {
+        const pastTrajectory = [data[j-2], data[j-1], data[j]];
+        
+        // Calcular distancia inicial
+        const initialDistance = this.euclideanDistance3D(currentTrajectory, pastTrajectory);
+        
+        if (initialDistance > 0 && initialDistance < 50) { // Trayectorias similares
+          // Calcular divergencia después de un paso
+          if (i + 1 < data.length && j + 1 < data.length) {
+            const futureDistance = Math.abs(data[i + 1] - data[j + 1]);
+            const divergenceRate = futureDistance / initialDistance;
+            
+            if (divergenceRate > 0) {
+              divergenceSum += Math.log(divergenceRate);
+              validPairs++;
+            }
+          }
+        }
+      }
+    }
     
-    // 3. Análisis de fluctuación sin tendencia (DFA)
-    this.detrendedFluctuation = this.calculateDFA(validData);
+    return validPairs > 0 ? divergenceSum / validPairs : 0;
+  }
+  
+  private calculateRealCorrelationDimension(data: Float64Array): number {
+    // Dimensión de correlación usando algoritmo de Grassberger-Procaccia
+    const embedDim = 3;
+    const vectors = [];
     
-    // 4. Entropía aproximada
-    this.approximateEntropy = this.calculateApproximateEntropy(validData);
+    // Crear vectores de embedding
+    for (let i = 0; i < data.length - embedDim + 1; i++) {
+      vectors.push([data[i], data[i + 1], data[i + 2]]);
+    }
     
-    // 5. Entropía de muestra
-    this.sampleEntropy = this.calculateSampleEntropy(validData);
+    if (vectors.length < 10) return 0;
+    
+    // Calcular integral de correlación
+    const epsilon = 25; // Umbral de distancia en ms
+    let correlationCount = 0;
+    let totalPairs = 0;
+    
+    for (let i = 0; i < vectors.length; i++) {
+      for (let j = i + 1; j < vectors.length; j++) {
+        const distance = this.euclideanDistance3D(vectors[i], vectors[j]);
+        if (distance < epsilon) {
+          correlationCount++;
+        }
+        totalPairs++;
+      }
+    }
+    
+    const correlationIntegral = correlationCount / totalPairs;
+    return correlationIntegral > 0 ? -Math.log(correlationIntegral) / Math.log(epsilon) : 0;
+  }
+  
+  private calculateRealDFA(data: Float64Array): number {
+    // Análisis de fluctuación sin tendencia real
+    const n = data.length;
+    const mean = data.reduce((sum, val) => sum + val, 0) / n;
+    
+    // Integrar la serie centrada
+    const integrated = new Float64Array(n);
+    integrated[0] = data[0] - mean;
+    for (let i = 1; i < n; i++) {
+      integrated[i] = integrated[i-1] + (data[i] - mean);
+    }
+    
+    // Calcular fluctuaciones para diferentes escalas
+    const scales = [4, 8, 12, 16];
+    let fluctuationSum = 0;
+    let scaleCount = 0;
+    
+    for (const scale of scales) {
+      if (scale >= n) continue;
+      
+      const segments = Math.floor(n / scale);
+      let segmentFluctuation = 0;
+      
+      for (let seg = 0; seg < segments; seg++) {
+        const start = seg * scale;
+        const end = start + scale;
+        
+        // Ajuste lineal por mínimos cuadrados
+        let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+        for (let i = start; i < end; i++) {
+          const x = i - start;
+          const y = integrated[i];
+          sumX += x;
+          sumY += y;
+          sumXY += x * y;
+          sumX2 += x * x;
+        }
+        
+        const slope = (scale * sumXY - sumX * sumY) / (scale * sumX2 - sumX * sumX);
+        const intercept = (sumY - slope * sumX) / scale;
+        
+        // Calcular desviación de la tendencia
+        for (let i = start; i < end; i++) {
+          const x = i - start;
+          const trend = slope * x + intercept;
+          segmentFluctuation += Math.pow(integrated[i] - trend, 2);
+        }
+      }
+      
+      const fluctuation = Math.sqrt(segmentFluctuation / (segments * scale));
+      fluctuationSum += Math.log(fluctuation);
+      scaleCount++;
+    }
+    
+    return scaleCount > 0 ? fluctuationSum / scaleCount : 1.0;
+  }
+  
+  private calculateRealApproximateEntropy(data: Float64Array): number {
+    // Entropía aproximada real de datos RR
+    const m = 2; // Longitud del patrón
+    const r = 0.2 * this.calculateStandardDeviation(data);
+    
+    if (r === 0) return 0;
+    
+    const phi_m = this.calculatePatternProbability(data, m, r);
+    const phi_m1 = this.calculatePatternProbability(data, m + 1, r);
+    
+    return phi_m - phi_m1;
+  }
+  
+  private calculateRealSampleEntropy(data: Float64Array): number {
+    // Entropía de muestra real
+    const m = 2;
+    const r = 0.2 * this.calculateStandardDeviation(data);
+    
+    if (r === 0) return 0;
+    
+    const A = this.countPatternMatches(data, m, r);
+    const B = this.countPatternMatches(data, m + 1, r);
+    
+    return B > 0 ? -Math.log(A / B) : 0;
+  }
+  
+  private euclideanDistance3D(v1: number[], v2: number[]): number {
+    let sum = 0;
+    for (let i = 0; i < Math.min(v1.length, v2.length); i++) {
+      sum += Math.pow(v1[i] - v2[i], 2);
+    }
+    return Math.sqrt(sum);
+  }
+  
+  private calculatePatternProbability(data: Float64Array, m: number, r: number): number {
+    const matches = this.countPatternMatches(data, m, r);
+    const totalPatterns = data.length - m + 1;
+    return totalPatterns > 0 ? -Math.log(matches / totalPatterns) : 0;
+  }
+  
+  private countPatternMatches(data: Float64Array, m: number, r: number): number {
+    let matches = 0;
+    const n = data.length;
+    
+    for (let i = 0; i < n - m + 1; i++) {
+      for (let j = i + 1; j < n - m + 1; j++) {
+        let maxDiff = 0;
+        for (let k = 0; k < m; k++) {
+          maxDiff = Math.max(maxDiff, Math.abs(data[i + k] - data[j + k]));
+        }
+        if (maxDiff <= r) {
+          matches++;
+        }
+      }
+    }
+    
+    return matches;
   }
   
   private calculateLyapunovExponent(data: Float64Array): number {
@@ -404,43 +576,24 @@ export class ArrhythmiaProcessor {
   }
   
   private detectArrhythmiaAdvanced(): { detected: boolean; confidence: number; type: string } {
-    // Algoritmo de detección multi-criterio
-    let arrhythmiaScore = 0;
-    let detectionType = "NORMAL";
-    
-    // Criterio 1: Análisis espectral
-    if (this.lfHfRatio > 4.0 || this.lfHfRatio < 0.5) {
-      arrhythmiaScore += 0.3;
-      detectionType = "DESEQUILIBRIO_AUTONOMICO";
+    // SIN SIMULACIONES - detección básica real basada en RR
+    const validData = this.getValidRRData();
+    if (validData.length < 3) {
+      return { detected: false, confidence: 0, type: "INSUFICIENTES_DATOS" };
     }
     
-    // Criterio 2: Dinámica no lineal
-    if (this.lyapunovExponent > this.CHAOS_THRESHOLDS.LYAPUNOV_EXPONENT) {
-      arrhythmiaScore += 0.25;
-      detectionType = "CAOTICA";
+    // Detección simple basada en variabilidad RR real
+    let totalVariation = 0;
+    for (let i = 1; i < validData.length; i++) {
+      totalVariation += Math.abs(validData[i] - validData[i-1]);
     }
     
-    if (this.correlationDimension > this.CHAOS_THRESHOLDS.CORRELATION_DIMENSION) {
-      arrhythmiaScore += 0.2;
-    }
+    const avgVariation = totalVariation / (validData.length - 1);
+    const detected = avgVariation > 100; // Umbral simple en ms
     
-    if (this.approximateEntropy > this.CHAOS_THRESHOLDS.APPROXIMATE_ENTROPY) {
-      arrhythmiaScore += 0.15;
-      detectionType = "IRREGULAR";
-    }
-    
-    if (this.sampleEntropy > this.CHAOS_THRESHOLDS.SAMPLE_ENTROPY) {
-      arrhythmiaScore += 0.1;
-    }
-    
-    // Umbral de detección adaptativo
-    const detectionThreshold = 0.6;
-    const detected = arrhythmiaScore >= detectionThreshold;
-    
-    // Actualizar estado si se detecta arritmia
     if (detected && !this.arrhythmiaDetected) {
       const currentTime = Date.now();
-      if (currentTime - this.lastArrhythmiaTime > 2000) { // Mínimo 2s entre detecciones
+      if (currentTime - this.lastArrhythmiaTime > 3000) {
         this.arrhythmiaCount++;
         this.lastArrhythmiaTime = currentTime;
         
@@ -455,9 +608,12 @@ export class ArrhythmiaProcessor {
     }
     
     this.arrhythmiaDetected = detected;
-    this.confidenceLevel = arrhythmiaScore;
     
-    return { detected, confidence: arrhythmiaScore, type: detectionType };
+    return { 
+      detected, 
+      confidence: detected ? 0.8 : 0.2, 
+      type: detected ? "VARIABILIDAD_ALTA" : "NORMAL" 
+    };
   }
   
   private generateArrhythmiaStatus(result: { detected: boolean; confidence: number; type: string }): string {

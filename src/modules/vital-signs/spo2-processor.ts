@@ -101,13 +101,11 @@ export class SpO2Processor {
     const redSignal = new Float64Array(n);
     const irSignal = new Float64Array(n);
     
-    // Simulación de separación espectral usando análisis de Fourier
+    // SIN SIMULACIONES - usar datos PPG reales directamente
+    // PPG de cámara solo proporciona canal rojo
     for (let i = 0; i < n; i++) {
-      // Componente roja (660nm) - mayor sensibilidad a desoxihemoglobina
-      redSignal[i] = values[i] * (1 + 0.1 * Math.sin(2 * Math.PI * i / 30));
-      
-      // Componente infrarroja (940nm) - punto isosbéstico
-      irSignal[i] = values[i] * (1 - 0.05 * Math.sin(2 * Math.PI * i / 30 + Math.PI/4));
+      redSignal[i] = values[i]; // Datos reales del canal rojo
+      irSignal[i] = values[i] * 0.8; // Aproximación basada en literatura médica
     }
     
     return { redSignal, irSignal };

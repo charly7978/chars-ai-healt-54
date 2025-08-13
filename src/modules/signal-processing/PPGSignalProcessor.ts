@@ -26,21 +26,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
   
-  // Configuration with stricter medically appropriate thresholds
+  // Configuración optimizada para detección rápida y precisa
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 15,
-    MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
-    MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 10,      // Increased for more stability assessment
-    MIN_STABILITY_COUNT: 5,   // Requires more stability for detection
-    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 6,  // Requires more frames to confirm detection
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
-    QUALITY_LEVELS: 20,
-    QUALITY_HISTORY_SIZE: 10,
-    CALIBRATION_SAMPLES: 10,
-    TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.6
+    BUFFER_SIZE: 12,
+    MIN_RED_THRESHOLD: 5,     // Umbral mínimo para filtrar ruido
+    MAX_RED_THRESHOLD: 250,
+    STABILITY_WINDOW: 8,      // Ventana más pequeña para respuesta rápida
+    MIN_STABILITY_COUNT: 3,   // Menos frames requeridos
+    HYSTERESIS: 1.5,          // Histeresis reducida
+    MIN_CONSECUTIVE_DETECTIONS: 3,  // Detección más rápida
+    MAX_CONSECUTIVE_NO_DETECTIONS: 6,  // Más tolerante a pérdidas temporales
+    QUALITY_LEVELS: 25,
+    QUALITY_HISTORY_SIZE: 8,
+    CALIBRATION_SAMPLES: 8,
+    TEXTURE_GRID_SIZE: 6,
+    ROI_SIZE_FACTOR: 0.7
   };
   
   constructor(
@@ -189,10 +189,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection of invalid frames - stricter thresholds
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.9) {
+      // Validación básica de señal
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
+          console.log("PPGSignalProcessor: Signal below minimum threshold:", redValue);
         }
 
         const minimalSignal: ProcessedSignal = {
@@ -206,9 +206,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         };
 
         this.onSignalReady(minimalSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Weak Signal):", minimalSignal);
-        }
         return;
       }
 
@@ -250,29 +247,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Reactivated validation with more tolerant thresholds
-      if ((rToGRatio < 0.7 || rToGRatio > 5.0) && !this.isCalibrating) { // Rango ampliado de 0.7 a 5.0
+      // Validación de ratio de colores más permisiva
+      if ((rToGRatio < 0.5 || rToGRatio > 8.0) && !this.isCalibrating) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
-            rToGRatio,
-            rToBRatio
-          });
+          console.log("PPGSignalProcessor: Color ratio out of range:", { rToGRatio, rToBRatio });
         }
 
         const rejectSignal: ProcessedSignal = {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: filteredValue,
-          quality: 0, 
+          quality: Math.min(30, redValue * 0.1), // Calidad parcial en lugar de 0
           fingerDetected: false,
           roi: roi,
           perfusionIndex: 0
         };
 
         this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Color Ratio):", rejectSignal);
-        }
         return;
       }
 
