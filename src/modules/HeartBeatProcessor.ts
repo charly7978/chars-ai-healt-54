@@ -479,19 +479,32 @@ export class HeartBeatProcessor {
     rawDerivative?: number;
   } {
     const now = Date.now();
-    const timeSinceLastPeak = this.lastPeakTime
-      ? now - this.lastPeakTime
-      : Number.MAX_VALUE;
+    const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : Number.MAX_VALUE;
 
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // Detectar pico en máximo local: derivada negativa
-    const isOverThreshold = derivative < 0;
-    // Confianza máxima en cada detección de pico
-    const confidence = 1;
 
-    return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
+    // Detección de pico real: buscar máximo local con validación fisiológica
+    const amplitude = Math.abs(normalizedValue);
+    const isSignificantAmplitude = amplitude > this.adaptiveSignalThreshold;
+    const isNegativeDerivative = derivative < this.adaptiveDerivativeThreshold;
+    
+    // Validación adicional: debe ser un pico prominente
+    let isPeak = false;
+    let confidence = 0;
+    
+    if (isSignificantAmplitude && isNegativeDerivative) {
+      // Calcular confianza basada en múltiples factores
+      const amplitudeScore = Math.min(amplitude / (this.adaptiveSignalThreshold * 3), 1);
+      const derivativeScore = Math.min(Math.abs(derivative) / Math.abs(this.adaptiveDerivativeThreshold), 1);
+      const timingScore = timeSinceLastPeak > (this.DEFAULT_MIN_PEAK_TIME_MS * 1.5) ? 1 : 0.7;
+      
+      confidence = (amplitudeScore * 0.5 + derivativeScore * 0.3 + timingScore * 0.2);
+      isPeak = confidence > this.adaptiveMinConfidence;
+    }
+
+    return { isPeak, confidence, rawDerivative: derivative };
   }
 
   private confirmPeak(
@@ -527,34 +540,53 @@ export class HeartBeatProcessor {
 
   private updateBPM() {
     if (!this.lastPeakTime || !this.previousPeakTime) return;
+    
     const interval = this.lastPeakTime - this.previousPeakTime;
     if (interval <= 0) return;
 
     const instantBPM = 60000 / interval;
-    if (instantBPM >= this.DEFAULT_MIN_BPM && instantBPM <= this.DEFAULT_MAX_BPM) { 
+    
+    // Validación fisiológica estricta
+    if (instantBPM >= this.DEFAULT_MIN_BPM && instantBPM <= this.DEFAULT_MAX_BPM) {
+      // Filtro adicional: rechazar cambios demasiado bruscos
+      if (this.bpmHistory.length > 0) {
+        const lastBPM = this.bpmHistory[this.bpmHistory.length - 1];
+        const change = Math.abs(instantBPM - lastBPM);
+        
+        // Permitir cambios graduales (máximo 20 BPM por latido)
+        if (change > 20) {
+          console.log(`HeartBeatProcessor: BPM change too abrupt: ${lastBPM} -> ${instantBPM}`);
+          return;
+        }
+      }
+      
       this.bpmHistory.push(instantBPM);
-      if (this.bpmHistory.length > 12) { 
+      if (this.bpmHistory.length > 8) { // Reducir ventana para respuesta más rápida
         this.bpmHistory.shift();
       }
+      
+      console.log(`HeartBeatProcessor: BPM updated: ${Math.round(instantBPM)}, interval: ${interval}ms`);
+    } else {
+      console.log(`HeartBeatProcessor: BPM out of range: ${instantBPM}`);
     }
   }
 
   public getSmoothBPM(): number {
-    if (this.bpmHistory.length < 3) return 0;
+    if (this.bpmHistory.length < 2) return 0;
     
-    // Filtrado adaptativo basado en confianza
-    const validReadings = this.bpmHistory.filter((_, i) => 
-      this.recentPeakConfidences[i] > 0.7
-    );
+    // Usar mediana para robustez contra outliers
+    const sortedBPM = [...this.bpmHistory].sort((a, b) => a - b);
+    let medianBPM: number;
     
-    // Ponderar por confianza y aplicar mediana móvil
-    const weightedBPM = validReadings.reduce(
-      (sum, bpm, i) => sum + (bpm * this.recentPeakConfidences[i]), 
-      0
-    ) / validReadings.reduce((sum, _, i) => sum + this.recentPeakConfidences[i], 0);
+    if (sortedBPM.length % 2 === 0) {
+      medianBPM = (sortedBPM[sortedBPM.length / 2 - 1] + sortedBPM[sortedBPM.length / 2]) / 2;
+    } else {
+      medianBPM = sortedBPM[Math.floor(sortedBPM.length / 2)];
+    }
     
-    // Suavizado final con filtro de Kalman simple
-    this.smoothBPM = this.kalmanFilter(weightedBPM);
+    // Suavizado con filtro de Kalman
+    this.smoothBPM = this.kalmanFilter(medianBPM);
+    
     return Math.round(this.smoothBPM);
   }
 

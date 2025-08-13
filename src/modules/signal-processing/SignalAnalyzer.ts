@@ -56,30 +56,37 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Weighted sum – weights can be tuned later or moved to config.
+    // Pesos optimizados para detección más sensible
     const weighted =
-      redChannel * 0.3 +
-      stability * 0.25 +
-      pulsatility * 0.25 +
-      biophysical * 0.15 +
+      redChannel * 0.4 +      // Mayor peso al canal rojo
+      pulsatility * 0.3 +     // Mayor peso a pulsatilidad
+      stability * 0.15 +
+      biophysical * 0.1 +
       periodicity * 0.05;
 
-    // Map 0-1 range to 0-100 and clamp.
-    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
+    // Mapear a 0-100 con ajuste de sensibilidad
+    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 120))); // Factor 120 para mayor sensibilidad
 
-    // Maintain moving average over last N frames.
+    // Historial de calidad con suavizado
     this.qualityHistory.push(qualityValue);
     if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
       this.qualityHistory.shift();
     }
-    const smoothedQuality =
-      this.qualityHistory.reduce((acc, v) => acc + v, 0) /
-      this.qualityHistory.length;
+    
+    // Suavizado con mayor peso a valores recientes
+    let weightedSum = 0;
+    let totalWeight = 0;
+    for (let i = 0; i < this.qualityHistory.length; i++) {
+      const weight = (i + 1) / this.qualityHistory.length; // Peso creciente
+      weightedSum += this.qualityHistory[i] * weight;
+      totalWeight += weight;
+    }
+    const smoothedQuality = totalWeight > 0 ? weightedSum / totalWeight : qualityValue;
 
-    // Hysteresis logic using consecutive detections.
+    // Lógica de histeresis mejorada
     let isFingerDetected = false;
-    console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 30;
+    const DETECTION_THRESHOLD = 20; // Umbral más bajo para mejor detección
+    
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
@@ -88,11 +95,10 @@ export class SignalAnalyzer {
       this.consecutiveDetections = 0;
     }
 
-    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
+    // Detección más rápida
+    if (this.consecutiveDetections >= Math.max(1, this.config.MIN_CONSECUTIVE_DETECTIONS - 2)) {
       isFingerDetected = true;
-    } else if (
-      this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS
-    ) {
+    } else if (this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS) {
       isFingerDetected = false;
     }
 
