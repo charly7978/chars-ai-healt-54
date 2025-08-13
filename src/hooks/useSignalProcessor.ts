@@ -69,8 +69,8 @@ export const useSignalProcessor = () => {
         }
       }
       
-      // Update statistics con señales válidas para extracción potente
-      if (signal.fingerDetected && signal.quality > 20) {
+      // Update statistics with valid signals only
+      if (signal.fingerDetected && signal.quality > 30) {
         setSignalStats(prev => {
           const newStats = {
             minValue: Math.min(prev.minValue, signal.filteredValue),

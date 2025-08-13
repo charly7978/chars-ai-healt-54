@@ -290,10 +290,8 @@ export class HeartBeatProcessor {
     
     const isConfirmedPeak = this.confirmPeak(isPeak, normalizedValue, confidence);
 
-    // Calcular calidad de señal SIMPLIFICADA
+    // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
-    
-    console.log(`HeartBeatProcessor: Señal - Valor: ${normalizedValue.toFixed(3)}, Confianza: ${confidence.toFixed(2)}, Calidad: ${this.currentSignalQuality}`);
 
     if (isConfirmedPeak && !this.isInWarmup()) {
       const now = Date.now();
@@ -341,16 +339,13 @@ export class HeartBeatProcessor {
     }
     
     // Retornar resultado con nuevos parámetros
-    const finalBPM = Math.round(this.getSmoothBPM());
-    const finalConfidence = isPeak ? 0.9 : Math.max(0.3, confidence);
-    
     return {
-      bpm: finalBPM,
-      confidence: finalConfidence,
+      bpm: Math.round(this.getSmoothBPM()),
+      confidence: isPeak ? 0.95 : this.adjustConfidenceForSignalStrength(0.6),
       isPeak: isPeak,
-      filteredValue: filteredValue,
+      filteredValue: filteredValue, // Usando la variable correctamente definida
       arrhythmiaCount: 0,
-      signalQuality: this.currentSignalQuality
+      signalQuality: this.currentSignalQuality // Retroalimentación de calidad
     };
   }
   
@@ -484,32 +479,19 @@ export class HeartBeatProcessor {
     rawDerivative?: number;
   } {
     const now = Date.now();
-    const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : Number.MAX_VALUE;
+    const timeSinceLastPeak = this.lastPeakTime
+      ? now - this.lastPeakTime
+      : Number.MAX_VALUE;
 
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
+    // Detectar pico en máximo local: derivada negativa
+    const isOverThreshold = derivative < 0;
+    // Confianza máxima en cada detección de pico
+    const confidence = 1;
 
-    // Detección de pico real: buscar máximo local con validación fisiológica
-    const amplitude = Math.abs(normalizedValue);
-    const isSignificantAmplitude = amplitude > this.adaptiveSignalThreshold;
-    const isNegativeDerivative = derivative < this.adaptiveDerivativeThreshold;
-    
-    // Validación adicional: debe ser un pico prominente
-    let isPeak = false;
-    let confidence = 0;
-    
-    if (isSignificantAmplitude && isNegativeDerivative) {
-      // Calcular confianza basada en múltiples factores
-      const amplitudeScore = Math.min(amplitude / (this.adaptiveSignalThreshold * 3), 1);
-      const derivativeScore = Math.min(Math.abs(derivative) / Math.abs(this.adaptiveDerivativeThreshold), 1);
-      const timingScore = timeSinceLastPeak > (this.DEFAULT_MIN_PEAK_TIME_MS * 1.5) ? 1 : 0.7;
-      
-      confidence = (amplitudeScore * 0.5 + derivativeScore * 0.3 + timingScore * 0.2);
-      isPeak = confidence > this.adaptiveMinConfidence;
-    }
-
-    return { isPeak, confidence, rawDerivative: derivative };
+    return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
   }
 
   private confirmPeak(
@@ -545,53 +527,34 @@ export class HeartBeatProcessor {
 
   private updateBPM() {
     if (!this.lastPeakTime || !this.previousPeakTime) return;
-    
     const interval = this.lastPeakTime - this.previousPeakTime;
     if (interval <= 0) return;
 
     const instantBPM = 60000 / interval;
-    
-    // Validación fisiológica estricta
-    if (instantBPM >= this.DEFAULT_MIN_BPM && instantBPM <= this.DEFAULT_MAX_BPM) {
-      // Filtro adicional: rechazar cambios demasiado bruscos
-      if (this.bpmHistory.length > 0) {
-        const lastBPM = this.bpmHistory[this.bpmHistory.length - 1];
-        const change = Math.abs(instantBPM - lastBPM);
-        
-        // Permitir cambios graduales (máximo 20 BPM por latido)
-        if (change > 20) {
-          console.log(`HeartBeatProcessor: BPM change too abrupt: ${lastBPM} -> ${instantBPM}`);
-          return;
-        }
-      }
-      
+    if (instantBPM >= this.DEFAULT_MIN_BPM && instantBPM <= this.DEFAULT_MAX_BPM) { 
       this.bpmHistory.push(instantBPM);
-      if (this.bpmHistory.length > 8) { // Reducir ventana para respuesta más rápida
+      if (this.bpmHistory.length > 12) { 
         this.bpmHistory.shift();
       }
-      
-      console.log(`HeartBeatProcessor: BPM updated: ${Math.round(instantBPM)}, interval: ${interval}ms`);
-    } else {
-      console.log(`HeartBeatProcessor: BPM out of range: ${instantBPM}`);
     }
   }
 
   public getSmoothBPM(): number {
-    if (this.bpmHistory.length < 2) return 0;
+    if (this.bpmHistory.length < 3) return 0;
     
-    // Usar mediana para robustez contra outliers
-    const sortedBPM = [...this.bpmHistory].sort((a, b) => a - b);
-    let medianBPM: number;
+    // Filtrado adaptativo basado en confianza
+    const validReadings = this.bpmHistory.filter((_, i) => 
+      this.recentPeakConfidences[i] > 0.7
+    );
     
-    if (sortedBPM.length % 2 === 0) {
-      medianBPM = (sortedBPM[sortedBPM.length / 2 - 1] + sortedBPM[sortedBPM.length / 2]) / 2;
-    } else {
-      medianBPM = sortedBPM[Math.floor(sortedBPM.length / 2)];
-    }
+    // Ponderar por confianza y aplicar mediana móvil
+    const weightedBPM = validReadings.reduce(
+      (sum, bpm, i) => sum + (bpm * this.recentPeakConfidences[i]), 
+      0
+    ) / validReadings.reduce((sum, _, i) => sum + this.recentPeakConfidences[i], 0);
     
-    // Suavizado con filtro de Kalman
-    this.smoothBPM = this.kalmanFilter(medianBPM);
-    
+    // Suavizado final con filtro de Kalman simple
+    this.smoothBPM = this.kalmanFilter(weightedBPM);
     return Math.round(this.smoothBPM);
   }
 
@@ -737,36 +700,83 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Calcula calidad de señal SIMPLIFICADA y DIRECTA
+   * Calcula la calidad de la señal actual basado en múltiples factores
+   * @param normalizedValue Valor normalizado de la señal actual
+   * @param confidence Confianza de la detección actual
+   * @returns Valor de calidad entre 0-100
    */
   private calculateSignalQuality(normalizedValue: number, confidence: number): number {
-    if (this.signalBuffer.length < 5) {
-      return 15; // Calidad inicial baja pero visible
+    // Si no hay suficientes datos para una evaluación precisa
+    if (this.signalBuffer.length < 10) {
+      return Math.min(this.currentSignalQuality + 5, 30); // Incremento gradual hasta 30 durante calibración
     }
     
-    const recentSignals = this.signalBuffer.slice(-10);
-    const range = Math.max(...recentSignals) - Math.min(...recentSignals);
+    // Calcular estadísticas de señal reciente
+    const recentSignals = this.signalBuffer.slice(-20);
+    const avgSignal = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
+    const maxSignal = Math.max(...recentSignals);
+    const minSignal = Math.min(...recentSignals);
+    const range = maxSignal - minSignal;
     
-    // Calidad basada DIRECTAMENTE en amplitud de señal
-    let quality = 0;
+    // Componentes de calidad
+    let amplitudeQuality = 0;
+    let stabilityQuality = 0;
+    let rhythmQuality = 0;
     
-    if (range > 5) quality = 85;      // Señal fuerte
-    else if (range > 2) quality = 70; // Señal buena
-    else if (range > 1) quality = 55; // Señal moderada
-    else if (range > 0.5) quality = 40; // Señal débil
-    else if (range > 0.1) quality = 25; // Señal muy débil
-    else quality = 10; // Señal casi plana
-    
-    // Ajuste por confianza
-    if (confidence > 0.8) quality += 10;
-    else if (confidence < 0.3) quality -= 15;
-    
-    // Ajuste por BPM válido
-    if (this.bpmHistory.length > 0) {
-      const lastBPM = this.bpmHistory[this.bpmHistory.length - 1];
-      if (lastBPM > 50 && lastBPM < 150) quality += 5;
+    // 1. Calidad basada en amplitud (0-40)
+    // Penalizar fuertemente las amplitudes muy bajas (señal plana o casi plana)
+    if (range < 0.001) { // Umbral para señal prácticamente plana
+        amplitudeQuality = 0; // Calidad nula si la señal es plana
+    } else {
+        amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40); // Mayor factor de amplificación
     }
     
-    return Math.max(5, Math.min(100, quality));
+    // 2. Calidad basada en estabilidad de señal (0-30)
+    if (range > 0.01) {
+      const variability = range / (Math.abs(avgSignal) || 0.001); // Evitar división por cero
+      if (variability < 0.5) { // Variabilidad óptima para PPG (más estricto)
+        stabilityQuality = 30;
+      } else if (variability < 1.0) { // Moderadamente inestable
+        stabilityQuality = 20;
+      } else if (variability < 2.0) { // Inestable
+        stabilityQuality = 10;
+      } else {
+        stabilityQuality = 0; // Muy inestable, calidad muy baja
+      }
+    }
+    
+    // 3. Calidad basada en ritmo (0-30)
+    if (this.bpmHistory.length >= 5) { // Más muestras para evaluar el ritmo
+      const recentBPMs = this.bpmHistory.slice(-5);
+      const bpmVariance = Math.max(...recentBPMs) - Math.min(...recentBPMs);
+      
+      if (bpmVariance < 5) { // Ritmo muy estable (más estricto)
+        rhythmQuality = 30; 
+      } else if (bpmVariance < 10) { // Ritmo estable
+        rhythmQuality = 20;
+      } else if (bpmVariance < 15) { // Ritmo variable pero aceptable
+        rhythmQuality = 10;
+      } else {
+        rhythmQuality = 5;  // Ritmo inestable
+      }
+    }
+    
+    // Calidad total (0-100)
+    let totalQuality = amplitudeQuality + stabilityQuality + rhythmQuality;
+    
+    // Penalización por baja confianza y umbral de calidad global
+    if (confidence < 0.5) { // Umbral de confianza más alto para penalizar
+      totalQuality *= confidence / 0.5;
+    }
+
+    // Penalización adicional si la señal es demasiado débil después de todas las comprobaciones
+    if (totalQuality < 10 && range < 0.01) { // Si la calidad es baja y el rango es muy pequeño
+        totalQuality = 0; // Forzar a cero si es prácticamente ruido
+    }
+    
+    // Suavizado para evitar cambios bruscos
+    totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
+    
+    return Math.min(Math.max(Math.round(totalQuality), 0), 100);
   }
 }

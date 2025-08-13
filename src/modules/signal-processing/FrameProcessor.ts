@@ -7,14 +7,14 @@ import { ProcessedSignal } from '../../types/signal';
  */
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  // Parámetros POTENTES para extracción fuerte de datos
-  private readonly RED_GAIN = 1.6; // GANANCIA ALTA para amplificar señal PPG
-  private readonly GREEN_SUPPRESSION = 0.75; // Supresión moderada
-  private readonly SIGNAL_GAIN = 1.4; // GANANCIA POTENTE para extracción fuerte
-  private readonly EDGE_ENHANCEMENT = 0.15;  // Detección de bordes balanceada
-  private readonly MIN_RED_THRESHOLD = 0.2;  // Umbral BAJO para capturar señales débiles
-  private readonly RG_RATIO_RANGE = [0.8, 5.0];  // Rango AMPLIO para extracción potente
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.08;  // Filtro de contraste PERMISIVO
+  // Parámetros ajustados para mejor extracción de señal
+  private readonly RED_GAIN = 1.4; // Aumentado para mejor amplificación de señal roja (antes 1.2)
+  private readonly GREEN_SUPPRESSION = 0.8; // Menos supresión para mantener información (antes 0.85)
+  private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
+  private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
+  private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
+  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
   
   // Historia para calibración adaptativa
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
@@ -26,10 +26,10 @@ export class FrameProcessor {
   private readonly ROI_HISTORY_SIZE = 5;
   
   constructor(config: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number }) {
-    // ROI AMPLIO para extracción potente de señal
+    // Aumentar tamaño de ROI para capturar más área
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.85, config.ROI_SIZE_FACTOR * 1.2) // AUMENTAR ROI para capturar más señal
+      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
     };
   }
   
@@ -108,11 +108,11 @@ export class FrameProcessor {
         cells[cellIdx].blue += b;
         cells[cellIdx].count++;
         
-        // Ganancia adaptativa POTENTE basada en ratio r/g
-        const rgRatio = r / (g + 1);
-        // PENALIZACIÓN MODERADA para mantener extracción fuerte
-        const adaptiveGain = (rgRatio >= this.RG_RATIO_RANGE[0] && rgRatio <= this.RG_RATIO_RANGE[1]) ?
-                           this.SIGNAL_GAIN : this.SIGNAL_GAIN * 0.7; // Penalización moderada
+        // Ganancia adaptativa basada en ratio r/g fisiológico - más permisiva
+        const rgRatio = r / (g + 1); // Use raw r and g for this ratio
+        // Ganancia reducida para ratios no fisiológicos pero más permisiva
+        const adaptiveGain = (rgRatio > this.RG_RATIO_RANGE[0] && rgRatio < this.RG_RATIO_RANGE[1]) ? // Rango ampliado (antes 0.9-3.0)
+                           this.SIGNAL_GAIN : this.SIGNAL_GAIN * 0.8; // Penalización reducida
         
         redSum += enhancedR * adaptiveGain;
         greenSum += attenuatedG;
@@ -212,13 +212,13 @@ export class FrameProcessor {
     if (this.lastFrames.length >= 3) { // Reducido (antes 5)
       const avgHistRed = this.lastFrames.reduce((sum, frame) => sum + frame.red, 0) / this.lastFrames.length;
       
-      // Ganancia POTENTE para extracción fuerte
-      if (avgHistRed > 25 && avgHistRed < 180 && 
+      // Ganancia moderada incluso para señales muy débiles
+      if (avgHistRed < 40 && avgHistRed > this.MIN_RED_THRESHOLD && 
           this.calculateEdgeContrast() > this.EDGE_CONTRAST_THRESHOLD) {
-        dynamicGain = 1.35; // GANANCIA ALTA para extracción potente
-      } else if (avgHistRed > this.MIN_RED_THRESHOLD) {
-        // Señal débil - amplificar para extracción
-        dynamicGain = 1.25; // AMPLIFICAR señales débiles
+        dynamicGain = 1.25; // Ganancia ligeramente reducida
+      } else if (avgHistRed <= this.MIN_RED_THRESHOLD) { // Umbral reducido
+        // Very weak signal - likely no finger present
+        dynamicGain = 1.1; // Algo de amplificación incluso con señal muy débil (antes 1.0)
       }
     }
     
@@ -227,9 +227,9 @@ export class FrameProcessor {
     const avgGreen = greenSum / pixelCount;
     const avgBlue = blueSum / pixelCount;
     
-    // Calculate color ratio indexes PERMISIVOS para extracción potente
-    const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.5; // Umbral bajo y ratio permisivo
-    const rToBRatio = avgBlue > 3 ? avgRed / avgBlue : 1.3;
+    // Calculate color ratio indexes with proper physiological constraints - más permisivo
+    const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
+    const rToBRatio = avgRed / avgBlue;
     console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
     
     // Light level affects detection quality

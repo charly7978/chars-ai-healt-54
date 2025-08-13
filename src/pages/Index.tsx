@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-import { useIntegratedVitalProcessor } from "@/hooks/useIntegratedVitalProcessor";
+import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
+import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -40,15 +41,20 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions } = useSignalProcessor();
+  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
   const { 
-    vitalData,
-    isCalibrating: isVitalCalibrating,
-    processSignal: processVitalSignal,
+    processSignal: processHeartBeat, 
+    setArrhythmiaState 
+  } = useHeartBeatProcessor();
+  const { 
+    processSignal: processVitalSigns, 
+    reset: resetVitalSigns,
+    fullReset: fullResetVitalSigns,
+    lastValidResults,
     startCalibration,
-    reset: resetVitalProcessor,
-    stop: stopVitalProcessor
-  } = useIntegratedVitalProcessor();
+    forceCalibrationCompletion,
+    getCalibrationProgress
+  } = useVitalSignsProcessor();
 
   const enterFullScreen = async () => {
     try {
@@ -152,7 +158,12 @@ const Index = () => {
     };
   }, []);
 
-
+  useEffect(() => {
+    if (lastValidResults && !isMonitoring) {
+      setVitalSigns(lastValidResults);
+      setShowResults(true);
+    }
+  }, [lastValidResults, isMonitoring]);
 
   const startMonitoring = () => {
     if (isMonitoring) {
@@ -175,8 +186,7 @@ const Index = () => {
       
       // Iniciar calibración automática
       console.log("Iniciando fase de calibración automática");
-      startCalibration();
-      setIsCalibrating(true);
+      startAutoCalibration();
       
       // Iniciar temporizador para medición
       if (measurementTimerRef.current) {
@@ -199,14 +209,26 @@ const Index = () => {
     }
   };
 
-
+  const startAutoCalibration = () => {
+    console.log("Iniciando auto-calibración real con indicadores visuales");
+    setIsCalibrating(true);
+    
+    // Iniciar la calibración en el procesador
+    startCalibration();
+    
+    // El progreso de la calibración será actualizado por el hook useVitalSignsProcessor
+    // y reflejado a través del estado calibrationProgress.
+    
+    // Eliminar la simulación visual con setInterval y setTimeout
+    // La lógica de calibración es ahora completamente manejada por el procesador
+  };
 
   const finalizeMeasurement = () => {
     console.log("Finalizando medición: manteniendo resultados");
     
-    if (isCalibrating || isVitalCalibrating) {
-      console.log("Calibración en progreso al finalizar");
-      setIsCalibrating(false);
+    if (isCalibrating) {
+      console.log("Calibración en progreso al finalizar, forzando finalización");
+      forceCalibrationCompletion();
     }
     
     setIsMonitoring(false);
@@ -219,8 +241,11 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    stopVitalProcessor();
-    setShowResults(true);
+    const savedResults = resetVitalSigns();
+    if (savedResults) {
+      setVitalSigns(savedResults);
+      setShowResults(true);
+    }
     
     setElapsedTime(0);
     setSignalQuality(0);
@@ -240,7 +265,7 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    resetVitalProcessor();
+    fullResetVitalSigns();
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -390,43 +415,60 @@ const Index = () => {
       isMonitoring: isMonitoring
     });
 
-    // Actualizar calidad de señal
+    // Actualizar calidad siempre
     setSignalQuality(lastSignal.quality);
-    
     // Si no está monitoreando, no procesar
     if (!isMonitoring) {
+      console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
       return;
     }
     
-    // Procesar con el procesador integrado
-    if (lastSignal.fingerDetected && lastSignal.quality > 15) {
-      processVitalSignal(lastSignal.filteredValue);
-      
-      // Actualizar estado local desde vitalData
-      setHeartRate(vitalData.heartRate);
-      setHeartbeatSignal(lastSignal.filteredValue);
-      setBeatMarker(vitalData.heartRate > 0 ? 1 : 0);
-      
-      // Actualizar signos vitales
-      setVitalSigns({
-        spo2: vitalData.spo2,
-        pressure: vitalData.pressure,
-        arrhythmiaStatus: vitalData.arrhythmiaStatus,
-        glucose: vitalData.glucose,
-        lipids: vitalData.lipids,
-        hemoglobin: vitalData.hemoglobin
+    // Umbral mínimo de calidad para medir
+    const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
+    // Si no hay dedo válido o calidad insuficiente, resetear indicadores
+    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
+      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
+        fingerDetected: lastSignal.fingerDetected,
+        quality: lastSignal.quality,
+        minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
       });
-      
-      setArrhythmiaCount(vitalData.arrhythmiaCount);
-    } else {
-      // Señal insuficiente
       setHeartRate(0);
       setHeartbeatSignal(0);
       setBeatMarker(0);
+      return;
     }
-  }, [lastSignal, isMonitoring, processVitalSignal, vitalData]);
 
+    console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
+    // Señal válida, procesar latidos y signos vitales
+    const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
+    setHeartRate(heartBeatResult.bpm);
+    setHeartbeatSignal(heartBeatResult.filteredValue);
+    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
+    // Actualizar últimos intervalos RR para debug
+    if (heartBeatResult.rrData?.intervals) {
+      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
+    }
+    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    if (vitals) {
+      setVitalSigns(vitals);
+      if (vitals.lastArrhythmiaData) {
+        setLastArrhythmiaData(vitals.lastArrhythmiaData);
+        const [status, count] = vitals.arrhythmiaStatus.split('|');
+        setArrhythmiaCount(count || "0");
+        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+          setArrhythmiaState(isArrhythmiaDetected);
+          if (isArrhythmiaDetected) {
+            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
+          }
+        }
+      }
+    }
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
+  // Referencia para activar o desactivar el sonido de arritmia
+  const arrhythmiaDetectedRef = useRef(false);
   
   // Nueva función para alternar medición
   const handleToggleMonitoring = () => {
@@ -437,17 +479,26 @@ const Index = () => {
     }
   };
 
-  // Observar calibración integrada
+  // Observar el progreso real de la calibración desde el procesador de signos vitales
   useEffect(() => {
-    if (isVitalCalibrating && !isCalibrating) {
-      setIsCalibrating(true);
-    } else if (!isVitalCalibrating && isCalibrating) {
-      setIsCalibrating(false);
-      if (navigator.vibrate) {
-        navigator.vibrate([100, 50, 100]);
-      }
+    if (isCalibrating) {
+      const interval = setInterval(() => {
+        const currentProgress = getCalibrationProgress();
+        setCalibrationProgress(currentProgress);
+
+        if (!currentProgress?.isCalibrating) {
+          clearInterval(interval);
+          console.log("Calibración finalizada según el procesador.");
+          setIsCalibrating(false);
+          if (navigator.vibrate) {
+            navigator.vibrate([100, 50, 100]);
+          }
+        }
+      }, 500); // Actualizar el progreso cada 500ms
+
+      return () => clearInterval(interval);
     }
-  }, [isVitalCalibrating, isCalibrating]);
+  }, [isCalibrating, getCalibrationProgress]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
@@ -504,7 +555,7 @@ const Index = () => {
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isVitalCalibrating ? 'Sí' : 'No'}</div>
+            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
           </div>
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
