@@ -152,12 +152,7 @@ const Index = () => {
     };
   }, []);
 
-  useEffect(() => {
-    if (lastValidResults && !isMonitoring) {
-      setVitalSigns(lastValidResults);
-      setShowResults(true);
-    }
-  }, [lastValidResults, isMonitoring]);
+
 
   const startMonitoring = () => {
     if (isMonitoring) {
@@ -204,26 +199,14 @@ const Index = () => {
     }
   };
 
-  const startAutoCalibration = () => {
-    console.log("Iniciando auto-calibración real con indicadores visuales");
-    setIsCalibrating(true);
-    
-    // Iniciar la calibración en el procesador
-    startCalibration();
-    
-    // El progreso de la calibración será actualizado por el hook useVitalSignsProcessor
-    // y reflejado a través del estado calibrationProgress.
-    
-    // Eliminar la simulación visual con setInterval y setTimeout
-    // La lógica de calibración es ahora completamente manejada por el procesador
-  };
+
 
   const finalizeMeasurement = () => {
     console.log("Finalizando medición: manteniendo resultados");
     
-    if (isCalibrating) {
-      console.log("Calibración en progreso al finalizar, forzando finalización");
-      forceCalibrationCompletion();
+    if (isCalibrating || isVitalCalibrating) {
+      console.log("Calibración en progreso al finalizar");
+      setIsCalibrating(false);
     }
     
     setIsMonitoring(false);
@@ -443,8 +426,7 @@ const Index = () => {
     }
   }, [lastSignal, isMonitoring, processVitalSignal, vitalData]);
 
-  // Referencia para activar o desactivar el sonido de arritmia
-  const arrhythmiaDetectedRef = useRef(false);
+
   
   // Nueva función para alternar medición
   const handleToggleMonitoring = () => {
@@ -455,26 +437,17 @@ const Index = () => {
     }
   };
 
-  // Observar el progreso real de la calibración desde el procesador de signos vitales
+  // Observar calibración integrada
   useEffect(() => {
-    if (isCalibrating) {
-      const interval = setInterval(() => {
-        const currentProgress = getCalibrationProgress();
-        setCalibrationProgress(currentProgress);
-
-        if (!currentProgress?.isCalibrating) {
-          clearInterval(interval);
-          console.log("Calibración finalizada según el procesador.");
-          setIsCalibrating(false);
-          if (navigator.vibrate) {
-            navigator.vibrate([100, 50, 100]);
-          }
-        }
-      }, 500); // Actualizar el progreso cada 500ms
-
-      return () => clearInterval(interval);
+    if (isVitalCalibrating && !isCalibrating) {
+      setIsCalibrating(true);
+    } else if (!isVitalCalibrating && isCalibrating) {
+      setIsCalibrating(false);
+      if (navigator.vibrate) {
+        navigator.vibrate([100, 50, 100]);
+      }
     }
-  }, [isCalibrating, getCalibrationProgress]);
+  }, [isVitalCalibrating, isCalibrating]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
