@@ -1,5 +1,4 @@
-import { FrameData, FrameHistory, ROI } from './types';
-import { ProcessedSignal } from '../../types/signal';
+import { FrameData, ProcessedSignal } from '../../types/signal';
 import { SecureLogger } from '../../utils/secureLogger';
 
 // INTERFAZ PARA NÚMEROS COMPLEJOS
@@ -436,7 +435,11 @@ export class FrameProcessor {
   }
   
   detectROI(redValue: number, imageData: ImageData): ProcessedSignal['roi'] {
-    console.log('[DEBUG] FrameProcessor detectROI - redValue:', redValue, 'imageSize:', imageData.width+'x'+imageData.height);
+    this.secureLogger.debug('Detecting ROI', {
+      redValue,
+      imageSize: `${imageData.width}x${imageData.height}`
+    });
+    
     // Centered ROI by default with adaptive size
     const centerX = Math.floor(imageData.width / 2);
     const centerY = Math.floor(imageData.height / 2);
@@ -469,7 +472,7 @@ export class FrameProcessor {
       height: roiSize
     };
     
-    console.log('[DEBUG] FrameProcessor detectROI - newROI:', newROI);
+    this.secureLogger.debug('New ROI calculated', newROI);
     // Guardar historia de ROIs para estabilidad
     this.roiHistory.push(newROI);
     if (this.roiHistory.length > this.ROI_HISTORY_SIZE) {
