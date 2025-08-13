@@ -2,8 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
-import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { useIntegratedVitalProcessor } from "@/hooks/useIntegratedVitalProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -41,20 +40,15 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
+  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions } = useSignalProcessor();
   const { 
-    processSignal: processHeartBeat, 
-    setArrhythmiaState 
-  } = useHeartBeatProcessor();
-  const { 
-    processSignal: processVitalSigns, 
-    reset: resetVitalSigns,
-    fullReset: fullResetVitalSigns,
-    lastValidResults,
+    vitalData,
+    isCalibrating: isVitalCalibrating,
+    processSignal: processVitalSignal,
     startCalibration,
-    forceCalibrationCompletion,
-    getCalibrationProgress
-  } = useVitalSignsProcessor();
+    reset: resetVitalProcessor,
+    stop: stopVitalProcessor
+  } = useIntegratedVitalProcessor();
 
   const enterFullScreen = async () => {
     try {
@@ -186,7 +180,8 @@ const Index = () => {
       
       // Iniciar calibración automática
       console.log("Iniciando fase de calibración automática");
-      startAutoCalibration();
+      startCalibration();
+      setIsCalibrating(true);
       
       // Iniciar temporizador para medición
       if (measurementTimerRef.current) {
@@ -241,11 +236,8 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    const savedResults = resetVitalSigns();
-    if (savedResults) {
-      setVitalSigns(savedResults);
-      setShowResults(true);
-    }
+    stopVitalProcessor();
+    setShowResults(true);
     
     setElapsedTime(0);
     setSignalQuality(0);
@@ -265,7 +257,7 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    fullResetVitalSigns();
+    resetVitalProcessor();
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -415,57 +407,41 @@ const Index = () => {
       isMonitoring: isMonitoring
     });
 
-    // Actualizar calidad siempre
+    // Actualizar calidad de señal
     setSignalQuality(lastSignal.quality);
+    
     // Si no está monitoreando, no procesar
     if (!isMonitoring) {
-      console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
       return;
     }
     
-    // Umbral mínimo de calidad para medir
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
-    // Si no hay dedo válido o calidad insuficiente, resetear indicadores
-    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
-      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
-        fingerDetected: lastSignal.fingerDetected,
-        quality: lastSignal.quality,
-        minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
+    // Procesar con el procesador integrado
+    if (lastSignal.fingerDetected && lastSignal.quality > 15) {
+      processVitalSignal(lastSignal.filteredValue);
+      
+      // Actualizar estado local desde vitalData
+      setHeartRate(vitalData.heartRate);
+      setHeartbeatSignal(lastSignal.filteredValue);
+      setBeatMarker(vitalData.heartRate > 0 ? 1 : 0);
+      
+      // Actualizar signos vitales
+      setVitalSigns({
+        spo2: vitalData.spo2,
+        pressure: vitalData.pressure,
+        arrhythmiaStatus: vitalData.arrhythmiaStatus,
+        glucose: vitalData.glucose,
+        lipids: vitalData.lipids,
+        hemoglobin: vitalData.hemoglobin
       });
+      
+      setArrhythmiaCount(vitalData.arrhythmiaCount);
+    } else {
+      // Señal insuficiente
       setHeartRate(0);
       setHeartbeatSignal(0);
       setBeatMarker(0);
-      return;
     }
-
-    console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
-    // Señal válida, procesar latidos y signos vitales
-    const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
-    setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(heartBeatResult.filteredValue);
-    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
-    // Actualizar últimos intervalos RR para debug
-    if (heartBeatResult.rrData?.intervals) {
-      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
-    }
-    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-    if (vitals) {
-      setVitalSigns(vitals);
-      if (vitals.lastArrhythmiaData) {
-        setLastArrhythmiaData(vitals.lastArrhythmiaData);
-        const [status, count] = vitals.arrhythmiaStatus.split('|');
-        setArrhythmiaCount(count || "0");
-        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
-        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-          setArrhythmiaState(isArrhythmiaDetected);
-          if (isArrhythmiaDetected) {
-            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
-          }
-        }
-      }
-    }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processVitalSignal, vitalData]);
 
   // Referencia para activar o desactivar el sonido de arritmia
   const arrhythmiaDetectedRef = useRef(false);
@@ -555,7 +531,7 @@ const Index = () => {
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
+            <div>Calibrando: {isVitalCalibrating ? 'Sí' : 'No'}</div>
           </div>
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">

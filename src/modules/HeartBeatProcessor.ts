@@ -290,8 +290,10 @@ export class HeartBeatProcessor {
     
     const isConfirmedPeak = this.confirmPeak(isPeak, normalizedValue, confidence);
 
-    // Calcular calidad de señal actual basada en varios factores (0-100)
+    // Calcular calidad de señal SIMPLIFICADA
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
+    
+    console.log(`HeartBeatProcessor: Señal - Valor: ${normalizedValue.toFixed(3)}, Confianza: ${confidence.toFixed(2)}, Calidad: ${this.currentSignalQuality}`);
 
     if (isConfirmedPeak && !this.isInWarmup()) {
       const now = Date.now();
@@ -339,13 +341,16 @@ export class HeartBeatProcessor {
     }
     
     // Retornar resultado con nuevos parámetros
+    const finalBPM = Math.round(this.getSmoothBPM());
+    const finalConfidence = isPeak ? 0.9 : Math.max(0.3, confidence);
+    
     return {
-      bpm: Math.round(this.getSmoothBPM()),
-      confidence: isPeak ? 0.95 : this.adjustConfidenceForSignalStrength(0.6),
+      bpm: finalBPM,
+      confidence: finalConfidence,
       isPeak: isPeak,
-      filteredValue: filteredValue, // Usando la variable correctamente definida
+      filteredValue: filteredValue,
       arrhythmiaCount: 0,
-      signalQuality: this.currentSignalQuality // Retroalimentación de calidad
+      signalQuality: this.currentSignalQuality
     };
   }
   
@@ -732,83 +737,36 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Calcula la calidad de la señal actual basado en múltiples factores
-   * @param normalizedValue Valor normalizado de la señal actual
-   * @param confidence Confianza de la detección actual
-   * @returns Valor de calidad entre 0-100
+   * Calcula calidad de señal SIMPLIFICADA y DIRECTA
    */
   private calculateSignalQuality(normalizedValue: number, confidence: number): number {
-    // Si no hay suficientes datos para una evaluación precisa
-    if (this.signalBuffer.length < 10) {
-      return Math.min(this.currentSignalQuality + 5, 30); // Incremento gradual hasta 30 durante calibración
+    if (this.signalBuffer.length < 5) {
+      return 15; // Calidad inicial baja pero visible
     }
     
-    // Calcular estadísticas de señal reciente
-    const recentSignals = this.signalBuffer.slice(-20);
-    const avgSignal = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
-    const maxSignal = Math.max(...recentSignals);
-    const minSignal = Math.min(...recentSignals);
-    const range = maxSignal - minSignal;
+    const recentSignals = this.signalBuffer.slice(-10);
+    const range = Math.max(...recentSignals) - Math.min(...recentSignals);
     
-    // Componentes de calidad
-    let amplitudeQuality = 0;
-    let stabilityQuality = 0;
-    let rhythmQuality = 0;
+    // Calidad basada DIRECTAMENTE en amplitud de señal
+    let quality = 0;
     
-    // 1. Calidad basada en amplitud (0-40)
-    // Penalizar fuertemente las amplitudes muy bajas (señal plana o casi plana)
-    if (range < 0.001) { // Umbral para señal prácticamente plana
-        amplitudeQuality = 0; // Calidad nula si la señal es plana
-    } else {
-        amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40); // Mayor factor de amplificación
+    if (range > 5) quality = 85;      // Señal fuerte
+    else if (range > 2) quality = 70; // Señal buena
+    else if (range > 1) quality = 55; // Señal moderada
+    else if (range > 0.5) quality = 40; // Señal débil
+    else if (range > 0.1) quality = 25; // Señal muy débil
+    else quality = 10; // Señal casi plana
+    
+    // Ajuste por confianza
+    if (confidence > 0.8) quality += 10;
+    else if (confidence < 0.3) quality -= 15;
+    
+    // Ajuste por BPM válido
+    if (this.bpmHistory.length > 0) {
+      const lastBPM = this.bpmHistory[this.bpmHistory.length - 1];
+      if (lastBPM > 50 && lastBPM < 150) quality += 5;
     }
     
-    // 2. Calidad basada en estabilidad de señal (0-30)
-    if (range > 0.01) {
-      const variability = range / (Math.abs(avgSignal) || 0.001); // Evitar división por cero
-      if (variability < 0.5) { // Variabilidad óptima para PPG (más estricto)
-        stabilityQuality = 30;
-      } else if (variability < 1.0) { // Moderadamente inestable
-        stabilityQuality = 20;
-      } else if (variability < 2.0) { // Inestable
-        stabilityQuality = 10;
-      } else {
-        stabilityQuality = 0; // Muy inestable, calidad muy baja
-      }
-    }
-    
-    // 3. Calidad basada en ritmo (0-30)
-    if (this.bpmHistory.length >= 5) { // Más muestras para evaluar el ritmo
-      const recentBPMs = this.bpmHistory.slice(-5);
-      const bpmVariance = Math.max(...recentBPMs) - Math.min(...recentBPMs);
-      
-      if (bpmVariance < 5) { // Ritmo muy estable (más estricto)
-        rhythmQuality = 30; 
-      } else if (bpmVariance < 10) { // Ritmo estable
-        rhythmQuality = 20;
-      } else if (bpmVariance < 15) { // Ritmo variable pero aceptable
-        rhythmQuality = 10;
-      } else {
-        rhythmQuality = 5;  // Ritmo inestable
-      }
-    }
-    
-    // Calidad total (0-100)
-    let totalQuality = amplitudeQuality + stabilityQuality + rhythmQuality;
-    
-    // Penalización por baja confianza y umbral de calidad global
-    if (confidence < 0.5) { // Umbral de confianza más alto para penalizar
-      totalQuality *= confidence / 0.5;
-    }
-
-    // Penalización adicional si la señal es demasiado débil después de todas las comprobaciones
-    if (totalQuality < 10 && range < 0.01) { // Si la calidad es baja y el rango es muy pequeño
-        totalQuality = 0; // Forzar a cero si es prácticamente ruido
-    }
-    
-    // Suavizado para evitar cambios bruscos
-    totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
-    
-    return Math.min(Math.max(Math.round(totalQuality), 0), 100);
+    return Math.max(5, Math.min(100, quality));
   }
 }
