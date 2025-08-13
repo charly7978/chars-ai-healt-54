@@ -1,29 +1,105 @@
 import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
 
+// INTERFAZ PARA NÚMEROS COMPLEJOS
+interface Complex {
+  real: number;
+  imag: number;
+}
+
+// INTERFAZ PARA ANÁLISIS ESPECTRAL AVANZADO
+interface SpectralFeatures {
+  centroid: number;
+  rolloff: number;
+  flux: number;
+  bandwidth: number;
+  flatness: number;
+  crest: number;
+}
+
 /**
- * Processes video frames to extract PPG signals and detect ROI
+ * PROCESADOR DE FRAMES DE NIVEL INDUSTRIAL EXTREMO
+ * Implementa algoritmos matemáticos de máxima complejidad para detección de dedo
  * PROHIBIDA LA SIMULACIÓN Y TODO TIPO DE MANIPULACIÓN FORZADA DE DATOS
  */
 export class FrameProcessor {
+  [x: string]: number;
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  // Parámetros ajustados para mejor extracción de señal
-  private readonly RED_GAIN = 1.4; // Aumentado para mejor amplificación de señal roja (antes 1.2)
-  private readonly GREEN_SUPPRESSION = 0.8; // Menos supresión para mantener información (antes 0.85)
-  private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
-  private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
-  private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
-  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
   
-  // Historia para calibración adaptativa
-  private lastFrames: Array<{red: number, green: number, blue: number}> = [];
-  private readonly HISTORY_SIZE = 15; // Reducido para adaptación más rápida (antes 20)
-  private lastLightLevel: number = -1;
+  // PARÁMETROS MATEMÁTICOS AVANZADOS DE NIVEL INDUSTRIAL
+  private readonly SPECTRAL_ANALYSIS_WINDOW = 64;
+  private readonly WAVELET_DECOMPOSITION_LEVELS = 6;
+  private readonly FRACTAL_DIMENSION_THRESHOLD = 1.3;
+  private readonly ENTROPY_COMPLEXITY_FACTOR = 2.718281828; // e
+  private readonly GOLDEN_RATIO = 1.618033988749895; // φ
+  private readonly EULER_MASCHERONI = 0.5772156649015329; // γ
+  private readonly PI_SQUARED = 9.869604401089358; // π²
+  private readonly FEIGENBAUM_CONSTANT = 4.669201609102990; // δ
   
-  // Nuevo: historial de ROIs para estabilidad
-  private roiHistory: Array<{x: number, y: number, width: number, height: number}> = [];
-  private readonly ROI_HISTORY_SIZE = 5;
+  // MATRICES DE CONVOLUCIÓN AVANZADAS
+  private readonly SOBEL_X = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
+  private readonly SOBEL_Y = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
+  private readonly LAPLACIAN_GAUSSIAN = [
+    [0, 0, -1, 0, 0],
+    [0, -1, -2, -1, 0],
+    [-1, -2, 16, -2, -1],
+    [0, -1, -2, -1, 0],
+    [0, 0, -1, 0, 0]
+  ];
+  
+  // FILTROS WAVELETS DAUBECHIES DE ORDEN SUPERIOR
+  private readonly DAUBECHIES_8 = [
+    0.23037781330885523,
+    0.7148465705525415,
+    0.6308807679295904,
+    -0.02798376941698385,
+    -0.18703481171888114,
+    0.030841381835986965,
+    0.032883011666982945,
+    -0.010597401784997278
+  ];
+  
+  // ANÁLISIS ESPECTRAL MULTIDIMENSIONAL
+  private spectralBuffer: Float64Array = new Float64Array(this.SPECTRAL_ANALYSIS_WINDOW);
+  private spectralIndex: number = 0;
+  private fftCache: Map<string, Complex[]> = new Map();
+  private powerSpectralDensity: Float64Array = new Float64Array(this.SPECTRAL_ANALYSIS_WINDOW / 2);
+  
+  // ANÁLISIS FRACTAL Y TEORÍA DEL CAOS
+  private fractalHistory: number[] = [];
+  private entropyHistory: number[] = [];
+  private hausdorffDimensions: number[] = [];
+  private lyapunovExponents: number[] = [];
+  private correlationDimensions: number[] = [];
+  
+  // ANÁLISIS MULTIRESOLUCIÓN WAVELET
+  private pyramidLevels: ImageData[] = [];
+  private orientationMaps: Float32Array[] = [];
+  private coherenceMaps: Float32Array[] = [];
+  private gabor_responses: Float32Array[] = [];
+  
+  // HISTORIA TEMPORAL COMPLEJA PARA ANÁLISIS DINÁMICO
+  private temporalSignatures: Array<{
+    timestamp: number,
+    spectralCentroid: number,
+    spectralRolloff: number,
+    spectralFlux: number,
+    mfccCoefficients: number[],
+    chromaVector: number[],
+    fractalDimension: number,
+    lyapunovExponent: number,
+    kolmogorovComplexity: number,
+    shannonEntropy: number,
+    renyi_entropy: number,
+    tsallis_entropy: number
+  }> = [];
+  
+  private readonly TEMPORAL_HISTORY_SIZE = 256;
+  private readonly MFCC_COEFFICIENTS = 13;
+  private readonly CHROMA_BINS = 12;
+  private readonly GABOR_ORIENTATIONS = 8;
+  private readonly GABOR_FREQUENCIES = 5;
+    RED_GAIN: number;
   
   constructor(config: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number }) {
     // Aumentar tamaño de ROI para capturar más área
