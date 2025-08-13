@@ -6,6 +6,8 @@ import { BiophysicalValidator } from './BiophysicalValidator';
 import { FrameProcessor } from './FrameProcessor';
 import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
+import { MotionDetector } from './MotionDetector';
+import { LightingValidator } from './LightingValidator';
 import { SignalProcessorConfig } from './types';
 
 /**
@@ -22,6 +24,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public frameProcessor: FrameProcessor;
   public calibrationHandler: CalibrationHandler;
   public signalAnalyzer: SignalAnalyzer;
+  public motionDetector: MotionDetector;
+  public lightingValidator: LightingValidator;
   public lastValues: number[] = [];
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
@@ -72,6 +76,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_DETECTIONS,
       MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS
     });
+    this.motionDetector = new MotionDetector();
+    this.lightingValidator = new LightingValidator();
     
     console.log("PPGSignalProcessor: Instance created with medically appropriate configuration:", this.CONFIG);
   }
@@ -89,6 +95,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.trendAnalyzer.reset();
       this.biophysicalValidator.reset();
       this.signalAnalyzer.reset();
+      this.motionDetector.reset();
+      this.lightingValidator.reset();
       this.frameProcessedCount = 0;
       
       console.log("PPGSignalProcessor: System initialized with callbacks:", {
@@ -118,6 +126,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.trendAnalyzer.reset();
     this.biophysicalValidator.reset();
     this.signalAnalyzer.reset();
+    this.motionDetector.reset();
+    this.lightingValidator.reset();
     console.log("PPGSignalProcessor: Advanced system stopped");
   }
 
@@ -169,7 +179,35 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // 1. Extract frame features with enhanced validation
+      // 1. VALIDACIÓN DE ILUMINACIÓN - Detectar luz ambiental vs dedo real
+      const lightingAnalysis = this.lightingValidator.analyzeLighting(imageData);
+      
+      // VETO INMEDIATO: Si es solo luz ambiental, rechazar
+      if (!lightingAnalysis.isValidForPPG || lightingAnalysis.lightingType === 'ambient') {
+        if (shouldLog) {
+          console.log("PPGSignalProcessor: AMBIENT LIGHT DETECTED - No finger present:", {
+            lightingType: lightingAnalysis.lightingType,
+            intensity: lightingAnalysis.intensity,
+            uniformity: lightingAnalysis.uniformity,
+            hasFingerShadow: lightingAnalysis.hasFingerShadow
+          });
+        }
+        
+        const ambientLightSignal: ProcessedSignal = {
+          timestamp: Date.now(),
+          rawValue: 0,
+          filteredValue: 0,
+          quality: 0,
+          fingerDetected: false,
+          roi: { x: 0, y: 0, width: 0, height: 0 },
+          perfusionIndex: 0
+        };
+        
+        this.onSignalReady(ambientLightSignal);
+        return;
+      }
+      
+      // 2. Extract frame features with enhanced validation
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
       const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
@@ -305,12 +343,76 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // Update analyzer with latest scores
       this.signalAnalyzer.updateDetectorScores(detectorScores);
 
-      // 5. Perform multi-detector analysis for highly accurate finger detection
+      // 5. ANÁLISIS DE MOVIMIENTO - Validar que el dedo esté estático
+      const motionAnalysis = this.motionDetector.analyzeMotion(redValue, roi, textureScore);
+      
+      // VALIDACIÓN CRUZADA: Iluminación + Movimiento
+      if (!lightingAnalysis.hasFingerShadow && !motionAnalysis.isStatic) {
+        if (shouldLog) {
+          console.log("PPGSignalProcessor: NO FINGER SHADOW + MOTION - Definitely no finger");
+        }
+        
+        const noFingerSignal: ProcessedSignal = {
+          timestamp: Date.now(),
+          rawValue: redValue,
+          filteredValue: redValue,
+          quality: 0,
+          fingerDetected: false,
+          roi: roi,
+          perfusionIndex: 0
+        };
+        
+        this.onSignalReady(noFingerSignal);
+        return;
+      }
+      
+      // 6. Perform multi-detector analysis SOLO si no hay movimiento excesivo
       const detectionResult = this.signalAnalyzer.analyzeSignalMultiDetector(filteredValue, trendResult);
-      const { isFingerDetected, quality } = detectionResult;
+      let { isFingerDetected, quality } = detectionResult;
+      
+      // VETO POR MOVIMIENTO: Si hay demasiado movimiento, rechazar detección
+      if (!motionAnalysis.isStatic || motionAnalysis.motionLevel > 0.3) {
+        if (shouldLog) {
+          console.log("PPGSignalProcessor: MOTION DETECTED - Rejecting finger detection:", {
+            isStatic: motionAnalysis.isStatic,
+            motionLevel: motionAnalysis.motionLevel,
+            stabilityScore: motionAnalysis.stabilityScore
+          });
+        }
+        
+        isFingerDetected = false;
+        quality = Math.min(quality, 20); // Reducir calidad por movimiento
+      }
+      
+      // VETO POR COLOCACIÓN: Si la colocación no es válida, rechazar
+      if (!motionAnalysis.hasValidPlacement) {
+        if (shouldLog) {
+          console.log("PPGSignalProcessor: INVALID PLACEMENT - Rejecting finger detection");
+        }
+        
+        isFingerDetected = false;
+        quality = 0;
+      }
+      
+      // VETO FINAL POR ILUMINACIÓN: Verificación de confianza
+      if (lightingAnalysis.confidence < 0.4) {
+        if (shouldLog) {
+          console.log("PPGSignalProcessor: LOW LIGHTING CONFIDENCE - Rejecting detection:", {
+            confidence: lightingAnalysis.confidence,
+            lightingType: lightingAnalysis.lightingType
+          });
+        }
+        
+        isFingerDetected = false;
+        quality = Math.min(quality, 15);
+      }
 
-      // Calculate physiologically valid perfusion index SOLO con detección confirmada
-      const perfusionIndex = isFingerDetected && quality > 50 ? 
+      // Calculate physiologically valid perfusion index SOLO con TODAS las validaciones
+      const perfusionIndex = isFingerDetected && 
+                           quality > 50 && 
+                           motionAnalysis.isStatic && 
+                           lightingAnalysis.hasFingerShadow && 
+                           lightingAnalysis.confidence > 0.5 ? 
                            Math.max(0, (Math.log(redValue) * 0.45 - 1.5)) : 0;
 
       // Create processed signal object with strict validation
