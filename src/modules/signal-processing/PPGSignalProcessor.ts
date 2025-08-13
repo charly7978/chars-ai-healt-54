@@ -33,13 +33,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // Configuración POTENTE para extracción fuerte de datos
   public readonly CONFIG: SignalProcessorConfig = {
     BUFFER_SIZE: 12,
-    MIN_RED_THRESHOLD: 12,    // Umbral BAJO para capturar señales débiles
+    MIN_RED_THRESHOLD: 20,    // Umbral MÁS ALTO para señales más fuertes
     MAX_RED_THRESHOLD: 250,
     STABILITY_WINDOW: 8,      // Ventana rápida para respuesta ágil
     MIN_STABILITY_COUNT: 4,   // Menos frames para detección rápida
     HYSTERESIS: 1.8,          // Histeresis moderada
-    MIN_CONSECUTIVE_DETECTIONS: 4,  // DETECCIÓN RÁPIDA para extracción potente
-    MAX_CONSECUTIVE_NO_DETECTIONS: 8,  // Más tolerante a variaciones
+    MIN_CONSECUTIVE_DETECTIONS: 6,  // DETECCIÓN MÁS ESTRICTA
+    MAX_CONSECUTIVE_NO_DETECTIONS: 6,  // Menos tolerante a variaciones
     QUALITY_LEVELS: 25,
     QUALITY_HISTORY_SIZE: 8,  // Historia moderada
     CALIBRATION_SAMPLES: 10,  // Calibración rápida

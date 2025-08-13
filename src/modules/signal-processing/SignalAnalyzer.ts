@@ -64,21 +64,20 @@ export class SignalAnalyzer {
       this.detectorScores;
 
     // VALIDACIÓN BALANCEADA: Detectores con umbrales optimizados
-    const hasMinimumRedSignal = redChannel > 0.08; // Umbral más bajo pero válido
-    const hasStability = stability > 0.15; // Estabilidad reducida
-    const hasPulsatility = pulsatility > 0.1; // Pulsatilidad más sensible
-    const hasBiophysicalSignature = biophysical > 0.08; // Firma biofísica más permisiva
+    const hasMinimumRedSignal = redChannel > 0.1; // Umbral MÁS ALTO para señales más fuertes
+    const hasStability = stability > 0.2; // Estabilidad MÁS ALTA
+    const hasPulsatility = pulsatility > 0.15; // Pulsatilidad MÁS ALTA
+    const hasBiophysicalSignature = biophysical > 0.1; // Firma biofísica MÁS ALTA
 
-    // Pesos optimizados para EXTRACCIÓN POTENTE
+    // Pesos optimizados para EXTRACCIÓN POTENTE y robusta
     const weighted =
-      redChannel * 0.45 +      // MAYOR peso al canal rojo para detección fuerte
-      pulsatility * 0.3 +      // Pulsatilidad crítica
-      stability * 0.15 +       // Estabilidad moderada
-      biophysical * 0.08 +     // Validación biofísica reducida
-      periodicity * 0.02;      // Periodicidad mínima
+      redChannel * 0.5 +       // MAYOR peso al canal rojo para detección fuerte
+      pulsatility * 0.35 +     // Pulsatilidad crítica y más alta
+      stability * 0.1 +        // Estabilidad reducida pero aún importante
+      biophysical * 0.05;      // Validación biofísica mínima
 
-    // Factor de calidad POTENTE para extracción fuerte
-    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 110))); // Factor aumentado
+    // Factor de calidad POTENTE y ROBUSTA para extracción fuerte
+    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 120))); // Factor aumentado y más agresivo
 
     // Historial de calidad
     this.qualityHistory.push(qualityValue);
@@ -90,8 +89,8 @@ export class SignalAnalyzer {
     const smoothedQuality = this.qualityHistory.reduce((sum, val) => sum + val, 0) / this.qualityHistory.length;
 
     // UMBRAL BALANCEADO para detección potente sin falsos positivos
-    const DETECTION_THRESHOLD = 25; // Umbral moderado
-    const CONFIRMATION_THRESHOLD = 20; // Umbral para mantener detección
+    const DETECTION_THRESHOLD = 35; // Umbral MÁS ALTO para detección inicial
+    const CONFIRMATION_THRESHOLD = 30; // Umbral MÁS ALTO para mantener detección
     
     // Lógica de detección POTENTE con validación mínima
     if (smoothedQuality >= DETECTION_THRESHOLD && hasMinimumRedSignal) {
@@ -102,11 +101,12 @@ export class SignalAnalyzer {
       this.consecutiveDetections = 0;
     }
 
-    // Detección MÁS RÁPIDA para extracción potente
+    // Detección MÁS ESTRICTA para extracción potente
     let isFingerDetected = false;
-    if (this.consecutiveDetections >= Math.max(2, this.config.MIN_CONSECUTIVE_DETECTIONS - 4)) {
+    // Ajuste para hacer la detección más estricta: requiere más detecciones consecutivas
+    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS + 2) { // Aumentado el requisito
       isFingerDetected = true;
-    } else if (this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS) {
+    } else if (this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS - 1) { // Reducido el umbral de no detección
       isFingerDetected = false;
     }
 
