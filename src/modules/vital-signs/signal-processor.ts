@@ -4,8 +4,8 @@
  * Implementa algoritmos de detección ultra-sensibles para señales PPG
  */
 export class SignalProcessor {
-  // Ajuste: ventana SMA ligeramente mayor para mejor suavizado
-  private readonly SMA_WINDOW = 4; 
+  // Ajuste: reducimos la ventana del SMA para mayor reactividad
+  private readonly SMA_WINDOW = 2; 
   private ppgValues: number[] = [];
   private readonly WINDOW_SIZE = 200; // Reducido para más rápida adaptación (antes 250)
   
@@ -13,16 +13,16 @@ export class SignalProcessor {
   private readonly SG_COEFFS = [0.2, 0.3, 0.5, 0.7, 1.0, 0.7, 0.5, 0.3, 0.2];
   private readonly SG_NORM = 4.4; // Factor de normalización para coeficientes
   
-  // Parámetros de eliminación de ruido tipo wavelet - VALORES DE SENSIBILIDAD AJUSTADOS
-  private readonly WAVELET_THRESHOLD = 0.006; // Umbral ajustado para balancear sensibilidad y reducción de ruido (antes 0.008)
+  // Parámetros de eliminación de ruido tipo wavelet - VALORES DE SENSIBILIDAD AUMENTADOS
+  private readonly WAVELET_THRESHOLD = 0.003; // Reducido para máxima sensibilidad (antes 0.005)
   private readonly BASELINE_FACTOR = 0.98; // Incrementado para mejor seguimiento (antes 0.97)
   private baselineValue: number = 0;
   
   // PARÁMETROS DE SENSIBILIDAD EXTREMA MEJORADOS
-  private readonly PEAK_ENHANCEMENT = 4.0; // Factor de amplificación ajustado para picos (antes 3.5)
-  private readonly MIN_SIGNAL_BOOST = 15.0; // Amplificación máxima para señales débiles moderada (antes 11.0)
+  private readonly PEAK_ENHANCEMENT = 5.0; // Factor de amplificación extremo para picos (antes 3.5)
+  private readonly MIN_SIGNAL_BOOST = 12.0; // Amplificación máxima para señales débiles (antes 8.0)
   private readonly ADAPTIVE_GAIN_ENABLED = true; // Mantener activada ganancia adaptativa
-  private readonly NOISE_SUPPRESSION = 0.8; // Supresión de ruido más agresiva (antes 0.75)
+  private readonly NOISE_SUPPRESSION = 0.7; // Supresión de ruido más agresiva pero no excesiva (antes 0.8)
   
   // Seguimiento de máximos y mínimos para normalización
   private recentMax: number = 0;

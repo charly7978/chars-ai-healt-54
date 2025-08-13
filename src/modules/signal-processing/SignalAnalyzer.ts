@@ -29,11 +29,6 @@ export class SignalAnalyzer {
     biophysical: 0,
     periodicity: 0,
   };
-  
-  // Sistema anti-falsos positivos
-  private motionHistory: number[] = [];
-  private signalVarianceHistory: number[] = [];
-  private lastSignalValue = 0;
 
   constructor(private readonly config: SignalAnalyzerConfig) {}
 
@@ -42,9 +37,6 @@ export class SignalAnalyzer {
     this.qualityHistory = [];
     this.consecutiveDetections = 0;
     this.consecutiveNoDetections = 0;
-    this.motionHistory = [];
-    this.signalVarianceHistory = [];
-    this.lastSignalValue = 0;
   }
 
   /** Update latest detector scores provided each frame by the processor. */
@@ -54,7 +46,8 @@ export class SignalAnalyzer {
 
   /**
    * Calculate overall quality and finger detection decision.
-   * SISTEMA ANTI-FALSOS POSITIVOS CON VALIDACIÓN ESTRICTA
+   * @param filteredValue Unused for now but kept for future algorithm updates.
+   * @param trendResult   Additional context (e.g., from SignalTrendAnalyzer).
    */
   analyzeSignalMultiDetector(
     filteredValue: number,
@@ -63,50 +56,43 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // VALIDACIÓN BALANCEADA: Detectores con umbrales optimizados
-    const hasMinimumRedSignal = redChannel > 0.1; // Umbral MÁS ALTO para señales más fuertes
-    const hasStability = stability > 0.2; // Estabilidad MÁS ALTA
-    const hasPulsatility = pulsatility > 0.15; // Pulsatilidad MÁS ALTA
-    const hasBiophysicalSignature = biophysical > 0.1; // Firma biofísica MÁS ALTA
-
-    // Pesos optimizados para EXTRACCIÓN POTENTE y robusta
+    // Weighted sum – weights can be tuned later or moved to config.
     const weighted =
-      redChannel * 0.5 +       // MAYOR peso al canal rojo para detección fuerte
-      pulsatility * 0.35 +     // Pulsatilidad crítica y más alta
-      stability * 0.1 +        // Estabilidad reducida pero aún importante
-      biophysical * 0.05;      // Validación biofísica mínima
+      redChannel * 0.3 +
+      stability * 0.25 +
+      pulsatility * 0.25 +
+      biophysical * 0.15 +
+      periodicity * 0.05;
 
-    // Factor de calidad POTENTE y ROBUSTA para extracción fuerte
-    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 120))); // Factor aumentado y más agresivo
+    // Map 0-1 range to 0-100 and clamp.
+    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
 
-    // Historial de calidad
+    // Maintain moving average over last N frames.
     this.qualityHistory.push(qualityValue);
     if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
       this.qualityHistory.shift();
     }
-    
-    // Suavizado conservador
-    const smoothedQuality = this.qualityHistory.reduce((sum, val) => sum + val, 0) / this.qualityHistory.length;
+    const smoothedQuality =
+      this.qualityHistory.reduce((acc, v) => acc + v, 0) /
+      this.qualityHistory.length;
 
-    // UMBRAL BALANCEADO para detección potente sin falsos positivos
-    const DETECTION_THRESHOLD = 35; // Umbral MÁS ALTO para detección inicial
-    const CONFIRMATION_THRESHOLD = 30; // Umbral MÁS ALTO para mantener detección
-    
-    // Lógica de detección POTENTE con validación mínima
-    if (smoothedQuality >= DETECTION_THRESHOLD && hasMinimumRedSignal) {
+    // Hysteresis logic using consecutive detections.
+    let isFingerDetected = false;
+    console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
+    const DETECTION_THRESHOLD = 30;
+    if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
-    } else if (smoothedQuality < CONFIRMATION_THRESHOLD) {
+    } else {
       this.consecutiveNoDetections += 1;
       this.consecutiveDetections = 0;
     }
 
-    // Detección MÁS ESTRICTA para extracción potente
-    let isFingerDetected = false;
-    // Ajuste para hacer la detección más estricta: requiere más detecciones consecutivas
-    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS + 2) { // Aumentado el requisito
+    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
       isFingerDetected = true;
-    } else if (this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS - 1) { // Reducido el umbral de no detección
+    } else if (
+      this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS
+    ) {
       isFingerDetected = false;
     }
 

@@ -122,7 +122,6 @@ const CameraView = ({
           const capabilities = videoTrack.getCapabilities();
           if (process.env.NODE_ENV !== 'production') {
             console.log("CameraView: Capacidades de la cámara:", capabilities);
-            console.log("CameraView: SISTEMA ANTI-FALSOS POSITIVOS ACTIVADO - Detección estricta habilitada");
           }
           
           torchAttempts.current = 0;
@@ -196,11 +195,11 @@ const CameraView = ({
             try {
               await handleTorch(true);
               if (process.env.NODE_ENV !== 'production') {
-                console.log("CameraView: Linterna activada - Sistema de detección estricta listo");
+                console.log("CameraView: Linterna activada para medición PPG");
               }
             } catch (err) {
               if (process.env.NODE_ENV !== 'production') {
-                console.error("CameraView: Error activando linterna - Detección puede ser menos precisa:", err);
+                console.error("CameraView: Error activando linterna:", err);
               }
               torchAttempts.current++;
               
@@ -243,11 +242,9 @@ const CameraView = ({
       
       if (onStreamReady) {
         if (process.env.NODE_ENV !== 'production') {
-          console.log("CameraView: Stream listo - Sistema anti-falsos positivos activado:", {
+          console.log("CameraView: Llamando onStreamReady con stream:", {
             hasVideoTracks: newStream.getVideoTracks().length > 0,
             streamActive: newStream.active,
-            torchSupported: deviceSupportsTorch,
-            autoFocusSupported: deviceSupportsAutoFocus,
             timestamp: new Date().toISOString()
           });
         }
@@ -255,14 +252,8 @@ const CameraView = ({
       }
     } catch (err) {
       if (process.env.NODE_ENV !== 'production') {
-        console.error("CameraView: Error crítico al iniciar cámara - Sistema de detección no disponible:", err);
+        console.error("CameraView: Error al iniciar la cámara:", err);
       }
-      
-      toast({
-        title: "Error de cámara",
-        description: "No se pudo acceder a la cámara. Verifique los permisos.",
-        variant: "destructive"
-      });
     }
   };
 
