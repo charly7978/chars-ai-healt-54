@@ -44,19 +44,6 @@ export interface FrameData {
   rToBRatio: number;
 }
 
-export interface FrameHistory {
-  red: number;
-  green: number;
-  blue: number;
-}
-
-export interface ROI {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export interface DetectionResult {
   isFingerDetected: boolean;
   quality: number;
