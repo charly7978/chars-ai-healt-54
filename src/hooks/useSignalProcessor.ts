@@ -69,8 +69,8 @@ export const useSignalProcessor = () => {
         }
       }
       
-      // Update statistics with valid signals only
-      if (signal.fingerDetected && signal.quality > 30) {
+      // Update statistics SOLO con señales altamente confiables
+      if (signal.fingerDetected && signal.quality > 50) {
         setSignalStats(prev => {
           const newStats = {
             minValue: Math.min(prev.minValue, signal.filteredValue),

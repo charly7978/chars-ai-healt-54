@@ -29,6 +29,11 @@ export class SignalAnalyzer {
     biophysical: 0,
     periodicity: 0,
   };
+  
+  // Sistema anti-falsos positivos
+  private motionHistory: number[] = [];
+  private signalVarianceHistory: number[] = [];
+  private lastSignalValue = 0;
 
   constructor(private readonly config: SignalAnalyzerConfig) {}
 
@@ -37,6 +42,9 @@ export class SignalAnalyzer {
     this.qualityHistory = [];
     this.consecutiveDetections = 0;
     this.consecutiveNoDetections = 0;
+    this.motionHistory = [];
+    this.signalVarianceHistory = [];
+    this.lastSignalValue = 0;
   }
 
   /** Update latest detector scores provided each frame by the processor. */
@@ -46,8 +54,7 @@ export class SignalAnalyzer {
 
   /**
    * Calculate overall quality and finger detection decision.
-   * @param filteredValue Unused for now but kept for future algorithm updates.
-   * @param trendResult   Additional context (e.g., from SignalTrendAnalyzer).
+   * SISTEMA ANTI-FALSOS POSITIVOS CON VALIDACIÓN ESTRICTA
    */
   analyzeSignalMultiDetector(
     filteredValue: number,
@@ -56,49 +63,62 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Pesos optimizados para detección más sensible
+    // VALIDACIÓN CRÍTICA: Todos los detectores deben tener valores mínimos
+    const hasMinimumRedSignal = redChannel > 0.15; // Señal roja mínima real
+    const hasStability = stability > 0.25; // Estabilidad mínima
+    const hasPulsatility = pulsatility > 0.2; // Pulsatilidad detectable
+    const hasBiophysicalSignature = biophysical > 0.15; // Firma biofísica
+    
+    // SISTEMA DE VETO: Si falla alguna validación crítica, NO hay dedo
+    if (!hasMinimumRedSignal || !hasStability) {
+      this.consecutiveNoDetections += 1;
+      this.consecutiveDetections = 0;
+      
+      return {
+        isFingerDetected: false,
+        quality: 0,
+        detectorDetails: { ...this.detectorScores },
+      };
+    }
+
+    // Pesos rebalanceados para evitar falsos positivos
     const weighted =
-      redChannel * 0.4 +      // Mayor peso al canal rojo
-      pulsatility * 0.3 +     // Mayor peso a pulsatilidad
-      stability * 0.15 +
-      biophysical * 0.1 +
-      periodicity * 0.05;
+      redChannel * 0.35 +      // Canal rojo importante pero no dominante
+      stability * 0.25 +       // Estabilidad crítica
+      pulsatility * 0.25 +     // Pulsatilidad crítica
+      biophysical * 0.1 +      // Validación biofísica
+      periodicity * 0.05;      // Periodicidad menor peso
 
-    // Mapear a 0-100 con ajuste de sensibilidad
-    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 120))); // Factor 120 para mayor sensibilidad
+    // Factor de calidad más conservador
+    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 85))); // Factor reducido
 
-    // Historial de calidad con suavizado
+    // Historial de calidad
     this.qualityHistory.push(qualityValue);
     if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
       this.qualityHistory.shift();
     }
     
-    // Suavizado con mayor peso a valores recientes
-    let weightedSum = 0;
-    let totalWeight = 0;
-    for (let i = 0; i < this.qualityHistory.length; i++) {
-      const weight = (i + 1) / this.qualityHistory.length; // Peso creciente
-      weightedSum += this.qualityHistory[i] * weight;
-      totalWeight += weight;
-    }
-    const smoothedQuality = totalWeight > 0 ? weightedSum / totalWeight : qualityValue;
+    // Suavizado conservador
+    const smoothedQuality = this.qualityHistory.reduce((sum, val) => sum + val, 0) / this.qualityHistory.length;
 
-    // Lógica de histeresis mejorada
-    let isFingerDetected = false;
-    const DETECTION_THRESHOLD = 20; // Umbral más bajo para mejor detección
+    // UMBRAL ESTRICTO ANTI-FALSOS POSITIVOS
+    const DETECTION_THRESHOLD = 45; // Umbral mucho más alto
+    const CONFIRMATION_THRESHOLD = 35; // Umbral para mantener detección
     
-    if (smoothedQuality >= DETECTION_THRESHOLD) {
+    // Lógica de detección estricta
+    if (smoothedQuality >= DETECTION_THRESHOLD && hasPulsatility && hasBiophysicalSignature) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
-    } else {
+    } else if (smoothedQuality < CONFIRMATION_THRESHOLD) {
       this.consecutiveNoDetections += 1;
       this.consecutiveDetections = 0;
     }
 
-    // Detección más rápida
-    if (this.consecutiveDetections >= Math.max(1, this.config.MIN_CONSECUTIVE_DETECTIONS - 2)) {
+    // Requiere múltiples confirmaciones consecutivas
+    let isFingerDetected = false;
+    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
       isFingerDetected = true;
-    } else if (this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS) {
+    } else if (this.consecutiveNoDetections >= Math.max(3, this.config.MAX_CONSECUTIVE_NO_DETECTIONS - 3)) {
       isFingerDetected = false;
     }
 
