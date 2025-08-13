@@ -1,5 +1,6 @@
-import { FrameData } from './types';
+import { FrameData, FrameHistory, ROI } from './types';
 import { ProcessedSignal } from '../../types/signal';
+import { SecureLogger } from '../../utils/secureLogger';
 
 // INTERFAZ PARA NÚMEROS COMPLEJOS
 interface Complex {
@@ -17,16 +18,31 @@ interface SpectralFeatures {
   crest: number;
 }
 
+// Interfaz para el historial de frames
+interface FrameHistory {
+  red: number;
+  green: number;
+  blue: number;
+}
+
+// Interfaz para ROI
+interface ROI {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 /**
  * PROCESADOR DE FRAMES DE NIVEL INDUSTRIAL EXTREMO
  * Implementa algoritmos matemáticos de máxima complejidad para detección de dedo
  * PROHIBIDA LA SIMULACIÓN Y TODO TIPO DE MANIPULACIÓN FORZADA DE DATOS
  */
 export class FrameProcessor {
-  [x: string]: number;
+  // Configuration
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
   
-  // PARÁMETROS MATEMÁTICOS AVANZADOS DE NIVEL INDUSTRIAL
+  // Signal processing parameters
   private readonly SPECTRAL_ANALYSIS_WINDOW = 64;
   private readonly WAVELET_DECOMPOSITION_LEVELS = 6;
   private readonly FRACTAL_DIMENSION_THRESHOLD = 1.3;
@@ -35,8 +51,59 @@ export class FrameProcessor {
   private readonly EULER_MASCHERONI = 0.5772156649015329; // γ
   private readonly PI_SQUARED = 9.869604401089358; // π²
   private readonly FEIGENBAUM_CONSTANT = 4.669201609102990; // δ
+  private readonly TEMPORAL_HISTORY_SIZE = 256;
+  private readonly MFCC_COEFFICIENTS = 13;
+  private readonly CHROMA_BINS = 12;
+  private readonly GABOR_ORIENTATIONS = 8;
+  private readonly GABOR_FREQUENCIES = 5;
+  private readonly HISTORY_SIZE = 30;
+  private readonly ROI_HISTORY_SIZE = 5;
+  private readonly MIN_RED_THRESHOLD = 15;
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.1;
+  private readonly EDGE_ENHANCEMENT = 1.2;
+  private readonly SIGNAL_GAIN = 1.5;
+  private readonly RG_RATIO_RANGE: [number, number] = [0.8, 3.2];
   
-  // MATRICES DE CONVOLUCIÓN AVANZADAS
+  // Signal processing buffers and state
+  private spectralBuffer: Float64Array;
+  private spectralIndex: number = 0;
+  private fftCache: Map<string, Complex[]> = new Map();
+  private powerSpectralDensity: Float64Array;
+  private fractalHistory: number[] = [];
+  private entropyHistory: number[] = [];
+  private hausdorffDimensions: number[] = [];
+  private lyapunovExponents: number[] = [];
+  private correlationDimensions: number[] = [];
+  private pyramidLevels: ImageData[] = [];
+  private orientationMaps: Float32Array[] = [];
+  private coherenceMaps: Float32Array[] = [];
+  private gabor_responses: Float32Array[] = [];
+  private lastFrames: FrameHistory[] = [];
+  private roiHistory: ROI[] = [];
+  private lastLightLevel: number = -1;
+  private secureLogger: SecureLogger;
+  
+  // Color processing parameters
+  public RED_GAIN: number = 1.5;
+  public GREEN_SUPPRESSION: number = 0.8;
+  
+  // Temporal analysis state
+  private temporalSignatures: Array<{
+    timestamp: number;
+    spectralCentroid: number;
+    spectralRolloff: number;
+    spectralFlux: number;
+    mfccCoefficients: number[];
+    chromaVector: number[];
+    fractalDimension: number;
+    lyapunovExponent: number;
+    kolmogorovComplexity: number;
+    shannonEntropy: number;
+    renyi_entropy: number;
+    tsallis_entropy: number;
+  }> = [];
+  
+  // Convolution matrices
   private readonly SOBEL_X = [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]];
   private readonly SOBEL_Y = [[-1, -2, -1], [0, 0, 0], [1, 2, 1]];
   private readonly LAPLACIAN_GAUSSIAN = [
@@ -47,7 +114,7 @@ export class FrameProcessor {
     [0, 0, -1, 0, 0]
   ];
   
-  // FILTROS WAVELETS DAUBECHIES DE ORDEN SUPERIOR
+  // Daubechies wavelet filters
   private readonly DAUBECHIES_8 = [
     0.23037781330885523,
     0.7148465705525415,
@@ -59,54 +126,39 @@ export class FrameProcessor {
     -0.010597401784997278
   ];
   
-  // ANÁLISIS ESPECTRAL MULTIDIMENSIONAL
-  private spectralBuffer: Float64Array = new Float64Array(this.SPECTRAL_ANALYSIS_WINDOW);
-  private spectralIndex: number = 0;
-  private fftCache: Map<string, Complex[]> = new Map();
-  private powerSpectralDensity: Float64Array = new Float64Array(this.SPECTRAL_ANALYSIS_WINDOW / 2);
-  
-  // ANÁLISIS FRACTAL Y TEORÍA DEL CAOS
-  private fractalHistory: number[] = [];
-  private entropyHistory: number[] = [];
-  private hausdorffDimensions: number[] = [];
-  private lyapunovExponents: number[] = [];
-  private correlationDimensions: number[] = [];
-  
-  // ANÁLISIS MULTIRESOLUCIÓN WAVELET
-  private pyramidLevels: ImageData[] = [];
-  private orientationMaps: Float32Array[] = [];
-  private coherenceMaps: Float32Array[] = [];
-  private gabor_responses: Float32Array[] = [];
-  
-  // HISTORIA TEMPORAL COMPLEJA PARA ANÁLISIS DINÁMICO
-  private temporalSignatures: Array<{
-    timestamp: number,
-    spectralCentroid: number,
-    spectralRolloff: number,
-    spectralFlux: number,
-    mfccCoefficients: number[],
-    chromaVector: number[],
-    fractalDimension: number,
-    lyapunovExponent: number,
-    kolmogorovComplexity: number,
-    shannonEntropy: number,
-    renyi_entropy: number,
-    tsallis_entropy: number
-  }> = [];
-  
-  private readonly TEMPORAL_HISTORY_SIZE = 256;
-  private readonly MFCC_COEFFICIENTS = 13;
-  private readonly CHROMA_BINS = 12;
-  private readonly GABOR_ORIENTATIONS = 8;
-  private readonly GABOR_FREQUENCIES = 5;
-    RED_GAIN: number;
-  
   constructor(config: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number }) {
-    // Aumentar tamaño de ROI para capturar más área
+    // Initialize configuration with increased ROI size
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
+      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.15) // Increase ROI size without exceeding 0.8
     };
+    
+    // Initialize arrays
+    this.spectralBuffer = new Float64Array(this.SPECTRAL_ANALYSIS_WINDOW);
+    this.powerSpectralDensity = new Float64Array(this.SPECTRAL_ANALYSIS_WINDOW / 2);
+    
+    // Initialize history arrays
+    this.fractalHistory = [];
+    this.entropyHistory = [];
+    this.hausdorffDimensions = [];
+    this.lyapunovExponents = [];
+    this.correlationDimensions = [];
+    this.pyramidLevels = [];
+    this.orientationMaps = [];
+    this.coherenceMaps = [];
+    this.gabor_responses = [];
+    this.lastFrames = [];
+    this.roiHistory = [];
+    this.temporalSignatures = [];
+    
+    // Initialize secure logger
+    this.secureLogger = new SecureLogger('FrameProcessor');
+    
+    // Log initialization
+    this.secureLogger.info('FrameProcessor initialized', {
+      config: this.CONFIG,
+      timestamp: Date.now()
+    });
   }
   
   extractFrameData(imageData: ImageData): FrameData {
@@ -306,25 +358,38 @@ export class FrameProcessor {
     // Calculate color ratio indexes with proper physiological constraints - más permisivo
     const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
     const rToBRatio = avgRed / avgBlue;
-    console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
+    this.secureLogger.debug('Frame data extracted', {
+      avgRed: Number(avgRed.toFixed(1)),
+      avgGreen: Number(avgGreen.toFixed(1)),
+      avgBlue: Number(avgBlue.toFixed(1)),
+      textureScore: Number(textureScore.toFixed(2)),
+      rToGRatio: Number(rToGRatio.toFixed(2)),
+      rToBRatio: Number(rToBRatio.toFixed(2)),
+      lightLevel: Number(this.lastLightLevel.toFixed(1)),
+      lightQuality: Number(lightLevelFactor.toFixed(2)),
+      dynamicGain: Number(dynamicGain.toFixed(2)),
+      pixelCount,
+      frameSize: `${imageData.width}x${imageData.height}`,
+      roiSize: Number(roiSize.toFixed(1))
+    });
     
     // Light level affects detection quality
     const lightLevelFactor = this.getLightLevelQualityFactor(this.lastLightLevel);
     
     // More detailed logging for diagnostics
-    console.log("FrameProcessor: Extracted data:", {
-      avgRed: avgRed.toFixed(1), 
-      avgGreen: avgGreen.toFixed(1), 
-      avgBlue: avgBlue.toFixed(1),
-      textureScore: textureScore.toFixed(2),
-      rToGRatio: rToGRatio.toFixed(2), 
-      rToBRatio: rToBRatio.toFixed(2),
-      lightLevel: this.lastLightLevel.toFixed(1),
-      lightQuality: lightLevelFactor.toFixed(2),
-      dynamicGain: dynamicGain.toFixed(2),
+    this.secureLogger.log("FrameProcessor: Extracted data:", {
+      avgRed: Number(avgRed.toFixed(1)), 
+      avgGreen: Number(avgGreen.toFixed(1)), 
+      avgBlue: Number(avgBlue.toFixed(1)),
+      textureScore: Number(textureScore.toFixed(2)),
+      rToGRatio: Number(rToGRatio.toFixed(2)), 
+      rToBRatio: Number(rToBRatio.toFixed(2)),
+      lightLevel: Number(this.lastLightLevel.toFixed(1)),
+      lightQuality: Number(lightLevelFactor.toFixed(2)),
+      dynamicGain: Number(dynamicGain.toFixed(2)),
       pixelCount,
       frameSize: `${imageData.width}x${imageData.height}`,
-      roiSize: `${roiSize.toFixed(1)}`
+      roiSize: Number(roiSize.toFixed(1))
     });
     
     return {

@@ -2,10 +2,10 @@ import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInt
 import { KalmanFilter } from './KalmanFilter';
 import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
 import { SignalTrendAnalyzer, TrendResult } from './SignalTrendAnalyzer';
-import { BiophysicalValidator } from './BiophysicalValidator';
-import { FrameProcessor } from './FrameProcessor';
+import { AdvancedBiophysicalValidator } from './AdvancedBiophysicalValidator';
+import { AdvancedFrameProcessor } from './AdvancedFrameProcessor';
 import { CalibrationHandler } from './CalibrationHandler';
-import { SignalAnalyzer } from './SignalAnalyzer';
+import { AdvancedSignalAnalyzer } from './AdvancedSignalAnalyzer';
 import { SignalProcessorConfig } from './types';
 
 /**
@@ -18,29 +18,29 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public kalmanFilter: KalmanFilter;
   public sgFilter: SavitzkyGolayFilter;
   public trendAnalyzer: SignalTrendAnalyzer;
-  public biophysicalValidator: BiophysicalValidator;
-  public frameProcessor: FrameProcessor;
+  public biophysicalValidator: AdvancedBiophysicalValidator;
+  public frameProcessor: AdvancedFrameProcessor;
   public calibrationHandler: CalibrationHandler;
-  public signalAnalyzer: SignalAnalyzer;
+  public signalAnalyzer: AdvancedSignalAnalyzer;
   public lastValues: number[] = [];
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
   
-  // Configuration with stricter medically appropriate thresholds
+  // CONFIGURACIÓN AVANZADA DE NIVEL INDUSTRIAL CON UMBRALES MATEMÁTICAMENTE OPTIMIZADOS
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 15,
-    MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
-    MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 10,      // Increased for more stability assessment
-    MIN_STABILITY_COUNT: 5,   // Requires more stability for detection
-    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 6,  // Requires more frames to confirm detection
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
-    QUALITY_LEVELS: 20,
-    QUALITY_HISTORY_SIZE: 10,
-    CALIBRATION_SAMPLES: 10,
-    TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.6
+    BUFFER_SIZE: 32,           // Aumentado para mejor análisis temporal
+    MIN_RED_THRESHOLD: 15,     // Umbral mínimo basado en análisis fisiológico
+    MAX_RED_THRESHOLD: 235,    // Umbral máximo para evitar saturación
+    STABILITY_WINDOW: 16,      // Ventana de estabilidad optimizada
+    MIN_STABILITY_COUNT: 8,    // Mayor estabilidad requerida
+    HYSTERESIS: 3.14159,       // Histéresis basada en π para mayor precisión
+    MIN_CONSECUTIVE_DETECTIONS: 12,  // Detecciones consecutivas aumentadas
+    MAX_CONSECUTIVE_NO_DETECTIONS: 6,   // Pérdida de detección más conservadora
+    QUALITY_LEVELS: 100,       // Niveles de calidad aumentados para mayor precisión
+    QUALITY_HISTORY_SIZE: 64,  // Historia extendida para mejor análisis temporal
+    CALIBRATION_SAMPLES: 25,   // Muestras de calibración aumentadas
+    TEXTURE_GRID_SIZE: 16,     // Grid de textura más fino
+    ROI_SIZE_FACTOR: 0.618     // Factor basado en proporción áurea
   };
   
   constructor(
@@ -56,8 +56,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.kalmanFilter = new KalmanFilter();
     this.sgFilter = new SavitzkyGolayFilter();
     this.trendAnalyzer = new SignalTrendAnalyzer();
-    this.biophysicalValidator = new BiophysicalValidator();
-    this.frameProcessor = new FrameProcessor({
+    this.biophysicalValidator = new AdvancedBiophysicalValidator();
+    this.frameProcessor = new AdvancedFrameProcessor({
       TEXTURE_GRID_SIZE: this.CONFIG.TEXTURE_GRID_SIZE,
       ROI_SIZE_FACTOR: this.CONFIG.ROI_SIZE_FACTOR
     });
@@ -66,7 +66,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       MIN_RED_THRESHOLD: this.CONFIG.MIN_RED_THRESHOLD,
       MAX_RED_THRESHOLD: this.CONFIG.MAX_RED_THRESHOLD
     });
-    this.signalAnalyzer = new SignalAnalyzer({
+    this.signalAnalyzer = new AdvancedSignalAnalyzer({
       QUALITY_LEVELS: this.CONFIG.QUALITY_LEVELS,
       QUALITY_HISTORY_SIZE: this.CONFIG.QUALITY_HISTORY_SIZE,
       MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_DETECTIONS,
