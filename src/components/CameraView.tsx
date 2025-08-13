@@ -35,7 +35,7 @@ const CameraView = ({
             advanced: [{ torch: false }]
           }).catch(err => {
             if (process.env.NODE_ENV !== 'production') {
-              console.error("Error desactivando linterna:", String(err));
+              console.error("Error desactivando linterna:", err);
             }
           });
         }

@@ -4,6 +4,7 @@ import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import { SignalProcessor } from './signal-processor';
 import { GlucoseProcessor } from './glucose-processor';
 import { LipidProcessor } from './lipid-processor';
+import { AdvancedVitalSignsProcessor } from './AdvancedVitalSignsProcessor';
 
 export interface VitalSignsResult {
   spo2: number;

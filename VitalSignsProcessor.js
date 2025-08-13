@@ -1,5 +1,3 @@
-import { secureLog } from './src/utils/secureLogger';
-
 export class VitalSignsProcessor {
   private readonly WINDOW_SIZE = 300;
   private readonly SPO2_CALIBRATION_FACTOR = 1.02;
