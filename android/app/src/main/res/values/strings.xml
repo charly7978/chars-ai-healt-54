@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">chars-ai-health</string>
-    <string name="title_activity_main">chars-ai-health</string>
-    <string name="package_name">com.example.charsaihealth</string>
-    <string name="custom_url_scheme">com.example.charsaihealth</string>
-</resources>
