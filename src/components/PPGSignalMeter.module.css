@@ -41,6 +41,24 @@
   background-color: rgba(255, 255, 255, 0.2);
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   transition: all 1s;
+  width: 0%;
+}
+
+.meterFill[data-quality] {
+  width: calc(var(--quality, 0) * 1%);
+}
+
+.meterFillActive[data-quality] {
+  --quality: attr(data-quality number, 0);
+}
+
+/* Clases para diferentes anchos del medidor */
+.meterFillActive {
+  width: 100%;
+}
+
+.meterFillInactive {
+  width: 0%;
 }
 
 .qualityText {

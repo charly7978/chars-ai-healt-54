@@ -374,8 +374,8 @@ const PPGSignalMeter = ({
           <div className={styles.meterBarContainer}>
             <div className={`${styles.meterBar} ${getQualityColor(quality)}`}>
               <div
-                className={styles.meterFill}
-                style={{ width: `${isFingerDetected ? quality : 0}%` }}
+                className={`${styles.meterFill} ${isFingerDetected ? styles.meterFillActive : styles.meterFillInactive}`}
+                data-quality={isFingerDetected ? quality : 0}
               />
             </div>
             <span className={`${styles.qualityText} ${quality > 60 ? styles.qualityGood : styles.qualityWarning}`}>
