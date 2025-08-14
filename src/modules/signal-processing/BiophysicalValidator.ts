@@ -16,18 +16,18 @@ export interface ColorRatios {
  * Evalúa la calidad de la señal PPG basándose en criterios fisiológicos.
  */
 export class BiophysicalValidator {
-  // Umbrales ultra-sensibles para pulsatilidad
-  private readonly MIN_PULSATILITY_THRESHOLD = 0.02; // Umbral mínimo muy reducido
-  private readonly PULSATILITY_NORMALIZATION_FACTOR = 6.0; // Factor muy reducido para máxima sensibilidad
+  // Umbrales para la pulsatilidad de la señal.
+  private readonly MIN_PULSATILITY_THRESHOLD = 0.1; // Umbral mínimo de pulsatilidad.
+  private readonly PULSATILITY_NORMALIZATION_FACTOR = 20.0; // Factor para normalizar la amplitud.
 
-  // Rangos fisiológicos ultra-permisivos para máxima detección
+  // Rangos fisiológicos esperados para los ratios de color y la intensidad.
   private readonly PHYSIOLOGICAL_RANGES = {
-    // Ratio Rojo/Verde: rango muy amplio
-    redToGreen: { min: 0.2, max: 12.0 }, // Rango extremadamente ampliado
-    // Ratio Rojo/Azul: rango muy amplio
-    redToBlue: { min: 0.2, max: 15.0 }, // Rango extremadamente ampliado
-    // Intensidad del canal rojo: acepta casi cualquier valor
-    redValue: { min: 1, max: 254 }, // Rango casi completo
+    // Ratio Rojo/Verde: la sangre absorbe más verde que rojo.
+    redToGreen: { min: 1.1, max: 3.5 },
+    // Ratio Rojo/Azul: similar al anterior, pero menos distintivo.
+    redToBlue: { min: 1.0, max: 4.0 },
+    // Intensidad del canal rojo: debe estar en un rango detectable, ni saturado ni muy oscuro.
+    redValue: { min: 25, max: 230 },
   };
 
   /**
@@ -37,31 +37,18 @@ export class BiophysicalValidator {
    * @returns Un puntaje de 0.0 (no pulsátil) a 1.0 (muy pulsátil).
    */
   public getPulsatilityScore(signalChunk: number[]): number {
-    if (signalChunk.length < 3) { // Reducido para detección más rápida
+    if (signalChunk.length < 5) {
       return 0;
     }
 
-    let max = signalChunk[0];
-    let min = signalChunk[0];
-    for (let i = 1; i < signalChunk.length; i++) {
-      if (signalChunk[i] > max) max = signalChunk[i];
-      if (signalChunk[i] < min) min = signalChunk[i];
-    }
+    const max = Math.max(...signalChunk);
+    const min = Math.min(...signalChunk);
     const amplitude = max - min;
-    
-    // Cálculo mejorado de pulsatilidad con múltiples métricas
-    const mean = signalChunk.reduce((a, b) => a + b, 0) / signalChunk.length;
-    const variance = signalChunk.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / signalChunk.length;
-    const stdDev = Math.sqrt(variance);
-    
-    // Combinar amplitud y varianza para mejor detección
-    const amplitudeScore = Math.min(1.0, amplitude / this.PULSATILITY_NORMALIZATION_FACTOR);
-    const varianceScore = Math.min(1.0, stdDev / (this.PULSATILITY_NORMALIZATION_FACTOR * 0.5));
-    
-    // Promedio ponderado favoreciendo la amplitud
-    const score = (amplitudeScore * 0.7) + (varianceScore * 0.3);
 
-    return Math.min(1.0, score);
+    // Normaliza el puntaje basado en una amplitud esperada para un pulso fuerte.
+    const score = Math.min(1.0, amplitude / this.PULSATILITY_NORMALIZATION_FACTOR);
+
+    return score;
   }
 
   /**

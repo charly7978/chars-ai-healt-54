@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { parseArrhythmiaStatus, getArrhythmiaText, getArrhythmiaColor } from '@/utils/arrhythmiaUtils';
-import styles from './VitalSign.module.css';
 
 interface VitalSignProps {
   label: string;
@@ -109,7 +108,7 @@ const VitalSign = ({
     
     const status = parseArrhythmiaStatus(value);
     return (
-      <div className={`text-sm font-medium mt-2 ${status?.status === 'DETECTED' ? 'text-red-500' : status?.status === 'CALIBRATING' ? 'text-blue-500' : 'text-green-500'}`}>
+      <div className="text-sm font-medium mt-2" style={{ color: getArrhythmiaColor(status) }}>
         {getArrhythmiaText(status)}
       </div>
     );
@@ -141,26 +140,24 @@ const VitalSign = ({
   return (
     <div 
       className={cn(
-        styles.vitalSignContainer,
-        highlighted && styles.vitalSignHighlighted,
-        showDetails && styles.showDetails
+        "relative flex flex-col justify-center items-center p-2 bg-transparent transition-all duration-500 text-center cursor-pointer",
+        showDetails && "bg-gray-800/20 backdrop-blur-sm rounded-lg"
       )}
       onClick={handleClick}
     >
-      <div className={styles.vitalSignLabel}>
-        <span>{label}</span>
-        {showDetails && <span className={styles.infoIcon}>ⓘ</span>}
+      <div className="text-[11px] font-medium uppercase tracking-wider text-black/70 mb-1">
+        {label}
       </div>
       
-      <div className={styles.vitalSignValueContainer}>
-        <span className={styles.vitalSignValue}>
+      <div className="font-bold text-xl sm:text-2xl transition-all duration-300">
+        <span className="text-gradient-soft animate-value-glow">
           {isArrhytmia && typeof value === 'string' ? value.split('|')[0] : value}
         </span>
-        {unit && <span className={styles.vitalSignUnit}>{unit}</span>}
+        {unit && <span className="text-xs text-white/70 ml-1">{unit}</span>}
       </div>
 
       {!isArrhytmia && riskLabel && (
-        <div className={`${styles.riskLabel} ${riskColor}`}>
+        <div className={`text-sm font-medium mt-1 ${riskColor}`}>
           {riskLabel}
         </div>
       )}
@@ -168,29 +165,31 @@ const VitalSign = ({
       {isArrhytmia && getArrhythmiaDisplay(value)}
       
       {calibrationProgress !== undefined && (
-        <div className={styles.calibrationIndicator}>
+        <div className="absolute inset-0 bg-transparent overflow-hidden pointer-events-none border-0">
           <div 
-            className={styles.calibrationProgress}
-            style={{ '--progress': `${calibrationProgress}%` } as React.CSSProperties}
+            className="h-full bg-blue-500/5 transition-all duration-300 ease-out"
+            style={{ width: `${calibrationProgress}%` }}
           />
-          <div className={styles.calibrationText}>
-            {calibrationProgress < 100 ? `${Math.round(calibrationProgress)}%` : '✓'}
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-xs text-white/80">
+              {calibrationProgress < 100 ? `${Math.round(calibrationProgress)}%` : '✓'}
+            </span>
           </div>
         </div>
       )}
 
       {showDetails && detailedInfo && (
-        <div className={styles.detailsPanel}>
-          <div className={styles.detailsTitle}>Información adicional:</div>
-          <div className={styles.detailsGrid}>
-            <div className={styles.detailItem}>
-              <span className={styles.detailLabel}>Mediana:</span> {median} {unit}
+        <div className="absolute inset-x-0 top-full z-50 mt-2 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg text-left">
+          <div className="text-sm font-medium text-gray-900 mb-2">Información adicional:</div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div className="text-xs">
+              <span className="font-medium">Mediana:</span> {median} {unit}
             </div>
-            <div className={styles.detailItem}>
-              <span className={styles.detailLabel}>Promedio ponderado:</span> {average} {unit}
+            <div className="text-xs">
+              <span className="font-medium">Promedio ponderado:</span> {average} {unit}
             </div>
           </div>
-          <div className={styles.interpretation}>
+          <div className="text-xs mt-1 text-gray-800">
             {detailedInfo.interpretation}
           </div>
         </div>

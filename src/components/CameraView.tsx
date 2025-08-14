@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
 import { AdvancedVitalSignsProcessor, BiometricReading } from '../modules/vital-signs/VitalSignsProcessor';
-import styles from './CameraView.module.css';
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -10,164 +9,72 @@ interface CameraViewProps {
   signalQuality?: number;
 }
 
-const CameraView: React.FC<CameraViewProps> = ({ 
+const CameraView = ({ 
   onStreamReady, 
   isMonitoring, 
   isFingerDetected = false, 
   signalQuality = 0,
-}) => {
-  // Refs
+}: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const vitalProcessor = useRef<AdvancedVitalSignsProcessor>(new AdvancedVitalSignsProcessor());
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const vitalProcessor = useRef(new AdvancedVitalSignsProcessor());
+  const [torchEnabled, setTorchEnabled] = useState(false);
+  const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
+  const lastFrameTimeRef = useRef<number>(0);
+  const [deviceSupportsAutoFocus, setDeviceSupportsAutoFocus] = useState(false);
+  const [deviceSupportsTorch, setDeviceSupportsTorch] = useState(false);
   const torchAttempts = useRef<number>(0);
   const cameraInitialized = useRef<boolean>(false);
   const requestedTorch = useRef<boolean>(false);
-  
-  // State
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [torchEnabled, setTorchEnabled] = useState<boolean>(false);
-  const [deviceSupportsTorch, setDeviceSupportsTorch] = useState<boolean>(false);
-  const [deviceSupportsAutoFocus, setDeviceSupportsAutoFocus] = useState<boolean>(false);
-  
-  // Helper functions
-  const handleTorch = async (enable: boolean) => {
-    if (!deviceSupportsTorch || !stream) return;
-    
-    try {
-      const videoTrack = stream.getVideoTracks()[0];
-      if (!videoTrack) return;
-      
-      await videoTrack.applyConstraints({
-        advanced: [{ torch: enable } as any]
-      });
-      setTorchEnabled(enable);
-    } catch (err) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('Error toggling torch:', err);
-      }
-    }
-  };
-
-  const handleAutoFocus = async () => {
-    if (!deviceSupportsAutoFocus || !stream) return;
-    
-    try {
-      const videoTrack = stream.getVideoTracks()[0];
-      if (!videoTrack) return;
-      
-      await videoTrack.applyConstraints({
-        advanced: [{ focusMode: 'continuous' } as any]
-      });
-    } catch (err) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn('Error adjusting focus:', err);
-      }
-    }
-  };
-
-  const extractPPGSignals = (frameData: ImageData) => {
-    const { width, height, data } = frameData;
-    const pixelCount = width * height;
-    
-    // Calculate channel averages
-    let redSum = 0, irSum = 0, greenSum = 0;
-    
-    for (let i = 0; i < pixelCount * 4; i += 4) {
-      redSum += data[i];     // Red channel
-      greenSum += data[i+1]; // Green channel
-      irSum += data[i+2];    // Infrared channel
-    }
-    
-    return {
-      red: [redSum / pixelCount],
-      ir: [irSum / pixelCount],
-      green: [greenSum / pixelCount]
-    };
-  };
-
-  const processFrame = (frameData: ImageData) => {
-    const { red, ir, green } = extractPPGSignals(frameData);
-    
-    const results = vitalProcessor.current.processSignal({
-      red,
-      ir, 
-      green,
-      timestamp: Date.now()
-    });
-    
-    if (results) {
-      handleResults(results);
-    }
-  };
-
-  const handleResults = (results: BiometricReading) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('Biometric measurements:', {
-        spo2: results.spo2.toFixed(1) + '%',
-        pressure: `${results.sbp}/${results.dbp} mmHg`,
-        glucose: `${results.glucose.toFixed(0)} mg/dL`,
-        confidence: `${(results.confidence * 100).toFixed(1)}%`
-      });
-    }
-  };
 
   const stopCamera = async () => {
     if (stream) {
-      try {
-        // Stop all tracks in the stream
-        stream.getTracks().forEach(track => {
-          // Turn off torch if supported
-          if (track.kind === 'video' && track.getCapabilities()?.torch) {
-            track.applyConstraints({
-              advanced: [{ torch: false } as any]
-            }).catch(err => {
-              if (process.env.NODE_ENV !== 'production') {
-                console.error('Error turning off torch:', err);
-              }
-            });
-          }
-          track.stop();
-        });
-        
-        // Clear video source
-        if (videoRef.current) {
-          videoRef.current.srcObject = null;
+      stream.getTracks().forEach(track => {
+        if (track.kind === 'video' && track.getCapabilities()?.torch) {
+          track.applyConstraints({
+            advanced: [{ torch: false }]
+          }).catch(err => {
+            if (process.env.NODE_ENV !== 'production') {
+              console.error("Error desactivando linterna:", err);
+            }
+          });
         }
         
-        // Reset states
-        setStream(null);
-        setTorchEnabled(false);
-        cameraInitialized.current = false;
-        requestedTorch.current = false;
-        
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('Camera stopped successfully');
-        }
-      } catch (error) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.error('Error stopping camera:', error);
-        }
+        track.stop();
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
       }
+      
+      setStream(null);
+      setTorchEnabled(false);
+      cameraInitialized.current = false;
+      requestedTorch.current = false;
     }
   };
 
   const startCamera = async () => {
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("getUserMedia not supported");
+        if (process.env.NODE_ENV !== 'production') {
+          console.error("Su dispositivo no soporta acceso a la cámara");
+        }
+        throw new Error("getUserMedia no está soportado");
       }
 
-      // Sanitize user agent to prevent log injection
-      const userAgent = typeof navigator !== 'undefined' ? 
-        String(navigator.userAgent || '') : '';
-      const isAndroid = /android/i.test(userAgent);
-      const isIOS = /iPad|iPhone|iPod/.test(userAgent);
+      const isAndroid = /android/i.test(navigator.userAgent);
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
       let baseVideoConstraints: MediaTrackConstraints = {
         facingMode: { exact: 'environment' },
         width: { ideal: 1280 },
         height: { ideal: 720 }
       };
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("CameraView: Configurando cámara para detección de dedo");
+      }
 
       if (isAndroid) {
         Object.assign(baseVideoConstraints, {
@@ -189,13 +96,36 @@ const CameraView: React.FC<CameraViewProps> = ({
         audio: false
       };
 
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("CameraView: Intentando obtener acceso a la cámara con constraints:", constraints);
+      }
       const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("CameraView: Acceso a la cámara obtenido exitosamente");
+      }
+      
+      if (!onStreamReady) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error("CameraView: onStreamReady callback no disponible");
+        }
+        toast({
+          title: "Error de cámara",
+          description: "No hay callback para procesar el video",
+          variant: "destructive"
+        });
+      }
       
       const videoTrack = newStream.getVideoTracks()[0];
 
       if (videoTrack) {
         try {
           const capabilities = videoTrack.getCapabilities();
+          if (process.env.NODE_ENV !== 'production') {
+            console.log("CameraView: Capacidades de la cámara:", capabilities);
+          }
+          
+          torchAttempts.current = 0;
+          requestedTorch.current = false;
           
           const advancedConstraints: MediaTrackConstraintSet[] = [];
           
@@ -203,6 +133,9 @@ const CameraView: React.FC<CameraViewProps> = ({
             advancedConstraints.push({ 
               exposureMode: 'manual'
             });
+            if (process.env.NODE_ENV !== 'production') {
+              console.log("CameraView: Modo de exposición manual aplicado");
+            }
 
             if (capabilities.exposureTime) {
               const minExposure = capabilities.exposureTime.min || 0;
@@ -212,16 +145,25 @@ const CameraView: React.FC<CameraViewProps> = ({
               advancedConstraints.push({
                 exposureTime: targetExposure
               });
+              if (process.env.NODE_ENV !== 'production') {
+                console.log(`CameraView: Tiempo de exposición ajustado a ${targetExposure}`);
+              }
             }
           }
           
           if (capabilities.focusMode) {
             advancedConstraints.push({ focusMode: 'continuous' });
             setDeviceSupportsAutoFocus(true);
+            if (process.env.NODE_ENV !== 'production') {
+              console.log("CameraView: Modo de enfoque continuo aplicado");
+            }
           }
           
           if (capabilities.whiteBalanceMode) {
             advancedConstraints.push({ whiteBalanceMode: 'continuous' });
+            if (process.env.NODE_ENV !== 'production') {
+              console.log("CameraView: Modo de balance de blancos continuo aplicado");
+            }
           }
 
           if (advancedConstraints.length > 0) {
@@ -229,9 +171,12 @@ const CameraView: React.FC<CameraViewProps> = ({
               await videoTrack.applyConstraints({
                 advanced: advancedConstraints
               });
+              if (process.env.NODE_ENV !== 'production') {
+                console.log("CameraView: Constraints avanzados aplicados exitosamente");
+              }
             } catch (err) {
               if (process.env.NODE_ENV !== 'production') {
-                console.error("Error applying advanced constraints:", err);
+                console.error("CameraView: Error aplicando constraints avanzados:", err);
               }
             }
           }
@@ -242,29 +187,44 @@ const CameraView: React.FC<CameraViewProps> = ({
           }
           
           if (capabilities.torch) {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log("CameraView: Este dispositivo tiene linterna disponible");
+            }
             setDeviceSupportsTorch(true);
             
             try {
               await handleTorch(true);
+              if (process.env.NODE_ENV !== 'production') {
+                console.log("CameraView: Linterna activada para medición PPG");
+              }
             } catch (err) {
+              if (process.env.NODE_ENV !== 'production') {
+                console.error("CameraView: Error activando linterna:", err);
+              }
               torchAttempts.current++;
               
               setTimeout(async () => {
                 try {
                   await handleTorch(true);
+                  if (process.env.NODE_ENV !== 'production') {
+                    console.log("CameraView: Linterna activada en segundo intento");
+                  }
                 } catch (err) {
                   if (process.env.NODE_ENV !== 'production') {
-                    console.error("Error on second torch attempt:", err);
+                    console.error("CameraView: Error en segundo intento de linterna:", err);
                   }
                 }
               }, 1000);
             }
           } else {
+            if (process.env.NODE_ENV !== 'production') {
+              console.log("CameraView: Este dispositivo no tiene linterna disponible");
+            }
             setDeviceSupportsTorch(false);
           }
         } catch (err) {
           if (process.env.NODE_ENV !== 'production') {
-            console.log("Could not apply some optimizations:", err);
+            console.log("CameraView: No se pudieron aplicar algunas optimizaciones:", err);
           }
         }
       }
@@ -281,35 +241,112 @@ const CameraView: React.FC<CameraViewProps> = ({
       cameraInitialized.current = true;
       
       if (onStreamReady) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.log("CameraView: Llamando onStreamReady con stream:", {
+            hasVideoTracks: newStream.getVideoTracks().length > 0,
+            streamActive: newStream.active,
+            timestamp: new Date().toISOString()
+          });
+        }
         onStreamReady(newStream);
       }
     } catch (err) {
       if (process.env.NODE_ENV !== 'production') {
-        console.error("Error starting camera:", err);
+        console.error("CameraView: Error al iniciar la cámara:", err);
       }
     }
   };
 
-  // Effects
-  useEffect(() => {
-    const initCamera = async () => {
-      if (isMonitoring && !stream) {
-        await startCamera();
-      } else if (!isMonitoring && stream) {
-        await stopCamera();
-      }
-    };
-
-    initCamera().catch(error => {
+  const handleTorch = async (enable: boolean) => {
+    if (!deviceSupportsTorch) return;
+    
+    try {
+      await stream?.getVideoTracks()[0].applyConstraints({
+        advanced: [{ torch: enable }]
+      });
+      setTorchEnabled(enable);
+    } catch (err) {
       if (process.env.NODE_ENV !== 'production') {
-        console.error('Error during camera initialization:', error);
+        console.error("Error al manejar linterna:", err);
       }
-    });
+    }
+  };
 
-    return () => {
-      if (stream) {
-        stopCamera().catch(console.error);
+  const handleAutoFocus = async () => {
+    if (!deviceSupportsAutoFocus) return;
+    
+    try {
+      await stream?.getVideoTracks()[0].applyConstraints({
+        advanced: [{ focusMode: 'continuous' }]
+      });
+    } catch (err) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.warn("Error al ajustar enfoque:", err);
       }
+    }
+  };
+
+  const processFrame = (frameData: ImageData) => {
+    const { red, ir, green } = extractPPGSignals(frameData);
+    
+    const results = vitalProcessor.current.processSignal({
+      red,
+      ir, 
+      green,
+      timestamp: Date.now()
+    });
+    
+    if (results) {
+      handleResults(results);
+    }
+  };
+
+  const extractPPGSignals = (frameData: ImageData) => {
+    const { width, height, data } = frameData;
+    const pixelCount = width * height;
+    
+    // Promedios de canales
+    let redSum = 0, irSum = 0, greenSum = 0;
+    
+    for (let i = 0; i < pixelCount * 4; i += 4) {
+      redSum += data[i];     // Canal Rojo
+      greenSum += data[i+1]; // Canal Verde
+      irSum += data[i+2];    // Canal Infrarrojo (asumiendo configuración cámara)
+    }
+    
+    return {
+      red: [redSum / pixelCount],
+      ir: [irSum / pixelCount],
+      green: [greenSum / pixelCount]
+    };
+  };
+
+  const handleResults = (results: BiometricReading) => {
+    console.log('Mediciones biométricas:', {
+      spo2: results.spo2.toFixed(1) + '%',
+      pressure: results.sbp + '/' + results.dbp + ' mmHg',
+      glucose: results.glucose.toFixed(0) + ' mg/dL',
+      confidence: (results.confidence * 100).toFixed(1) + '%'
+    });
+  };
+
+  useEffect(() => {
+    if (isMonitoring && !stream) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("[DIAG] CameraView: Iniciando cámara porque isMonitoring=true");
+      }
+      startCamera();
+    } else if (!isMonitoring && stream) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("[DIAG] CameraView: Deteniendo cámara porque isMonitoring=false");
+      }
+      stopCamera();
+    }
+    return () => {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log("[DIAG] CameraView: Desmontando componente, deteniendo cámara");
+      }
+      stopCamera();
     };
   }, [isMonitoring]);
 
@@ -324,7 +361,13 @@ const CameraView: React.FC<CameraViewProps> = ({
       if (!torchIsReallyOn) {
         try {
           await handleTorch(true);
+          if (process.env.NODE_ENV !== 'production') {
+            console.log("CameraView: Re-activando linterna (torch)");
+          }
         } catch (err) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.error("CameraView: Error re-encendiendo linterna:", err);
+          }
           torchAttempts.current++;
           setTorchEnabled(false);
         }
@@ -336,6 +379,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     };
     
     const torchCheckInterval = setInterval(keepTorchOn, 2000);
+    
     keepTorchOn();
     
     return () => {
@@ -346,6 +390,8 @@ const CameraView: React.FC<CameraViewProps> = ({
   useEffect(() => {
     if (!stream || !isMonitoring || !deviceSupportsAutoFocus) return;
     
+    let focusInterval: number;
+    
     const focusIntervalTime = isFingerDetected ? 4000 : 1500;
     
     const attemptRefocus = async () => {
@@ -354,7 +400,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     
     attemptRefocus();
     
-    const focusInterval = window.setInterval(attemptRefocus, focusIntervalTime);
+    focusInterval = window.setInterval(attemptRefocus, focusIntervalTime);
     
     return () => {
       clearInterval(focusInterval);
@@ -367,7 +413,12 @@ const CameraView: React.FC<CameraViewProps> = ({
       autoPlay
       playsInline
       muted
-      className={`${styles.video} absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover`}
+      className="absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover"
+      style={{
+        willChange: 'transform',
+        transform: 'translateZ(0)',
+        backfaceVisibility: 'hidden'
+      }}
     />
   );
 };
