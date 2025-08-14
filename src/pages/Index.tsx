@@ -1,9 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
-import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
-import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { useUnifiedProcessor } from "@/hooks/useUnifiedProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -41,20 +39,22 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
-  const { 
-    processSignal: processHeartBeat, 
-    setArrhythmiaState 
-  } = useHeartBeatProcessor();
-  const { 
-    processSignal: processVitalSigns, 
-    reset: resetVitalSigns,
-    fullReset: fullResetVitalSigns,
-    lastValidResults,
-    startCalibration,
-    forceCalibrationCompletion,
-    getCalibrationProgress
-  } = useVitalSignsProcessor();
+  const {
+    signal: lastSignal,
+    heartRate: unifiedHeartRate,
+    confidence: unifiedConfidence,
+    isPeak: unifiedIsPeak,
+    vitalSigns: unifiedVitalSigns,
+    isProcessing,
+    signalQuality: unifiedSignalQuality,
+    arrhythmiaCount: unifiedArrhythmiaCount,
+    framesProcessed,
+    error,
+    startProcessing,
+    stopProcessing,
+    processFrame,
+    reset: unifiedReset
+  } = useUnifiedProcessor();
 
   const enterFullScreen = async () => {
     try {
@@ -277,7 +277,7 @@ const Index = () => {
       animationFrameRef.current = null;
     }
     
-    fullResetVitalSigns();
+    unifiedReset();
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -435,13 +435,9 @@ const Index = () => {
       isMonitoring: isMonitoring
     });
 
-    // Actualizar calidad siempre
-    setSignalQuality(lastSignal.quality);
-    // Si no está monitoreando, no procesar
-    if (!isMonitoring) {
-      console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
-      return;
-    }
+    // FLUJO UNIFICADO - Sin duplicaciones
+    setSignalQuality(unifiedSignalQuality);
+    if (!isMonitoring) return;
     
     // Umbral mínimo de calidad para medir
     const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
