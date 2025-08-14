@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
 import { AdvancedVitalSignsProcessor, BiometricReading } from '../modules/vital-signs/VitalSignsProcessor';
+import styles from './CameraView.module.css';
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -156,8 +157,11 @@ const CameraView: React.FC<CameraViewProps> = ({
         throw new Error("getUserMedia not supported");
       }
 
-      const isAndroid = /android/i.test(navigator.userAgent);
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      // Sanitize user agent to prevent log injection
+      const userAgent = typeof navigator !== 'undefined' ? 
+        String(navigator.userAgent || '') : '';
+      const isAndroid = /android/i.test(userAgent);
+      const isIOS = /iPad|iPhone|iPod/.test(userAgent);
 
       let baseVideoConstraints: MediaTrackConstraints = {
         facingMode: { exact: 'environment' },
@@ -363,11 +367,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       autoPlay
       playsInline
       muted
-      className="absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover"
-      style={{
-        willChange: 'transform',
-        transform: 'translateZ(0)',
-        backfaceVisibility: 'hidden'
+      className={`${styles.video} absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover`}
       }}
     />
   );
