@@ -50,8 +50,14 @@ export const useUnifiedProcessor = () => {
   const [framesProcessed, setFramesProcessed] = useState(0);
   const [error, setError] = useState<ProcessingError | null>(null);
   
-  // Initialize processors ONCE
+  // Initialize processors ONCE - FIXED: No recrear en cada render
   useEffect(() => {
+    // EVITAR RECREACIÓN si ya existen
+    if (ppgProcessor.current && heartProcessor.current && vitalProcessor.current) {
+      console.log("useUnifiedProcessor: Processors already exist, skipping creation");
+      return;
+    }
+    
     const onSignalReady = (signal: ProcessedSignal) => {
       // SINGLE PROCESSING CHAIN - No duplicación
       if (!heartProcessor.current || !vitalProcessor.current) return;
@@ -82,24 +88,30 @@ export const useUnifiedProcessor = () => {
       setError(error);
     };
     
-    // Create processors
+    // Create processors ONLY ONCE
+    console.log("useUnifiedProcessor: Creating new processor instances");
     ppgProcessor.current = new PPGSignalProcessor(onSignalReady, onError);
     heartProcessor.current = new HeartBeatProcessor();
     vitalProcessor.current = new VitalSignsProcessor();
     
     return () => {
+      console.log("useUnifiedProcessor: Cleanup - stopping processors");
       ppgProcessor.current?.stop();
       heartProcessor.current?.reset();
       vitalProcessor.current?.fullReset();
     };
-  }, []);
+  }, []); // DEPENDENCIAS VACÍAS para ejecutar solo UNA VEZ
   
   const startProcessing = useCallback(() => {
-    if (!ppgProcessor.current) return;
+    if (!ppgProcessor.current) {
+      console.error("useUnifiedProcessor: No PPG processor available");
+      return;
+    }
     
+    console.log("useUnifiedProcessor: Starting processing - NO RESET");
     ppgProcessor.current.start();
     setResult(prev => ({ ...prev, isProcessing: true }));
-    setFramesProcessed(0);
+    // NO resetear frameCount para mantener continuidad
     setError(null);
   }, []);
   
@@ -116,30 +128,23 @@ export const useUnifiedProcessor = () => {
   }, [result.isProcessing]);
   
   const reset = useCallback(() => {
+    console.log("useUnifiedProcessor: SOFT RESET - preserving processor instances");
+    // NO destruir procesadores, solo resetear estado
     ppgProcessor.current?.stop();
-    heartProcessor.current?.reset();
-    vitalProcessor.current?.fullReset();
     
-    setResult({
+    // SOFT reset - mantener contexto de procesadores
+    setResult(prev => ({
+      ...prev,
       signal: null,
       heartRate: 0,
       confidence: 0,
       isPeak: false,
-      vitalSigns: {
-        spo2: 0,
-        pressure: "--/--",
-        arrhythmiaStatus: "--",
-        glucose: 0,
-        lipids: { totalCholesterol: 0, triglycerides: 0 },
-        hemoglobin: 0
-      },
       isProcessing: false,
-      signalQuality: 0,
-      arrhythmiaCount: 0
-    });
+      signalQuality: 0
+    }));
     
-    setFramesProcessed(0);
     setError(null);
+    // NO resetear frameCount para mantener continuidad
   }, []);
   
   return {
