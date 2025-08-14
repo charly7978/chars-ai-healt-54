@@ -527,7 +527,7 @@ const Index = () => {
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
             <div>BPM: {heartRate}</div>
-            <div>Picos: {isPeak ? 'Sí' : 'No'}</div>
+            <div>Picos: {unifiedIsPeak ? 'Sí' : 'No'}</div>
           </div>
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
@@ -535,12 +535,12 @@ const Index = () => {
             <pre className="whitespace-pre-wrap text-xs">
               Frames procesados: {framesProcessed}{"\n"}
               Heart Rate: {heartRate} BPM{"\n"}
-              Confidence: {confidence.toFixed(2)}{"\n"}
-              Is Peak: {isPeak ? 'YES' : 'NO'}{"\n"}
+              Confidence: {unifiedConfidence.toFixed(2)}{"\n"}
+              Is Peak: {unifiedIsPeak ? 'YES' : 'NO'}{"\n"}
               Signal Quality: {signalQuality}{"\n"}
-              Finger Detected: {signal?.fingerDetected ? 'YES' : 'NO'}{"\n"}
-              Raw Value: {signal?.rawValue?.toFixed(2) || 'N/A'}{"\n"}
-              Filtered Value: {signal?.filteredValue?.toFixed(2) || 'N/A'}
+              Finger Detected: {lastSignal?.fingerDetected ? 'YES' : 'NO'}{"\n"}
+              Raw Value: {lastSignal?.rawValue?.toFixed(2) || 'N/A'}{"\n"}
+              Filtered Value: {lastSignal?.filteredValue?.toFixed(2) || 'N/A'}
             </pre>
           </details>
           <div className="flex-1">
