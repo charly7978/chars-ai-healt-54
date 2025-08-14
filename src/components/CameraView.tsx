@@ -368,7 +368,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       playsInline
       muted
       className={`${styles.video} absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover`}
-      }}
     />
   );
 };

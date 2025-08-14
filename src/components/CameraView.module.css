@@ -1,12 +1,19 @@
 .video {
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  /* Preserve 3D transforms for better performance */
-  transform-style: preserve-3d;
   /* Force hardware acceleration */
   -webkit-transform: translateZ(0);
   -webkit-backface-visibility: hidden;
   -webkit-perspective: 1000;
-  -webkit-font-smoothing: subpixel-antialiased;
+  
+  /* Standard properties */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
+  
+  /* Performance optimizations */
+  will-change: transform;
+  transform-style: preserve-3d;
+  
+  /* Ensure proper rendering */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
