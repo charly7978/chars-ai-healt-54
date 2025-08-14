@@ -8,6 +8,7 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
+import styles from './Index.module.css';
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -41,7 +42,7 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
+  const { startProcessing, stopProcessing, lastSignal, processor, isProcessing, framesProcessed, signalStats } = useSignalProcessor();
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState 
@@ -380,11 +381,15 @@ const Index = () => {
             const imageData = enhanceCtx.getImageData(0, 0, enhanceCanvas.width, enhanceCanvas.height);
             
             // Procesar el frame mejorado
-            processFrame(imageData);
+            if (processor) {
+              processor.processFrame(imageData);
+            }
           } else {
             // Fallback a procesamiento normal
             const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
-            processFrame(imageData);
+            if (processor) {
+              processor.processFrame(imageData);
+            }
           }
           
           // Actualizar contadores para monitoreo de rendimiento
@@ -524,15 +529,7 @@ const Index = () => {
   }, [isCalibrating, getCalibrationProgress]);
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-black" style={{ 
-      height: '100svh',
-      width: '100vw',
-      maxWidth: '100vw',
-      maxHeight: '100svh',
-      overflow: 'hidden',
-      paddingTop: 'env(safe-area-inset-top)',
-      paddingBottom: 'env(safe-area-inset-bottom)'
-    }}>
+    <div className={styles.container}>
       {/* Debug overlay de intervalos RR */}
       {rrIntervals.length > 0 && (
         <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded">
@@ -578,14 +575,13 @@ const Index = () => {
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
+            <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
           </div>
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
             <summary className="cursor-pointer">Debug Signal Stats</summary>
             <pre className="whitespace-pre-wrap text-xs">
               {JSON.stringify(signalStats, null, 2)}
-              {'\n'}Quality Transitions:{'\n'}{JSON.stringify(qualityTransitions, null, 2)}
             </pre>
           </details>
           <div className="flex-1">

@@ -3,7 +3,7 @@
  */
 
 // Tipos base
-type ErrorType = 'VALIDATION_ERROR' | 'PROCESSOR_ERROR' | 'GENERIC_ERROR';
+export type ErrorType = 'VALIDATION_ERROR' | 'PROCESSOR_ERROR' | 'GENERIC_ERROR' | 'CALIBRATION_ERROR' | 'CALLBACK_ERROR' | 'INIT_ERROR';
 
 // Interfaces principales
 export interface ProcessedSignal {
