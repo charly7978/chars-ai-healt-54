@@ -1,5 +1,5 @@
 import { FrameData } from './types';
-import { ProcessedSignal } from '../../types/signal';
+import { ProcessedSignal } from '../../types/signal.d';
 
 /**
  * Processes video frames to extract PPG signals and detect ROI
