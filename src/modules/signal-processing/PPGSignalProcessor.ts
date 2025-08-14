@@ -26,16 +26,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
   
-  // Configuration with stricter medically appropriate thresholds
+  // Configuration with more sensitive thresholds for better detection
   public readonly CONFIG: SignalProcessorConfig = {
     BUFFER_SIZE: 15,
     MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
     MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 10,      // Increased for more stability assessment
-    MIN_STABILITY_COUNT: 5,   // Requires more stability for detection
-    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 6,  // Requires more frames to confirm detection
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
+    STABILITY_WINDOW: 5,      // Reducido para detección más rápida
+    MIN_STABILITY_COUNT: 2,   // Reducido para ser menos estricto
+    HYSTERESIS: 1.0,          // Reducido para mayor sensibilidad
+    MIN_CONSECUTIVE_DETECTIONS: 3,  // Reducido para detección más rápida
+    MAX_CONSECUTIVE_NO_DETECTIONS: 8,  // Aumentado para mantener detección más tiempo
     QUALITY_LEVELS: 20,
     QUALITY_HISTORY_SIZE: 10,
     CALIBRATION_SAMPLES: 10,
@@ -189,8 +189,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection of invalid frames - stricter thresholds
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.9) {
+      // Early rejection of invalid frames - más permisivo
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
         }
@@ -251,7 +251,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
 
       // Reactivated validation with more tolerant thresholds
-      if ((rToGRatio < 0.7 || rToGRatio > 5.0) && !this.isCalibrating) { // Rango ampliado de 0.7 a 5.0
+      if ((rToGRatio < 0.3 || rToGRatio > 8.0) && !this.isCalibrating) { // Rango muy ampliado de 0.3 a 8.0
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,
@@ -299,7 +299,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const { isFingerDetected, quality } = detectionResult;
 
       // Calculate physiologically valid perfusion index only when finger is detected
-      const perfusionIndex = isFingerDetected && quality > 30 ? 
+      const perfusionIndex = isFingerDetected && quality > 10 ? 
                            (Math.log(redValue) * 0.55 - 1.2) : 0;
 
       // Create processed signal object with strict validation

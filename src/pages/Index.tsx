@@ -191,7 +191,14 @@ const Index = () => {
       measurementTimerRef.current = window.setInterval(() => {
         setElapsedTime(prev => {
           const newTime = prev + 1;
-          console.log(`Tiempo transcurrido: ${newTime}s`);
+          
+          // Only log every 5 seconds to reduce console noise
+          if (newTime % 5 === 0) {
+            console.log('Measurement progress:', { 
+              elapsedTime: newTime, 
+              maxTime: 30 
+            });
+          }
           
           // Finalizar medición después de 30 segundos
           if (newTime >= 30) {
@@ -207,7 +214,7 @@ const Index = () => {
 
 
   const finalizeMeasurement = () => {
-    console.log("Finalizando medición: manteniendo resultados");
+    console.log("Measurement completed: saving results");
     
     if (isCalibrating) {
       console.log("Calibración en progreso al finalizar, forzando finalización");
@@ -287,12 +294,17 @@ const Index = () => {
     
     // Asegurar que la linterna esté encendida para mediciones de PPG
     if (videoTrack.getCapabilities()?.torch) {
-      console.log("Activando linterna para mejorar la señal PPG");
+      console.log("Flash enabled for improved PPG signal");
       videoTrack.applyConstraints({
         advanced: [{ torch: true }]
-      }).catch(err => console.error("Error activando linterna:", err));
+      }).catch((err: unknown) => {
+        console.error('Flash activation error:', {
+          error: err instanceof Error ? err.message : 'Unknown error',
+          timestamp: new Date().toISOString()
+        });
+      });
     } else {
-      console.warn("Esta cámara no tiene linterna disponible, la medición puede ser menos precisa");
+      console.warn("Flash not available - measurement accuracy may be reduced");
     }
     
     // Crear un canvas de tamaño óptimo para el procesamiento
@@ -514,13 +526,21 @@ const Index = () => {
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
+            <div>BPM: {heartRate}</div>
+            <div>Picos: {isPeak ? 'Sí' : 'No'}</div>
           </div>
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
             <summary className="cursor-pointer">Debug Signal Stats</summary>
             <pre className="whitespace-pre-wrap text-xs">
-              Frames procesados: {framesProcessed}
+              Frames procesados: {framesProcessed}{"\n"}
+              Heart Rate: {heartRate} BPM{"\n"}
+              Confidence: {confidence.toFixed(2)}{"\n"}
+              Is Peak: {isPeak ? 'YES' : 'NO'}{"\n"}
+              Signal Quality: {signalQuality}{"\n"}
+              Finger Detected: {signal?.fingerDetected ? 'YES' : 'NO'}{"\n"}
+              Raw Value: {signal?.rawValue?.toFixed(2) || 'N/A'}{"\n"}
+              Filtered Value: {signal?.filteredValue?.toFixed(2) || 'N/A'}
             </pre>
           </details>
           <div className="flex-1">

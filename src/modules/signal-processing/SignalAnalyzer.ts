@@ -79,7 +79,7 @@ export class SignalAnalyzer {
     // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
     console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 30;
+    const DETECTION_THRESHOLD = 15; // Reducido de 30 a 15 para mayor sensibilidad
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
