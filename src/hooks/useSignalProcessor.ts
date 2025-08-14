@@ -177,84 +177,105 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
     processSignal(signal);
   }, [processSignal]);
 
+  // Manejador de errores del procesador
+  const handleProcessorError = useCallback((error: ProcessingError) => {
+    console.error("[SIGNAL] Error en el procesador de señal:", {
+      message: error.message,
+      type: error.type,
+      details: error.details
+    });
+    
+    // Actualizar el estado de error
+    setLastError(error);
+    
+    // Contar errores consecutivos
+    errorCountRef.current++;
+    const now = Date.now();
+    const timeSinceLastError = now - lastErrorTimeRef.current;
+    lastErrorTimeRef.current = now;
+    
+    console.log(`[DEBUG] Error #${errorCountRef.current} - Tiempo desde el último error: ${timeSinceLastError}ms`);
+    
+    // Si hay demasiados errores en poco tiempo, detener el procesamiento
+    if (errorCountRef.current > ERROR_RATE_THRESHOLD && timeSinceLastError < ERROR_RATE_WINDOW_MS) {
+      console.error("[ERROR] Demasiados errores en poco tiempo. Deteniendo procesamiento.");
+      
+      // Detener el procesamiento
+      setIsProcessing(false);
+      
+      // Notificar el error crítico
+      setLastError({
+        message: "Error crítico. Reiniciando procesador...",
+        timestamp: now,
+        type: "PROCESSOR_ERROR",
+        details: {
+          errorCount: errorCountRef.current,
+          timeSinceLastError,
+          errorMessage: error.message,
+          errorType: error.type
+        }
+      });
+      
+      // Programar reinicio del contador de errores
+      setTimeout(() => { 
+        console.log("[DEBUG] Reiniciando contador de errores");
+        errorCountRef.current = 0; 
+      }, 60000);
+      
+      // Intentar reiniciar el procesador
+      setTimeout(() => {
+        console.log("[DEBUG] Intentando reiniciar el procesador...");
+        resetProcessorState();
+      }, 2000);
+    }
+  }, [setLastError, setIsProcessing]);
+
   // Inicialización del procesador
   useEffect(() => {
     const sessionId = Math.random().toString(36).substring(2, 9);
     const initTimestamp = new Date().toISOString();
     let isMounted = true;
     
-    console.log("useSignalProcessor: Inicializando procesador de señales", {
+    console.log("[INIT] useSignalProcessor: Inicializando procesador de señales", {
       timestamp: initTimestamp,
-      sessionId
+      sessionId,
+      hasOnSignalReady: !!onSignalReady,
+      hasOnError: !!handleProcessorError
     });
     
-    const handleProcessorError = (error: ProcessingError) => {
-      if (!isMounted) return;
+    // Función para inicializar el procesador
+    const initializeProcessor = async () => {
+      if (!isMounted) return false;
       
-      console.error("Error en el procesador de señal:", error);
-      setLastError(error);
-      
-      errorCountRef.current++;
-      const now = Date.now();
-      const timeSinceLastError = now - lastErrorTimeRef.current;
-      lastErrorTimeRef.current = now;
-      
-      if (errorCountRef.current > ERROR_RATE_THRESHOLD && timeSinceLastError < ERROR_RATE_WINDOW_MS) {
-        console.error("Demasiados errores en poco tiempo. Deteniendo procesamiento.");
-        setIsProcessing(false);
-        setLastError({
-            message: "Error crítico. Reiniciando procesador...",
-            timestamp: now,
-            type: "PROCESSOR_ERROR",
-            details: {
-              errorCount: errorCountRef.current,
-              timeSinceLastError,
-              errorMessage: error.message
-            }
-        });
-        setTimeout(() => { errorCountRef.current = 0; }, 60000);
-      }
-    };
-    
-    const handleProcessingStateChange = (isRunning: boolean) => {
-      if (!isMounted) return;
-      
-      console.log(`Estado del procesamiento: ${isRunning ? 'Iniciado' : 'Detenido'}`);
-      setIsProcessing(isRunning);
-      if (isRunning) {
-        resetProcessorState();
-      }
-    };
-    
-    const initProcessor = async () => {
-      if (!processorRef.current) {
-        console.log("useSignalProcessor: Creando nueva instancia del procesador");
-        processorRef.current = new PPGSignalProcessor(
-          onSignalReady,
-          handleProcessorError
-        );
+      try {
+        console.log("[INIT] Creando nueva instancia de PPGSignalProcessor...");
+        processorRef.current = new PPGSignalProcessor(onSignalReady, handleProcessorError);
         
-        try {
-          console.log("useSignalProcessor: Inicializando procesador...");
-          await processorRef.current.initialize();
-          console.log("useSignalProcessor: Procesador inicializado correctamente");
-          return true;
-        } catch (error) {
-          console.error("useSignalProcessor: Error al inicializar el procesador:", error);
+        // Inicializar el procesador
+        console.log("[INIT] Inicializando procesador...");
+        await processorRef.current.initialize();
+        
+        console.log("[INIT] Procesador inicializado correctamente");
+        return true;
+      } catch (error) {
+        console.error("[ERROR] Error al inicializar el procesador:", error);
+        
+        if (isMounted) {
           setLastError({
             message: "Error al inicializar el procesador de señales",
             timestamp: Date.now(),
             type: "INIT_ERROR",
             details: error instanceof Error ? error.message : String(error)
           });
-          processorRef.current = null;
-          return false;
         }
+        
+        processorRef.current = null;
+        return false;
       }
-      return true;
     };
     
-    const init = async () => {
+    // Inicializar el procesador
+    (async () => {
       try {
         const options: PPGProcessorOptions = {
           sampleRate: 30,
@@ -262,53 +283,56 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
           maxQualityThreshold: 95
         };
         
-        console.log("useSignalProcessor: Configurando opciones del procesador", { options });
+        console.log("[INIT] Configurando opciones del procesador", { options });
         
         // Inicializar el procesador
-        const initialized = await initProcessor();
+        const initialized = await initializeProcessor();
         if (!initialized) {
-          console.error("useSignalProcessor: No se pudo inicializar el procesador");
+          console.error("[ERROR] No se pudo inicializar el procesador");
           return;
         }
         
-        console.log("useSignalProcessor: Procesador de señales listo", {
+        console.log("[INIT] Procesador de señales listo", {
           timestamp: new Date().toISOString(),
           sessionId,
           options
         });
         
       } catch (error) {
-        console.error("useSignalProcessor: Error en la inicialización:", error);
-        setLastError({
-          message: "Error en la inicialización del procesador",
-          timestamp: Date.now(),
-          type: "INIT_ERROR",
-          details: error instanceof Error ? error.message : String(error)
-        });
+        console.error("[ERROR] Error en la inicialización:", error);
+        
+        if (isMounted) {
+          setLastError({
+            message: "Error en la inicialización del procesador",
+            timestamp: Date.now(),
+            type: "INIT_ERROR",
+            details: error instanceof Error ? error.message : String(error)
+          });
+        }
       }
-    };
+    })();
     
-    // Iniciar la secuencia de inicialización
-    init();
-    
-    // Limpieza
+    // Función de limpieza
     return () => {
+      console.log("[CLEANUP] Iniciando limpieza del procesador...");
       isMounted = false;
       
       if (processorRef.current) {
-        console.log("useSignalProcessor: Deteniendo y limpiando el procesador");
         try {
+          console.log("[CLEANUP] Deteniendo el procesador...");
           processorRef.current.stop();
+          console.log("[CLEANUP] Procesador detenido correctamente");
         } catch (error) {
-          console.error("Error al detener el procesador:", error);
+          console.error("[ERROR] Error al detener el procesador:", error);
+        } finally {
+          processorRef.current = null;
         }
-        processorRef.current = null;
       }
       
       resetProcessorState();
-      console.log("useSignalProcessor: Limpieza completada");
+      console.log("[CLEANUP] Limpieza completada");
     };
-  }, [resetProcessorState, onSignalReady, handleProcessorError]);
+  }, [resetProcessorState, onSignalReady]);
 
   const startProcessing = useCallback(() => {
     if (processorRef.current && !isProcessing) {
