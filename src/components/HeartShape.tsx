@@ -1,5 +1,4 @@
 import { cn } from "@/lib/utils";
-import styles from './HeartShape.module.css';
 
 interface HeartShapeProps {
   isBeating: boolean;
@@ -10,13 +9,19 @@ const HeartShape = ({ isBeating, className }: HeartShapeProps) => {
   return (
     <div
       className={cn(
-        styles.heartContainer,
-        isBeating && styles.animateHeartBeat,
+        "relative w-32 h-32 transform",
+        isBeating && "animate-heart-beat",
         className
       )}
     >
-      <div className={styles.heartLeft} />
-      <div className={styles.heartRight} />
+      <div
+        className="absolute w-20 h-32 bg-medical-red rounded-t-full -rotate-45 origin-bottom-right"
+        style={{ left: "41px" }}
+      />
+      <div
+        className="absolute w-20 h-32 bg-medical-red rounded-t-full rotate-45 origin-bottom-left"
+        style={{ left: "0" }}
+      />
     </div>
   );
 };

@@ -39,22 +39,11 @@ const Auth = () => {
         
         navigate("/");
       }
-    } catch (error) {
-      console.error('Authentication error:', error);
-      let errorMessage = 'An unexpected error occurred';
-      
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      } else if (typeof error === 'string') {
-        errorMessage = error;
-      } else if (error && typeof error === 'object' && 'message' in error) {
-        errorMessage = String(error.message);
-      }
-      
+    } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Authentication Error",
-        description: errorMessage || 'Failed to authenticate. Please try again.',
+        title: "Error",
+        description: error.message,
       });
     } finally {
       setLoading(false);

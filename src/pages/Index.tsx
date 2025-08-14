@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
-import { useUnifiedProcessor } from "@/hooks/useUnifiedProcessor";
-import { useMultiCamera } from "@/hooks/useMultiCamera";
+import { useSignalProcessor } from "@/hooks/useSignalProcessor";
+import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
+import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -40,36 +41,20 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  // Hook para múltiples cámaras en Android
-  const {
-    isActive: multiCameraActive,
-    activeCameras,
-    averageQuality: multiCameraQuality,
-    isInitializing: multiCameraInitializing,
-    error: multiCameraError,
-    isAndroidDevice,
-    initializeMultiCamera,
-    startCapture: startMultiCameraCapture,
-    stopCapture: stopMultiCameraCapture,
-    checkMultiCameraSupport
-  } = useMultiCamera();
-  
-  const {
-    signal: lastSignal,
-    heartRate: unifiedHeartRate,
-    confidence: unifiedConfidence,
-    isPeak: unifiedIsPeak,
-    vitalSigns: unifiedVitalSigns,
-    isProcessing,
-    signalQuality: unifiedSignalQuality,
-    arrhythmiaCount: unifiedArrhythmiaCount,
-    framesProcessed,
-    error,
-    startProcessing,
-    stopProcessing,
-    processFrame,
-    reset: unifiedReset
-  } = useUnifiedProcessor();
+  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
+  const { 
+    processSignal: processHeartBeat, 
+    setArrhythmiaState 
+  } = useHeartBeatProcessor();
+  const { 
+    processSignal: processVitalSigns, 
+    reset: resetVitalSigns,
+    fullReset: fullResetVitalSigns,
+    lastValidResults,
+    startCalibration,
+    forceCalibrationCompletion,
+    getCalibrationProgress
+  } = useVitalSignsProcessor();
 
   const enterFullScreen = async () => {
     try {
@@ -173,9 +158,14 @@ const Index = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (lastValidResults && !isMonitoring) {
+      setVitalSigns(lastValidResults);
+      setShowResults(true);
+    }
+  }, [lastValidResults, isMonitoring]);
 
-
-  const startMonitoring = async () => {
+  const startMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
@@ -183,40 +173,6 @@ const Index = () => {
       setIsMonitoring(true);
       setIsCameraOn(true);
       setShowResults(false);
-      
-      // Intentar inicializar múltiples cámaras en Android
-      if (isAndroidDevice && !multiCameraActive) {
-        console.log('Iniciando modo multicámara para Android...');
-        try {
-          const multiCameraSuccess = await initializeMultiCamera();
-          if (multiCameraSuccess) {
-            // Iniciar captura multicámara
-            await startMultiCameraCapture((combinedSignal) => {
-              console.log('Señal multicámara recibida:', {
-                calidad: combinedSignal.combinedQuality,
-                cámarasActivas: combinedSignal.activeCameras,
-                timestamp: new Date(combinedSignal.timestamp).toISOString()
-              });
-              
-              // Procesar señal combinada como señal PPG estándar
-              setSignalQuality(combinedSignal.combinedQuality);
-              setHeartbeatSignal(combinedSignal.greenValue); // Usar canal verde para PPG
-            });
-            
-            toast({
-              title: "Modo Multicámara Activado",
-              description: `${activeCameras} cámaras traseras detectadas y activadas para máxima precisión`,
-            });
-          }
-        } catch (error) {
-          console.error('Error inicializando multicámara:', error);
-          toast({
-            title: "Modo Multicámara No Disponible",
-            description: "Usando cámara única estándar",
-            variant: "destructive"
-          });
-        }
-      }
       
       // Iniciar procesamiento de señal
       startProcessing();
@@ -230,7 +186,7 @@ const Index = () => {
       
       // Iniciar calibración automática
       console.log("Iniciando fase de calibración automática");
-      setIsCalibrating(true);
+      startAutoCalibration();
       
       // Iniciar temporizador para medición
       if (measurementTimerRef.current) {
@@ -240,14 +196,7 @@ const Index = () => {
       measurementTimerRef.current = window.setInterval(() => {
         setElapsedTime(prev => {
           const newTime = prev + 1;
-          
-          // Only log every 5 seconds to reduce console noise
-          if (newTime % 5 === 0) {
-            console.log('Measurement progress:', { 
-              elapsedTime: newTime, 
-              maxTime: 30 
-            });
-          }
+          console.log(`Tiempo transcurrido: ${newTime}s`);
           
           // Finalizar medición después de 30 segundos
           if (newTime >= 30) {
@@ -260,24 +209,26 @@ const Index = () => {
     }
   };
 
+  const startAutoCalibration = () => {
+    console.log("Iniciando auto-calibración real con indicadores visuales");
+    setIsCalibrating(true);
+    
+    // Iniciar la calibración en el procesador
+    startCalibration();
+    
+    // El progreso de la calibración será actualizado por el hook useVitalSignsProcessor
+    // y reflejado a través del estado calibrationProgress.
+    
+    // Eliminar la simulación visual con setInterval y setTimeout
+    // La lógica de calibración es ahora completamente manejada por el procesador
+  };
 
-
-  const finalizeMeasurement = async () => {
-    console.log("Measurement completed: saving results");
+  const finalizeMeasurement = () => {
+    console.log("Finalizando medición: manteniendo resultados");
     
     if (isCalibrating) {
       console.log("Calibración en progreso al finalizar, forzando finalización");
-      setIsCalibrating(false);
-    }
-    
-    // Detener captura multicámara si está activa
-    if (multiCameraActive) {
-      try {
-        await stopMultiCameraCapture();
-        console.log('Captura multicámara detenida');
-      } catch (error) {
-        console.error('Error deteniendo multicámara:', error);
-      }
+      forceCalibrationCompletion();
     }
     
     setIsMonitoring(false);
@@ -296,26 +247,19 @@ const Index = () => {
       animationFrameRef.current = null;
     }
     
-    // NO resetear procesadores al finalizar - mantener contexto
-    setShowResults(true);
+    const savedResults = resetVitalSigns();
+    if (savedResults) {
+      setVitalSigns(savedResults);
+      setShowResults(true);
+    }
     
     setElapsedTime(0);
     setSignalQuality(0);
     setCalibrationProgress(undefined);
   };
 
-  const handleReset = async () => {
+  const handleReset = () => {
     console.log("Reseteando completamente la aplicación");
-    
-    // Detener multicámara si está activa
-    if (multiCameraActive) {
-      try {
-        await stopMultiCameraCapture();
-      } catch (error) {
-        console.error('Error deteniendo multicámara en reset:', error);
-      }
-    }
-    
     setIsMonitoring(false);
     setIsCameraOn(false);
     setShowResults(false);
@@ -333,7 +277,7 @@ const Index = () => {
       animationFrameRef.current = null;
     }
     
-    unifiedReset();
+    fullResetVitalSigns();
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -363,17 +307,12 @@ const Index = () => {
     
     // Asegurar que la linterna esté encendida para mediciones de PPG
     if (videoTrack.getCapabilities()?.torch) {
-      console.log("Flash enabled for improved PPG signal");
+      console.log("Activando linterna para mejorar la señal PPG");
       videoTrack.applyConstraints({
         advanced: [{ torch: true }]
-      }).catch((err: unknown) => {
-        console.error('Flash activation error:', {
-          error: err instanceof Error ? err.message : 'Unknown error',
-          timestamp: new Date().toISOString()
-        });
-      });
+      }).catch(err => console.error("Error activando linterna:", err));
     } else {
-      console.warn("Flash not available - measurement accuracy may be reduced");
+      console.warn("Esta cámara no tiene linterna disponible, la medición puede ser menos precisa");
     }
     
     // Crear un canvas de tamaño óptimo para el procesamiento
@@ -496,30 +435,57 @@ const Index = () => {
       isMonitoring: isMonitoring
     });
 
-    // FLUJO UNIFICADO - Sin duplicaciones
-    setSignalQuality(unifiedSignalQuality);
-    if (!isMonitoring) return;
+    // Actualizar calidad siempre
+    setSignalQuality(lastSignal.quality);
+    // Si no está monitoreando, no procesar
+    if (!isMonitoring) {
+      console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
+      return;
+    }
     
-    // Umbral mínimo de calidad para medir - REDUCIDO para mayor tolerancia
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 15;
-    // Si no hay dedo válido o calidad insuficiente, NO resetear inmediatamente
+    // Umbral mínimo de calidad para medir
+    const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
+    // Si no hay dedo válido o calidad insuficiente, resetear indicadores
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
-      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente - manteniendo últimos valores", {
+      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
         fingerDetected: lastSignal.fingerDetected,
         quality: lastSignal.quality,
         minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
       });
-      // MANTENER valores anteriores en lugar de resetear a 0
+      setHeartRate(0);
+      setHeartbeatSignal(0);
+      setBeatMarker(0);
       return;
     }
 
     console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
-    // Usar datos unificados
-    setHeartRate(unifiedHeartRate);
-    setHeartbeatSignal(lastSignal.filteredValue);
-    setBeatMarker(unifiedIsPeak ? 1 : 0);
-    setVitalSigns(unifiedVitalSigns);
-  }, [lastSignal, isMonitoring, unifiedHeartRate, unifiedIsPeak, unifiedVitalSigns]);
+    // Señal válida, procesar latidos y signos vitales
+    const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
+    setHeartRate(heartBeatResult.bpm);
+    setHeartbeatSignal(heartBeatResult.filteredValue);
+    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
+    // Actualizar últimos intervalos RR para debug
+    if (heartBeatResult.rrData?.intervals) {
+      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
+    }
+    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    if (vitals) {
+      setVitalSigns(vitals);
+      if (vitals.lastArrhythmiaData) {
+        setLastArrhythmiaData(vitals.lastArrhythmiaData);
+        const [status, count] = vitals.arrhythmiaStatus.split('|');
+        setArrhythmiaCount(count || "0");
+        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+          setArrhythmiaState(isArrhythmiaDetected);
+          if (isArrhythmiaDetected) {
+            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
+          }
+        }
+      }
+    }
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   // Referencia para activar o desactivar el sonido de arritmia
   const arrhythmiaDetectedRef = useRef(false);
@@ -528,28 +494,34 @@ const Index = () => {
   const animationFrameRef = useRef<number | null>(null);
   
   // Nueva función para alternar medición
-  const handleToggleMonitoring = async () => {
+  const handleToggleMonitoring = () => {
     if (isMonitoring) {
-      await finalizeMeasurement();
+      finalizeMeasurement();
     } else {
-      await startMonitoring();
+      startMonitoring();
     }
   };
-  
-  // Verificar soporte multicámara al cargar
+
+  // Observar el progreso real de la calibración desde el procesador de signos vitales
   useEffect(() => {
-    if (isAndroidDevice) {
-      checkMultiCameraSupport().then(supported => {
-        if (supported) {
-          console.log('Dispositivo Android con soporte multicámara detectado');
-        } else {
-          console.log('Dispositivo Android sin soporte multicámara');
+    if (isCalibrating) {
+      const interval = setInterval(() => {
+        const currentProgress = getCalibrationProgress();
+        setCalibrationProgress(currentProgress);
+
+        if (!currentProgress?.isCalibrating) {
+          clearInterval(interval);
+          console.log("Calibración finalizada según el procesador.");
+          setIsCalibrating(false);
+          if (navigator.vibrate) {
+            navigator.vibrate([100, 50, 100]);
+          }
         }
-      });
+      }, 500); // Actualizar el progreso cada 500ms
+
+      return () => clearInterval(interval);
     }
-  }, [isAndroidDevice, checkMultiCameraSupport]);
-
-
+  }, [isCalibrating, getCalibrationProgress]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
@@ -606,43 +578,14 @@ const Index = () => {
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
-            <div>BPM: {heartRate}</div>
-            <div>Picos: {unifiedIsPeak ? 'Sí' : 'No'}</div>
-            {multiCameraActive && (
-              <div className="text-green-400">📹 {activeCameras} Cámaras</div>
-            )}
+            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
           </div>
-          
-          {/* Indicador de multicámara */}
-          {isAndroidDevice && multiCameraInitializing && (
-            <div className="px-4 py-2 bg-blue-900/50 text-white text-center text-sm">
-              🔄 Inicializando múltiples cámaras traseras...
-            </div>
-          )}
-          
-          {multiCameraActive && (
-            <div className="px-4 py-1 bg-green-900/50 text-white text-center text-xs">
-              ✅ Modo Multicámara Activo - Calidad: {Math.round(multiCameraQuality)}%
-            </div>
-          )}
-          
-          {multiCameraError && (
-            <div className="px-4 py-1 bg-red-900/50 text-white text-center text-xs">
-              ❌ Error Multicámara: {multiCameraError}
-            </div>
-          )}
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
             <summary className="cursor-pointer">Debug Signal Stats</summary>
             <pre className="whitespace-pre-wrap text-xs">
-              Frames procesados: {framesProcessed}{"\n"}
-              Heart Rate: {heartRate} BPM{"\n"}
-              Confidence: {unifiedConfidence.toFixed(2)}{"\n"}
-              Is Peak: {unifiedIsPeak ? 'YES' : 'NO'}{"\n"}
-              Signal Quality: {signalQuality}{"\n"}
-              Finger Detected: {lastSignal?.fingerDetected ? 'YES' : 'NO'}{"\n"}
-              Raw Value: {lastSignal?.rawValue?.toFixed(2) || 'N/A'}{"\n"}
-              Filtered Value: {lastSignal?.filteredValue?.toFixed(2) || 'N/A'}
+              {JSON.stringify(signalStats, null, 2)}
+              {'\n'}Quality Transitions:{'\n'}{JSON.stringify(qualityTransitions, null, 2)}
             </pre>
           </details>
           <div className="flex-1">
@@ -716,15 +659,6 @@ const Index = () => {
                 variant="reset"
               />
             </div>
-            
-            {/* Indicador de estado multicámara en botones */}
-            {isAndroidDevice && multiCameraActive && (
-              <div className="absolute -top-8 left-0 right-0 text-center">
-                <span className="bg-green-600 text-white px-2 py-1 rounded-full text-xs font-medium">
-                  🎥 Multicámara: {activeCameras} activas
-                </span>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -733,10 +667,3 @@ const Index = () => {
 };
 
 export default Index;
-
-// Información sobre el modo multicámara:
-// - Detecta automáticamente dispositivos Android
-// - Inicializa múltiples cámaras traseras simultáneamente
-// - Combina señales PPG de todas las cámaras para máxima precisión
-// - Fallback automático a cámara única si multicámara no está disponible
-// - Indicadores visuales del estado multicámara en la interfaz
