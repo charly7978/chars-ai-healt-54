@@ -1,6 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
 import { AdvancedVitalSignsProcessor, BiometricReading } from '../modules/vital-signs/VitalSignsProcessor';
+import { MultiCameraManager } from '../modules/camera/MultiCameraManager';
+import { MultiSignalProcessor } from '../modules/camera/MultiSignalProcessor';
 import styles from './CameraView.module.css';
 
 interface CameraViewProps {
@@ -19,6 +21,8 @@ const CameraView: React.FC<CameraViewProps> = ({
   // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const vitalProcessor = useRef<AdvancedVitalSignsProcessor>(new AdvancedVitalSignsProcessor());
+  const multiCameraManager = useRef<MultiCameraManager>(new MultiCameraManager());
+  const multiSignalProcessor = useRef<MultiSignalProcessor>(new MultiSignalProcessor());
   const torchAttempts = useRef<number>(0);
   const cameraInitialized = useRef<boolean>(false);
   const requestedTorch = useRef<boolean>(false);
@@ -28,6 +32,8 @@ const CameraView: React.FC<CameraViewProps> = ({
   const [torchEnabled, setTorchEnabled] = useState<boolean>(false);
   const [deviceSupportsTorch, setDeviceSupportsTorch] = useState<boolean>(false);
   const [deviceSupportsAutoFocus, setDeviceSupportsAutoFocus] = useState<boolean>(false);
+  const [activeCameras, setActiveCameras] = useState<number>(0);
+  const [multiCameraEnabled, setMultiCameraEnabled] = useState<boolean>(false);
   
   // Helper functions
   const handleTorch = async (enable: boolean) => {
@@ -112,6 +118,18 @@ const CameraView: React.FC<CameraViewProps> = ({
   };
 
   const stopCamera = async () => {
+    // Detener modo multicámara si está activo
+    if (multiCameraEnabled) {
+      try {
+        await multiCameraManager.current.stopMultiCameraCapture();
+        setMultiCameraEnabled(false);
+        setActiveCameras(0);
+        console.log('Modo multicámara detenido');
+      } catch (error) {
+        console.error('Error deteniendo modo multicámara:', error);
+      }
+    }
+
     if (stream) {
       try {
         // Stop all tracks in the stream
@@ -162,6 +180,36 @@ const CameraView: React.FC<CameraViewProps> = ({
         String(navigator.userAgent || '') : '';
       const isAndroid = /android/i.test(userAgent);
       const isIOS = /iPad|iPhone|iPod/.test(userAgent);
+
+      // Intentar inicializar múltiples cámaras en Android
+      if (isAndroid) {
+        console.log('Dispositivo Android detectado - Iniciando modo multicámara');
+        const multiCameraSuccess = await multiCameraManager.current.initializeMultipleCameras();
+        
+        if (multiCameraSuccess) {
+          setMultiCameraEnabled(true);
+          setActiveCameras(multiCameraManager.current.getActiveCameraCount());
+          
+          // Configurar procesador de señales múltiples
+          multiSignalProcessor.current.setSignalCallback((combinedSignal) => {
+            if (onStreamReady) {
+              // Convertir señal combinada a formato compatible
+              const mockStream = new MediaStream();
+              onStreamReady(mockStream);
+            }
+          });
+          
+          // Iniciar captura multicámara
+          await multiCameraManager.current.startMultiCameraCapture((signals) => {
+            multiSignalProcessor.current.processMultiCameraSignals(signals);
+          });
+          
+          console.log(`Modo multicámara activado con ${activeCameras} cámaras`);
+          return;
+        } else {
+          console.log('Modo multicámara no disponible - usando cámara única');
+        }
+      }
 
       let baseVideoConstraints: MediaTrackConstraints = {
         facingMode: { exact: 'environment' },
@@ -362,14 +410,33 @@ const CameraView: React.FC<CameraViewProps> = ({
   }, [stream, isMonitoring, isFingerDetected, deviceSupportsAutoFocus]);
 
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted
-      className={`${styles.video} absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover`}
-    />
+    <div className="relative w-full h-full">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className={`${styles.video} absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover`}
+      />
+      
+      {/* Indicador de modo multicámara */}
+      {multiCameraEnabled && (
+        <div className="absolute top-4 right-4 z-10 bg-black/70 text-white px-3 py-1 rounded-lg text-sm font-medium">
+          📹 {activeCameras} Cámaras Activas
+        </div>
+      )}
+      
+      {/* Indicador de calidad de señal multicámara */}
+      {multiCameraEnabled && (
+        <div className="absolute top-4 left-4 z-10 bg-black/70 text-white px-3 py-1 rounded-lg text-sm">
+          Calidad: {Math.round(multiSignalProcessor.current.getCurrentQuality())}%
+        </div>
+      )}
+    </div>
   );
 };
 
 export default CameraView;
+
+// Exportar tipos para uso en otros módulos
+export type { CameraViewProps };

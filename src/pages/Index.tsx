@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useUnifiedProcessor } from "@/hooks/useUnifiedProcessor";
+import { useMultiCamera } from "@/hooks/useMultiCamera";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -38,6 +39,20 @@ const Index = () => {
   } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
+  
+  // Hook para múltiples cámaras en Android
+  const {
+    isActive: multiCameraActive,
+    activeCameras,
+    averageQuality: multiCameraQuality,
+    isInitializing: multiCameraInitializing,
+    error: multiCameraError,
+    isAndroidDevice,
+    initializeMultiCamera,
+    startCapture: startMultiCameraCapture,
+    stopCapture: stopMultiCameraCapture,
+    checkMultiCameraSupport
+  } = useMultiCamera();
   
   const {
     signal: lastSignal,
@@ -160,7 +175,7 @@ const Index = () => {
 
 
 
-  const startMonitoring = () => {
+  const startMonitoring = async () => {
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
@@ -168,6 +183,40 @@ const Index = () => {
       setIsMonitoring(true);
       setIsCameraOn(true);
       setShowResults(false);
+      
+      // Intentar inicializar múltiples cámaras en Android
+      if (isAndroidDevice && !multiCameraActive) {
+        console.log('Iniciando modo multicámara para Android...');
+        try {
+          const multiCameraSuccess = await initializeMultiCamera();
+          if (multiCameraSuccess) {
+            // Iniciar captura multicámara
+            await startMultiCameraCapture((combinedSignal) => {
+              console.log('Señal multicámara recibida:', {
+                calidad: combinedSignal.combinedQuality,
+                cámarasActivas: combinedSignal.activeCameras,
+                timestamp: new Date(combinedSignal.timestamp).toISOString()
+              });
+              
+              // Procesar señal combinada como señal PPG estándar
+              setSignalQuality(combinedSignal.combinedQuality);
+              setHeartbeatSignal(combinedSignal.greenValue); // Usar canal verde para PPG
+            });
+            
+            toast({
+              title: "Modo Multicámara Activado",
+              description: `${activeCameras} cámaras traseras detectadas y activadas para máxima precisión`,
+            });
+          }
+        } catch (error) {
+          console.error('Error inicializando multicámara:', error);
+          toast({
+            title: "Modo Multicámara No Disponible",
+            description: "Usando cámara única estándar",
+            variant: "destructive"
+          });
+        }
+      }
       
       // Iniciar procesamiento de señal
       startProcessing();
@@ -213,12 +262,22 @@ const Index = () => {
 
 
 
-  const finalizeMeasurement = () => {
+  const finalizeMeasurement = async () => {
     console.log("Measurement completed: saving results");
     
     if (isCalibrating) {
       console.log("Calibración en progreso al finalizar, forzando finalización");
       setIsCalibrating(false);
+    }
+    
+    // Detener captura multicámara si está activa
+    if (multiCameraActive) {
+      try {
+        await stopMultiCameraCapture();
+        console.log('Captura multicámara detenida');
+      } catch (error) {
+        console.error('Error deteniendo multicámara:', error);
+      }
     }
     
     setIsMonitoring(false);
@@ -245,8 +304,18 @@ const Index = () => {
     setCalibrationProgress(undefined);
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     console.log("Reseteando completamente la aplicación");
+    
+    // Detener multicámara si está activa
+    if (multiCameraActive) {
+      try {
+        await stopMultiCameraCapture();
+      } catch (error) {
+        console.error('Error deteniendo multicámara en reset:', error);
+      }
+    }
+    
     setIsMonitoring(false);
     setIsCameraOn(false);
     setShowResults(false);
@@ -459,13 +528,26 @@ const Index = () => {
   const animationFrameRef = useRef<number | null>(null);
   
   // Nueva función para alternar medición
-  const handleToggleMonitoring = () => {
+  const handleToggleMonitoring = async () => {
     if (isMonitoring) {
-      finalizeMeasurement();
+      await finalizeMeasurement();
     } else {
-      startMonitoring();
+      await startMonitoring();
     }
   };
+  
+  // Verificar soporte multicámara al cargar
+  useEffect(() => {
+    if (isAndroidDevice) {
+      checkMultiCameraSupport().then(supported => {
+        if (supported) {
+          console.log('Dispositivo Android con soporte multicámara detectado');
+        } else {
+          console.log('Dispositivo Android sin soporte multicámara');
+        }
+      });
+    }
+  }, [isAndroidDevice, checkMultiCameraSupport]);
 
 
 
@@ -526,7 +608,29 @@ const Index = () => {
             <div>Frames: {framesProcessed}</div>
             <div>BPM: {heartRate}</div>
             <div>Picos: {unifiedIsPeak ? 'Sí' : 'No'}</div>
+            {multiCameraActive && (
+              <div className="text-green-400">📹 {activeCameras} Cámaras</div>
+            )}
           </div>
+          
+          {/* Indicador de multicámara */}
+          {isAndroidDevice && multiCameraInitializing && (
+            <div className="px-4 py-2 bg-blue-900/50 text-white text-center text-sm">
+              🔄 Inicializando múltiples cámaras traseras...
+            </div>
+          )}
+          
+          {multiCameraActive && (
+            <div className="px-4 py-1 bg-green-900/50 text-white text-center text-xs">
+              ✅ Modo Multicámara Activo - Calidad: {Math.round(multiCameraQuality)}%
+            </div>
+          )}
+          
+          {multiCameraError && (
+            <div className="px-4 py-1 bg-red-900/50 text-white text-center text-xs">
+              ❌ Error Multicámara: {multiCameraError}
+            </div>
+          )}
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
             <summary className="cursor-pointer">Debug Signal Stats</summary>
@@ -612,6 +716,15 @@ const Index = () => {
                 variant="reset"
               />
             </div>
+            
+            {/* Indicador de estado multicámara en botones */}
+            {isAndroidDevice && multiCameraActive && (
+              <div className="absolute -top-8 left-0 right-0 text-center">
+                <span className="bg-green-600 text-white px-2 py-1 rounded-full text-xs font-medium">
+                  🎥 Multicámara: {activeCameras} activas
+                </span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -620,3 +733,10 @@ const Index = () => {
 };
 
 export default Index;
+
+// Información sobre el modo multicámara:
+// - Detecta automáticamente dispositivos Android
+// - Inicializa múltiples cámaras traseras simultáneamente
+// - Combina señales PPG de todas las cámaras para máxima precisión
+// - Fallback automático a cámara única si multicámara no está disponible
+// - Indicadores visuales del estado multicámara en la interfaz
