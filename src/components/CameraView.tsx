@@ -112,21 +112,41 @@ const CameraView: React.FC<CameraViewProps> = ({
 
   const stopCamera = async () => {
     if (stream) {
-      stream.getTracks().forEach(track => {
-        if (track.kind === 'video' && track.getCapabilities()?.torch) {
-          track.applyConstraints({
-            advanced: [{ torch: false } as any]
-        track.stop();
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
+      try {
+        // Stop all tracks in the stream
+        stream.getTracks().forEach(track => {
+          // Turn off torch if supported
+          if (track.kind === 'video' && track.getCapabilities()?.torch) {
+            track.applyConstraints({
+              advanced: [{ torch: false } as any]
+            }).catch(err => {
+              if (process.env.NODE_ENV !== 'production') {
+                console.error('Error turning off torch:', err);
+              }
+            });
+          }
+          track.stop();
+        });
+        
+        // Clear video source
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
+        }
+        
+        // Reset states
+        setStream(null);
+        setTorchEnabled(false);
+        cameraInitialized.current = false;
+        requestedTorch.current = false;
+        
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('Camera stopped successfully');
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('Error stopping camera:', error);
+        }
       }
-      
-      setStream(null);
-      setTorchEnabled(false);
-      cameraInitialized.current = false;
-      requestedTorch.current = false;
     }
   };
 
