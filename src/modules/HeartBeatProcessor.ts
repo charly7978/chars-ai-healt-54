@@ -459,26 +459,19 @@ export class HeartBeatProcessor {
   private autoResetIfSignalIsLow(amplitude: number) {
     if (amplitude < this.LOW_SIGNAL_THRESHOLD) {
       this.lowSignalCount++;
-      if (this.lowSignalCount >= this.LOW_SIGNAL_FRAMES) {
-        this.resetDetectionStates();
-        // También reseteamos los parámetros adaptativos a sus valores por defecto
-        this.adaptiveSignalThreshold = this.DEFAULT_SIGNAL_THRESHOLD;
-        this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
-        this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
-        this.isArrhythmiaDetected = false;
-        console.log("HeartBeatProcessor: auto-reset adaptative parameters and arrhythmia flag (low signal).");
+      if (this.lowSignalCount >= this.LOW_SIGNAL_FRAMES * 3) { // TRIPLICADO para evitar resets prematuros
+        // SOLO resetear estados de detección, NO los parámetros adaptativos
+        this.lastConfirmedPeak = false;
+        this.peakConfirmationBuffer = [];
+        this.lowSignalCount = 0; // Reset del contador
+        console.log("HeartBeatProcessor: soft reset detection states (prolonged low signal).");
       }
     } else {
-      this.lowSignalCount = Math.max(0, this.lowSignalCount - 1); // Reducción gradual
+      this.lowSignalCount = Math.max(0, this.lowSignalCount - 2); // Reducción más rápida
     }
   }
 
-  private resetDetectionStates() {
-    // No resetear lastPeakTime para mantener continuidad de detecciones
-    this.lastConfirmedPeak = false;
-    this.peakConfirmationBuffer = [];
-    console.log("HeartBeatProcessor: auto-reset detection states (low signal).");
-  }
+
 
   /**
    * Detección de picos mejorada para señales con validación médica

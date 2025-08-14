@@ -237,7 +237,7 @@ const Index = () => {
       animationFrameRef.current = null;
     }
     
-    unifiedReset();
+    // NO resetear procesadores al finalizar - mantener contexto
     setShowResults(true);
     
     setElapsedTime(0);
@@ -431,18 +431,16 @@ const Index = () => {
     setSignalQuality(unifiedSignalQuality);
     if (!isMonitoring) return;
     
-    // Umbral mínimo de calidad para medir
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
-    // Si no hay dedo válido o calidad insuficiente, resetear indicadores
+    // Umbral mínimo de calidad para medir - REDUCIDO para mayor tolerancia
+    const MIN_SIGNAL_QUALITY_TO_MEASURE = 15;
+    // Si no hay dedo válido o calidad insuficiente, NO resetear inmediatamente
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
-      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
+      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente - manteniendo últimos valores", {
         fingerDetected: lastSignal.fingerDetected,
         quality: lastSignal.quality,
         minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
       });
-      setHeartRate(0);
-      setHeartbeatSignal(0);
-      setBeatMarker(0);
+      // MANTENER valores anteriores en lugar de resetear a 0
       return;
     }
 
