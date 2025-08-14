@@ -43,7 +43,7 @@ export class GlucoseProcessor {
     // Calculate glucose using validated model
     const baseGlucose = 93; // Baseline en estudios
     const glucoseEstimate = baseGlucose +
-      (features.derivativeRatio * 6.5) +     // antes: 7.2
+      (features.derivativeRatio * 8.5) +     // antes: 7.2
       (features.riseFallRatio * 8.5) -         // antes: 8.1 (se invierte el signo para ajustar la correlación)
       (features.variabilityIndex * 5.0) +      // antes: -5.3, se invierte y ajusta el multiplicador
       (features.peakWidth * 5.0) +             // antes: 4.7
@@ -196,7 +196,7 @@ export class GlucoseProcessor {
     const lowPulsatility = features.pulsatilityIndex < 0.05;
     
     // Extremely high variability indicates noise/artifacts
-    const highVariability = features.variabilityIndex > 0.5;
+    const highVariability = features.variabilityIndex > 0.9;
     
     // Calculate final confidence score
     const baseConfidence = 0.8; // Start with high confidence
