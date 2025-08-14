@@ -7,18 +7,18 @@ import { ProcessedSignal } from '../../types/signal';
  */
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  // Parámetros ajustados para mejor extracción de señal
-  private readonly RED_GAIN = 1.4; // Aumentado para mejor amplificación de señal roja (antes 1.2)
-  private readonly GREEN_SUPPRESSION = 0.8; // Menos supresión para mantener información (antes 0.85)
-  private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
-  private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
-  private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
-  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
+  // Parámetros ajustados para detección REAL de dedos y latidos
+  private readonly RED_GAIN = 1.0; // Reducido para evitar amplificación excesiva de ruido
+  private readonly GREEN_SUPPRESSION = 0.9; // Aumentado para mejor supresión de ruido verde
+  private readonly SIGNAL_GAIN = 0.9; // Reducido para evitar amplificación de ruido ambiental
+  private readonly EDGE_ENHANCEMENT = 0.1;  // Reducido para detección más precisa
+  private readonly MIN_RED_THRESHOLD = 5.0;  // Reducido para permitir detección de señales reales débiles
+  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango ampliado para mayor tolerancia
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.15;  // Reducido para mejor detección
   
   // Historia para calibración adaptativa
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
-  private readonly HISTORY_SIZE = 15; // Reducido para adaptación más rápida (antes 20)
+  private readonly HISTORY_SIZE = 10; // Reducido para adaptación más rápida y mejor respuesta
   private lastLightLevel: number = -1;
   
   // Nuevo: historial de ROIs para estabilidad
@@ -227,9 +227,9 @@ export class FrameProcessor {
     const avgGreen = greenSum / pixelCount;
     const avgBlue = blueSum / pixelCount;
     
-    // Calculate color ratio indexes with proper physiological constraints - más permisivo
-    const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
-    const rToBRatio = avgRed / avgBlue;
+    // Calculate color ratio indexes with proper physiological constraints - más estricto
+    const rToGRatio = avgGreen > 5 ? avgRed / avgGreen : 1.0; 
+    const rToBRatio = avgBlue > 1 ? avgRed / avgBlue : 1.0;
     console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
     
     // Light level affects detection quality
@@ -282,15 +282,15 @@ export class FrameProcessor {
    * Both too dark and too bright conditions reduce signal quality
    */
   private getLightLevelQualityFactor(lightLevel: number): number {
-    // Rango óptimo ampliado - más permisivo
-    if (lightLevel >= 25 && lightLevel <= 85) { // Antes 30-80
+    // Rango óptimo ajustado - más estricto para detección real
+    if (lightLevel >= 30 && lightLevel <= 75) { // Rango óptimo más realista
       return 1.0; // Optimal lighting
-    } else if (lightLevel < 25) {
-      // Too dark - reducción lineal en calidad pero más permisiva
-      return Math.max(0.4, lightLevel / 25); // Mínimo aumentado (antes 0.3)
+    } else if (lightLevel < 30) {
+      // Too dark - penalización más estricta
+      return Math.max(0.2, lightLevel / 30); // Mínimo reducido para rechazar señales débiles
     } else {
-      // Too bright - penalización reducida
-      return Math.max(0.4, 1.0 - (lightLevel - 85) / 60); // Límites más permisivos
+      // Too bright - penalización más estricta
+      return Math.max(0.2, 1.0 - (lightLevel - 75) / 50); // Límites más estrictos
     }
   }
   

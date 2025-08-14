@@ -228,7 +228,7 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
         resetProcessorState();
       }, 2000);
     }
-  }, [setLastError, setIsProcessing]);
+  }, [setLastError, setIsProcessing, resetProcessorState]);
 
   // Inicialización del procesador
   useEffect(() => {
@@ -249,7 +249,17 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
       
       try {
         console.log("[INIT] Creando nueva instancia de PPGSignalProcessor...");
-        processorRef.current = new PPGSignalProcessor(onSignalReady, handleProcessorError);
+        
+        // Asegurarse de que los callbacks estén definidos
+        if (!onSignalReady || !handleProcessorError) {
+          throw new Error("Callbacks no definidos");
+        }
+        
+        // Crear una copia local de los callbacks para evitar problemas de referencia
+        const signalReadyCallback = onSignalReady;
+        const errorCallback = handleProcessorError;
+        
+        processorRef.current = new PPGSignalProcessor(signalReadyCallback, errorCallback);
         
         // Inicializar el procesador
         console.log("[INIT] Inicializando procesador...");
@@ -332,7 +342,7 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
       resetProcessorState();
       console.log("[CLEANUP] Limpieza completada");
     };
-  }, [resetProcessorState, onSignalReady]);
+  }, [resetProcessorState, onSignalReady, handleProcessorError]);
 
   const startProcessing = useCallback(() => {
     if (processorRef.current && !isProcessing) {

@@ -135,7 +135,6 @@ export class PPGSignalProcessor extends OriginalPPGSignalProcessor {
       }
     }
   }
-  }
 }
 
 // También re-exportamos los tipos
