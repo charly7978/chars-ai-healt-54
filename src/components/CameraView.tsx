@@ -68,12 +68,13 @@ const CameraView: React.FC<CameraViewProps> = ({
     const { width, height, data } = frameData;
     const pixelCount = width * height;
     
+    // Calculate channel averages
     let redSum = 0, irSum = 0, greenSum = 0;
     
     for (let i = 0; i < pixelCount * 4; i += 4) {
-      redSum += data[i];
-      greenSum += data[i+1];
-      irSum += data[i+2];
+      redSum += data[i];     // Red channel
+      greenSum += data[i+1]; // Green channel
+      irSum += data[i+2];    // Infrared channel
     }
     
     return {
@@ -84,23 +85,17 @@ const CameraView: React.FC<CameraViewProps> = ({
   };
 
   const processFrame = (frameData: ImageData) => {
-    try {
-      const { red, ir, green } = extractPPGSignals(frameData);
-      
-      const results = vitalProcessor.current.processSignal({
-        red,
-        ir, 
-        green,
-        timestamp: Date.now()
-      });
-      
-      if (results) {
-        handleResults(results);
-      }
-    } catch (error) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('Error processing frame:', error);
-      }
+    const { red, ir, green } = extractPPGSignals(frameData);
+    
+    const results = vitalProcessor.current.processSignal({
+      red,
+      ir, 
+      green,
+      timestamp: Date.now()
+    });
+    
+    if (results) {
+      handleResults(results);
     }
   };
 
