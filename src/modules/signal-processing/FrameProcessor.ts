@@ -235,7 +235,15 @@ export class FrameProcessor {
     // Calculate color ratio indexes with proper physiological constraints - más permisivo
     const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
     const rToBRatio = avgRed / avgBlue;
-    console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
+    // Sanitize and log frame data
+    console.log('[DEBUG] FrameProcessor extractFrameData - avgRed: %f, avgGreen: %f, avgBlue: %f, textureScore: %f, rToGRatio: %f, rToBRatio: %f', 
+      Number(avgRed) || 0, 
+      Number(avgGreen) || 0, 
+      Number(avgBlue) || 0, 
+      Number(textureScore) || 0, 
+      Number(rToGRatio) || 0, 
+      Number(rToBRatio) || 0
+    );
     
     // Light level affects detection quality
     const lightLevelFactor = this.getLightLevelQualityFactor(this.lastLightLevel);
@@ -300,7 +308,11 @@ export class FrameProcessor {
   }
   
   detectROI(redValue: number, imageData: ImageData): ProcessedSignal['roi'] {
-    console.log('[DEBUG] FrameProcessor detectROI - redValue:', redValue, 'imageSize:', imageData.width+'x'+imageData.height);
+    console.log('[DEBUG] FrameProcessor detectROI - redValue: %s, imageSize: %dx%d', 
+      String(redValue), 
+      String(imageData?.width), 
+      String(imageData?.height)
+    );
     // Centered ROI by default with adaptive size
     const centerX = Math.floor(imageData.width / 2);
     const centerY = Math.floor(imageData.height / 2);
@@ -336,7 +348,12 @@ export class FrameProcessor {
       height: roiSize
     };
     
-    console.log('[DEBUG] FrameProcessor detectROI - newROI:', newROI);
+    console.log('[DEBUG] FrameProcessor detectROI - newROI: %o', {
+      x: Number(newROI.x) || 0,
+      y: Number(newROI.y) || 0,
+      width: Number(newROI.width) || 0,
+      height: Number(newROI.height) || 0
+    });
     // Guardar historia de ROIs para estabilidad
     this.roiHistory.push(newROI);
     if (this.roiHistory.length > this.ROI_HISTORY_SIZE) {
