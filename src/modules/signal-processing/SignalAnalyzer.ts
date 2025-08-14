@@ -56,13 +56,13 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Weighted sum – weights can be tuned later or moved to config.
+    // Weighted sum optimizado para detección de dedo
     const weighted =
-      redChannel * 0.3 +
-      stability * 0.25 +
-      pulsatility * 0.25 +
-      biophysical * 0.15 +
-      periodicity * 0.05;
+      redChannel * 0.4 +        // Mayor peso al canal rojo (principal indicador)
+      pulsatility * 0.3 +       // Mayor peso a pulsatilidad
+      stability * 0.15 +        // Menor peso a estabilidad (puede ser ruidosa inicialmente)
+      biophysical * 0.1 +       // Menor peso a validación biofísica
+      periodicity * 0.05;       // Peso mínimo a periodicidad
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
@@ -76,11 +76,19 @@ export class SignalAnalyzer {
       this.qualityHistory.reduce((acc, v) => acc + v, 0) /
       this.qualityHistory.length;
 
-    // Hysteresis logic using consecutive detections.
+    // Ultra-sensitive hysteresis logic for immediate finger detection
     let isFingerDetected = false;
     console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 15; // Reducido de 30 a 15 para mayor sensibilidad
-    if (smoothedQuality >= DETECTION_THRESHOLD) {
+    
+    // Umbral dinámico basado en la calidad de la señal
+    let detectionThreshold = 8; // Umbral base muy bajo
+    
+    // Ajustar umbral basado en componentes individuales
+    if (redChannel > 0.3 || pulsatility > 0.2 || biophysical > 0.4) {
+      detectionThreshold = 5; // Aún más bajo si hay buenas señales individuales
+    }
+    
+    if (smoothedQuality >= detectionThreshold) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
     } else {
@@ -88,12 +96,18 @@ export class SignalAnalyzer {
       this.consecutiveDetections = 0;
     }
 
+    // Detección más rápida y persistente
     if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
       isFingerDetected = true;
     } else if (
       this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS
     ) {
       isFingerDetected = false;
+    }
+    
+    // Override: si hay señal roja fuerte, detectar inmediatamente
+    if (redChannel > 0.5 && smoothedQuality > 3) {
+      isFingerDetected = true;
     }
 
     return {

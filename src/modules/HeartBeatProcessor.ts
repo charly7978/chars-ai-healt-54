@@ -6,11 +6,11 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 50; // Aumentado para mejor análisis
   private readonly DEFAULT_MIN_BPM = 40; // Más restrictivo para evitar falsos positivos
   private readonly DEFAULT_MAX_BPM = 180; // Más restrictivo para rangos fisiológicos
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03; // Reducido para mayor sensibilidad
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.4; // Reducido para detectar más latidos
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Menos restrictivo para picos
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Reducido para permitir más detecciones
-  private readonly WARMUP_TIME_MS = 500; // Reducido para detección más rápida
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.015; // Ultra-reducido para máxima sensibilidad
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.25; // Muy reducido para detectar más latidos
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.002; // Muy permisivo para picos
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 250; // Muy reducido para más detecciones
+  private readonly WARMUP_TIME_MS = 300; // Muy reducido para detección inmediata
 
   // Parámetros de filtrado ajustados para precisión médica
   private readonly MEDIAN_FILTER_WINDOW = 5; // Aumentado para mejor filtrado de ruido
@@ -34,13 +34,13 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites para los parámetros adaptativos - Valores médicamente apropiados
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.02; // Reducido para mayor sensibilidad
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.15;
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.3; // Reducido para detectar más latidos
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.7;
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.05;
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.010;
+  // Límites adaptativos ultra-permisivos
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.008; // Ultra-reducido
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.12;
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.15; // Muy reducido
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.6;
+  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
+  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
 
   // ────────── PARÁMETROS PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.5; // Reducido para evitar saturación
@@ -77,15 +77,15 @@ export class HeartBeatProcessor {
   private peakCandidateValue: number = 0;
   private isArrhythmiaDetected: boolean = false;
   
-  // Variables para mejorar la detección
+  // Variables ultra-optimizadas para detección máxima
   private peakValidationBuffer: number[] = [];
-  private readonly PEAK_VALIDATION_THRESHOLD = 0.3; // Reducido para validación menos estricta
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.25; // Reducido para mayor sensibilidad
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.35; // Reducido para detectar más latidos
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.15; // Reducido para picos menos pronunciados
-  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.003; // Menos restrictivo para picos
-  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.5; // Reducido para mayor flexibilidad
-  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 8; // Aumentado para mejor confirmación
+  private readonly PEAK_VALIDATION_THRESHOLD = 0.15; // Ultra-reducido
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.1; // Mínimo absoluto
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.2; // Muy reducido
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.08; // Ultra-reducido para picos muy pequeños
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.001; // Muy permisivo
+  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.3; // Muy flexible
+  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 6; // Reducido para respuesta más rápida
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
@@ -250,14 +250,14 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
 
-    if (this.signalBuffer.length < 20) { // Requisito apropiado para evaluación
+    if (this.signalBuffer.length < 8) { // Requisito muy reducido para evaluación rápida
       return {
         bpm: 0,
         confidence: 0,
         isPeak: false,
-        filteredValue: filteredValue, // Usando la variable correctamente definida
+        filteredValue: filteredValue,
         arrhythmiaCount: 0,
-        signalQuality: 0
+        signalQuality: Math.min(25, this.signalBuffer.length * 3) // Calidad progresiva
       };
     }
 
@@ -497,14 +497,14 @@ export class HeartBeatProcessor {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Validación multi-criterio para picos reales - más permisiva
+    // Validación ultra-permisiva para picos
     const amplitudeValid = Math.abs(normalizedValue) > this.PEAK_AMPLITUDE_THRESHOLD;
     const derivativeValid = derivative < this.DERIVATIVE_STEEPNESS_THRESHOLD;
     const signalStrong = this.currentSignalQuality > this.MIN_PEAK_CONFIRMATION_QUALITY;
     
-    // Detectar pico si cumple al menos 2 de 3 criterios (más permisivo)
+    // Detectar pico si cumple al menos 1 de 3 criterios (ultra-permisivo)
     const criteriaCount = (amplitudeValid ? 1 : 0) + (derivativeValid ? 1 : 0) + (signalStrong ? 1 : 0);
-    const isPeak = criteriaCount >= 2;
+    const isPeak = criteriaCount >= 1 || Math.abs(normalizedValue) > (this.PEAK_AMPLITUDE_THRESHOLD * 0.5);
     
     // Confianza basada en múltiples factores
     let confidence = 0;

@@ -7,14 +7,14 @@ import { ProcessedSignal } from '../../types/signal';
  */
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  // Parámetros ajustados para mejor extracción de señal
-  private readonly RED_GAIN = 1.4; // Aumentado para mejor amplificación de señal roja (antes 1.2)
-  private readonly GREEN_SUPPRESSION = 0.8; // Menos supresión para mantener información (antes 0.85)
-  private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
-  private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
-  private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
-  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
+  // Parámetros ultra-optimizados para máxima sensibilidad
+  private readonly RED_GAIN = 2.2; // Amplificación máxima del canal rojo
+  private readonly GREEN_SUPPRESSION = 0.7; // Mayor supresión del verde para resaltar rojo
+  private readonly SIGNAL_GAIN = 1.8; // Ganancia de señal aumentada
+  private readonly EDGE_ENHANCEMENT = 0.25;  // Mayor realce de bordes
+  private readonly MIN_RED_THRESHOLD = 0.1;  // Umbral mínimo casi eliminado
+  private readonly RG_RATIO_RANGE = [0.3, 8.0];  // Rango muy amplio
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.05;  // Umbral de contraste muy bajo
   
   // Historia para calibración adaptativa
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
@@ -108,11 +108,11 @@ export class FrameProcessor {
         cells[cellIdx].blue += b;
         cells[cellIdx].count++;
         
-        // Ganancia adaptativa basada en ratio r/g fisiológico - más permisiva
-        const rgRatio = r / (g + 1); // Use raw r and g for this ratio
-        // Ganancia reducida para ratios no fisiológicos pero más permisiva
-        const adaptiveGain = (rgRatio > this.RG_RATIO_RANGE[0] && rgRatio < this.RG_RATIO_RANGE[1]) ? // Rango ampliado (antes 0.9-3.0)
-                           this.SIGNAL_GAIN : this.SIGNAL_GAIN * 0.8; // Penalización reducida
+        // Ganancia adaptativa ultra-permisiva
+        const rgRatio = r / (g + 1);
+        // Aplicar ganancia completa en casi todos los casos
+        const adaptiveGain = (rgRatio > this.RG_RATIO_RANGE[0] && rgRatio < this.RG_RATIO_RANGE[1]) ?
+                           this.SIGNAL_GAIN : this.SIGNAL_GAIN * 0.9; // Penalización mínima
         
         redSum += enhancedR * adaptiveGain;
         greenSum += attenuatedG;
@@ -207,18 +207,23 @@ export class FrameProcessor {
       };
     }
     
-    // Apply dynamic calibration based on history - with medical constraints
-    let dynamicGain = 1.0; // Base gain
-    if (this.lastFrames.length >= 3) { // Reducido (antes 5)
+    // Calibración dinámica ultra-agresiva para señales débiles
+    let dynamicGain = 1.2; // Ganancia base aumentada
+    if (this.lastFrames.length >= 2) { // Reducido para respuesta más rápida
       const avgHistRed = this.lastFrames.reduce((sum, frame) => sum + frame.red, 0) / this.lastFrames.length;
       
-      // Ganancia moderada incluso para señales muy débiles
-      if (avgHistRed < 40 && avgHistRed > this.MIN_RED_THRESHOLD && 
-          this.calculateEdgeContrast() > this.EDGE_CONTRAST_THRESHOLD) {
-        dynamicGain = 1.25; // Ganancia ligeramente reducida
-      } else if (avgHistRed <= this.MIN_RED_THRESHOLD) { // Umbral reducido
-        // Very weak signal - likely no finger present
-        dynamicGain = 1.1; // Algo de amplificación incluso con señal muy débil (antes 1.0)
+      // Amplificación masiva para señales débiles
+      if (avgHistRed < 50) {
+        dynamicGain = Math.min(3.0, 1.5 + (50 - avgHistRed) / 25); // Ganancia proporcional inversa
+      } else if (avgHistRed < 80) {
+        dynamicGain = 1.4; // Ganancia moderada
+      } else {
+        dynamicGain = 1.2; // Ganancia base para señales fuertes
+      }
+      
+      // Bonus por contraste de borde
+      if (this.calculateEdgeContrast() > this.EDGE_CONTRAST_THRESHOLD) {
+        dynamicGain *= 1.1;
       }
     }
     
@@ -300,22 +305,25 @@ export class FrameProcessor {
     const centerX = Math.floor(imageData.width / 2);
     const centerY = Math.floor(imageData.height / 2);
     
-    // Factor ROI adaptativo mejorado
+    // Factor ROI ultra-adaptativo para máxima captura
     let adaptiveROISizeFactor = this.CONFIG.ROI_SIZE_FACTOR;
     
-    // Ajustar ROI basado en valor rojo detectado - más permisivo
-    if (redValue < 25) { // Umbral reducido (antes 30)
-      // Señal débil - aumentar ROI para capturar más área
-      adaptiveROISizeFactor = Math.min(0.8, adaptiveROISizeFactor * 1.1); // Mayor aumento
-    } else if (redValue > 120) { // Umbral aumentado (antes 100)
-      // Señal fuerte - enfocar ROI en área central
-      adaptiveROISizeFactor = Math.max(0.35, adaptiveROISizeFactor * 0.97); // Menos reducción
+    // Ajustar ROI de forma más agresiva
+    if (redValue < 35) {
+      // Señal muy débil - maximizar área de captura
+      adaptiveROISizeFactor = Math.min(0.85, adaptiveROISizeFactor * 1.25);
+    } else if (redValue < 60) {
+      // Señal débil - aumentar área moderadamente
+      adaptiveROISizeFactor = Math.min(0.8, adaptiveROISizeFactor * 1.15);
+    } else if (redValue > 150) {
+      // Señal muy fuerte - enfocar pero no demasiado
+      adaptiveROISizeFactor = Math.max(0.4, adaptiveROISizeFactor * 0.95);
     }
     
-    // Ensure ROI is appropriate to image size
+    // ROI con límites muy permisivos
     const minDimension = Math.min(imageData.width, imageData.height);
-    const maxRoiSize = minDimension * 0.85; // Máximo aumentado (antes 0.8)
-    const minRoiSize = minDimension * 0.25; // Mínimo reducido (antes 0.3)
+    const maxRoiSize = minDimension * 0.9; // Máximo muy alto
+    const minRoiSize = minDimension * 0.2; // Mínimo muy bajo
     
     let roiSize = minDimension * adaptiveROISizeFactor;
     roiSize = Math.max(minRoiSize, Math.min(maxRoiSize, roiSize));

@@ -7,6 +7,7 @@ import { FrameProcessor } from './FrameProcessor';
 import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
 import { SignalProcessorConfig } from './types';
+import { IntelligentCalibrator } from './IntelligentCalibrator';
 
 /**
  * Procesador de señal PPG con detección de dedo
@@ -22,25 +23,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public frameProcessor: FrameProcessor;
   public calibrationHandler: CalibrationHandler;
   public signalAnalyzer: SignalAnalyzer;
+  public intelligentCalibrator: IntelligentCalibrator;
   public lastValues: number[] = [];
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
   
-  // Configuration with more sensitive thresholds for better detection
+  // Configuration with ultra-sensitive thresholds for optimal finger detection
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 15,
-    MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
-    MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 5,      // Reducido para detección más rápida
-    MIN_STABILITY_COUNT: 2,   // Reducido para ser menos estricto
-    HYSTERESIS: 1.0,          // Reducido para mayor sensibilidad
-    MIN_CONSECUTIVE_DETECTIONS: 3,  // Reducido para detección más rápida
-    MAX_CONSECUTIVE_NO_DETECTIONS: 8,  // Aumentado para mantener detección más tiempo
-    QUALITY_LEVELS: 20,
-    QUALITY_HISTORY_SIZE: 10,
-    CALIBRATION_SAMPLES: 10,
-    TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.6
+    BUFFER_SIZE: 12,
+    MIN_RED_THRESHOLD: 0,     // Sin umbral mínimo - acepta cualquier señal
+    MAX_RED_THRESHOLD: 255,
+    STABILITY_WINDOW: 3,      // Muy reducido para detección inmediata
+    MIN_STABILITY_COUNT: 1,   // Mínimo absoluto
+    HYSTERESIS: 0.5,          // Muy reducido para máxima sensibilidad
+    MIN_CONSECUTIVE_DETECTIONS: 2,  // Detección casi inmediata
+    MAX_CONSECUTIVE_NO_DETECTIONS: 12,  // Mantener detección más tiempo
+    QUALITY_LEVELS: 15,
+    QUALITY_HISTORY_SIZE: 8,
+    CALIBRATION_SAMPLES: 8,
+    TEXTURE_GRID_SIZE: 6,
+    ROI_SIZE_FACTOR: 0.7
   };
   
   constructor(
@@ -72,6 +74,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_DETECTIONS,
       MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS
     });
+    this.intelligentCalibrator = new IntelligentCalibrator();
     
     console.log("PPGSignalProcessor: Instance created with medically appropriate configuration:", this.CONFIG);
   }
@@ -89,6 +92,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.trendAnalyzer.reset();
       this.biophysicalValidator.reset();
       this.signalAnalyzer.reset();
+      this.intelligentCalibrator.reset();
+      this.intelligentCalibrator.reset();
       this.frameProcessedCount = 0;
       
       console.log("PPGSignalProcessor: System initialized with callbacks:", {
@@ -123,23 +128,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   async calibrate(): Promise<boolean> {
     try {
-      console.log("PPGSignalProcessor: Starting adaptive calibration");
+      console.log("PPGSignalProcessor: Starting intelligent calibration");
       await this.initialize();
       
-      // Mark calibration mode
+      // Iniciar calibración inteligente
       this.isCalibrating = true;
+      this.intelligentCalibrator.startCalibration();
       
-      // After a period of calibration, automatically finish
-      setTimeout(() => {
-        this.isCalibrating = false;
-        console.log("PPGSignalProcessor: Adaptive calibration completed automatically");
-      }, 3000);
-      
-      console.log("PPGSignalProcessor: Adaptive calibration initiated");
+      console.log("PPGSignalProcessor: Intelligent calibration initiated");
       return true;
     } catch (error) {
       console.error("PPGSignalProcessor: Calibration error", error);
-      this.handleError("CALIBRATION_ERROR", "Error during adaptive calibration");
+      this.handleError("CALIBRATION_ERROR", "Error during intelligent calibration");
       this.isCalibrating = false;
       return false;
     }
@@ -189,34 +189,40 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection of invalid frames - más permisivo
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
+      // Alimentar calibrador inteligente si está activo
+      if (this.intelligentCalibrator.isCalibrating()) {
+        this.intelligentCalibrator.addCalibrationSample(redValue, 0, textureScore);
+        
+        // Verificar si la calibración se completó
+        if (!this.intelligentCalibrator.isCalibrating()) {
+          this.isCalibrating = false;
+          console.log("PPGSignalProcessor: Intelligent calibration completed");
         }
-
-        const minimalSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: redValue,
-          quality: 0,
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(minimalSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Weak Signal):", minimalSignal);
-        }
-        return;
       }
+      
+      // Aplicar umbrales adaptativos si están disponibles
+      const adaptiveThresholds = this.intelligentCalibrator.getAdaptiveThresholds();
+      const effectiveMinThreshold = this.isCalibrating ? 0 : adaptiveThresholds.redMin;
+      
+      // Procesar señales usando umbrales adaptativos
 
-      // 2. Apply multi-stage filtering to the signal
+      // 2. Apply enhanced multi-stage filtering with intelligent gain
       let filteredValue = this.kalmanFilter.filter(redValue);
       filteredValue = this.sgFilter.filter(filteredValue);
-      // Aplicar ganancia adaptativa basada en calidad de señal
-      const adaptiveGain = Math.min(2.0, 1.0 + (extractionResult.textureScore * 0.5));
+      
+      // Ganancia inteligente basada en múltiples factores
+      let adaptiveGain = 1.0;
+      
+      // Amplificar señales débiles más agresivamente
+      if (redValue < 30) {
+        adaptiveGain = Math.min(3.5, 2.0 + (1.0 / Math.max(0.1, redValue / 30)));
+      } else if (redValue < 60) {
+        adaptiveGain = Math.min(2.5, 1.5 + (extractionResult.textureScore * 0.8));
+      } else {
+        adaptiveGain = Math.min(2.0, 1.0 + (extractionResult.textureScore * 0.5));
+      }
+      
+      // Aplicar ganancia con suavizado
       filteredValue = filteredValue * adaptiveGain;
 
       // Mantener un historial de valores filtrados para el cálculo de la pulsatilidad
@@ -250,30 +256,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Reactivated validation with more tolerant thresholds
-      if ((rToGRatio < 0.3 || rToGRatio > 8.0) && !this.isCalibrating) { // Rango muy ampliado de 0.3 a 8.0
+      // Validación de ratio de color ultra-permisiva - solo rechazar casos extremos
+      if ((rToGRatio < 0.1 || rToGRatio > 15.0) && !this.isCalibrating && redValue > 10) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
+          console.log("PPGSignalProcessor: Extreme color ratio detected:", {
             rToGRatio,
-            rToBRatio
+            rToBRatio,
+            redValue
           });
         }
-
-        const rejectSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: filteredValue,
-          quality: 0, 
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Color Ratio):", rejectSignal);
-        }
-        return;
+        // Aún así, procesar la señal pero con calidad reducida
       }
 
       // 4. Calculate comprehensive detector scores with medical validation
@@ -294,13 +286,39 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // Update analyzer with latest scores
       this.signalAnalyzer.updateDetectorScores(detectorScores);
 
-      // 5. Perform multi-detector analysis for highly accurate finger detection
+      // 5. Perform multi-detector analysis with adaptive thresholds
       const detectionResult = this.signalAnalyzer.analyzeSignalMultiDetector(filteredValue, trendResult);
-      const { isFingerDetected, quality } = detectionResult;
+      let { isFingerDetected, quality } = detectionResult;
+      
+      // Aplicar boost de calidad basado en calibración inteligente
+      if (!this.isCalibrating) {
+        const calibrationState = this.intelligentCalibrator.getCalibrationState();
+        const { skinTone, thickness, bloodFlow } = calibrationState.fingerCharacteristics;
+        
+        // Boost para características específicas del dedo
+        let qualityBoost = 1.0;
+        if (skinTone === 'dark' && redValue > adaptiveThresholds.redMin) qualityBoost += 0.3;
+        if (thickness === 'thick' && textureScore > 0.3) qualityBoost += 0.2;
+        if (bloodFlow === 'low' && quality > 5) qualityBoost += 0.4;
+        
+        quality = Math.min(100, Math.round(quality * qualityBoost));
+        
+        // Re-evaluar detección con calidad mejorada
+        if (!isFingerDetected && quality > adaptiveThresholds.qualityMin) {
+          isFingerDetected = true;
+        }
+      }
 
-      // Calculate physiologically valid perfusion index only when finger is detected
-      const perfusionIndex = isFingerDetected && quality > 10 ? 
-                           (Math.log(redValue) * 0.55 - 1.2) : 0;
+      // Calculate perfusion index with enhanced sensitivity
+      let perfusionIndex = 0;
+      if (redValue > 5) { // Umbral muy bajo
+        // Cálculo mejorado del índice de perfusión
+        const basePI = Math.log(Math.max(1, redValue)) * 0.4 - 0.8;
+        const qualityBonus = quality > 15 ? (quality / 100) * 0.3 : 0;
+        const textureBonus = extractionResult.textureScore * 0.2;
+        
+        perfusionIndex = Math.max(0, basePI + qualityBonus + textureBonus);
+      }
 
       // Create processed signal object with strict validation
       const processedSignal: ProcessedSignal = {
