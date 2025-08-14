@@ -8,13 +8,13 @@ import { ProcessedSignal } from '../../types/signal.d';
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
   // Parámetros ajustados para detección REAL de dedos y latidos
-  private readonly RED_GAIN = 1.0; // Reducido para evitar amplificación excesiva de ruido
-  private readonly GREEN_SUPPRESSION = 0.9; // Aumentado para mejor supresión de ruido verde
-  private readonly SIGNAL_GAIN = 0.9; // Reducido para evitar amplificación de ruido ambiental
-  private readonly EDGE_ENHANCEMENT = 0.1;  // Reducido para detección más precisa
-  private readonly MIN_RED_THRESHOLD = 5.0;  // Reducido para permitir detección de señales reales débiles
-  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango ampliado para mayor tolerancia
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.15;  // Reducido para mejor detección
+  private readonly RED_GAIN = 1.4; // ✅ Aumentado aún más para mejor detección de señal roja
+  private readonly GREEN_SUPPRESSION = 0.8; // ✅ Reducido aún más para no suprimir señal válida
+  private readonly SIGNAL_GAIN = 1.2; // ✅ Aumentado para amplificar señales reales débiles
+  private readonly EDGE_ENHANCEMENT = 0.2;  // ✅ Aumentado para mejor detección de bordes
+  private readonly MIN_RED_THRESHOLD = 1.5;  // ✅ Más reducido para permitir señales muy débiles reales
+  private readonly RG_RATIO_RANGE = [0.5, 6.0];  // ✅ Rango aún más ampliado para dedos reales
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.06;  // ✅ Más permisivo para detección real
   
   // Historia para calibración adaptativa
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
@@ -132,7 +132,7 @@ export class FrameProcessor {
     }
     
     // Calculate texture (variation between cells) with physiological constraints
-    let textureScore = 0.5; // Base value
+    let textureScore = 0.4; // ✅ Base value reducido para mayor sensibilidad
     
     if (cells.some(cell => cell.count > 0)) {
       // Normalize cells by count and consider edges
@@ -156,15 +156,15 @@ export class FrameProcessor {
             const cell2 = normCells[j];
             
             // Calculate color difference with emphasis on red channel
-            const redDiff = Math.abs(cell1.red - cell2.red) * 1.3; // Mayor énfasis en rojo
-            const greenDiff = Math.abs(cell1.green - cell2.green) * 0.8; // Menor énfasis
-            const blueDiff = Math.abs(cell1.blue - cell2.blue) * 0.6; // Menor énfasis
+            const redDiff = Math.abs(cell1.red - cell2.red) * 1.5; // ✅ Mayor énfasis en rojo
+            const greenDiff = Math.abs(cell1.green - cell2.green) * 0.7; // ✅ Menor énfasis
+            const blueDiff = Math.abs(cell1.blue - cell2.blue) * 0.5; // ✅ Menor énfasis
             
             // Include edge information in texture calculation
             const edgeDiff = Math.abs(cell1.edgeScore - cell2.edgeScore) * this.EDGE_ENHANCEMENT;
             
             // Weighted average of differences
-            const avgDiff = (redDiff + greenDiff + blueDiff + edgeDiff) / 2.7;
+            const avgDiff = (redDiff + greenDiff + blueDiff + edgeDiff) / 2.8;
             totalVariation += avgDiff;
             comparisonCount++;
           }
@@ -173,9 +173,9 @@ export class FrameProcessor {
         if (comparisonCount > 0) {
           const avgVariation = totalVariation / comparisonCount;
           
-          // Cálculo de textura mejorado - más permisivo
-          const normalizedVar = Math.pow(avgVariation / 3, 0.65); // Exponente reducido
-          textureScore = Math.max(0.35, Math.min(1, normalizedVar)); // Mínimo más alto
+          // ✅ Cálculo de textura mejorado - más permisivo
+          const normalizedVar = Math.pow(avgVariation / 2.8, 0.6); // Exponente y divisor reducidos
+          textureScore = Math.max(0.3, Math.min(1, normalizedVar)); // Mínimo reducido
         }
       }
     }

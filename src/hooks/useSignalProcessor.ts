@@ -82,12 +82,13 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
     if (!validation.isValid) {
       const errorMsg = `Señal inválida: ${validation.reason}`;
       console.warn(errorMsg, signal);
-      setLastError({
-          message: validation.reason || 'Error de validación de señal',
-          timestamp: now,
-          type: 'VALIDATION_ERROR' as ErrorType,
-          details: signal
-      });
+          setLastError({
+            code: "INVALID_SIGNAL",
+            message: "Señal inválida recibida",
+            timestamp: Date.now(),
+            type: "VALIDATION_ERROR",
+            details: signal
+          });
       return { isValid: false, reason: validation.reason };
     }
     
@@ -101,14 +102,15 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
         const errorMsg = "Demasiadas señales sospechosas. Se requiere recalibración.";
         console.error(errorMsg);
         setLastError({
-            message: "Calidad de señal insuficiente. Por favor, recoloca tu dedo.",
-            timestamp: now,
-            type: "VALIDATION_ERROR",
-            details: {
-              reason: spectralAnalysis.reason,
-              signalHistory: signalHistoryRef.current.length,
-              suspiciousCount: suspiciousSignalCount.current
-            }
+          code: "BIOPHYSICAL_VALIDATION_FAILED",
+          message: "Validación biofísica fallida - posible simulación detectada",
+          timestamp: Date.now(),
+          type: "VALIDATION_ERROR",
+          details: {
+            reason: spectralAnalysis.reason,
+            signalHistory: signalHistoryRef.current.length,
+            suspiciousCount: suspiciousSignalCount.current
+          }
         });
         return { isValid: false, reason: errorMsg };
       }
@@ -164,10 +166,11 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
     } catch (error) {
       console.error("Error en el procesamiento de señal:", error);
       setLastError({
-          message: "Error al procesar la señal",
-          timestamp: now,
-          type: "PROCESSOR_ERROR",
-          details: error instanceof Error ? error.message : String(error)
+        code: "PROCESSOR_INTERNAL_ERROR",
+        message: "Error interno del procesador",
+        timestamp: Date.now(),
+        type: "PROCESSOR_ERROR",
+        details: error instanceof Error ? error.message : "Error desconocido"
       });
     }
   }, [validateSignal, signalStats]);
@@ -204,17 +207,18 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
       setIsProcessing(false);
       
       // Notificar el error crítico
-      setLastError({
-        message: "Error crítico. Reiniciando procesador...",
-        timestamp: now,
-        type: "PROCESSOR_ERROR",
-        details: {
-          errorCount: errorCountRef.current,
-          timeSinceLastError,
-          errorMessage: error.message,
-          errorType: error.type
-        }
-      });
+        setLastError({
+          code: "MULTIPLE_ERRORS_DETECTED",
+          message: "Múltiples errores detectados",
+          timestamp: Date.now(),
+          type: "PROCESSOR_ERROR",
+          details: {
+            errorCount: errorCountRef.current,
+            timeSinceLastError: Date.now() - (lastError?.timestamp || Date.now()),
+            errorMessage: lastError?.message || "Error desconocido",
+            errorType: lastError?.type || "GENERIC_ERROR"
+          }
+        });
       
       // Programar reinicio del contador de errores
       setTimeout(() => { 
@@ -271,12 +275,13 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
         console.error("[ERROR] Error al inicializar el procesador:", error);
         
         if (isMounted) {
-          setLastError({
-            message: "Error al inicializar el procesador de señales",
-            timestamp: Date.now(),
-            type: "INIT_ERROR",
-            details: error instanceof Error ? error.message : String(error)
-          });
+        setLastError({
+          code: "PROCESSOR_INIT_ERROR",
+          message: "Error de inicialización del procesador",
+          timestamp: Date.now(),
+          type: "INIT_ERROR",
+          details: "No se pudieron inicializar los callbacks correctamente"
+        });
         }
         
         processorRef.current = null;
@@ -312,12 +317,13 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
         console.error("[ERROR] Error en la inicialización:", error);
         
         if (isMounted) {
-          setLastError({
-            message: "Error en la inicialización del procesador",
-            timestamp: Date.now(),
-            type: "INIT_ERROR",
-            details: error instanceof Error ? error.message : String(error)
-          });
+        setLastError({
+          code: "SIGNAL_PROCESSOR_INIT_ERROR",
+          message: "Error al inicializar el procesador de señales",
+          timestamp: Date.now(),
+          type: "INIT_ERROR",
+          details: error instanceof Error ? error.message : "Error desconocido"
+        });
         }
       }
     })();

@@ -1,4 +1,5 @@
-import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
+import { ProcessedSignal, ProcessingError } from '../../types/signal';
+import { SignalProcessor } from '../../types/signal.d';
 import { KalmanFilter } from './KalmanFilter';
 import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
 import { SignalTrendAnalyzer, TrendResult } from './SignalTrendAnalyzer';
@@ -13,7 +14,7 @@ import { SignalProcessorConfig } from './types';
  * e indicador de calidad
  * PROHIBIDA LA SIMULACIÓN Y TODO TIPO DE MANIPULACIÓN FORZADA DE DATOS
  */
-export class PPGSignalProcessor implements SignalProcessorInterface {
+export class PPGSignalProcessor implements SignalProcessor {
   public isProcessing: boolean = false;
   public kalmanFilter: KalmanFilter;
   public sgFilter: SavitzkyGolayFilter;
@@ -31,13 +32,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     BUFFER_SIZE: 15,
     MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
     MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 10,      // Increased for more stability assessment
-    MIN_STABILITY_COUNT: 5,   // Requires more stability for detection
-    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 6,  // Requires more frames to confirm detection
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
+    STABILITY_WINDOW: 8,      // Reducido para respuesta más rápida
+    MIN_STABILITY_COUNT: 3,   // Reducido para detección más sensible
+    HYSTERESIS: 1.5,          // Reducido para mayor sensibilidad
+    MIN_CONSECUTIVE_DETECTIONS: 3,  // Reducido para respuesta más rápida
+    MAX_CONSECUTIVE_NO_DETECTIONS: 3,  // Más rápido para perder detección
     QUALITY_LEVELS: 20,
-    QUALITY_HISTORY_SIZE: 10,
+    QUALITY_HISTORY_SIZE: 8,   // Reducido para respuesta más rápida
     CALIBRATION_SAMPLES: 10,
     TEXTURE_GRID_SIZE: 8,
     ROI_SIZE_FACTOR: 0.6

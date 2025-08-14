@@ -127,6 +127,7 @@ export class PPGSignalProcessor extends OriginalPPGSignalProcessor {
       // Intentar reiniciar el procesador en caso de error
       if (this.onError) {
         this.onError({
+          code: "PROCESSOR_ERROR",
           message: "Error al procesar frame",
           timestamp: Date.now(),
           type: "PROCESSOR_ERROR",

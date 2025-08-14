@@ -12,13 +12,20 @@ export interface ProcessedSignal {
   filteredValue: number;
   quality: number;
   fingerDetected: boolean;
-  // Agrega más propiedades según sea necesario
+  roi: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  perfusionIndex?: number;
 }
 
 export interface ProcessingError {
+  code: string;
   message: string;
   timestamp: number;
-  type: ErrorType;
+  type?: ErrorType;
   details?: unknown;
 }
 
@@ -52,7 +59,7 @@ export interface PPGProcessorOptions {
 
 // Tipos de utilidad
 export type SignalValidator = (signal: ProcessedSignal) => { isValid: boolean; reason?: string };
-export type SignalProcessor = (signal: ProcessedSignal) => ProcessedSignal | null;
+export type SignalProcessorFunction = (signal: ProcessedSignal) => ProcessedSignal | null;
 
 // Estado global del procesador
 export interface SignalProcessorState {
