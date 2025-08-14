@@ -181,6 +181,7 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
   useEffect(() => {
     const sessionId = Math.random().toString(36).substring(2, 9);
     const initTimestamp = new Date().toISOString();
+    let isMounted = true;
     
     console.log("useSignalProcessor: Inicializando procesador de señales", {
       timestamp: initTimestamp,
@@ -188,6 +189,8 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
     });
     
     const handleProcessorError = (error: ProcessingError) => {
+      if (!isMounted) return;
+      
       console.error("Error en el procesador de señal:", error);
       setLastError(error);
       
@@ -214,6 +217,8 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
     };
     
     const handleProcessingStateChange = (isRunning: boolean) => {
+      if (!isMounted) return;
+      
       console.log(`Estado del procesamiento: ${isRunning ? 'Iniciado' : 'Detenido'}`);
       setIsProcessing(isRunning);
       if (isRunning) {
@@ -221,43 +226,89 @@ export const useSignalProcessor = (): UseSignalProcessorReturn => {
       }
     };
     
-    try {
-      const options: PPGProcessorOptions = {
-        sampleRate: 30,
-        minQualityThreshold: 30,
-        maxQualityThreshold: 95
-      };
-      
-      const callbacks: PPGProcessorCallbacks = {
-        onSignalReady,
-        onError: handleProcessorError,
-        onProcessingStateChange: handleProcessingStateChange
-      };
-      
-      processorRef.current = new PPGSignalProcessor(onSignalReady, handleProcessorError);
-      
-      console.log("Procesador de señales inicializado correctamente", {
-        timestamp: initTimestamp,
-        sessionId,
-        options
-      });
-      
-    } catch (initError) {
-      console.error("Error al inicializar el procesador de señales:", initError);
-      setLastError({
-        message: "Error al inicializar el procesador",
-        timestamp: Date.now(),
-        type: "PROCESSOR_ERROR",
-        details: initError instanceof Error ? initError.message : String(initError)
-      });
-    }
-    
-    return () => {
-      console.log("Limpiando procesador de señales");
-      processorRef.current?.stop();
-      processorRef.current = null;
+    const initProcessor = async () => {
+      if (!processorRef.current) {
+        console.log("useSignalProcessor: Creando nueva instancia del procesador");
+        processorRef.current = new PPGSignalProcessor(
+          onSignalReady,
+          handleProcessorError
+        );
+        
+        try {
+          console.log("useSignalProcessor: Inicializando procesador...");
+          await processorRef.current.initialize();
+          console.log("useSignalProcessor: Procesador inicializado correctamente");
+          return true;
+        } catch (error) {
+          console.error("useSignalProcessor: Error al inicializar el procesador:", error);
+          setLastError({
+            message: "Error al inicializar el procesador de señales",
+            timestamp: Date.now(),
+            type: "INIT_ERROR",
+            details: error instanceof Error ? error.message : String(error)
+          });
+          processorRef.current = null;
+          return false;
+        }
+      }
+      return true;
     };
-  }, [onSignalReady, resetProcessorState]);
+    
+    const init = async () => {
+      try {
+        const options: PPGProcessorOptions = {
+          sampleRate: 30,
+          minQualityThreshold: 30,
+          maxQualityThreshold: 95
+        };
+        
+        console.log("useSignalProcessor: Configurando opciones del procesador", { options });
+        
+        // Inicializar el procesador
+        const initialized = await initProcessor();
+        if (!initialized) {
+          console.error("useSignalProcessor: No se pudo inicializar el procesador");
+          return;
+        }
+        
+        console.log("useSignalProcessor: Procesador de señales listo", {
+          timestamp: new Date().toISOString(),
+          sessionId,
+          options
+        });
+        
+      } catch (error) {
+        console.error("useSignalProcessor: Error en la inicialización:", error);
+        setLastError({
+          message: "Error en la inicialización del procesador",
+          timestamp: Date.now(),
+          type: "INIT_ERROR",
+          details: error instanceof Error ? error.message : String(error)
+        });
+      }
+    };
+    
+    // Iniciar la secuencia de inicialización
+    init();
+    
+    // Limpieza
+    return () => {
+      isMounted = false;
+      
+      if (processorRef.current) {
+        console.log("useSignalProcessor: Deteniendo y limpiando el procesador");
+        try {
+          processorRef.current.stop();
+        } catch (error) {
+          console.error("Error al detener el procesador:", error);
+        }
+        processorRef.current = null;
+      }
+      
+      resetProcessorState();
+      console.log("useSignalProcessor: Limpieza completada");
+    };
+  }, [resetProcessorState, onSignalReady, handleProcessorError]);
 
   const startProcessing = useCallback(() => {
     if (processorRef.current && !isProcessing) {
