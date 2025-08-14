@@ -236,9 +236,15 @@ const Index = () => {
     setIsCalibrating(false);
     stopProcessing();
     
+    // Limpiar TODOS los timers y animaciones
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
+    }
+    
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
     
     const savedResults = resetVitalSigns();
@@ -260,9 +266,15 @@ const Index = () => {
     setIsCalibrating(false);
     stopProcessing();
     
+    // Limpiar TODOS los timers y animaciones
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
+    }
+    
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
     }
     
     fullResetVitalSigns();
@@ -393,11 +405,19 @@ const Index = () => {
       
       // Programar el siguiente frame
       if (isMonitoring) {
-        requestAnimationFrame(processImage);
+        animationFrameRef.current = requestAnimationFrame(processImage);
       }
     };
 
     processImage();
+    
+    // Cleanup function para evitar sesiones duplicadas
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
   };
 
   useEffect(() => {
@@ -469,6 +489,9 @@ const Index = () => {
 
   // Referencia para activar o desactivar el sonido de arritmia
   const arrhythmiaDetectedRef = useRef(false);
+  
+  // Ref para controlar requestAnimationFrame
+  const animationFrameRef = useRef<number | null>(null);
   
   // Nueva función para alternar medición
   const handleToggleMonitoring = () => {
