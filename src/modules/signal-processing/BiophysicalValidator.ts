@@ -41,8 +41,12 @@ export class BiophysicalValidator {
       return 0;
     }
 
-    const max = Math.max(...signalChunk);
-    const min = Math.min(...signalChunk);
+    let max = signalChunk[0];
+    let min = signalChunk[0];
+    for (let i = 1; i < signalChunk.length; i++) {
+      if (signalChunk[i] > max) max = signalChunk[i];
+      if (signalChunk[i] < min) min = signalChunk[i];
+    }
     const amplitude = max - min;
     
     // Cálculo mejorado de pulsatilidad con múltiples métricas

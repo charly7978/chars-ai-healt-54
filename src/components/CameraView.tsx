@@ -15,17 +15,38 @@ const CameraView = ({
   isFingerDetected = false, 
   signalQuality = 0,
 }: CameraViewProps) => {
+  // Refs
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const vitalProcessor = useRef(new AdvancedVitalSignsProcessor());
-  const [torchEnabled, setTorchEnabled] = useState(false);
+  const vitalProcessor = useRef<AdvancedVitalSignsProcessor>(new AdvancedVitalSignsProcessor());
   const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
   const lastFrameTimeRef = useRef<number>(0);
-  const [deviceSupportsAutoFocus, setDeviceSupportsAutoFocus] = useState(false);
-  const [deviceSupportsTorch, setDeviceSupportsTorch] = useState(false);
   const torchAttempts = useRef<number>(0);
   const cameraInitialized = useRef<boolean>(false);
   const requestedTorch = useRef<boolean>(false);
+  const isAndroid = useRef<boolean>(false);
+  
+  // State
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [torchEnabled, setTorchEnabled] = useState<boolean>(false);
+  const [deviceSupportsAutoFocus, setDeviceSupportsAutoFocus] = useState<boolean>(false);
+  const [deviceSupportsTorch, setDeviceSupportsTorch] = useState<boolean>(false);
+  
+  // Camera control functions
+  const handleTorch = async (enable: boolean) => {
+    if (!stream) return;
+    
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+    
+    try {
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: enable } as any]
+      });
+      setTorchEnabled(enable);
+    } catch (err) {
+      console.error('Error toggling torch:', err);
+    }
+  };
 
   const stopCamera = async () => {
     if (stream) {
@@ -254,6 +275,7 @@ const CameraView = ({
       if (process.env.NODE_ENV !== 'production') {
         console.error("CameraView: Error al iniciar la cámara:", err);
       }
+    }
     }
   };
 
