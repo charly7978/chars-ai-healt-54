@@ -57,15 +57,18 @@ interface State {
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
 const addToRemoveQueue = (toastId: string) => {
-  if (toastTimeouts.has(toastId)) {
-    return
+  // Ensure toastId is a string to prevent NoSQL injection
+  const safeToastId = String(toastId);
+  
+  if (toastTimeouts.has(safeToastId)) {
+    return;
   }
 
   const timeout = setTimeout(() => {
-    toastTimeouts.delete(toastId)
+    toastTimeouts.delete(safeToastId);
     dispatch({
       type: "REMOVE_TOAST",
-      toastId: toastId,
+      toastId: safeToastId,
     })
   }, TOAST_REMOVE_DELAY)
 

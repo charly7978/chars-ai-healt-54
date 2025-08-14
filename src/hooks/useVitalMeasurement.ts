@@ -41,7 +41,15 @@ export const useVitalMeasurement = (isMeasuring: boolean) => {
           arrhythmiaCount: "--"
         };
         
-        console.log('useVitalMeasurement - Nuevos valores tras reinicio', newValues);
+        // Log only in development and sanitize the output
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('useVitalMeasurement - Valores reiniciados', {
+            heartRate: 0,
+            spo2: 0,
+            pressure: '--/--',
+            arrhythmiaCount: '--'
+          });
+        }
         return newValues;
       });
       

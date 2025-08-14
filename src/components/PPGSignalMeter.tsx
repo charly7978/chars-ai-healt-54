@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
+import styles from './PPGSignalMeter.module.css';
 import { Fingerprint, AlertCircle } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
@@ -367,18 +368,17 @@ const PPGSignalMeter = ({
         className="w-full h-[100vh] absolute inset-0 z-0"
       />
 
-      <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
-        <div className="flex items-center gap-2">
-          <span className="text-lg font-bold text-black/80">PPG</span>
-          <div className="w-[180px]">
-            <div className={`h-1 w-full rounded-full bg-gradient-to-r ${getQualityColor(quality)} transition-all duration-1000 ease-in-out`}>
+      <div className={styles.meterContainer}>
+        <div className={styles.flexContainer}>
+          <span className={styles.meterLabel}>PPG</span>
+          <div className={styles.meterBarContainer}>
+            <div className={`${styles.meterBar} ${getQualityColor(quality)}`}>
               <div
-                className="h-full rounded-full bg-white/20 animate-pulse transition-all duration-1000"
+                className={styles.meterFill}
                 style={{ width: `${isFingerDetected ? quality : 0}%` }}
               />
             </div>
-            <span className="text-[8px] text-center mt-0.5 font-medium transition-colors duration-700 block" 
-                  style={{ color: quality > 60 ? '#0EA5E9' : '#F59E0B' }}>
+            <span className={`${styles.qualityText} ${quality > 60 ? styles.qualityGood : styles.qualityWarning}`}>
               {getQualityText(quality, isFingerDetected, 'meter')}
             </span>
           </div>
