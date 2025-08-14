@@ -572,19 +572,12 @@ export class HeartBeatProcessor {
   public getSmoothBPM(): number {
     if (this.bpmHistory.length < 3) return 0;
     
-    // Filtrado adaptativo basado en confianza
-    const validReadings = this.bpmHistory.filter((_, i) => 
-      this.recentPeakConfidences[i] > 0.7
-    );
-    
-    // Ponderar por confianza y aplicar mediana móvil
-    const weightedBPM = validReadings.reduce(
-      (sum, bpm, i) => sum + (bpm * this.recentPeakConfidences[i]), 
-      0
-    ) / validReadings.reduce((sum, _, i) => sum + this.recentPeakConfidences[i], 0);
+    // Usar todos los valores BPM sin filtrar por confianza
+    const recentBPMs = this.bpmHistory.slice(-8);
+    const avgBPM = recentBPMs.reduce((sum, bpm) => sum + bpm, 0) / recentBPMs.length;
     
     // Suavizado final con filtro de Kalman simple
-    this.smoothBPM = this.kalmanFilter(weightedBPM);
+    this.smoothBPM = this.kalmanFilter(avgBPM);
     return Math.round(this.smoothBPM);
   }
 
