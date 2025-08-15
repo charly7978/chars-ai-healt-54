@@ -8,7 +8,6 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
-import styles from './Index.module.css';
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -42,7 +41,7 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  const { startProcessing, stopProcessing, lastSignal, processor, isProcessing, framesProcessed, signalStats } = useSignalProcessor();
+  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState 
@@ -237,15 +236,9 @@ const Index = () => {
     setIsCalibrating(false);
     stopProcessing();
     
-    // Limpiar TODOS los timers y animaciones
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
-    }
-    
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
     }
     
     const savedResults = resetVitalSigns();
@@ -267,15 +260,9 @@ const Index = () => {
     setIsCalibrating(false);
     stopProcessing();
     
-    // Limpiar TODOS los timers y animaciones
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
-    }
-    
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
     }
     
     fullResetVitalSigns();
@@ -381,15 +368,11 @@ const Index = () => {
             const imageData = enhanceCtx.getImageData(0, 0, enhanceCanvas.width, enhanceCanvas.height);
             
             // Procesar el frame mejorado
-            if (processor) {
-              processor.processFrame(imageData);
-            }
+            processFrame(imageData);
           } else {
             // Fallback a procesamiento normal
             const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
-            if (processor) {
-              processor.processFrame(imageData);
-            }
+            processFrame(imageData);
           }
           
           // Actualizar contadores para monitoreo de rendimiento
@@ -410,19 +393,11 @@ const Index = () => {
       
       // Programar el siguiente frame
       if (isMonitoring) {
-        animationFrameRef.current = requestAnimationFrame(processImage);
+        requestAnimationFrame(processImage);
       }
     };
 
     processImage();
-    
-    // Cleanup function para evitar sesiones duplicadas
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = null;
-      }
-    };
   };
 
   useEffect(() => {
@@ -495,9 +470,6 @@ const Index = () => {
   // Referencia para activar o desactivar el sonido de arritmia
   const arrhythmiaDetectedRef = useRef(false);
   
-  // Ref para controlar requestAnimationFrame
-  const animationFrameRef = useRef<number | null>(null);
-  
   // Nueva función para alternar medición
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
@@ -529,7 +501,15 @@ const Index = () => {
   }, [isCalibrating, getCalibrationProgress]);
 
   return (
-    <div className={styles.container}>
+    <div className="fixed inset-0 flex flex-col bg-black" style={{ 
+      height: '100svh',
+      width: '100vw',
+      maxWidth: '100vw',
+      maxHeight: '100svh',
+      overflow: 'hidden',
+      paddingTop: 'env(safe-area-inset-top)',
+      paddingBottom: 'env(safe-area-inset-bottom)'
+    }}>
       {/* Debug overlay de intervalos RR */}
       {rrIntervals.length > 0 && (
         <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded">
@@ -575,13 +555,14 @@ const Index = () => {
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
+            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
           </div>
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
             <summary className="cursor-pointer">Debug Signal Stats</summary>
             <pre className="whitespace-pre-wrap text-xs">
               {JSON.stringify(signalStats, null, 2)}
+              {'\n'}Quality Transitions:{'\n'}{JSON.stringify(qualityTransitions, null, 2)}
             </pre>
           </details>
           <div className="flex-1">

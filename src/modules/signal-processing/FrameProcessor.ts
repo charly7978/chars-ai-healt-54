@@ -1,5 +1,5 @@
 import { FrameData } from './types';
-import { ProcessedSignal } from '../../types/signal.d';
+import { ProcessedSignal } from '../../types/signal';
 
 /**
  * Processes video frames to extract PPG signals and detect ROI
@@ -7,18 +7,18 @@ import { ProcessedSignal } from '../../types/signal.d';
  */
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  // Parámetros ajustados para detección REAL de dedos y latidos
-  private readonly RED_GAIN = 1.4; // ✅ Aumentado aún más para mejor detección de señal roja
-  private readonly GREEN_SUPPRESSION = 0.8; // ✅ Reducido aún más para no suprimir señal válida
-  private readonly SIGNAL_GAIN = 1.2; // ✅ Aumentado para amplificar señales reales débiles
-  private readonly EDGE_ENHANCEMENT = 0.2;  // ✅ Aumentado para mejor detección de bordes
-  private readonly MIN_RED_THRESHOLD = 1.5;  // ✅ Más reducido para permitir señales muy débiles reales
-  private readonly RG_RATIO_RANGE = [0.5, 6.0];  // ✅ Rango aún más ampliado para dedos reales
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.06;  // ✅ Más permisivo para detección real
+  // Parámetros ajustados para mejor extracción de señal
+  private readonly RED_GAIN = 1.4; // Aumentado para mejor amplificación de señal roja (antes 1.2)
+  private readonly GREEN_SUPPRESSION = 0.8; // Menos supresión para mantener información (antes 0.85)
+  private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
+  private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
+  private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
+  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
   
   // Historia para calibración adaptativa
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
-  private readonly HISTORY_SIZE = 10; // Reducido para adaptación más rápida y mejor respuesta
+  private readonly HISTORY_SIZE = 15; // Reducido para adaptación más rápida (antes 20)
   private lastLightLevel: number = -1;
   
   // Nuevo: historial de ROIs para estabilidad
@@ -132,7 +132,7 @@ export class FrameProcessor {
     }
     
     // Calculate texture (variation between cells) with physiological constraints
-    let textureScore = 0.4; // ✅ Base value reducido para mayor sensibilidad
+    let textureScore = 0.5; // Base value
     
     if (cells.some(cell => cell.count > 0)) {
       // Normalize cells by count and consider edges
@@ -156,15 +156,15 @@ export class FrameProcessor {
             const cell2 = normCells[j];
             
             // Calculate color difference with emphasis on red channel
-            const redDiff = Math.abs(cell1.red - cell2.red) * 1.5; // ✅ Mayor énfasis en rojo
-            const greenDiff = Math.abs(cell1.green - cell2.green) * 0.7; // ✅ Menor énfasis
-            const blueDiff = Math.abs(cell1.blue - cell2.blue) * 0.5; // ✅ Menor énfasis
+            const redDiff = Math.abs(cell1.red - cell2.red) * 1.3; // Mayor énfasis en rojo
+            const greenDiff = Math.abs(cell1.green - cell2.green) * 0.8; // Menor énfasis
+            const blueDiff = Math.abs(cell1.blue - cell2.blue) * 0.6; // Menor énfasis
             
             // Include edge information in texture calculation
             const edgeDiff = Math.abs(cell1.edgeScore - cell2.edgeScore) * this.EDGE_ENHANCEMENT;
             
             // Weighted average of differences
-            const avgDiff = (redDiff + greenDiff + blueDiff + edgeDiff) / 2.8;
+            const avgDiff = (redDiff + greenDiff + blueDiff + edgeDiff) / 2.7;
             totalVariation += avgDiff;
             comparisonCount++;
           }
@@ -173,9 +173,9 @@ export class FrameProcessor {
         if (comparisonCount > 0) {
           const avgVariation = totalVariation / comparisonCount;
           
-          // ✅ Cálculo de textura mejorado - más permisivo
-          const normalizedVar = Math.pow(avgVariation / 2.8, 0.6); // Exponente y divisor reducidos
-          textureScore = Math.max(0.3, Math.min(1, normalizedVar)); // Mínimo reducido
+          // Cálculo de textura mejorado - más permisivo
+          const normalizedVar = Math.pow(avgVariation / 3, 0.65); // Exponente reducido
+          textureScore = Math.max(0.35, Math.min(1, normalizedVar)); // Mínimo más alto
         }
       }
     }
@@ -227,9 +227,9 @@ export class FrameProcessor {
     const avgGreen = greenSum / pixelCount;
     const avgBlue = blueSum / pixelCount;
     
-    // Calculate color ratio indexes with proper physiological constraints - más estricto
-    const rToGRatio = avgGreen > 5 ? avgRed / avgGreen : 1.0; 
-    const rToBRatio = avgBlue > 1 ? avgRed / avgBlue : 1.0;
+    // Calculate color ratio indexes with proper physiological constraints - más permisivo
+    const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
+    const rToBRatio = avgRed / avgBlue;
     console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
     
     // Light level affects detection quality
@@ -282,15 +282,15 @@ export class FrameProcessor {
    * Both too dark and too bright conditions reduce signal quality
    */
   private getLightLevelQualityFactor(lightLevel: number): number {
-    // Rango óptimo ajustado - más estricto para detección real
-    if (lightLevel >= 30 && lightLevel <= 75) { // Rango óptimo más realista
+    // Rango óptimo ampliado - más permisivo
+    if (lightLevel >= 25 && lightLevel <= 85) { // Antes 30-80
       return 1.0; // Optimal lighting
-    } else if (lightLevel < 30) {
-      // Too dark - penalización más estricta
-      return Math.max(0.2, lightLevel / 30); // Mínimo reducido para rechazar señales débiles
+    } else if (lightLevel < 25) {
+      // Too dark - reducción lineal en calidad pero más permisiva
+      return Math.max(0.4, lightLevel / 25); // Mínimo aumentado (antes 0.3)
     } else {
-      // Too bright - penalización más estricta
-      return Math.max(0.2, 1.0 - (lightLevel - 75) / 50); // Límites más estrictos
+      // Too bright - penalización reducida
+      return Math.max(0.4, 1.0 - (lightLevel - 85) / 60); // Límites más permisivos
     }
   }
   

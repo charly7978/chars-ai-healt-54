@@ -1,8 +1,0 @@
-.qualityBar {
-  width: 100%;
-  transition: width 1s ease-in-out;
-}
-
-.qualityText {
-  transition: color 0.7s;
-}

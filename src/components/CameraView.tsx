@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
-import styles from './CameraView.module.css';
+import { AdvancedVitalSignsProcessor, BiometricReading } from '../modules/vital-signs/VitalSignsProcessor';
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -17,6 +17,7 @@ const CameraView = ({
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const vitalProcessor = useRef(new AdvancedVitalSignsProcessor());
   const [torchEnabled, setTorchEnabled] = useState(false);
   const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
   const lastFrameTimeRef = useRef<number>(0);
@@ -285,6 +286,49 @@ const CameraView = ({
     }
   };
 
+  const processFrame = (frameData: ImageData) => {
+    const { red, ir, green } = extractPPGSignals(frameData);
+    
+    const results = vitalProcessor.current.processSignal({
+      red,
+      ir, 
+      green,
+      timestamp: Date.now()
+    });
+    
+    if (results) {
+      handleResults(results);
+    }
+  };
+
+  const extractPPGSignals = (frameData: ImageData) => {
+    const { width, height, data } = frameData;
+    const pixelCount = width * height;
+    
+    // Promedios de canales
+    let redSum = 0, irSum = 0, greenSum = 0;
+    
+    for (let i = 0; i < pixelCount * 4; i += 4) {
+      redSum += data[i];     // Canal Rojo
+      greenSum += data[i+1]; // Canal Verde
+      irSum += data[i+2];    // Canal Infrarrojo (asumiendo configuración cámara)
+    }
+    
+    return {
+      red: [redSum / pixelCount],
+      ir: [irSum / pixelCount],
+      green: [greenSum / pixelCount]
+    };
+  };
+
+  const handleResults = (results: BiometricReading) => {
+    console.log('Mediciones biométricas:', {
+      spo2: results.spo2.toFixed(1) + '%',
+      pressure: results.sbp + '/' + results.dbp + ' mmHg',
+      glucose: results.glucose.toFixed(0) + ' mg/dL',
+      confidence: (results.confidence * 100).toFixed(1) + '%'
+    });
+  };
 
   useEffect(() => {
     if (isMonitoring && !stream) {
@@ -369,7 +413,12 @@ const CameraView = ({
       autoPlay
       playsInline
       muted
-      className={styles.video}
+      className="absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover"
+      style={{
+        willChange: 'transform',
+        transform: 'translateZ(0)',
+        backfaceVisibility: 'hidden'
+      }}
     />
   );
 };

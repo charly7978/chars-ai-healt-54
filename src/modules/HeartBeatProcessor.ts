@@ -8,7 +8,7 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_MAX_BPM = 220;
   private readonly DEFAULT_SIGNAL_THRESHOLD = 0.02; // Reducido para captar señal más débil
   private readonly DEFAULT_MIN_CONFIDENCE = 0.30; // Reducido para mejor detección
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.009; // Ajustado para mejor sensibilidad
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Restaurado a valor médicamente apropiado
   private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
 
@@ -44,7 +44,7 @@ export class HeartBeatProcessor {
 
   // ────────── PARÁMETROS PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.8; // Aumentado para mejor amplificación
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.8; // Aumentado para mejor detección
+  private readonly PEAK_DETECTION_SENSITIVITY = 0.6; // Aumentado para mejor detección
   
   // Control del auto-ajuste
   private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 10; // Reducido para adaptarse más rápido

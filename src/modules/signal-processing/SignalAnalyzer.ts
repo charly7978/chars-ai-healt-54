@@ -78,20 +78,9 @@ export class SignalAnalyzer {
 
     // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
-    
-    // ✅ Umbral de detección reducido para mayor sensibilidad
-    const DETECTION_THRESHOLD = 10;  
-    
-    // ✅ Lógica mejorada para detección de dedo real
-    // Considerar tanto la calidad general como indicadores específicos
-    const hasStrongRedSignal = redChannel > 0.3; // Señal roja fuerte indica dedo - reducido a 0.3
-    const hasGoodStability = stability > 0.2; // Estabilidad mínima - reducido a 0.2
-    const hasSomePulsatility = pulsatility > 0.15; // Alguna actividad pulsatil - reducido a 0.15
-    
-    // Umbral dinámico: si hay indicadores fuertes, reducir el umbral requerido
-    const dynamicThreshold = hasStrongRedSignal && hasGoodStability ? 6 : DETECTION_THRESHOLD;
-    
-    if (smoothedQuality >= dynamicThreshold) {
+    console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
+    const DETECTION_THRESHOLD = 30;
+    if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
     } else {
@@ -99,20 +88,12 @@ export class SignalAnalyzer {
       this.consecutiveDetections = 0;
     }
 
-    // ✅ Reducir detecciones consecutivas necesarias para respuesta más rápida
-    const minDetections = hasStrongRedSignal && hasSomePulsatility ? 2 : this.config.MIN_CONSECUTIVE_DETECTIONS;
-    
-    if (this.consecutiveDetections >= minDetections) {
+    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
       isFingerDetected = true;
     } else if (
       this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS
     ) {
       isFingerDetected = false;
-    }
-    
-    // ✅ Logging mejorado para diagnóstico
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[ANALYZER] Quality: ${smoothedQuality.toFixed(1)}, Threshold: ${dynamicThreshold}, Red: ${redChannel.toFixed(2)}, Stability: ${stability.toFixed(2)}, Pulsatility: ${pulsatility.toFixed(2)}, Detected: ${isFingerDetected}`);
     }
 
     return {

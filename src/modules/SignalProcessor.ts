@@ -1,139 +1,102 @@
+// Este archivo exporta el PPGSignalProcessor desde la estructura refactorizada
+// para mantener compatibilidad con versiones anteriores
 import { PPGSignalProcessor as OriginalPPGSignalProcessor } from './signal-processing/PPGSignalProcessor';
 import { ProcessedSignal, ProcessingError } from '../types/signal';
 
+// Extender la clase original en lugar de implementar su interfaz
 export class PPGSignalProcessor extends OriginalPPGSignalProcessor {
+  // Bandera para monitorear inicialización correcta
   private isInitialized: boolean = false;
-  private isInitializing: boolean = false;
-  private pendingFrames: ImageData[] = [];
-  private callbacksInitialized: boolean = false;
   
   constructor(
     onSignalReady?: (signal: ProcessedSignal) => void,
     onError?: (error: ProcessingError) => void
   ) {
-    // Configurar callbacks seguros
-    const safeOnSignalReady = (signal: ProcessedSignal) => {
-      console.log("[SIGNAL] Señal procesada recibida", { signal });
-      onSignalReady?.(signal);
-    };
-    
-    const safeOnError = (error: ProcessingError) => {
-      console.error("[ERROR] Error en el procesador de señales:", error);
-      onError?.(error);
-    };
-    
-    // Llamar al constructor de la clase padre con los callbacks seguros
-    super(safeOnSignalReady, safeOnError);
-    
-    console.log("[INIT] PPGSignalProcessor creado", {
+    console.log("[DIAG] SignalProcessor wrapper: Constructor", {
       hasSignalReadyCallback: !!onSignalReady,
-      hasErrorCallback: !!onError
+      hasErrorCallback: !!onError,
+      stack: new Error().stack
     });
     
-    // Inicialización diferida
-    this.initialize().catch(err => {
-      console.error("[ERROR] Error en inicialización automática:", err);
-    });
+    // Llamar al constructor de la clase padre
+    super(onSignalReady, onError);
+    
+    // Verificar inicialización
+    setTimeout(() => {
+      this.checkInitialization();
+    }, 1000);
   }
   
-  async initialize(): Promise<void> {
-    if (this.isInitialized) return;
-    if (this.isInitializing) return;
-    
-    this.isInitializing = true;
-    console.log("[INIT] Inicializando procesador de señales...");
-    
-    try {
-      // Asegurar que los callbacks estén configurados
-      this.syncCallbacks();
-      
-      // Inicializar el procesador padre
-      await super.initialize();
-      
-      this.isInitialized = true;
-      console.log("[INIT] Procesador de señales inicializado correctamente");
-      
-      // Procesar frames en espera
-      this.processPendingFrames();
-      
-    } catch (error) {
-      console.error("[ERROR] Error al inicializar el procesador:", error);
-      throw error;
-    } finally {
-      this.isInitializing = false;
+  // Verificación de inicialización correcta
+  private checkInitialization() {
+    console.log("[DIAG] SignalProcessor wrapper: checkInitialization", { isInitialized: this.isInitialized });
+    if (!this.isInitialized) {
+      console.log("⚠️ PPGSignalProcessor: Inicialización verificada manualmente");
+      this.initialize().then(() => {
+        console.log("✅ PPGSignalProcessor: Inicialización manual exitosa");
+        this.isInitialized = true;
+      }).catch(err => {
+        console.error("❌ PPGSignalProcessor: Error en inicialización manual", err);
+      });
     }
   }
   
-  private syncCallbacks() {
-    // Sincronizar callbacks con la instancia padre
+  // Sobrescribimos initialize para marcar como inicializado
+  async initialize(): Promise<void> {
+    console.log("[DIAG] SignalProcessor wrapper: initialize() called", {
+      hasOnSignalReadyCallback: !!this.onSignalReady,
+      hasOnErrorCallback: !!this.onError
+    });
+    
+    // Asegurar que el padre tenga los callbacks correctos
+    if (this.onSignalReady) {
+      super.onSignalReady = this.onSignalReady;
+    }
+    
+    if (this.onError) {
+      super.onError = this.onError;
+    }
+    
+    // Llamar al initialize del padre
+    const result = await super.initialize();
+    this.isInitialized = true;
+    return result;
+  }
+
+  // Sobrescribimos processFrame para asegurar que los callbacks estén actualizados
+  processFrame(imageData: ImageData): void {
+    console.log("[DIAG] SignalProcessor wrapper: processFrame() called", {
+      isInitialized: this.isInitialized,
+      hasOnSignalReadyCallback: !!this.onSignalReady,
+      superHasCallback: !!super.onSignalReady,
+      imageSize: `${imageData.width}x${imageData.height}`,
+      timestamp: new Date().toISOString()
+    });
+    
+    // VERIFICACIÓN CRÍTICA: Asegurar que los callbacks están correctamente configurados
     if (this.onSignalReady && super.onSignalReady !== this.onSignalReady) {
-      console.log("[DEBUG] Sincronizando callback onSignalReady");
+      console.log("PPGSignalProcessor wrapper: Actualizando onSignalReady callback");
       super.onSignalReady = this.onSignalReady;
     }
     
     if (this.onError && super.onError !== this.onError) {
-      console.log("[DEBUG] Sincronizando callback onError");
+      console.log("PPGSignalProcessor wrapper: Actualizando onError callback");
       super.onError = this.onError;
     }
-  }
-  
-  private processPendingFrames() {
-    if (!this.isInitialized || this.pendingFrames.length === 0) return;
     
-    console.log(`[DEBUG] Procesando ${this.pendingFrames.length} frames en espera`);
-    
-    while (this.pendingFrames.length > 0) {
-      const frame = this.pendingFrames.shift();
-      if (frame) {
-        try {
-          super.processFrame(frame);
-        } catch (error) {
-          console.error("[ERROR] Error al procesar frame en cola:", error);
-        }
-      }
-    }
-  }
-  
-  processFrame(imageData: ImageData): void {
-    // Verificar si la imagen es válida
-    if (!imageData || !imageData.data || imageData.width <= 0 || imageData.height <= 0) {
-      console.warn("[WARN] Intento de procesar frame inválido");
-      return;
-    }
-    
-    // Sincronizar callbacks en cada frame para asegurar que estén actualizados
-    this.syncCallbacks();
-    
-    // Si no está inicializado, encolar el frame
+    // Si no se ha inicializado, hacerlo ahora
     if (!this.isInitialized) {
-      console.log("[DEBUG] Procesador no inicializado, encolando frame");
-      this.pendingFrames.push(imageData);
-      
-      // Iniciar inicialización si no está en proceso
-      if (!this.isInitializing) {
-        this.initialize().catch(error => {
-          console.error("[ERROR] Error en inicialización diferida:", error);
-        });
-      }
-      return;
-    }
-    
-    // Procesar el frame
-    try {
+      console.log("PPGSignalProcessor: Inicializando en processFrame");
+      this.initialize().then(() => {
+        console.log("PPGSignalProcessor: Inicializado correctamente, procesando frame");
+        // Llamar al método de la clase padre
+        super.processFrame(imageData);
+      }).catch(error => {
+        console.error("PPGSignalProcessor: Error al inicializar", error);
+      });
+    } else {
+      // Llamar al método de la clase padre
       super.processFrame(imageData);
-    } catch (error) {
-      console.error("[ERROR] Error al procesar frame:", error);
-      
-      // Intentar reiniciar el procesador en caso de error
-      if (this.onError) {
-        this.onError({
-          code: "PROCESSOR_ERROR",
-          message: "Error al procesar frame",
-          timestamp: Date.now(),
-          type: "PROCESSOR_ERROR",
-          details: error instanceof Error ? error.message : String(error)
-        });
-      }
     }
   }
 }
