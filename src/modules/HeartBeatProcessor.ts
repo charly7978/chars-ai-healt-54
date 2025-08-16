@@ -6,7 +6,7 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 30;
   private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.02; // Reducido para captar señal más débil
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.04; // Reducido para captar señal más débil
   private readonly DEFAULT_MIN_CONFIDENCE = 0.30; // Reducido para mejor detección
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Restaurado a valor médicamente apropiado
@@ -35,19 +35,19 @@ export class HeartBeatProcessor {
   private adaptiveDerivativeThreshold: number;
 
   // Límites para los parámetros adaptativos - Valores médicamente apropiados
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.05; // Reducido para mejor sensibilidad
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.09; // Reducido para mejor sensibilidad
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.4;
   private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.40; // Reducido para mejor detección
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.80;
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.90;
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
 
   // ────────── PARÁMETROS PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.8; // Aumentado para mejor amplificación
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.6; // Aumentado para mejor detección
+  private readonly PEAK_DETECTION_SENSITIVITY = 0.5; // Aumentado para mejor detección
   
   // Control del auto-ajuste
-  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 10; // Reducido para adaptarse más rápido
+  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 11; // Reducido para adaptarse más rápido
   private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.20; // Aumentado para adaptarse más rápido
   
   // Variables internas
