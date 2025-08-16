@@ -8,9 +8,9 @@ import { ProcessedSignal } from '../../types/signal';
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
   // Parámetros ajustados para mejor extracción de señal
-  private readonly RED_GAIN = 1.4; // Aumentado para mejor amplificación de señal roja (antes 1.2)
+  private readonly RED_GAIN = 1.1; // Aumentado para mejor amplificación de señal roja (antes 1.2)
   private readonly GREEN_SUPPRESSION = 0.8; // Menos supresión para mantener información (antes 0.85)
-  private readonly SIGNAL_GAIN = 1.3; // Aumentado para mejor detección (antes 1.1)
+  private readonly SIGNAL_GAIN = 1.0; // Aumentado para mejor detección (antes 1.1)
   private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
   private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
   private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
@@ -29,7 +29,7 @@ export class FrameProcessor {
     // Aumentar tamaño de ROI para capturar más área
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
+      ROI_SIZE_FACTOR: Math.min(0.7, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
     };
   }
   
