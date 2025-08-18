@@ -6,8 +6,9 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 30;
   private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.04; // Reducido para captar señal más débil
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.50; // Reducido para mejor detección
+  // Ajustar parámetros para mayor sensibilidad
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03; // Reducido de 0.04
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.45; // Reducido de 0.50
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Restaurado a valor médicamente apropiado
   private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
@@ -35,9 +36,9 @@ export class HeartBeatProcessor {
   private adaptiveDerivativeThreshold: number;
 
   // Límites para los parámetros adaptativos - Valores médicamente apropiados
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.09; // Reducido para mejor sensibilidad
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.07; // Reducido de 0.09
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.4;
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.40; // Reducido para mejor detección
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.35; // Reducido de 0.40
   private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.90;
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
@@ -491,6 +492,12 @@ export class HeartBeatProcessor {
     // Confianza máxima en cada detección de pico
     const confidence = 1;
 
+    // Nuevo criterio: validar rango fisiológico
+    const isPhysiological = normalizedValue > 0.1 && normalizedValue < 5.0;
+    if (!isPhysiological) {
+      return { isPeak: false, confidence: 0 };
+    }
+
     return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
   }
 
@@ -517,12 +524,11 @@ export class HeartBeatProcessor {
    * Validación de picos basada estrictamente en criterios médicos
    */
   private validatePeak(peakValue: number, confidence: number): boolean {
-    // Un pico es válido si tiene suficiente confianza y la calidad de la señal es alta.
-    // Esto asegura que solo los picos robustos y fisiológicamente plausibles sean considerados.
     const isHighConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
     const isGoodSignalQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY;
-
-    return isHighConfidence && isGoodSignalQuality;
+    const isPhysiologicalAmplitude = peakValue >= this.PEAK_AMPLITUDE_THRESHOLD;
+    
+    return isHighConfidence && isGoodSignalQuality && isPhysiologicalAmplitude;
   }
 
   private updateBPM() {
@@ -776,6 +782,17 @@ export class HeartBeatProcessor {
     
     // Suavizado para evitar cambios bruscos
     totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
+    
+    // Agregar componente de consistencia de picos
+    let peakConsistency = 0;
+    if (this.bpmHistory.length >= 3) {
+      const intervals = this.bpmHistory.slice(-3).map(bpm => 60000 / bpm);
+      const avgInterval = intervals.reduce((sum, val) => sum + val, 0) / 3;
+      const variance = intervals.reduce((sum, val) => sum + Math.pow(val - avgInterval, 2), 0) / 3;
+      peakConsistency = Math.max(0, 20 - variance / 100);
+    }
+    
+    totalQuality += peakConsistency;
     
     return Math.min(Math.max(Math.round(totalQuality), 0), 100);
   }

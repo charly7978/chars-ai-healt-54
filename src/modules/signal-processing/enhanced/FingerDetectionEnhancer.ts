@@ -25,12 +25,12 @@ export interface DetectionWindow {
 export class FingerDetectionEnhancer {
   private readonly CONFIG = {
     // Enhanced detection thresholds
-    MIN_SIGNAL_STRENGTH: 0.3,      // Increased from 0.2
-    MIN_TEXTURE_QUALITY: 0.25,     // Increased from 0.15
-    MIN_COLOR_CONSISTENCY: 0.7,   // Increased from 0.5
-    MIN_MOTION_STABILITY: 0.6,     // Increased from 0.4
-    MIN_PULSATILITY_SCORE: 0.35,  // Increased from 0.25
-    MIN_PHYSIOLOGICAL_SCORE: 0.6, // Increased from 0.4
+    MIN_SIGNAL_STRENGTH: 0.25,      // Increased from 0.2
+    MIN_TEXTURE_QUALITY: 0.20,     // Increased from 0.15
+    MIN_COLOR_CONSISTENCY: 0.65,   // Increased from 0.5
+    MIN_MOTION_STABILITY: 0.55,     // Increased from 0.4
+    MIN_PULSATILITY_SCORE: 0.30,  // Increased from 0.25
+    MIN_PHYSIOLOGICAL_SCORE: 0.55, // Increased from 0.4
     
     // Detection windows
     DETECTION_WINDOW_SIZE: 15,    // Frames for consistent detection
@@ -90,18 +90,24 @@ export class FingerDetectionEnhancer {
     // Calculate overall confidence with weighted scoring
     const overallConfidence = this.calculateOverallConfidence(metrics, validationResults);
     
-    // Apply temporal consistency validation
-    const temporalValidation = this.validateTemporalConsistency(overallConfidence);
+    // Nueva validación de consistencia temporal
+    const temporalConsistency = this.calculateTemporalConsistency(metrics);
+    if (temporalConsistency < 0.5) {
+      return { isDetected: false, confidence: 0, metrics };
+    }
+    
+    // Optimizar cálculo de confianza
+    const optimizedConfidence = (metrics.overallConfidence * 0.7) + (temporalConsistency * 0.3);
     
     // Final detection decision with hysteresis
-    const isDetected = this.makeDetectionDecision(temporalValidation.confidence, temporalValidation.isValid);
+    const isDetected = this.makeDetectionDecision(optimizedConfidence, temporalConsistency);
     
     // Update detection history
-    this.updateDetectionHistory(isDetected, temporalValidation.confidence, metrics);
+    this.updateDetectionHistory(isDetected, optimizedConfidence, metrics);
     
     return {
       isDetected,
-      confidence: temporalValidation.confidence,
+      confidence: optimizedConfidence,
       metrics
     };
   }

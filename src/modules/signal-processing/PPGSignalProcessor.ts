@@ -29,14 +29,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // Enhanced configuration with multi-layer validation for medical-grade detection
   public readonly CONFIG: SignalProcessorConfig = {
     BUFFER_SIZE: 90,          // Increased buffer for better HRV and signal analysis
-    MIN_RED_THRESHOLD: 35,    // Raised minimum threshold to reduce noise significantly
-    MAX_RED_THRESHOLD: 170,   // Lowered maximum to avoid saturation artifacts
+    MIN_RED_THRESHOLD: 30,    // Reducido de 35
+    MAX_RED_THRESHOLD: 180,   // Aumentado de 170
     STABILITY_WINDOW: 40,     // Increased for more robust stability assessment
     MIN_STABILITY_COUNT: 15,  // Requires more stability for reliable detection
     HYSTERESIS: 8.0,         // Increased hysteresis for ultra-stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 25, // Requires more frames to confirm detection (reduces false positives)
+    MIN_CONSECUTIVE_DETECTIONS: 20, // Reducido de 25
     MAX_CONSECUTIVE_NO_DETECTIONS: 2,  // Faster response when finger is removed
-    QUALITY_LEVELS: 50,       // More granular quality assessment
+    QUALITY_LEVELS: 100,       // Aumentado para más granularidad
     QUALITY_HISTORY_SIZE: 30, // Larger history for better trend analysis
     CALIBRATION_SAMPLES: 30,  // More samples for accurate calibration
     TEXTURE_GRID_SIZE: 20,    // Finer texture analysis for better detection
@@ -374,6 +374,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         perfusionIndex: Math.max(0, perfusionIndex)
       };
 
+      // Nuevo filtrado ambiental
+      const environmentalNoise = this.estimateEnvironmentalNoise(extractionResult);
+      if (environmentalNoise > 0.4) {
+        filteredValue = this.applyNoiseReduction(filteredValue, environmentalNoise);
+      }
+      
+      // Ajustar calidad con más granularidad
+      const quality = Math.round(detectionResult.quality * 100 / this.CONFIG.QUALITY_LEVELS);
+
       if (shouldLog) {
         console.log("PPGSignalProcessor: Sending validated signal:", {
           fingerDetected: isFingerDetected,
@@ -412,5 +421,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     } else {
       console.error("PPGSignalProcessor: onError callback not available, cannot report error:", error);
     }
+  }
+
+  // Nueva función para estimar ruido ambiental
+  private estimateEnvironmentalNoise(extraction: FrameData): number {
+    // Implementación basada en variabilidad de color
+    const colorVar = Math.abs(extraction.rToGRatio - 1.5) + Math.abs(extraction.rToBRatio - 1.2);
+    return Math.min(1, colorVar / 2);
+  }
+
+  // Nueva función de reducción de ruido
+  private applyNoiseReduction(value: number, noiseLevel: number): number {
+    return value * (1 - noiseLevel * 0.5);
   }
 }
