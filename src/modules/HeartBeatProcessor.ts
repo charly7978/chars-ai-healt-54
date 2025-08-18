@@ -16,7 +16,7 @@ export class HeartBeatProcessor {
   private readonly MEDIAN_FILTER_WINDOW = 3;
   private readonly MOVING_AVERAGE_WINDOW = 3; // Aumentado para mejor filtrado
   private readonly EMA_ALPHA = 0.5; // Restaurado para equilibrio entre estabilidad y respuesta
-  private readonly BASELINE_FACTOR = 0.8; // Restaurado para seguimiento adecuado
+  private readonly BASELINE_FACTOR = 0.95; // AUMENTADO de 0.8 a 0.95 para mayor estabilidad de baseline
 
   // Parámetros de beep y vibración
   private readonly BEEP_DURATION = 450; 
@@ -24,9 +24,9 @@ export class HeartBeatProcessor {
   private readonly MIN_BEEP_INTERVAL_MS = 600; // Restaurado para prevenir beeps excesivos
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
-  // AUTO-RESET mejorado
-  private readonly LOW_SIGNAL_THRESHOLD = 0; // Deshabilitado auto-reset por baja señal
-  private readonly LOW_SIGNAL_FRAMES = 25; // Aumentado para mayor tolerancia
+  // AUTO-RESET ESTABILIZADO (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
+  private readonly LOW_SIGNAL_THRESHOLD = 0.01; // AUMENTADO para evitar resets constantes  
+  private readonly LOW_SIGNAL_FRAMES = 60; // AUMENTADO de 25 a 60 para mayor estabilidad
   private lowSignalCount = 0;
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
@@ -46,9 +46,9 @@ export class HeartBeatProcessor {
   private readonly SIGNAL_BOOST_FACTOR = 1.2; // REDUCIDO de 1.8 a 1.2 para evitar BPM excesivo
   private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // REDUCIDO de 0.5 a 0.3 para menos falsos picos
   
-  // Control del auto-ajuste
-  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 11; // Reducido para adaptarse más rápido
-  private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.20; // Aumentado para adaptarse más rápido
+  // Control del auto-ajuste ESTABILIZADO (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
+  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 20; // AUMENTADO para mayor estabilidad
+  private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.10; // REDUCIDO para cambios más graduales
   
   // Variables internas
   private recentPeakAmplitudes: number[] = [];
@@ -327,10 +327,9 @@ export class HeartBeatProcessor {
           }
           
           this.peaksSinceLastTuning++;
-          if (this.peaksSinceLastTuning >= Math.floor(this.ADAPTIVE_TUNING_PEAK_WINDOW / 2)) {
-            this.performAdaptiveTuning();
-            this.peaksSinceLastTuning = 0;
-          }
+          // SINTONIZACIÓN ADAPTIVA DESHABILITADA TEMPORALMENTE (ESTABILIDAD MÁXIMA)
+          // this.performAdaptiveTuning() - COMENTADO para evitar captación errática
+          // Los umbrales permanecen constantes para comportamiento predecible
         } else {
           console.log(`HeartBeatProcessor: Pico rechazado - confianza insuficiente: ${confidence}`);
           isPeak = false;
@@ -341,7 +340,7 @@ export class HeartBeatProcessor {
     // Retornar resultado con nuevos parámetros
     return {
       bpm: Math.round(this.getSmoothBPM()),
-      confidence: isPeak ? 0.95 : this.adjustConfidenceForSignalStrength(0.6),
+      confidence: isPeak ? 0.85 : 0.5, // CONFIANZA FIJA para evitar oscilaciones
       isPeak: isPeak,
       filteredValue: filteredValue, // Usando la variable correctamente definida
       arrhythmiaCount: 0,
@@ -450,16 +449,12 @@ export class HeartBeatProcessor {
     if (amplitude < this.LOW_SIGNAL_THRESHOLD) {
       this.lowSignalCount++;
       if (this.lowSignalCount >= this.LOW_SIGNAL_FRAMES) {
+        // SOLO resetear estados de detección, NO parámetros adaptativos (ESTABILIDAD)
         this.resetDetectionStates();
-        // También reseteamos los parámetros adaptativos a sus valores por defecto
-        this.adaptiveSignalThreshold = this.DEFAULT_SIGNAL_THRESHOLD;
-        this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
-        this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
-        this.isArrhythmiaDetected = false;
-        console.log("HeartBeatProcessor: auto-reset adaptative parameters and arrhythmia flag (low signal).");
+        console.log("HeartBeatProcessor: auto-reset SOLO detection states (conservando parámetros adaptativos).");
       }
     } else {
-      this.lowSignalCount = Math.max(0, this.lowSignalCount - 1); // Reducción gradual
+      this.lowSignalCount = Math.max(0, this.lowSignalCount - 2); // Reducción más rápida para recuperación
     }
   }
 

@@ -44,8 +44,8 @@ export class SignalProcessor {
    * y mejor preservación de picos cardíacos
    */
   public applySMAFilter(value: number): number {
-    // NUEVO: Amplificación inicial para garantizar señal mínima detectable
-    value = value * 1.5 + 2;
+    // AMPLIFICACIÓN INICIAL ESTABILIZADA (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)  
+    value = value * 1.1 + 1; // REDUCIDO de 1.5x+2 a 1.1x+1 para menor oscilación
     
     // Añadir valor al buffer
     this.ppgValues.push(value);
@@ -57,16 +57,16 @@ export class SignalProcessor {
     if (this.baselineValue === 0 && this.ppgValues.length > 0) {
       this.baselineValue = value;
     } else {
-      // Adaptación dinámica ultra-rápida
-      const adaptationSpeed = this.detectSignalChange() ? 0.3 : 0.08; // Más rápida (antes 0.2 y 0.05)
+      // ADAPTACIÓN ESTABILIZADA (CORREGIDO PARA EVITAR OSCILACIONES)
+      const adaptationSpeed = this.detectSignalChange() ? 0.15 : 0.05; // REDUCIDO para mayor estabilidad
       this.baselineValue = this.baselineValue * (1 - adaptationSpeed) + value * adaptationSpeed;
     }
     
     // Usar SMA como filtro inicial - ahora con estabilización mejorada
     const smaValue = this.calculateStabilizedSMA(value);
     
-    // MEJORA CRÍTICA: Amplificación ultra-potente para señales débiles
-    let amplifiedValue = this.ultraAmplifySignal(smaValue);
+    // AMPLIFICACIÓN ESTABILIZADA: Moderada en lugar de ultra-potente
+    let amplifiedValue = this.amplifyWeakSignals(smaValue); // Usar amplificación más estable
     
     // Denoising con umbral adaptativo ultra-bajo
     const denoised = this.enhancedWaveletDenoise(amplifiedValue);
@@ -76,19 +76,19 @@ export class SignalProcessor {
       // Filtrado SG mejorado con preservación extrema de picos
       const sgFiltered = this.applySavitzkyGolayFilter(denoised);
       
-      // Análisis final con énfasis en picos y retroalimentación temporal
-      const enhancedValue = this.enhanceCardiacSignalWithFeedback(sgFiltered);
+      // ANÁLISIS FINAL ESTABILIZADO (SIN RETROALIMENTACIÓN TEMPORAL ERRÁTICA)
+      const enhancedValue = sgFiltered; // SIMPLIFICADO para evitar captación errática
       
-      // Rastrear picos para análisis futuro
-      this.trackPeak(enhancedValue);
+      // TRACKING DE PICOS DESHABILITADO TEMPORALMENTE (ESTABILIDAD)
+      // this.trackPeak(enhancedValue); // COMENTADO para evitar oscilaciones
       
       return enhancedValue;
     }
     
     // Seguir usando denoised si no hay suficientes puntos para SG
-    // pero con amplificación adicional para garantizar detección
-    const earlyEnhanced = denoised * 1.5;
-    this.trackPeak(earlyEnhanced);
+    // SIMPLIFICADO para estabilidad (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
+    const earlyEnhanced = denoised * 1.2; // REDUCIDO de 1.5 a 1.2
+    // this.trackPeak(earlyEnhanced); // COMENTADO para evitar oscilaciones
     
     return earlyEnhanced;
   }
@@ -121,9 +121,9 @@ export class SignalProcessor {
    * NUEVO: Detección mejorada de cambios significativos en la señal para adaptar filtros
    */
   private detectSignalChange(): boolean {
-    if (this.ppgValues.length < 8) return false; // Reducido para detección más temprana
+    if (this.ppgValues.length < 15) return false; // AUMENTADO para mayor estabilidad
     
-    const current = this.ppgValues.slice(-4); // Segmento más corto para respuesta más rápida
+    const current = this.ppgValues.slice(-8); // AUMENTADO para menor sensibilidad
     const previous = this.ppgValues.slice(-8, -4);
     
     const currentAvg = current.reduce((a, b) => a + b, 0) / current.length;
