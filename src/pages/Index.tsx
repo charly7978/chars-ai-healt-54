@@ -401,70 +401,103 @@ const Index = () => {
   };
 
   useEffect(() => {
-    if (!lastSignal) {
-      console.log("[DIAG] Index.tsx: lastSignal es nulo o indefinido.");
-      return;
-    }
+    const processSignalsAsync = async () => {
+      if (!lastSignal) {
+        console.log("[DIAG] Index.tsx: lastSignal es nulo o indefinido.");
+        return;
+      }
 
-    console.log("[DIAG] Index.tsx: Procesando lastSignal", {
-      timestamp: new Date(lastSignal.timestamp).toISOString(),
-      fingerDetected: lastSignal.fingerDetected,
-      quality: lastSignal.quality,
-      rawValue: lastSignal.rawValue,
-      filteredValue: lastSignal.filteredValue,
-      isMonitoring: isMonitoring
-    });
-
-    // Actualizar calidad siempre
-    setSignalQuality(lastSignal.quality);
-    // Si no está monitoreando, no procesar
-    if (!isMonitoring) {
-      console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
-      return;
-    }
-    
-    // Umbral mínimo de calidad para medir
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
-    // Si no hay dedo válido o calidad insuficiente, resetear indicadores
-    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
-      console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
+      console.log("[DIAG] Index.tsx: Procesando lastSignal", {
+        timestamp: new Date(lastSignal.timestamp).toISOString(),
         fingerDetected: lastSignal.fingerDetected,
         quality: lastSignal.quality,
-        minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
+        rawValue: lastSignal.rawValue,
+        filteredValue: lastSignal.filteredValue,
+        isMonitoring: isMonitoring
       });
-      setHeartRate(0);
-      setHeartbeatSignal(0);
-      setBeatMarker(0);
-      return;
-    }
 
-    console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
-    // Señal válida, procesar latidos y signos vitales
-    const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
-    setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(heartBeatResult.filteredValue);
-    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
-    // Actualizar últimos intervalos RR para debug
-    if (heartBeatResult.rrData?.intervals) {
-      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
-    }
-    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-    if (vitals) {
-      setVitalSigns(vitals);
-      if (vitals.lastArrhythmiaData) {
-        setLastArrhythmiaData(vitals.lastArrhythmiaData);
-        const [status, count] = vitals.arrhythmiaStatus.split('|');
-        setArrhythmiaCount(count || "0");
-        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
-        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-          setArrhythmiaState(isArrhythmiaDetected);
-          if (isArrhythmiaDetected) {
-            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
-          }
-        }
+      // Actualizar calidad siempre
+      setSignalQuality(lastSignal.quality);
+      // Si no está monitoreando, no procesar
+      if (!isMonitoring) {
+        console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
+        return;
       }
-    }
+      
+      // Umbral mínimo de calidad para medir
+      const MIN_SIGNAL_QUALITY_TO_MEASURE = 30;
+      // Si no hay dedo válido o calidad insuficiente, resetear indicadores
+      if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
+        console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
+          fingerDetected: lastSignal.fingerDetected,
+          quality: lastSignal.quality,
+          minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
+        });
+        setHeartRate(0);
+        setHeartbeatSignal(0);
+        setBeatMarker(0);
+        return;
+      }
+
+      try {
+        console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
+        // Señal válida, procesar latidos y signos vitales
+        const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
+        setHeartRate(heartBeatResult.bpm);
+        setHeartbeatSignal(heartBeatResult.filteredValue);
+        setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
+        
+        // Actualizar últimos intervalos RR para debug
+        if (heartBeatResult.rrData?.intervals) {
+          setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
+        }
+
+        // 🔬 PROCESAMIENTO ASÍNCRONO DE SIGNOS VITALES CON ALGORITMOS AVANZADOS
+        console.log("🔬 Procesando signos vitales con matemática de extrema complejidad...");
+        const vitals = await processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+        
+        if (vitals) {
+          console.log("✅ Signos vitales calculados exitosamente:", {
+            spo2: vitals.spo2,
+            pressure: vitals.pressure,
+            glucose: vitals.glucose,
+            hemoglobin: vitals.hemoglobin,
+            colesterol: vitals.lipids?.totalCholesterol,
+            trigliceridos: vitals.lipids?.triglycerides,
+            arrhythmiaStatus: vitals.arrhythmiaStatus
+          });
+          
+          setVitalSigns(vitals);
+          
+          if (vitals.lastArrhythmiaData) {
+            setLastArrhythmiaData(vitals.lastArrhythmiaData);
+            const [status, count] = vitals.arrhythmiaStatus.split('|');
+            setArrhythmiaCount(count || "0");
+            const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+            if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+              arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+              setArrhythmiaState(isArrhythmiaDetected);
+              if (isArrhythmiaDetected) {
+                toast({ 
+                  title: "¡Arritmia detectada!", 
+                  description: "Se activará un sonido distintivo con los latidos.", 
+                  variant: "destructive", 
+                  duration: 3000 
+                });
+              }
+            }
+          }
+        } else {
+          console.warn("⚠️ processVitalSigns devolvió null/undefined");
+        }
+      } catch (error) {
+        console.error("❌ Error en procesamiento de signos vitales:", error);
+        // Mantener valores anteriores en caso de error
+      }
+    };
+
+    // Ejecutar el procesamiento asíncrono
+    processSignalsAsync();
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   // Referencia para activar o desactivar el sonido de arritmia
