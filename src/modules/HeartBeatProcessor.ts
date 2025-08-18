@@ -362,7 +362,7 @@ export class HeartBeatProcessor {
           console.log(`HeartBeatProcessor: ✅ LATIDO REAL DETECTADO [${now}]`, {
             intervaloAnterior: this.lastPeakTime ? (now - this.lastPeakTime) + 'ms' : 'PRIMERO',
             bpmInstantaneo: this.lastPeakTime ? (60000/(now - this.lastPeakTime)).toFixed(1) : 'N/A',
-            totalIntervalos: this.rrIntervals?.length || 0
+            totalIntervalos: this.getRRIntervals().intervals.length
           });
           
           this.previousPeakTime = this.lastPeakTime;
