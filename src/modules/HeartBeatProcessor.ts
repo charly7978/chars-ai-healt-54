@@ -331,20 +331,44 @@ export class HeartBeatProcessor {
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
+    // LATIDO CONFIRMADO = EJECUTAR TODO COORDINADAMENTE
     if (isConfirmedPeak && !this.isInWarmup()) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
         ? now - this.lastPeakTime
         : Number.MAX_VALUE;
 
-      // Validación médicamente apropiada
+      console.log(`HeartBeatProcessor: 🎯 PICO CONFIRMADO [${now}]`, {
+        timeSinceLastPeak: timeSinceLastPeak === Number.MAX_VALUE ? 'PRIMERO' : timeSinceLastPeak + 'ms',
+        minRequired: this.DEFAULT_MIN_PEAK_TIME_MS + 'ms',
+        cumpleTiempo: timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS,
+        normalizedValue: normalizedValue.toFixed(4),
+        confidence: confidence.toFixed(3)
+      });
+
+      // VALIDACIÓN MÉDICAMENTE APROPIADA
       if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
-        // Validación estricta según criterios médicos
-        if (this.validatePeak(normalizedValue, confidence)) {
+        // VALIDACIÓN ESTRICTA SEGÚN CRITERIOS MÉDICOS
+        const peakIsValid = this.validatePeak(normalizedValue, confidence);
+        
+        console.log(`HeartBeatProcessor: 🔍 VALIDACIÓN PICO`, {
+          esValido: peakIsValid,
+          normalizedValue: normalizedValue.toFixed(4),
+          confidence: confidence.toFixed(3),
+          umbralMinConf: this.adaptiveMinConfidence.toFixed(3)
+        });
+        
+        if (peakIsValid) {
+          console.log(`HeartBeatProcessor: ✅ LATIDO REAL DETECTADO [${now}]`, {
+            intervaloAnterior: this.lastPeakTime ? (now - this.lastPeakTime) + 'ms' : 'PRIMERO',
+            bpmInstantaneo: this.lastPeakTime ? (60000/(now - this.lastPeakTime)).toFixed(1) : 'N/A',
+            totalIntervalos: this.rrIntervals.length
+          });
+          
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
-          // Reproducir sonido y actualizar estado
+          // COORDINAR: beep + vibración JUNTOS  
           this.playHeartSound(1.0, this.isArrhythmiaDetected);
 
           this.updateBPM();
