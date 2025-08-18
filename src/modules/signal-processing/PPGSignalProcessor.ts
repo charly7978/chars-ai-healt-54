@@ -6,7 +6,7 @@ import { BiophysicalValidator } from './BiophysicalValidator';
 import { FrameProcessor } from './FrameProcessor';
 import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
-import { SignalProcessorConfig } from './types';
+import { SignalProcessorConfig, FrameData } from './types';
 
 /**
  * Procesador de señal PPG con detección de dedo
@@ -381,12 +381,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
       
       // Ajustar calidad con más granularidad
-      const quality = Math.round(detectionResult.quality * 100 / this.CONFIG.QUALITY_LEVELS);
+      const adjustedQuality = Math.round(detectionResult.quality * 100 / this.CONFIG.QUALITY_LEVELS);
 
       if (shouldLog) {
         console.log("PPGSignalProcessor: Sending validated signal:", {
           fingerDetected: isFingerDetected,
-          quality,
+          quality, adjustedQuality,
           redValue,
           filteredValue,
           timestamp: new Date().toISOString()
