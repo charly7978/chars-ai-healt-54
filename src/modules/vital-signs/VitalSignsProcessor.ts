@@ -290,10 +290,6 @@ export class VitalSignsProcessor {
         console.warn("⚠️ Resultado no fisiológico, manteniendo valores anteriores");
       }
 
-      return result;
-      
-    } catch (error) {
-
     if (this.isCalibrating) {
       this.calibrationSamples++;
     }
