@@ -568,10 +568,11 @@ export class HeartBeatProcessor {
    * Analiza patrones recientes para detectar regularidad cardíaca
    */
   private getTemporalContextFactor(): number {
-    if (this.rrIntervals.length < 3) return 0.5; // Factor base sin historial
+    const rrData = this.getRRIntervals(); // USAR MÉTODO PÚBLICO
+    if (rrData.intervals.length < 3) return 0.5; // Factor base sin historial
     
     // Analizar regularidad de intervalos RR recientes
-    const recentIntervals = this.rrIntervals.slice(-5);
+    const recentIntervals = rrData.intervals.slice(-5);
     const avgInterval = recentIntervals.reduce((a, b) => a + b, 0) / recentIntervals.length;
     
     // Calcular variabilidad (menor variabilidad = más regular = mayor confianza)

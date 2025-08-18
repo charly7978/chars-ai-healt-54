@@ -340,25 +340,25 @@ const CameraView = ({
         const brightness = (avgRed + avgGreen + avgBlue) / 3;
         const redIntensity = avgRed / 255;
         
-        // ALGORITMO SOFISTICADO DE EXTRACCIÓN PPG PARA CÁMARA
+        // ALGORITMO SOFISTICADO DE EXTRACCIÓN PPG PARA CÁMARA (COMPILACIÓN CELULAR)
         // Sistema adaptativo multi-dimensional para optimizar señal débil
-        if (!window.ppgBaseline) window.ppgBaseline = avgRed;
-        if (!window.ppgHistory) window.ppgHistory = [];
+        if (!(window as any).ppgBaseline) (window as any).ppgBaseline = avgRed;
+        if (!(window as any).ppgHistory) (window as any).ppgHistory = [];
         
         // BASELINE ADAPTATIVO INTELIGENTE con memoria histórica
-        const alpha = window.ppgHistory.length < 10 ? 0.1 : 0.02; // Adaptación inicial más rápida
-        window.ppgBaseline = window.ppgBaseline * (1-alpha) + avgRed * alpha;
+        const alpha = (window as any).ppgHistory.length < 10 ? 0.1 : 0.02; // Adaptación inicial más rápida
+        (window as any).ppgBaseline = (window as any).ppgBaseline * (1-alpha) + avgRed * alpha;
         
         // FILTRADO AVANZADO DE SEÑAL PPG
-        const rawPPGSignal = (avgRed - window.ppgBaseline) / window.ppgBaseline;
+        const rawPPGSignal = (avgRed - (window as any).ppgBaseline) / (window as any).ppgBaseline;
         
         // Agregar al historial para análisis temporal
-        window.ppgHistory.push(rawPPGSignal);
-        if (window.ppgHistory.length > 20) window.ppgHistory.shift();
+        (window as any).ppgHistory.push(rawPPGSignal);
+        if ((window as any).ppgHistory.length > 20) (window as any).ppgHistory.shift();
         
         // ALGORITMO DE AMPLIFICACIÓN INTELIGENTE basado en varianza reciente
-        const recentVariance = window.ppgHistory.length > 5 ? 
-          window.ppgHistory.reduce((acc, val) => acc + Math.pow(val, 2), 0) / window.ppgHistory.length : 0.01;
+        const recentVariance = (window as any).ppgHistory.length > 5 ? 
+          (window as any).ppgHistory.reduce((acc: number, val: number) => acc + Math.pow(val, 2), 0) / (window as any).ppgHistory.length : 0.01;
         const adaptiveGain = Math.max(3.0, Math.min(15.0, 1.0 / Math.sqrt(recentVariance))); // Gain inversamente proporcional a varianza
         
         const ppgAmplified = rawPPGSignal * adaptiveGain;
@@ -383,7 +383,7 @@ const CameraView = ({
             rgRatio: rgRatio.toFixed(3),
             
             // PROCESAMIENTO AVANZADO PPG
-            baselineAdaptativo: window.ppgBaseline.toFixed(2),
+            baselineAdaptativo: (window as any).ppgBaseline.toFixed(2),
             señalPPGRaw: rawPPGSignal.toFixed(6),
             varianzaReciente: recentVariance.toFixed(6),
             gainAdaptativo: adaptiveGain.toFixed(2),
@@ -391,7 +391,7 @@ const CameraView = ({
             ppgFinal: ppgNormalized.toFixed(6),
             
             // ANÁLISIS TEMPORAL INTELIGENTE
-            historiaPPG: window.ppgHistory.length,
+            historiaPPG: (window as any).ppgHistory.length,
             variacionDesdeUltimo: ppgNormalized - ((window as any).lastPPGValue || 0.5),
             timestamp,
             intervaloDeProceso: timestamp - ((window as any).lastPPGTimestamp || timestamp)
