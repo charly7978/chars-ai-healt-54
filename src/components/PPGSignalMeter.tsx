@@ -127,67 +127,31 @@ const PPGSignalMeter = ({
     }
   }, [arrhythmiaStatus]);
 
-  const detectPeaks = useCallback((points: PPGDataPoint[], now: number) => {
-    if (points.length < PEAK_DETECTION_WINDOW) return;
-    
-    const potentialPeaks: {index: number, value: number, time: number, isArrhythmia: boolean}[] = [];
-    
-    for (let i = PEAK_DETECTION_WINDOW; i < points.length - PEAK_DETECTION_WINDOW; i++) {
-      const currentPoint = points[i];
+  // DETECCIÓN DE PICOS ELIMINADA - USAR SOLO HeartBeatProcessor
+  // PPGSignalMeter YA NO detecta picos independientemente
+  // Los picos vienen coordinados desde HeartBeatProcessor via beatMarker (value)
+  
+  const recordPeakFromHeartBeat = useCallback((value: number, timestamp: number, isArrhythmia: boolean = false) => {
+    // Solo REGISTRAR picos detectados externamente por HeartBeatProcessor
+    if (value > 0) { // value > 0 indica que HeartBeatProcessor detectó un pico
+      const peak = {
+        time: timestamp,
+        value: value,
+        isArrhythmia
+      };
       
-      const recentlyProcessed = peaksRef.current.some(
-        peak => Math.abs(peak.time - currentPoint.time) < MIN_PEAK_DISTANCE_MS
-      );
-      
-      if (recentlyProcessed) continue;
-      
-      let isPeak = true;
-      
-      for (let j = i - PEAK_DETECTION_WINDOW; j < i; j++) {
-        if (points[j].value >= currentPoint.value) {
-          isPeak = false;
-          break;
-        }
+      peaksRef.current.push(peak);
+      if (peaksRef.current.length > MAX_PEAKS_TO_DISPLAY) {
+        peaksRef.current = peaksRef.current.slice(-MAX_PEAKS_TO_DISPLAY);
       }
       
-      if (isPeak) {
-        for (let j = i + 1; j <= i + PEAK_DETECTION_WINDOW; j++) {
-          if (j < points.length && points[j].value > currentPoint.value) {
-            isPeak = false;
-            break;
-          }
-        }
-      }
-      
-      if (isPeak && Math.abs(currentPoint.value) > PEAK_THRESHOLD) {
-        potentialPeaks.push({
-          index: i,
-          value: currentPoint.value,
-          time: currentPoint.time,
-          isArrhythmia: currentPoint.isArrhythmia
-        });
-      }
+      console.log('PPGSignalMeter: 📍 Pico registrado desde HeartBeatProcessor', {
+        time: timestamp,
+        value: value.toFixed(3),
+        isArrhythmia,
+        totalPicos: peaksRef.current.length
+      });
     }
-    
-    for (const peak of potentialPeaks) {
-      const tooClose = peaksRef.current.some(
-        existingPeak => Math.abs(existingPeak.time - peak.time) < MIN_PEAK_DISTANCE_MS
-      );
-      
-      if (!tooClose) {
-        peaksRef.current.push({
-          time: peak.time,
-          value: peak.value,
-          isArrhythmia: peak.isArrhythmia
-        });
-      }
-    }
-    
-    peaksRef.current.sort((a, b) => a.time - b.time);
-    
-    peaksRef.current = peaksRef.current
-      .filter(peak => now - peak.time < WINDOW_WIDTH_MS)
-      .slice(-MAX_PEAKS_TO_DISPLAY);
   }, []);
 
   const renderSignal = useCallback(() => {
