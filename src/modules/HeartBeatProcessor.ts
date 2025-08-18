@@ -235,8 +235,24 @@ export class HeartBeatProcessor {
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
   } {
+    // ANÁLISIS CRÍTICO DE SEÑAL PPG ENTRANTE
+    const timestamp = Date.now();
+    const originalValue = value;
+    
     // Aplicar amplificación razonable
     value = this.boostSignal(value);
+    
+    // LOG DETALLADO CADA 30 FRAMES (evitar spam)
+    if (this.signalBuffer.length % 30 === 0) {
+      console.log(`HeartBeatProcessor: 🔍 ANÁLISIS SEÑAL [${timestamp}]`, {
+        valorOriginal: originalValue.toFixed(6),
+        valorAmplificado: value.toFixed(6),
+        amplificacion: (value/originalValue).toFixed(2) + 'x',
+        rangoEsperado: '0.0-1.0',
+        esValido: originalValue >= 0 && originalValue <= 1,
+        bufferSize: this.signalBuffer.length
+      });
+    }
     
     const medVal = this.medianFilter(value);
     const movAvgVal = this.calculateMovingAverage(medVal);
@@ -282,10 +298,32 @@ export class HeartBeatProcessor {
     }
     this.lastValue = smoothed;
     
-    // Detección de picos médicamente válida
+    // DETECCIÓN DE PICOS CON LOGGING CRÍTICO
     const peakDetectionResult = this.enhancedPeakDetection(normalizedValue, smoothDerivative);
     let isPeak = peakDetectionResult.isPeak;
     const confidence = peakDetectionResult.confidence;
+    
+    // LOG CRÍTICO: por qué se detecta/no se detecta pico
+    if (this.signalBuffer.length % 30 === 0 || isPeak) {
+      const timeSinceLastPeak = this.lastPeakTime ? timestamp - this.lastPeakTime : 'N/A';
+      console.log(`HeartBeatProcessor: ${isPeak ? '🔥' : '⚫'} DETECCIÓN PICO [${timestamp}]`, {
+        isPeak,
+        normalizedValue: normalizedValue.toFixed(4),
+        smoothDerivative: smoothDerivative.toFixed(4),
+        confidence: confidence.toFixed(3),
+        timeSinceLastPeak: typeof timeSinceLastPeak === 'number' ? timeSinceLastPeak + 'ms' : timeSinceLastPeak,
+        umbrales: {
+          signalThreshold: this.adaptiveSignalThreshold.toFixed(4),
+          minConfidence: this.adaptiveMinConfidence.toFixed(3),
+          minPeakTime: this.DEFAULT_MIN_PEAK_TIME_MS + 'ms'
+        },
+        cumpleUmbrales: {
+          signal: Math.abs(normalizedValue) > this.adaptiveSignalThreshold,
+          confidence: confidence > this.adaptiveMinConfidence,
+          tiempo: !this.lastPeakTime || (timestamp - this.lastPeakTime) >= this.DEFAULT_MIN_PEAK_TIME_MS
+        }
+      });
+    }
     const rawDerivative = peakDetectionResult.rawDerivative;
     
     const isConfirmedPeak = this.confirmPeak(isPeak, normalizedValue, confidence);
