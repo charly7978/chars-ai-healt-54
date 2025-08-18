@@ -18,8 +18,8 @@ const CameraView = ({
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  // Usar un procesador simple en lugar del avanzado que se movió
-  const vitalProcessor = useRef<any>(null);
+  // Referencia al canvas para procesamiento de frames
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [torchEnabled, setTorchEnabled] = useState(false);
   const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
   const lastFrameTimeRef = useRef<number>(0);
@@ -288,52 +288,106 @@ const CameraView = ({
     }
   };
 
-  const processFrame = (frameData: ImageData) => {
-    // Procesamiento simplificado para evitar errores críticos
-    const { red, ir, green } = extractPPGSignals(frameData);
+  const processFrame = () => {
+    if (!videoRef.current || !canvasRef.current) return;
     
-    // Simular resultados básicos para mantener funcionalidad
-    const basicResults = {
-      spo2: 97.5,
-      hr: 72,
-      hrv: 35,
-      sbp: 120,
-      dbp: 80,
-      glucose: 95,
-      confidence: 0.85
-    };
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
     
-    handleResults(basicResults);
-  };
-
-  const extractPPGSignals = (frameData: ImageData) => {
-    const { width, height, data } = frameData;
-    const pixelCount = width * height;
+    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) return;
     
-    // Promedios de canales
-    let redSum = 0, irSum = 0, greenSum = 0;
+    // Ajustar tamaño del canvas al video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     
-    for (let i = 0; i < pixelCount * 4; i += 4) {
-      redSum += data[i];     // Canal Rojo
-      greenSum += data[i+1]; // Canal Verde
-      irSum += data[i+2];    // Canal Infrarrojo (asumiendo configuración cámara)
+    // Capturar frame actual
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    try {
+      // Extraer ImageData del frame REAL
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      
+      // PROCESAMIENTO REAL: Análisis de la región central donde está el dedo
+      const centerX = Math.floor(canvas.width / 2);
+      const centerY = Math.floor(canvas.height / 2);
+      const roiSize = Math.min(80, Math.floor(Math.min(canvas.width, canvas.height) / 6));
+      
+      let redSum = 0, greenSum = 0, blueSum = 0, pixelCount = 0;
+      
+      // Extraer valores RGB promedio de la ROI central
+      for (let y = centerY - roiSize; y < centerY + roiSize; y++) {
+        for (let x = centerX - roiSize; x < centerX + roiSize; x++) {
+          if (x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
+            const index = (y * canvas.width + x) * 4;
+            redSum += imageData.data[index];         // R
+            greenSum += imageData.data[index + 1];   // G  
+            blueSum += imageData.data[index + 2];    // B
+            pixelCount++;
+          }
+        }
+      }
+      
+      if (pixelCount > 0) {
+        const avgRed = redSum / pixelCount;
+        const avgGreen = greenSum / pixelCount;
+        const avgBlue = blueSum / pixelCount;
+        
+        // DETECCIÓN REAL DE DEDO basada en características ópticas
+        const rgRatio = avgRed / (avgGreen + 1);
+        const brightness = (avgRed + avgGreen + avgBlue) / 3;
+        const redIntensity = avgRed / 255;
+        
+        // Criterios biofísicos para detectar tejido perfundido
+        const fingerDetected = 
+          avgRed > 40 &&                    // Mínima intensidad roja
+          brightness > 60 &&                // Brillo mínimo  
+          rgRatio > 1.0 && rgRatio < 4.0 && // Ratio fisiológico
+          redIntensity > 0.2;               // Intensidad normalizada
+        
+        // Log REAL de detección
+        if (fingerDetected) {
+          console.log('CameraView: DEDO DETECTADO - Procesando señal PPG real', {
+            avgRed: avgRed.toFixed(1),
+            avgGreen: avgGreen.toFixed(1), 
+            rgRatio: rgRatio.toFixed(2),
+            brightness: brightness.toFixed(1),
+            redIntensity: redIntensity.toFixed(3)
+          });
+          
+          // Llamar onStreamReady para notificar que hay datos reales
+          if (onStreamReady) {
+            onStreamReady(stream!);
+          }
+        } else {
+          // Log cuando NO hay dedo
+          console.log('CameraView: Sin dedo detectado', {
+            avgRed: avgRed.toFixed(1),
+            brightness: brightness.toFixed(1),
+            rgRatio: rgRatio.toFixed(2)
+          });
+        }
+      }
+    } catch (error) {
+      console.error('CameraView: Error procesando frame real:', error);
     }
-    
-    return {
-      red: [redSum / pixelCount],
-      ir: [irSum / pixelCount],
-      green: [greenSum / pixelCount]
-    };
   };
 
-  const handleResults = (results: any) => {
-    console.log('Mediciones biométricas:', {
-      spo2: results.spo2.toFixed(1) + '%',
-      pressure: results.sbp + '/' + results.dbp + ' mmHg',
-      glucose: results.glucose.toFixed(0) + ' mg/dL',
-      confidence: (results.confidence * 100).toFixed(1) + '%'
-    });
-  };
+  // PROCESAMIENTO CONTINUO DE FRAMES activado
+  useEffect(() => {
+    if (!isMonitoring || !stream) return;
+    
+    const intervalId = setInterval(() => {
+      processFrame();
+    }, 100); // Procesar cada 100ms (10 FPS para análisis)
+    
+    console.log('CameraView: Iniciando procesamiento continuo de frames para detección real');
+    
+    return () => {
+      clearInterval(intervalId);
+      console.log('CameraView: Deteniendo procesamiento de frames');
+    };
+  }, [isMonitoring, stream]);
 
   useEffect(() => {
     if (isMonitoring && !stream) {
@@ -413,6 +467,7 @@ const CameraView = ({
   }, [stream, isMonitoring, isFingerDetected, deviceSupportsAutoFocus]);
 
   return (
+    <>
     <video
       ref={videoRef}
       autoPlay
@@ -425,6 +480,12 @@ const CameraView = ({
         backfaceVisibility: 'hidden'
       }}
     />
+      <canvas
+        ref={canvasRef}
+        className="hidden"
+        style={{ display: 'none' }}
+      />
+    </>
   );
 };
 
