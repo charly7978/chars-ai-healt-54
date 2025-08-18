@@ -5,7 +5,7 @@
 export class ArrhythmiaProcessor {
   // Configuration based on Harvard Medical School research on HRV
   private readonly RR_WINDOW_SIZE = 10; // Increased window for better statistical power
-  private readonly RMSSD_THRESHOLD = 45; // More conservative threshold
+  private readonly RMSSD_THRESHOLD = 80; // AUMENTADO de 45 a 80 para evitar falsas arritmias
   private readonly ARRHYTHMIA_LEARNING_PERIOD = 6000; // Extended learning period
   private readonly SD1_THRESHOLD = 35; // More conservative Poincaré plot SD1 threshold
   private readonly PERFUSION_INDEX_MIN = 0.3; // Higher minimum PI for reliable detection
@@ -157,19 +157,14 @@ export class ArrhythmiaProcessor {
     const timeSinceLastArrhythmia = currentTime - this.lastArrhythmiaTime;
     const newArrhythmiaState = 
       timeSinceLastArrhythmia >= this.MIN_ARRHYTHMIA_INTERVAL && (
-        // Primary condition: requires multiple criteria to be met
+        // CRITERIOS ARRITMIA MÁS ESTRICTOS (CORREGIDO PARA EVITAR FALSAS ARRITMIAS)
         (rmssd > this.RMSSD_THRESHOLD && 
-         rrVariation > 0.25 && 
-         coefficientOfVariation > 0.15) ||
+         rrVariation > 0.40 && // AUMENTADO de 0.25 a 0.40
+         coefficientOfVariation > 0.25) || // AUMENTADO de 0.15 a 0.25
         
-        // Secondary condition: requires very strong signal quality
-        (this.shannonEntropy > this.SHANNON_ENTROPY_THRESHOLD && 
-         this.pnnX > this.PNNX_THRESHOLD && 
-         coefficientOfVariation > 0.2) ||
-        
-        // Extreme variation condition: requires multiple confirmations
-        (rrVariation > 0.35 && 
-         coefficientOfVariation > 0.25 && 
+        // Condición extrema únicamente para arritmias severas
+        (rrVariation > 0.50 && // AUMENTADO de 0.35 a 0.50
+         coefficientOfVariation > 0.35 && // AUMENTADO de 0.25 a 0.35
          this.sampleEntropy > this.SAMPLE_ENTROPY_THRESHOLD)
       );
 

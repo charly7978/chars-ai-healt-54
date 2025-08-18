@@ -6,10 +6,10 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 30;
   private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.04; // Reducido para captar señal más débil
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.50; // Reducido para mejor detección
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03; // REDUCIDO de 0.04 a 0.03 para mejor captación
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.40; // REDUCIDO de 0.50 a 0.40 para detección más sensible
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // AUMENTADO de 300 a 400ms para evitar BPM excesivo (máx 150 BPM)
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 350; // REDUCIDO de 400 a 350ms para evitar intervalos largos (máx 171 BPM)
   private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
 
   // Parámetros de filtrado ajustados para precisión médica
@@ -34,10 +34,10 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites para los parámetros adaptativos - CORREGIDOS PARA BPM PRECISO
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.15; // AUMENTADO de 0.09 a 0.15 para ser más selectivo
+  // Límites adaptativos BALANCEADOS (CORREGIDO PARA DETECCIÓN CONSISTENTE)
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.08; // REDUCIDO de 0.15 a 0.08 para mejor detección
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.4;
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.60; // AUMENTADO de 0.40 a 0.60 para mayor precisión
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.45; // REDUCIDO de 0.60 a 0.45 para mejor captación
   private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.90;
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
@@ -481,16 +481,16 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // DETECCIÓN DE PICOS MÁS SELECTIVA (CORREGIDO PARA BPM PRECISO)
-    const derivativeThreshold = -0.2; // Umbral más estricto para derivada
-    const amplitudeThreshold = 0.5;   // Umbral mínimo de amplitud
+    // DETECCIÓN DE PICOS BALANCEADA (CORREGIDO PARA EVITAR INTERVALOS LARGOS)
+    const derivativeThreshold = -0.1; // REDUCIDO de -0.2 a -0.1 (menos estricto)
+    const amplitudeThreshold = 0.2;   // REDUCIDO de 0.5 a 0.2 (menos estricto)
     
     const isOverThreshold = derivative < derivativeThreshold && 
                            Math.abs(normalizedValue) > amplitudeThreshold;
     
-    // CONFIANZA BASADA EN CALIDAD DE SEÑAL (CORREGIDO)
+    // CONFIANZA MÁS GENEROSA (CORREGIDO PARA MEJOR DETECCIÓN)
     const confidence = isOverThreshold ? 
-      Math.min(1.0, Math.abs(derivative) / 2.0 + Math.abs(normalizedValue) / 5.0) : 0;
+      Math.min(1.0, Math.abs(derivative) / 1.0 + Math.abs(normalizedValue) / 3.0) : 0; // Divisores reducidos
 
     return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
   }
