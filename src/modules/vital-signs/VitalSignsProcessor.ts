@@ -226,10 +226,8 @@ export class VitalSignsProcessor {
       this.calibrationSamples++;
     }
 
-    try {
-      // CONSTRUIR SEÑAL PPG PARA PROCESAMIENTO AVANZADO
-      // En un sistema real, tendríamos múltiples valores, pero aquí construimos un buffer
-      const ppgSignal = this.buildPPGSignal(ppgValue);
+    // PROCESAMIENTO ESTÁNDAR CON ALGORITMOS ORIGINALES
+    const filtered = this.signalProcessor.applySMAFilter(ppgValue);
       
       console.log(`🔬 Procesando señal con algoritmos matemáticos avanzados: ${ppgSignal.length} muestras`);
       
