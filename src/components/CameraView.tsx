@@ -354,23 +354,49 @@ const CameraView = ({
           rgRatio > 1.1 && rgRatio < 3.8 && // AJUSTADO: Ratio fisiológico
           redIntensity > 0.25;              // AUMENTADO: Intensidad normalizada
         
-        // Log COMPLETO de procesamiento PPG
+        // ANÁLISIS PROFUNDO DE SEÑAL PPG REAL
+        const timestamp = Date.now();
         if (fingerDetected) {
-          console.log('CameraView: 🟢 DEDO DETECTADO - Enviando señal PPG procesada', {
-            // Valores cámara originales
+          console.log(`CameraView: 🟢 DEDO DETECTADO [${timestamp}] - ANÁLISIS PPG DETALLADO`, {
+            // Valores cámara RAW
             avgRed: avgRed.toFixed(1),
-            avgGreen: avgGreen.toFixed(1),
+            avgGreen: avgGreen.toFixed(1), 
+            avgBlue: avgBlue.toFixed(1),
             brightness: brightness.toFixed(1),
             rgRatio: rgRatio.toFixed(3),
-            // Conversión PPG
+            redIntensity: redIntensity.toFixed(3),
+            
+            // Conversión PPG paso a paso
             ppgBaseline,
-            ppgSignal: ppgSignal.toFixed(4),
-            ppgAmplified: ppgAmplified.toFixed(4),
-            ppgNormalized: ppgNormalized.toFixed(4)
+            ppgSignal: ppgSignal.toFixed(6), // MÁS PRECISIÓN
+            ppgAmplified: ppgAmplified.toFixed(6),
+            ppgNormalized: ppgNormalized.toFixed(6),
+            
+            // ANÁLISIS DE VARIACIÓN (clave para PPG)
+            variacionRoja: avgRed - (window as any).lastAvgRed || 0,
+            variacionPPG: ppgNormalized - (window as any).lastPPGValue || 0,
+            
+            // Timestamp para análisis temporal
+            timestamp,
+            tiempoDesdeUltimo: timestamp - ((window as any).lastPPGTimestamp || timestamp)
           });
           
-          // ENVIAR SEÑAL PPG PROCESADA directamente
+          // Guardar para análisis de variación
+          (window as any).lastAvgRed = avgRed;
+          (window as any).lastPPGValue = ppgNormalized;
+          (window as any).lastPPGTimestamp = timestamp;
+          
+          // ENVIAR SEÑAL PPG PROCESADA directamente CON ANÁLISIS
           if (onPPGSignal) {
+            // Log crítico: QUÉ valor exacto se está enviando
+            console.log(`📡 ENVIANDO PPG [${timestamp}]:`, {
+              valor: ppgNormalized.toFixed(6),
+              esVariacionSignificativa: Math.abs(ppgNormalized - ((window as any).lastSentPPG || 0.5)) > 0.01,
+              ultimoEnviado: ((window as any).lastSentPPG || 'N/A'),
+              diferencia: Math.abs(ppgNormalized - ((window as any).lastSentPPG || 0.5)).toFixed(6)
+            });
+            
+            (window as any).lastSentPPG = ppgNormalized;
             onPPGSignal(ppgNormalized, fingerDetected);
           }
           
@@ -380,14 +406,17 @@ const CameraView = ({
           }
           
         } else {
-          console.log('CameraView: 🔴 Sin dedo detectado', {
-            avgRed: avgRed.toFixed(1),
-            brightness: brightness.toFixed(1),
-            rgRatio: rgRatio.toFixed(2),
-            'razón': avgRed < 50 ? 'rojo bajo' : 
-                     brightness < 70 ? 'brillo bajo' :
-                     rgRatio <= 1.1 || rgRatio >= 3.8 ? 'ratio inválido' : 'intensidad baja'
-          });
+          // Solo log cada 10 frames para evitar spam
+          if (timestamp % 1000 < 100) { // Aprox cada segundo
+            console.log('CameraView: 🔴 Sin dedo detectado', {
+              avgRed: avgRed.toFixed(1),
+              brightness: brightness.toFixed(1),
+              rgRatio: rgRatio.toFixed(2),
+              'razón': avgRed < 50 ? '❌ rojo bajo' : 
+                       brightness < 70 ? '❌ brillo bajo' :
+                       rgRatio <= 1.1 || rgRatio >= 3.8 ? '❌ ratio inválido' : '❌ intensidad baja'
+            });
+          }
         }
       }
     } catch (error) {

@@ -297,18 +297,39 @@ const Index = () => {
       timestamp: new Date().toISOString()
     });
     
-    // Procesar directamente con HeartBeatProcessor
+    // PROCESAMIENTO COORDINADO CON SINCRONIZACIÓN COMPLETA
     const heartBeatResult = processHeartBeat(ppgValue, fingerDetected);
     const vitalSignsResult = processVitalSigns(ppgValue, heartBeatResult.rrData);
     
-    // Actualizar estado con resultados reales
-    setBeatMarker(heartBeatResult.isPeak ? ppgValue : 0);
+    // DETECCIÓN DE LATIDO REAL = COORDINACIÓN TOTAL
+    if (heartBeatResult.isPeak) {
+      console.log('Index.tsx: 🔥 LATIDO REAL DETECTADO - Coordinando TODO', {
+        timestamp: Date.now(),
+        ppgValue: ppgValue.toFixed(4),
+        bpm: heartBeatResult.bpm,
+        confidence: heartBeatResult.confidence,
+        signalQuality: heartBeatResult.signalQuality
+      });
+      
+      // SINCRONIZACIÓN PERFECTA: 1 latido = 1 pico + 1 beep + 1 vibración
+      setBeatMarker(ppgValue * 100); // AMPLIFICAR para visualización clara
+      
+      // VIBRACIÓN COORDINADA (no duplicar la del HeartBeatProcessor)
+      // HeartBeatProcessor ya maneja beep + vibración internamente
+      
+    } else {
+      // NO hay latido = NO hay pico visual
+      setBeatMarker(0);
+    }
+    
+    // Actualizar estado general
     setSignalQuality(heartBeatResult.signalQuality || 0);
     setVitalSigns(vitalSignsResult);
     
-    console.log('Index.tsx: ✅ Procesamiento PPG completado', {
+    console.log('Index.tsx: ✅ Procesamiento PPG coordinado', {
       bpm: heartBeatResult.bpm,
       isPeak: heartBeatResult.isPeak,
+      beatMarker: heartBeatResult.isPeak ? ppgValue * 100 : 0,
       spo2: vitalSignsResult.spo2,
       signalQuality: heartBeatResult.signalQuality
     });

@@ -250,8 +250,8 @@ const PPGSignalMeter = ({
     
     dataBufferRef.current.push(dataPoint);
     
-    const points = dataBufferRef.current.getPoints();
-    detectPeaks(points, now);
+    // REGISTRAR PICO SI HeartBeatProcessor LO DETECTÓ (via value > 0)
+    recordPeakFromHeartBeat(value, now, isArrhythmia);
     
     if (points.length > 1) {
       ctx.beginPath();
