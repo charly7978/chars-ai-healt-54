@@ -287,18 +287,26 @@ const Index = () => {
     setCalibrationProgress(undefined);
   };
 
-  // NUEVO: Handler para señal PPG directa desde CameraView
+  // HANDLER DESBLOQUEADO: Procesar SIEMPRE señal PPG válida  
   const handlePPGSignal = (ppgValue: number, fingerDetected: boolean) => {
-    if (!isProcessing) return;
+    // PROCESAMIENTO DIRECTO SIN BLOQUEOS
+    if (!fingerDetected) {
+      console.log('Index.tsx: ❌ Sin dedo detectado - ignorando señal');
+      return; 
+    }
     
-    console.log('Index.tsx: 📡 Recibiendo señal PPG directa', {
+    console.log('Index.tsx: 📡🔥 PROCESANDO SEÑAL PPG DESBLOQUEADA', {
       ppgValue: ppgValue.toFixed(4),
       fingerDetected,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      'ESTADO': 'DESBLOQUEADO - Procesando directo'
     });
     
-    // PROCESAMIENTO COORDINADO CON SINCRONIZACIÓN COMPLETA
+    // PROCESAMIENTO DIRECTO DESBLOQUEADO
+    console.log('Index.tsx: ❤️ Llamando processHeartBeat con valor:', ppgValue.toFixed(4));
     const heartBeatResult = processHeartBeat(ppgValue, fingerDetected);
+    
+    console.log('Index.tsx: 🩺 Llamando processVitalSigns con resultado heart:', heartBeatResult);
     const vitalSignsResult = processVitalSigns(ppgValue, heartBeatResult.rrData);
     
     // DETECCIÓN DE LATIDO REAL = COORDINACIÓN TOTAL
