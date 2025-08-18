@@ -287,6 +287,33 @@ const Index = () => {
     setCalibrationProgress(undefined);
   };
 
+  // NUEVO: Handler para señal PPG directa desde CameraView
+  const handlePPGSignal = (ppgValue: number, fingerDetected: boolean) => {
+    if (!isProcessing) return;
+    
+    console.log('Index.tsx: 📡 Recibiendo señal PPG directa', {
+      ppgValue: ppgValue.toFixed(4),
+      fingerDetected,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Procesar directamente con HeartBeatProcessor
+    const heartBeatResult = processHeartBeat(ppgValue, fingerDetected);
+    const vitalSignsResult = processVitalSigns(ppgValue, heartBeatResult.rrData);
+    
+    // Actualizar estado con resultados reales
+    setBeatMarker(heartBeatResult.isPeak ? ppgValue : 0);
+    setSignalQuality(heartBeatResult.signalQuality || 0);
+    setVitalSigns(vitalSignsResult);
+    
+    console.log('Index.tsx: ✅ Procesamiento PPG completado', {
+      bpm: heartBeatResult.bpm,
+      isPeak: heartBeatResult.isPeak,
+      spo2: vitalSignsResult.spo2,
+      signalQuality: heartBeatResult.signalQuality
+    });
+  };
+
   const handleStreamReady = (stream: MediaStream) => {
     if (!isMonitoring) return;
     
@@ -535,6 +562,7 @@ const Index = () => {
         <div className="absolute inset-0">
           <CameraView 
             onStreamReady={handleStreamReady}
+            onPPGSignal={handlePPGSignal}
             isMonitoring={isCameraOn}
             isFingerDetected={lastSignal?.fingerDetected}
             signalQuality={signalQuality}

@@ -6,8 +6,8 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 30;
   private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03; // REDUCIDO de 0.04 a 0.03 para mejor captación
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.40; // REDUCIDO de 0.50 a 0.40 para detección más sensible
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.05; // ESPECÍFICO para PPG cámara normalizado (0.0-1.0)
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.35; // REDUCIDO para PPG sutil de cámara
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 350; // REDUCIDO de 400 a 350ms para evitar intervalos largos (máx 171 BPM)
   private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
@@ -34,16 +34,16 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites adaptativos BALANCEADOS (CORREGIDO PARA DETECCIÓN CONSISTENTE)
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.08; // REDUCIDO de 0.15 a 0.08 para mejor detección
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.4;
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.45; // REDUCIDO de 0.60 a 0.45 para mejor captación
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.90;
+  // Límites adaptativos ESPECÍFICOS PARA PPG DE CÁMARA
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.02; // MUY REDUCIDO para señales PPG sutiles
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.3;  // REDUCIDO para rango PPG 0-1
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.25;   // MUY REDUCIDO para detección inicial PPG 
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.80;
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
 
-  // ────────── PARÁMETROS PARA PROCESAMIENTO (CORREGIDOS PARA BPM PRECISO) ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.2; // REDUCIDO de 1.8 a 1.2 para evitar BPM excesivo
+  // ────────── PARÁMETROS ESPECÍFICOS PARA PPG DE CÁMARA ──────────
+  private readonly SIGNAL_BOOST_FACTOR = 2.5; // AUMENTADO para amplificar señales PPG sutiles de cámara
   private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // REDUCIDO de 0.5 a 0.3 para menos falsos picos
   
   // Control del auto-ajuste ESTABILIZADO (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
@@ -481,16 +481,16 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // DETECCIÓN DE PICOS BALANCEADA (CORREGIDO PARA EVITAR INTERVALOS LARGOS)
-    const derivativeThreshold = -0.1; // REDUCIDO de -0.2 a -0.1 (menos estricto)
-    const amplitudeThreshold = 0.2;   // REDUCIDO de 0.5 a 0.2 (menos estricto)
+    // DETECCIÓN DE PICOS PARA PPG DE CÁMARA (valores 0.0-1.0)
+    const derivativeThreshold = -0.05; // MÁS SENSIBLE para cambios sutiles de PPG cámara
+    const amplitudeThreshold = 0.1;    // MÁS SENSIBLE para amplitudes pequeñas de PPG
     
     const isOverThreshold = derivative < derivativeThreshold && 
                            Math.abs(normalizedValue) > amplitudeThreshold;
     
-    // CONFIANZA MÁS GENEROSA (CORREGIDO PARA MEJOR DETECCIÓN)
+    // CONFIANZA ESPECÍFICA PARA PPG CÁMARA (valores más pequeños)
     const confidence = isOverThreshold ? 
-      Math.min(1.0, Math.abs(derivative) / 1.0 + Math.abs(normalizedValue) / 3.0) : 0; // Divisores reducidos
+      Math.min(1.0, Math.abs(derivative) / 0.5 + Math.abs(normalizedValue) / 1.5) : 0; // MÁS GENEROSA para PPG sutil
 
     return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
   }

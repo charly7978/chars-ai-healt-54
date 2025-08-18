@@ -5,6 +5,7 @@ import { toast } from "@/components/ui/use-toast";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
+  onPPGSignal?: (ppgValue: number, fingerDetected: boolean) => void; // NUEVA: callback para señal PPG
   isMonitoring: boolean;
   isFingerDetected?: boolean;
   signalQuality?: number;
@@ -12,7 +13,8 @@ interface CameraViewProps {
 
 const CameraView = ({ 
   onStreamReady, 
-  isMonitoring, 
+  onPPGSignal,
+  isMonitoring,
   isFingerDetected = false, 
   signalQuality = 0,
 }: CameraViewProps) => {
@@ -333,38 +335,58 @@ const CameraView = ({
         const avgGreen = greenSum / pixelCount;
         const avgBlue = blueSum / pixelCount;
         
-        // DETECCIÓN REAL DE DEDO basada en características ópticas
+        // PROCESAMIENTO PPG ESPECIALIZADO PARA CÁMARA
         const rgRatio = avgRed / (avgGreen + 1);
         const brightness = (avgRed + avgGreen + avgBlue) / 3;
         const redIntensity = avgRed / 255;
         
-        // Criterios biofísicos para detectar tejido perfundido
-        const fingerDetected = 
-          avgRed > 40 &&                    // Mínima intensidad roja
-          brightness > 60 &&                // Brillo mínimo  
-          rgRatio > 1.0 && rgRatio < 4.0 && // Ratio fisiológico
-          redIntensity > 0.2;               // Intensidad normalizada
+        // CONVERSIÓN A SEÑAL PPG NORMALIZADA (0.0-1.0)
+        // Los valores de cámara (80-200) se convierten a rango PPG estándar
+        const ppgBaseline = 128; // Valor medio RGB
+        const ppgSignal = (avgRed - ppgBaseline) / ppgBaseline; // Normalizado ±1.0
+        const ppgAmplified = ppgSignal * 10.0; // Amplificación específica para PPG de cámara
+        const ppgNormalized = Math.max(0, Math.min(1.0, ppgAmplified + 0.5)); // Rango 0-1
         
-        // Log REAL de detección
+        // Criterios biofísicos mejorados para detectar tejido perfundido
+        const fingerDetected = 
+          avgRed > 50 &&                    // AUMENTADO: Mínima intensidad roja
+          brightness > 70 &&                // AUMENTADO: Brillo mínimo  
+          rgRatio > 1.1 && rgRatio < 3.8 && // AJUSTADO: Ratio fisiológico
+          redIntensity > 0.25;              // AUMENTADO: Intensidad normalizada
+        
+        // Log COMPLETO de procesamiento PPG
         if (fingerDetected) {
-          console.log('CameraView: DEDO DETECTADO - Procesando señal PPG real', {
+          console.log('CameraView: 🟢 DEDO DETECTADO - Enviando señal PPG procesada', {
+            // Valores cámara originales
             avgRed: avgRed.toFixed(1),
-            avgGreen: avgGreen.toFixed(1), 
-            rgRatio: rgRatio.toFixed(2),
+            avgGreen: avgGreen.toFixed(1),
             brightness: brightness.toFixed(1),
-            redIntensity: redIntensity.toFixed(3)
+            rgRatio: rgRatio.toFixed(3),
+            // Conversión PPG
+            ppgBaseline,
+            ppgSignal: ppgSignal.toFixed(4),
+            ppgAmplified: ppgAmplified.toFixed(4),
+            ppgNormalized: ppgNormalized.toFixed(4)
           });
           
-          // Llamar onStreamReady para notificar que hay datos reales
-          if (onStreamReady) {
-            onStreamReady(stream!);
+          // ENVIAR SEÑAL PPG PROCESADA directamente
+          if (onPPGSignal) {
+            onPPGSignal(ppgNormalized, fingerDetected);
           }
+          
+          // También llamar onStreamReady para compatibilidad
+          if (onStreamReady && stream) {
+            onStreamReady(stream);
+          }
+          
         } else {
-          // Log cuando NO hay dedo
-          console.log('CameraView: Sin dedo detectado', {
+          console.log('CameraView: 🔴 Sin dedo detectado', {
             avgRed: avgRed.toFixed(1),
             brightness: brightness.toFixed(1),
-            rgRatio: rgRatio.toFixed(2)
+            rgRatio: rgRatio.toFixed(2),
+            'razón': avgRed < 50 ? 'rojo bajo' : 
+                     brightness < 70 ? 'brillo bajo' :
+                     rgRatio <= 1.1 || rgRatio >= 3.8 ? 'ratio inválido' : 'intensidad baja'
           });
         }
       }
