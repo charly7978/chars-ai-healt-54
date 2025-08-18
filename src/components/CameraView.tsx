@@ -340,12 +340,14 @@ const CameraView = ({
         const brightness = (avgRed + avgGreen + avgBlue) / 3;
         const redIntensity = avgRed / 255;
         
-        // CONVERSIÓN A SEÑAL PPG NORMALIZADA (0.0-1.0)
-        // Los valores de cámara (80-200) se convierten a rango PPG estándar
-        const ppgBaseline = 128; // Valor medio RGB
-        const ppgSignal = (avgRed - ppgBaseline) / ppgBaseline; // Normalizado ±1.0
-        const ppgAmplified = ppgSignal * 10.0; // Amplificación específica para PPG de cámara
-        const ppgNormalized = Math.max(0, Math.min(1.0, ppgAmplified + 0.5)); // Rango 0-1
+        // CONVERSIÓN PPG ESTABILIZADA (REDUCIR RUIDO)
+        // Usar baseline adaptativo para mejor estabilidad
+        if (!window.ppgBaseline) window.ppgBaseline = avgRed; // Inicializar
+        window.ppgBaseline = window.ppgBaseline * 0.99 + avgRed * 0.01; // Baseline suavizado
+        
+        const ppgSignal = (avgRed - window.ppgBaseline) / window.ppgBaseline; // Señal centrada
+        const ppgAmplified = ppgSignal * 5.0; // REDUCIDO: Menos amplificación = menos ruido
+        const ppgNormalized = Math.max(0.1, Math.min(0.9, ppgAmplified + 0.5)); // Rango restringido
         
         // Criterios biofísicos mejorados para detectar tejido perfundido
         const fingerDetected = 
