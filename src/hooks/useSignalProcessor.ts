@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PPGSignalProcessor } from '../modules/SignalProcessor';
+import { PPGSignalProcessor } from '../modules/signal-processing/PPGSignalProcessor';
 import { ProcessedSignal, ProcessingError } from '../types/signal';
 
 /**
@@ -29,7 +29,12 @@ export const useSignalProcessor = () => {
   useEffect(() => {
     console.log("useSignalProcessor: Creating new processor instance", {
       timestamp: new Date().toISOString(),
-      sessionId: Math.random().toString(36).substring(2, 9)
+      sessionId: (() => {
+        // PROHIBIDO Math.random() en aplicaciones médicas - usar crypto
+        const randomBytes = new Uint32Array(1);
+        crypto.getRandomValues(randomBytes);
+        return randomBytes[0].toString(36);
+      })()
     });
 
     // Define signal ready callback with proper physiological validation
