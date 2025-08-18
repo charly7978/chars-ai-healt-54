@@ -550,15 +550,23 @@ export class HeartBeatProcessor {
     const isOverThreshold = derivative < derivativeThreshold && 
                            Math.abs(normalizedValue) > amplitudeThreshold;
     
-    // ALGORITMO AVANZADO DE CONFIANZA MULTI-FACTORIAL
-    const baseConfidence = isOverThreshold ? 
+    // CONFIANZA DIRECTA (ELIMINAR BLOQUEO DE FACTORES MULTIPLICATIVOS)
+    const confidence = isOverThreshold ? 
       Math.min(1.0, Math.abs(derivative) / 0.8 + Math.abs(normalizedValue) / 1.8) : 0;
     
-    // FACTOR CORRECTOR INTELIGENTE basado en contexto temporal
+    // FACTORES INFORMATIVOS ÚNICAMENTE (NO BLOQUEAR DETECCIÓN)
     const contextFactor = this.getTemporalContextFactor();
     const signalQualityFactor = this.currentSignalQuality / 100;
     
-    const confidence = baseConfidence * contextFactor * signalQualityFactor;
+    // Log factores para diagnóstico (sin afectar confidence)
+    if (this.signalBuffer.length % 30 === 0) {
+      console.log('🔍 FACTORES DIAGNÓSTICO:', {
+        baseConfidence: confidence.toFixed(3),
+        contextFactor: contextFactor.toFixed(3),
+        signalQualityFactor: signalQualityFactor.toFixed(3),
+        'SIN_MULTIPLICAR': 'Evitando bloqueo de detección'
+      });
+    }
 
     return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
   }
