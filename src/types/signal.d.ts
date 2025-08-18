@@ -13,51 +13,6 @@ export interface ProcessedSignal {
     height: number;
   };
   perfusionIndex?: number;
-  signalStrength?: number;
-  noiseLevel?: number;
-  enhancedMetrics?: EnhancedMetrics;
-}
-
-export interface EnhancedMetrics {
-  signalStrength: number;
-  noiseLevel: number;
-  perfusionIndex: number;
-  signalQuality: number;
-  detectionConfidence: number;
-  motionArtifactLevel: number;
-  contactQuality: number;
-  baselineStability: number;
-  adaptiveThreshold: number;
-  signalConsistency: number;
-  pulseDetectionQuality: number;
-  fingerConfidence: number;
-  peakDetected: boolean;
-  peakConfidence: number;
-  signalStability: number;
-  detectionReasons: string[];
-  environmentalFactors: {
-    lighting: number;
-    motion: number;
-    temperature: number;
-  };
-  detectionScores: {
-    redChannel: number;
-    stability: number;
-    pulsatility: number;
-    biophysical: number;
-    periodicity: number;
-  };
-}
-
-export interface SignalQualityMetrics {
-  signalStrength: number;
-  noiseLevel: number;
-  perfusionIndex: number;
-  overallQuality: number;
-  timestamp: number;
-  frameRate?: number;
-  bufferUsage?: number;
-  confidence?: number;
 }
 
 export interface ProcessingError {

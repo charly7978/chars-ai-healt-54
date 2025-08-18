@@ -15,15 +15,6 @@ export interface SignalProcessorConfig {
   CALIBRATION_SAMPLES: number;
   TEXTURE_GRID_SIZE: number;
   ROI_SIZE_FACTOR: number;
-  PEAK_DETECTION_THRESHOLD: number;
-  MIN_PEAK_SEPARATION: number;
-  HEART_RATE_MIN: number;
-  HEART_RATE_MAX: number;
-  MOTION_THRESHOLD: number;
-  SIGNAL_TO_NOISE_MIN: number;
-  MIN_PULSATILITY_SCORE: number;
-  COLOR_RATIO_MIN: number;
-  COLOR_RATIO_MAX: number;
 }
 
 export interface CalibrationValues {

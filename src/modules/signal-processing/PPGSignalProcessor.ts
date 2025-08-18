@@ -6,7 +6,7 @@ import { BiophysicalValidator } from './BiophysicalValidator';
 import { FrameProcessor } from './FrameProcessor';
 import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
-import { SignalProcessorConfig, FrameData } from './types';
+import { SignalProcessorConfig } from './types';
 
 /**
  * Procesador de señal PPG con detección de dedo
@@ -26,30 +26,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
   
-  // Enhanced configuration with multi-layer validation for medical-grade detection
+  // Configuration with stricter medically appropriate thresholds
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 90,          // Increased buffer for better HRV and signal analysis
-    MIN_RED_THRESHOLD: 30,    // Reducido de 35
-    MAX_RED_THRESHOLD: 180,   // Aumentado de 170
-    STABILITY_WINDOW: 40,     // Increased for more robust stability assessment
-    MIN_STABILITY_COUNT: 15,  // Requires more stability for reliable detection
-    HYSTERESIS: 8.0,         // Increased hysteresis for ultra-stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 20, // Reducido de 25
-    MAX_CONSECUTIVE_NO_DETECTIONS: 2,  // Faster response when finger is removed
-    QUALITY_LEVELS: 100,       // Aumentado para más granularidad
-    QUALITY_HISTORY_SIZE: 30, // Larger history for better trend analysis
-    CALIBRATION_SAMPLES: 30,  // More samples for accurate calibration
-    TEXTURE_GRID_SIZE: 20,    // Finer texture analysis for better detection
-    ROI_SIZE_FACTOR: 0.35,    // Smaller ROI for better signal focus and reduced noise
-    PEAK_DETECTION_THRESHOLD: 0.35, // Higher threshold for peak detection
-    MIN_PEAK_SEPARATION: 0.5, // Minimum separation between peaks (seconds)
-    HEART_RATE_MIN: 45,       // Minimum physiological heart rate (stricter)
-    HEART_RATE_MAX: 160,      // Maximum physiological heart rate (stricter)
-    MOTION_THRESHOLD: 0.15,   // Threshold for motion detection
-    SIGNAL_TO_NOISE_MIN: 3.0, // Minimum signal-to-noise ratio
-    MIN_PULSATILITY_SCORE: 0.25, // Minimum pulsatility score for valid detection
-    COLOR_RATIO_MIN: 0.9,     // Minimum red/green ratio for physiological validation
-    COLOR_RATIO_MAX: 3.2      // Maximum red/green ratio for physiological validation
+    BUFFER_SIZE: 15,
+    MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
+    MAX_RED_THRESHOLD: 240,
+    STABILITY_WINDOW: 15,      // Increased for more stability assessment
+    MIN_STABILITY_COUNT: 6,   // Requires more stability for detection
+    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
+    MIN_CONSECUTIVE_DETECTIONS: 9,  // Requires more frames to confirm detection
+    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
+    QUALITY_LEVELS: 20,
+    QUALITY_HISTORY_SIZE: 10,
+    CALIBRATION_SAMPLES: 10,
+    TEXTURE_GRID_SIZE: 8,
+    ROI_SIZE_FACTOR: 0.6
   };
   
   constructor(
@@ -198,10 +189,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection de frames inválidos - umbrales más permisivos
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.7 || redValue > this.CONFIG.MAX_RED_THRESHOLD * 1.2) {
+      // Early rejection of invalid frames - stricter thresholds
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.9) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal out of physiological range, skipping processing:", redValue);
+          console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
         }
 
         const minimalSignal: ProcessedSignal = {
@@ -216,69 +207,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
         this.onSignalReady(minimalSignal);
         if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Out of Range):", minimalSignal);
+          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Weak Signal):", minimalSignal);
         }
         return;
       }
 
-      // Validación adicional para textura y ratios de color - más permisiva
-      if (textureScore < 0.1 || rToGRatio < 0.6 || rToGRatio > 5.0) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Poor texture or non-physiological color ratio, skipping processing:", {
-            textureScore,
-            rToGRatio
-          });
-        }
-
-        const minimalSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: redValue,
-          quality: 10, // Asignar calidad mínima en lugar de cero
-          fingerDetected: redValue > 20, // Detección más agresiva para pruebas
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(minimalSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Poor Texture/Color):", minimalSignal);
-        }
-        return;
-      }
-
-      // 2. Apply multi-stage filtering to the signal with enhanced noise reduction
+      // 2. Apply multi-stage filtering to the signal
       let filteredValue = this.kalmanFilter.filter(redValue);
       filteredValue = this.sgFilter.filter(filteredValue);
-      
-      // Enhanced adaptive gain based on multiple signal quality factors with stricter validation
-      const textureGain = Math.min(1.3, 1.0 + (extractionResult.textureScore * 0.25));
-      const stabilityGain = this.trendAnalyzer.getStabilityScore() > 0.8 ? 1.15 : 1.0;
-      const adaptiveGain = textureGain * stabilityGain;
+      // Aplicar ganancia adaptativa basada en calidad de señal
+      const adaptiveGain = Math.min(2.0, 1.0 + (extractionResult.textureScore * 0.5));
       filteredValue = filteredValue * adaptiveGain;
-      
-      // Apply additional noise reduction for low-quality signals with physiological constraints
-      if (extractionResult.textureScore < 0.25 || rToGRatio < 0.9 || rToGRatio > 3.5) {
-        filteredValue = filteredValue * 0.7 + (this.lastValues[this.lastValues.length - 1] || redValue) * 0.3;
-      }
-      
-      // Apply physiological signal validation - reject unrealistic rapid changes
-      if (this.lastValues.length > 0) {
-        const lastValue = this.lastValues[this.lastValues.length - 1];
-        const changeRatio = Math.abs(filteredValue - lastValue) / (lastValue || 1);
-        
-        // Reject signals with unrealistic physiological changes (> 20% per frame)
-        if (changeRatio > 0.2 && !this.isCalibrating) {
-          if (shouldLog) {
-            console.log("PPGSignalProcessor: Unrealistic signal change detected, applying smoothing:", {
-              changeRatio,
-              currentValue: filteredValue,
-              lastValue
-            });
-          }
-          filteredValue = lastValue * 0.9 + filteredValue * 0.1;
-        }
-      }
 
       // Mantener un historial de valores filtrados para el cálculo de la pulsatilidad
       this.lastValues.push(filteredValue);
@@ -289,8 +228,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 3. Perform signal trend analysis with strict physiological validation
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
 
-      // Validación de tendencia fisiológica desactivada temporalmente para pruebas
-      if (false && trendResult === "non_physiological" && !this.isCalibrating) {
+      if (trendResult === "non_physiological" && !this.isCalibrating) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological signal rejected");
         }
@@ -299,10 +237,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: filteredValue,
-          quality: 20, // Calidad mínima en lugar de cero
-          fingerDetected: redValue > 20, // Detección más agresiva
+          quality: 0, 
+          fingerDetected: false,
           roi: roi,
-          perfusionIndex: 0.1
+          perfusionIndex: 0
         };
 
         this.onSignalReady(rejectSignal);
@@ -312,8 +250,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Validación reactivada con umbrales mucho más tolerantes
-      if ((rToGRatio < 0.5 || rToGRatio > 6.0) && !this.isCalibrating) { // Rango ampliado de 0.7-5.0 a 0.5-6.0
+      // Reactivated validation with more tolerant thresholds
+      if ((rToGRatio < 0.7 || rToGRatio > 5.0) && !this.isCalibrating) { // Rango ampliado de 0.7 a 5.0
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,
@@ -325,10 +263,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: filteredValue,
-          quality: 15, // Calidad mínima en lugar de cero
-          fingerDetected: redValue > 25, // Detección más agresiva para pruebas
+          quality: 0, 
+          fingerDetected: false,
           roi: roi,
-          perfusionIndex: 0.1 // Índice de perfusión mínimo
+          perfusionIndex: 0
         };
 
         this.onSignalReady(rejectSignal);
@@ -375,19 +313,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         perfusionIndex: Math.max(0, perfusionIndex)
       };
 
-      // Nuevo filtrado ambiental
-      const environmentalNoise = this.estimateEnvironmentalNoise(extractionResult);
-      if (environmentalNoise > 0.4) {
-        filteredValue = this.applyNoiseReduction(filteredValue, environmentalNoise);
-      }
-      
-      // Ajustar calidad con más granularidad
-      const adjustedQuality = Math.round(detectionResult.quality * 100 / this.CONFIG.QUALITY_LEVELS);
-
       if (shouldLog) {
         console.log("PPGSignalProcessor: Sending validated signal:", {
           fingerDetected: isFingerDetected,
-          quality, adjustedQuality,
+          quality,
           redValue,
           filteredValue,
           timestamp: new Date().toISOString()
@@ -422,17 +351,5 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     } else {
       console.error("PPGSignalProcessor: onError callback not available, cannot report error:", error);
     }
-  }
-
-  // Nueva función para estimar ruido ambiental
-  private estimateEnvironmentalNoise(extraction: FrameData): number {
-    // Implementación basada en variabilidad de color
-    const colorVar = Math.abs(extraction.rToGRatio - 1.5) + Math.abs(extraction.rToBRatio - 1.2);
-    return Math.min(1, colorVar / 2);
-  }
-
-  // Nueva función de reducción de ruido
-  private applyNoiseReduction(value: number, noiseLevel: number): number {
-    return value * (1 - noiseLevel * 0.5);
   }
 }

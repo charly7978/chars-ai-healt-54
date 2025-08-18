@@ -45,9 +45,9 @@ export class SignalAnalyzer {
   }
 
   /**
-   * Calculate overall quality and finger detection decision with enhanced validation.
-   * @param filteredValue Current filtered signal value
-   * @param trendResult   Trend analysis result for physiological validation
+   * Calculate overall quality and finger detection decision.
+   * @param filteredValue Unused for now but kept for future algorithm updates.
+   * @param trendResult   Additional context (e.g., from SignalTrendAnalyzer).
    */
   analyzeSignalMultiDetector(
     filteredValue: number,
@@ -56,19 +56,18 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Enhanced weighted sum with medical validation priorities
-    // Prioritize biophysical and physiological signals over simple color presence
+    // Weighted sum – weights can be tuned later or moved to config.
     const weighted =
-      redChannel * 0.15 +        // Reduced weight - basic presence
-      stability * 0.20 +         // Signal stability is important
-      pulsatility * 0.30 +      // Increased weight - crucial for heartbeat detection
-      biophysical * 0.25 +      // Increased weight - physiological validation
-      periodicity * 0.10;       // Important for rhythm detection
+      redChannel * 0.3 +
+      stability * 0.25 +
+      pulsatility * 0.25 +
+      biophysical * 0.15 +
+      periodicity * 0.05;
 
-    // Map 0-1 range to 0-100 and clamp
+    // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
 
-    // Maintain moving average over last N frames
+    // Maintain moving average over last N frames.
     this.qualityHistory.push(qualityValue);
     if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
       this.qualityHistory.shift();
@@ -77,22 +76,11 @@ export class SignalAnalyzer {
       this.qualityHistory.reduce((acc, v) => acc + v, 0) /
       this.qualityHistory.length;
 
-    // Enhanced hysteresis logic with adaptive thresholds
+    // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
-    
-    // Adaptive threshold based on signal characteristics
-    const baseThreshold = 35; // Increased base threshold for better specificity
-    const adaptiveThreshold = this.calculateAdaptiveThreshold();
-    const finalThreshold = Math.max(baseThreshold, adaptiveThreshold);
-
-    // Enhanced validation with trend analysis
-    const trendValidation = this.validateTrendCompatibility(trendResult);
-    const physiologicalValidation = this.validatePhysiologicalConsistency();
-
-    // Combined decision logic
-    const combinedScore = smoothedQuality * (trendValidation ? 1.0 : 0.7) * (physiologicalValidation ? 1.0 : 0.8);
-
-    if (combinedScore >= finalThreshold) {
+    console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
+    const DETECTION_THRESHOLD = 30;
+    if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
     } else {
@@ -100,7 +88,6 @@ export class SignalAnalyzer {
       this.consecutiveDetections = 0;
     }
 
-    // Stricter detection criteria with enhanced hysteresis
     if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
       isFingerDetected = true;
     } else if (
@@ -109,67 +96,10 @@ export class SignalAnalyzer {
       isFingerDetected = false;
     }
 
-    // Additional validation: require minimum pulsatility for heartbeat detection
-    if (isFingerDetected && pulsatility < 0.15) {
-      isFingerDetected = false;
-      this.consecutiveDetections = 0;
-    }
-
     return {
       isFingerDetected,
       quality: Math.round(smoothedQuality),
       detectorDetails: { ...this.detectorScores },
     };
-  }
-
-  /**
-   * Calculate adaptive threshold based on signal characteristics
-   */
-  private calculateAdaptiveThreshold(): number {
-    if (this.qualityHistory.length < 5) return 30;
-
-    // Calculate signal stability to adjust threshold
-    const recentQuality = this.qualityHistory.slice(-5);
-    const meanQuality = recentQuality.reduce((a, b) => a + b, 0) / recentQuality.length;
-    const qualityVariance = recentQuality.reduce((sum, val) => sum + Math.pow(val - meanQuality, 2), 0) / recentQuality.length;
-
-    // Increase threshold for unstable signals, decrease for stable ones
-    const stabilityFactor = Math.max(0.8, Math.min(1.2, 1.0 - qualityVariance / 1000));
-    return 30 * stabilityFactor;
-  }
-
-  /**
-   * Validate compatibility with trend analysis
-   */
-  private validateTrendCompatibility(trendResult: unknown): boolean {
-    // If trend result indicates non-physiological behavior, reject detection
-    if (typeof trendResult === 'string') {
-      return trendResult !== 'non_physiological' && trendResult !== 'unstable';
-    }
-    return true;
-  }
-
-  /**
-   * Validate physiological consistency across detectors
-   */
-  private validatePhysiologicalConsistency(): boolean {
-    const { redChannel, stability, pulsatility, biophysical, periodicity } = this.detectorScores;
-
-    // Require minimum levels in key physiological indicators
-    const minBiophysical = 0.2;  // Minimum biophysical plausibility
-    const minPulsatility = 0.1;  // Minimum pulsatility for heartbeat detection
-    const minStability = 0.15;   // Minimum signal stability
-
-    // Check consistency between related metrics
-    const biophysicalPulsatilityConsistent = Math.abs(biophysical - pulsatility) < 0.4;
-    const stabilityPeriodicityConsistent = stability > 0.1 ? periodicity > 0.05 : true;
-
-    return (
-      biophysical >= minBiophysical &&
-      pulsatility >= minPulsatility &&
-      stability >= minStability &&
-      biophysicalPulsatilityConsistent &&
-      stabilityPeriodicityConsistent
-    );
   }
 }

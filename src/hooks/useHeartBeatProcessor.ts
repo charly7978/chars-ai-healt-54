@@ -19,7 +19,7 @@ export const useHeartBeatProcessor = () => {
   const [currentBPM, setCurrentBPM] = useState<number>(0);
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0); // Estado para calidad de señal
-  const sessionId = useRef<string>(crypto.getRandomValues(new Uint32Array(1))[0].toString(36).substring(2, 9));
+  const sessionId = useRef<string>(Math.random().toString(36).substring(2, 9));
   // Variables para seguimiento de detección
   const detectionAttempts = useRef<number>(0);
   const lastDetectionTime = useRef<number>(Date.now());
