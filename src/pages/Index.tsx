@@ -311,8 +311,8 @@ const Index = () => {
         signalQuality: heartBeatResult.signalQuality
       });
       
-      // SINCRONIZACIÓN PERFECTA: 1 latido = 1 pico + 1 beep + 1 vibración
-      setBeatMarker(ppgValue * 100); // AMPLIFICAR para visualización clara
+      // MARCADOR DE LATIDO ESTABILIZADO (NO ERRÁTICO)
+      setBeatMarker(50); // VALOR FIJO: Consistencia visual > amplitud variable
       
       // VIBRACIÓN COORDINADA (no duplicar la del HeartBeatProcessor)
       // HeartBeatProcessor ya maneja beep + vibración internamente

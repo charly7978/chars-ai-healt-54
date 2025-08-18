@@ -46,8 +46,8 @@ const PPGSignalMeter = ({
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 95.0;
-  const SMOOTHING_FACTOR = 1.5;
+  const verticalScale = 25.0; // REDUCIDO: Menos amplitud visual = menos caos
+  const SMOOTHING_FACTOR = 0.8;   // REDUCIDO: Más suavizado
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
@@ -189,11 +189,15 @@ const PPGSignalMeter = ({
       baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
     }
     
-    const smoothedValue = smoothValue(value, lastValueRef.current);
-    lastValueRef.current = smoothedValue;
+    // SUAVIZADO AGRESIVO PARA ELIMINAR CAOS VISUAL
+    const heavySmoothValue = lastValueRef.current 
+      ? lastValueRef.current * 0.8 + value * 0.2  // MÁS SUAVIZADO
+      : value;
+    lastValueRef.current = heavySmoothValue;
     
-    const normalizedValue = (baselineRef.current || 0) - smoothedValue;
-    const scaledValue = normalizedValue * verticalScale;
+    // BASELINE ESTABLE Y ESCALADO CONTROLADO
+    const normalizedValue = (baselineRef.current || 0) - heavySmoothValue;
+    const scaledValue = Math.max(-50, Math.min(50, normalizedValue * 30)); // RANGO LIMITADO
     
     let isArrhythmia = false;
     if (rawArrhythmiaData && 
