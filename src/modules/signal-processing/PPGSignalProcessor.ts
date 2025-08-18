@@ -28,19 +28,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   // Configuration with stricter medically appropriate thresholds
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 15,
-    MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
-    MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 15,      // Increased for more stability assessment
-    MIN_STABILITY_COUNT: 6,   // Requires more stability for detection
-    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 9,  // Requires more frames to confirm detection
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
-    QUALITY_LEVELS: 20,
-    QUALITY_HISTORY_SIZE: 10,
-    CALIBRATION_SAMPLES: 10,
-    TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.6
+    BUFFER_SIZE: 25,          // Increased buffer for better signal analysis
+    MIN_RED_THRESHOLD: 15,    // Raised minimum threshold to reduce noise
+    MAX_RED_THRESHOLD: 220,   // Lowered maximum to avoid saturation
+    STABILITY_WINDOW: 20,     // Increased for more robust stability assessment
+    MIN_STABILITY_COUNT: 8,   // Requires more stability for reliable detection
+    HYSTERESIS: 3.0,         // Increased hysteresis for stable detection
+    MIN_CONSECUTIVE_DETECTIONS: 12, // Requires more frames to confirm detection
+    MAX_CONSECUTIVE_NO_DETECTIONS: 3,  // Faster response when finger is removed
+    QUALITY_LEVELS: 25,       // More granular quality assessment
+    QUALITY_HISTORY_SIZE: 15, // Larger history for better trend analysis
+    CALIBRATION_SAMPLES: 15,  // More samples for accurate calibration
+    TEXTURE_GRID_SIZE: 10,    // Finer texture analysis
+    ROI_SIZE_FACTOR: 0.55     // Smaller ROI for better signal focus
   };
   
   constructor(
@@ -212,12 +212,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // 2. Apply multi-stage filtering to the signal
+      // 2. Apply multi-stage filtering to the signal with enhanced noise reduction
       let filteredValue = this.kalmanFilter.filter(redValue);
       filteredValue = this.sgFilter.filter(filteredValue);
-      // Aplicar ganancia adaptativa basada en calidad de señal
-      const adaptiveGain = Math.min(2.0, 1.0 + (extractionResult.textureScore * 0.5));
+      
+      // Enhanced adaptive gain based on multiple signal quality factors
+      const textureGain = Math.min(1.5, 1.0 + (extractionResult.textureScore * 0.3));
+      const stabilityGain = this.trendAnalyzer.getStabilityScore() > 0.7 ? 1.2 : 1.0;
+      const adaptiveGain = textureGain * stabilityGain;
       filteredValue = filteredValue * adaptiveGain;
+      
+      // Apply additional noise reduction for low-quality signals
+      if (extractionResult.textureScore < 0.3) {
+        filteredValue = filteredValue * 0.8 + (this.lastValues[this.lastValues.length - 1] || redValue) * 0.2;
+      }
 
       // Mantener un historial de valores filtrados para el cálculo de la pulsatilidad
       this.lastValues.push(filteredValue);
