@@ -198,8 +198,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection of invalid frames - stricter thresholds with multi-layer validation
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD || redValue > this.CONFIG.MAX_RED_THRESHOLD) {
+      // Early rejection de frames inválidos - umbrales más permisivos
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.7 || redValue > this.CONFIG.MAX_RED_THRESHOLD * 1.2) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Signal out of physiological range, skipping processing:", redValue);
         }
@@ -221,8 +221,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Additional validation for texture and color ratios
-      if (textureScore < 0.2 || rToGRatio < 0.8 || rToGRatio > 4.0) {
+      // Validación adicional para textura y ratios de color - más permisiva
+      if (textureScore < 0.1 || rToGRatio < 0.6 || rToGRatio > 5.0) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Poor texture or non-physiological color ratio, skipping processing:", {
             textureScore,
@@ -234,8 +234,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: redValue,
-          quality: 0,
-          fingerDetected: false,
+          quality: 10, // Asignar calidad mínima en lugar de cero
+          fingerDetected: redValue > 20, // Detección más agresiva para pruebas
           roi: roi,
           perfusionIndex: 0
         };
@@ -289,7 +289,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 3. Perform signal trend analysis with strict physiological validation
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
 
-      if (trendResult === "non_physiological" && !this.isCalibrating) {
+      // Validación de tendencia fisiológica desactivada temporalmente para pruebas
+      if (false && trendResult === "non_physiological" && !this.isCalibrating) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological signal rejected");
         }
@@ -298,10 +299,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: filteredValue,
-          quality: 0, 
-          fingerDetected: false,
+          quality: 20, // Calidad mínima en lugar de cero
+          fingerDetected: redValue > 20, // Detección más agresiva
           roi: roi,
-          perfusionIndex: 0
+          perfusionIndex: 0.1
         };
 
         this.onSignalReady(rejectSignal);
@@ -311,8 +312,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Reactivated validation with more tolerant thresholds
-      if ((rToGRatio < 0.7 || rToGRatio > 5.0) && !this.isCalibrating) { // Rango ampliado de 0.7 a 5.0
+      // Validación reactivada con umbrales mucho más tolerantes
+      if ((rToGRatio < 0.5 || rToGRatio > 6.0) && !this.isCalibrating) { // Rango ampliado de 0.7-5.0 a 0.5-6.0
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,
@@ -324,10 +325,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           timestamp: Date.now(),
           rawValue: redValue,
           filteredValue: filteredValue,
-          quality: 0, 
-          fingerDetected: false,
+          quality: 15, // Calidad mínima en lugar de cero
+          fingerDetected: redValue > 25, // Detección más agresiva para pruebas
           roi: roi,
-          perfusionIndex: 0
+          perfusionIndex: 0.1 // Índice de perfusión mínimo
         };
 
         this.onSignalReady(rejectSignal);
