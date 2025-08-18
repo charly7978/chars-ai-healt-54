@@ -214,6 +214,9 @@ const PPGSignalMeter = ({
     // REGISTRAR PICO SI HeartBeatProcessor LO DETECTÓ (via value > 0)
     recordPeakFromHeartBeat(value, now, isArrhythmia);
     
+    // OBTENER PUNTOS DEL BUFFER (CRÍTICO - ESTABA FALTANDO)
+    const points = dataBufferRef.current.getPoints();
+    
     if (points.length > 1) {
       ctx.beginPath();
       ctx.strokeStyle = '#0EA5E9';
