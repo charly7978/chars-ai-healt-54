@@ -401,7 +401,6 @@ const Index = () => {
   };
 
   useEffect(() => {
-    const processSignalsAsync = async () => {
       if (!lastSignal) {
         console.log("[DIAG] Index.tsx: lastSignal es nulo o indefinido.");
         return;
@@ -439,65 +438,33 @@ const Index = () => {
         return;
       }
 
-      try {
-        console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
-        // Señal válida, procesar latidos y signos vitales
-        const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
-        setHeartRate(heartBeatResult.bpm);
-        setHeartbeatSignal(heartBeatResult.filteredValue);
-        setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
-        
-        // Actualizar últimos intervalos RR para debug
-        if (heartBeatResult.rrData?.intervals) {
-          setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
-        }
-
-        // 🔬 PROCESAMIENTO ASÍNCRONO DE SIGNOS VITALES CON ALGORITMOS AVANZADOS
-        console.log("🔬 Procesando signos vitales con matemática de extrema complejidad...");
-        const vitals = await processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-        
-        if (vitals) {
-          console.log("✅ Signos vitales calculados exitosamente:", {
-            spo2: vitals.spo2,
-            pressure: vitals.pressure,
-            glucose: vitals.glucose,
-            hemoglobin: vitals.hemoglobin,
-            colesterol: vitals.lipids?.totalCholesterol,
-            trigliceridos: vitals.lipids?.triglycerides,
-            arrhythmiaStatus: vitals.arrhythmiaStatus
-          });
-          
-          setVitalSigns(vitals);
-          
-          if (vitals.lastArrhythmiaData) {
-            setLastArrhythmiaData(vitals.lastArrhythmiaData);
-            const [status, count] = vitals.arrhythmiaStatus.split('|');
-            setArrhythmiaCount(count || "0");
-            const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
-            if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-              arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-              setArrhythmiaState(isArrhythmiaDetected);
-              if (isArrhythmiaDetected) {
-                toast({ 
-                  title: "¡Arritmia detectada!", 
-                  description: "Se activará un sonido distintivo con los latidos.", 
-                  variant: "destructive", 
-                  duration: 3000 
-                });
-              }
-            }
+    console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
+    // Señal válida, procesar latidos y signos vitales
+    const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
+    setHeartRate(heartBeatResult.bpm);
+    setHeartbeatSignal(heartBeatResult.filteredValue);
+    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
+    // Actualizar últimos intervalos RR para debug
+    if (heartBeatResult.rrData?.intervals) {
+      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
+    }
+    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    if (vitals) {
+      setVitalSigns(vitals);
+      if (vitals.lastArrhythmiaData) {
+        setLastArrhythmiaData(vitals.lastArrhythmiaData);
+        const [status, count] = vitals.arrhythmiaStatus.split('|');
+        setArrhythmiaCount(count || "0");
+        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+          setArrhythmiaState(isArrhythmiaDetected);
+          if (isArrhythmiaDetected) {
+            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
           }
-        } else {
-          console.warn("⚠️ processVitalSigns devolvió null/undefined");
         }
-      } catch (error) {
-        console.error("❌ Error en procesamiento de signos vitales:", error);
-        // Mantener valores anteriores en caso de error
       }
-    };
-
-    // Ejecutar el procesamiento asíncrono
-    processSignalsAsync();
+    }
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   // Referencia para activar o desactivar el sonido de arritmia

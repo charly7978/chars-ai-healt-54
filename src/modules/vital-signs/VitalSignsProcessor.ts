@@ -1,5 +1,9 @@
-import { SuperAdvancedVitalSignsProcessor, type AdvancedVitalSignsResult } from './SuperAdvancedVitalSignsProcessor';
-import { simulationEradicator } from '../../security/SimulationEradicator';
+import { SpO2Processor } from './spo2-processor';
+import { BloodPressureProcessor } from './blood-pressure-processor';
+import { ArrhythmiaProcessor } from './arrhythmia-processor';
+import { SignalProcessor } from './signal-processor';
+import { GlucoseProcessor } from './glucose-processor';
+import { LipidProcessor } from './lipid-processor';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -28,12 +32,17 @@ export interface VitalSignsResult {
       hemoglobin: number;
     };
   };
-  // Campos adicionales del sistema avanzado (opcionales para compatibilidad)
-  advanced?: AdvancedVitalSignsResult;
+
 }
 
 export class VitalSignsProcessor {
-  private advancedProcessor: SuperAdvancedVitalSignsProcessor;
+  // REVERTIR A PROCESADORES ORIGINALES PARA MANTENER COMPATIBILIDAD
+  private spo2Processor: SpO2Processor;
+  private bpProcessor: BloodPressureProcessor;
+  private arrhythmiaProcessor: ArrhythmiaProcessor;
+  private signalProcessor: SignalProcessor;
+  private glucoseProcessor: GlucoseProcessor;
+  private lipidProcessor: LipidProcessor;
   
   private lastValidResults: VitalSignsResult | null = null;
   private isCalibrating: boolean = false;
@@ -62,8 +71,13 @@ export class VitalSignsProcessor {
   private calibrationTimer: any = null;
 
   constructor() {
-    console.log('🚀 Inicializando VitalSignsProcessor con algoritmos matemáticos avanzados');
-    this.advancedProcessor = new SuperAdvancedVitalSignsProcessor();
+    console.log('🚀 Inicializando VitalSignsProcessor con procesadores originales (compatibilidad)');
+    this.spo2Processor = new SpO2Processor();
+    this.bpProcessor = new BloodPressureProcessor();
+    this.arrhythmiaProcessor = new ArrhythmiaProcessor();
+    this.signalProcessor = new SignalProcessor();
+    this.glucoseProcessor = new GlucoseProcessor();
+    this.lipidProcessor = new LipidProcessor();
   }
 
   /**
@@ -89,8 +103,7 @@ export class VitalSignsProcessor {
       this.calibrationProgress[key as keyof typeof this.calibrationProgress] = 0;
     }
     
-    // Delegar a procesador avanzado
-    this.advancedProcessor.startCalibration();
+    // Procesadores individuales no necesitan calibración especial
     
     // Establecer un temporizador de seguridad para finalizar la calibración
     if (this.calibrationTimer) {
@@ -189,126 +202,17 @@ export class VitalSignsProcessor {
     });
   }
 
-  public async processSignal(
+  public processSignal(
     ppgValue: number,
     rrData?: { intervals: number[]; lastPeakTime: number | null }
-  ): Promise<VitalSignsResult> {
-    // VALIDACIÓN ANTI-SIMULACIÓN MÁS TOLERANTE PARA DEBUGGING
-    try {
-      const isQuickSimulation = simulationEradicator.quickSimulationCheck(ppgValue, Date.now());
-      if (isQuickSimulation) {
-        console.warn("⚠️ Posible simulación detectada, pero continuando para debugging:", ppgValue);
-        // NO lanzar error, solo advertir
-      }
-    } catch (error) {
-      console.warn("⚠️ Error en validación anti-simulación, continuando:", error);
-    }
-
-    // Si el valor es muy bajo, se asume que no hay dedo => no medir nada (umbral más permisivo)
-    if (ppgValue < 0.01) {
-      console.log("VitalSignsProcessor: Señal muy baja, retornando valores por defecto.");
-      return this.lastValidResults || {
-        spo2: 97,
-        pressure: "120/80",
-        arrhythmiaStatus: "SIN ARRITMIAS",
-        glucose: 95,
-        lipids: {
-          totalCholesterol: 180,
-          triglycerides: 120
-        },
-        hemoglobin: 14.5
-      };
-    }
-
-    if (this.isCalibrating) {
-      this.calibrationSamples++;
-    }
-
-    try {
-      // CONSTRUIR SEÑAL PPG PARA PROCESAMIENTO AVANZADO
-      // En un sistema real, tendríamos múltiples valores, pero aquí construimos un buffer
-      const ppgSignal = this.buildPPGSignal(ppgValue);
-      
-      console.log(`🔬 Procesando señal con algoritmos matemáticos avanzados: ${ppgSignal.length} muestras`);
-      
-      // PROCESAMIENTO CON ALGORITMOS DE EXTREMA COMPLEJIDAD MATEMÁTICA
-      console.log("🧮 Ejecutando algoritmos matemáticos avanzados...");
-      const advancedResult = await this.advancedProcessor.processAdvancedVitalSigns(
-        ppgSignal, 
-        {
-          // Contexto estimado para el procesamiento avanzado
-          age: 35, // Valor por defecto, en aplicación real vendría del usuario
-          temperature: 36.5,
-          ambientLight: 500,
-          motionLevel: 2
-        }
-      );
-      
-      console.log("🎯 Resultado de algoritmos avanzados:", {
-        spo2: advancedResult.spo2,
-        sistolica: advancedResult.systolic,
-        diastolica: advancedResult.diastolic,
-        glucosa: advancedResult.glucose.value,
-        colesterol: advancedResult.lipids.totalCholesterol,
-        hemoglobina: advancedResult.hemoglobin.concentration,
-        confianza: advancedResult.validation.overallConfidence
-      });
-
-      // CONVERSIÓN A FORMATO COMPATIBLE MANTENIENDO DATOS AVANZADOS
-      const result: VitalSignsResult = {
-        spo2: Math.round(advancedResult.spo2 * 10) / 10,
-        pressure: `${advancedResult.systolic}/${advancedResult.diastolic}`,
-        arrhythmiaStatus: advancedResult.arrhythmiaStatus,
-        lastArrhythmiaData: advancedResult.heartRateVariability.rmssd > 0 ? {
-          timestamp: advancedResult.metadata.timestamp,
-          rmssd: Math.round(advancedResult.heartRateVariability.rmssd * 100) / 100,
-          rrVariation: advancedResult.heartRateVariability.nonLinearAnalysis.sd1 / advancedResult.heartRateVariability.nonLinearAnalysis.sd2
-        } : null,
-        glucose: Math.round(advancedResult.glucose.value * 10) / 10,
-        lipids: {
-          totalCholesterol: Math.round(advancedResult.lipids.totalCholesterol),
-          triglycerides: Math.round(advancedResult.lipids.triglycerides)
-        },
-        hemoglobin: Math.round(advancedResult.hemoglobin.concentration * 10) / 10,
-        // INCLUIR RESULTADO COMPLETO PARA APLICACIONES AVANZADAS
-        advanced: advancedResult
-      };
-      
-      if (this.isCalibrating) {
-        const calibrationProgress = this.advancedProcessor.getCalibrationProgress();
-        result.calibration = {
-          isCalibrating: true,
-          progress: {
-            heartRate: calibrationProgress?.progress.overall || 0,
-            spo2: calibrationProgress?.progress.spectral || 0,
-            pressure: calibrationProgress?.progress.cardiovascular || 0,
-            arrhythmia: calibrationProgress?.progress.overall || 0,
-            glucose: calibrationProgress?.progress.biochemical || 0,
-            lipids: calibrationProgress?.progress.biochemical || 0,
-            hemoglobin: calibrationProgress?.progress.overall || 0
-          }
-        };
-      }
-      
-      // Validar que los resultados son fisiológicamente válidos antes de guardar
-      if (this.isValidPhysiologicalResult(result)) {
-        this.lastValidResults = { ...result };
-        
-        console.log(`✅ Procesamiento exitoso - Confianza: ${advancedResult.validation.overallConfidence.toFixed(3)}, Calidad: ${advancedResult.validation.dataQuality}`);
-      } else {
-        console.warn("⚠️ Resultado no fisiológico, manteniendo valores anteriores");
-      }
-
-      return result;
-      
-    } catch (error) {
-      console.error("❌ Error en procesamiento avanzado:", error);
-      
-      // En caso de error, retornar valores seguros
+  ): VitalSignsResult {
+    // Si el valor es muy bajo, se asume que no hay dedo => no medir nada
+    if (ppgValue < 0.1) {
+      console.log("VitalSignsProcessor: No se detecta dedo, retornando resultados previos.");
       return this.lastValidResults || {
         spo2: 0,
         pressure: "--/--",
-        arrhythmiaStatus: "ERROR_PROCESAMIENTO",
+        arrhythmiaStatus: "--",
         glucose: 0,
         lipids: {
           totalCholesterol: 0,
@@ -317,76 +221,56 @@ export class VitalSignsProcessor {
         hemoglobin: 0
       };
     }
-  }
 
-  /**
-   * Construir señal PPG realista a partir de un valor individual
-   * Genera una señal fisiológicamente válida para el procesamiento
-   */
-  private buildPPGSignal(currentValue: number): number[] {
-    const signalLength = 300; // 5 segundos a 60 Hz
-    const signal: number[] = [];
-    
-    // Asegurar que el valor base es realista
-    const baseValue = Math.max(50, Math.min(200, currentValue || 128)); // Rango PPG típico
-    const amplitude = baseValue * 0.05; // 5% de modulación más realista
-    
-    console.log("🔬 Construyendo señal PPG:", {
-      valorBase: baseValue,
-      amplitud: amplitude,
-      longitudSeñal: signalLength
-    });
-    
-    for (let i = 0; i < signalLength; i++) {
-      // Señal cardíaca más realista (70 BPM típico)
-      const heartBeat = Math.sin(2 * Math.PI * i * 70 / (60 * 60)) * amplitude;
-      
-      // Modulación respiratoria (15 respiraciones por minuto)
-      const respiratory = Math.sin(2 * Math.PI * i * 15 / (60 * 60)) * amplitude * 0.1;
-      
-      // Ruido fisiológico mínimo
-      const noise = (this.getCryptoRandom() - 0.5) * baseValue * 0.01;
-      
-      // Variabilidad del ritmo cardíaco realista
-      const hrvVariation = Math.sin(2 * Math.PI * i * 0.1 / 60) * amplitude * 0.05;
-      
-      const finalValue = baseValue + heartBeat + respiratory + noise + hrvVariation;
-      signal.push(Math.max(10, Math.min(250, finalValue))); // Clamp a rangos realistas
+    if (this.isCalibrating) {
+      this.calibrationSamples++;
     }
     
-    // Log de muestra para debugging
-    if (signal.length >= 10) {
-      console.log("✅ Señal PPG generada:", {
-        primeros10: signal.slice(0, 10),
-        promedio: signal.reduce((a, b) => a + b, 0) / signal.length,
-        minimo: Math.min(...signal),
-        maximo: Math.max(...signal)
-      });
+    const filtered = this.signalProcessor.applySMAFilter(ppgValue);
+    
+    const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
+    
+    // Obtener los últimos valores de PPG para procesamiento
+    const ppgValues = this.signalProcessor.getPPGValues();
+    
+    // Calcular SpO2 usando datos reales de la señal
+    const spo2 = this.spo2Processor.calculateSpO2(ppgValues.slice(-60));
+    
+    // La presión arterial se calcula usando el módulo blood-pressure-processor
+    const bp = this.bpProcessor.calculateBloodPressure(ppgValues.slice(-60));
+    const pressure = `${bp.systolic}/${bp.diastolic}`;
+    
+    // Calcular niveles reales de glucosa a partir de las características del PPG
+    const glucose = this.glucoseProcessor.calculateGlucose(ppgValues);
+    
+    // El perfil lipídico (incluyendo colesterol y triglicéridos) se calcula usando el módulo lipid-processor
+    const lipids = this.lipidProcessor.calculateLipids(ppgValues);
+    
+    // Calcular hemoglobina real usando algoritmo optimizado
+    const hemoglobin = this.calculateHemoglobin(ppgValues);
+
+    const result: VitalSignsResult = {
+      spo2,
+      pressure,
+      arrhythmiaStatus: arrhythmiaResult.arrhythmiaStatus,
+      lastArrhythmiaData: arrhythmiaResult.lastArrhythmiaData,
+      glucose,
+      lipids,
+      hemoglobin
+    };
+    
+    if (this.isCalibrating) {
+      result.calibration = {
+        isCalibrating: true,
+        progress: { ...this.calibrationProgress }
+      };
     }
     
-    return signal;
-  }
-  
-  /**
-   * Generar número aleatorio usando crypto (NO Math.random)
-   */
-  private getCryptoRandom(): number {
-    const array = new Uint32Array(1);
-    crypto.getRandomValues(array);
-    return array[0] / 0xFFFFFFFF;
-  }
-  
-  /**
-   * Validar que los resultados son fisiológicamente válidos
-   */
-  private isValidPhysiologicalResult(result: VitalSignsResult): boolean {
-    return (
-      result.spo2 >= 70 && result.spo2 <= 100 &&
-      result.glucose >= 50 && result.glucose <= 400 &&
-      result.hemoglobin >= 8 && result.hemoglobin <= 20 &&
-      result.lipids.totalCholesterol >= 100 && result.lipids.totalCholesterol <= 400 &&
-      result.lipids.triglycerides >= 50 && result.lipids.triglycerides <= 500
-    );
+    if (spo2 > 0 && bp.systolic > 0 && bp.diastolic > 0 && glucose > 0 && lipids.totalCholesterol > 0) {
+      this.lastValidResults = { ...result };
+    }
+
+    return result;
   }
 
   private calculateHemoglobin(ppgValues: number[]): number {
@@ -414,37 +298,28 @@ export class VitalSignsProcessor {
   public getCalibrationProgress(): VitalSignsResult['calibration'] {
     if (!this.isCalibrating) return undefined;
     
-    const advancedProgress = this.advancedProcessor.getCalibrationProgress();
-    
     return {
       isCalibrating: true,
-      progress: {
-        heartRate: advancedProgress?.progress.overall || this.calibrationProgress.heartRate,
-        spo2: advancedProgress?.progress.spectral || this.calibrationProgress.spo2,
-        pressure: advancedProgress?.progress.cardiovascular || this.calibrationProgress.pressure,
-        arrhythmia: advancedProgress?.progress.overall || this.calibrationProgress.arrhythmia,
-        glucose: advancedProgress?.progress.biochemical || this.calibrationProgress.glucose,
-        lipids: advancedProgress?.progress.biochemical || this.calibrationProgress.lipids,
-        hemoglobin: advancedProgress?.progress.overall || this.calibrationProgress.hemoglobin
-      }
+      progress: { ...this.calibrationProgress }
     };
   }
 
   public forceCalibrationCompletion(): void {
     if (!this.isCalibrating) return;
     
-    console.log("🎯 VitalSignsProcessor: Forzando finalización manual de calibración avanzada");
+    console.log("VitalSignsProcessor: Forzando finalización manual de calibración");
     this.forceCompleteCalibration = true;
-    this.advancedProcessor.forceCalibrationCompletion();
-    this.completeCalibration();
   }
 
   public reset(): VitalSignsResult | null {
-    console.log("🔄 VitalSignsProcessor: Reset con sistema avanzado");
+    console.log("🔄 VitalSignsProcessor: Reset con procesadores originales");
     
-    // Resetear procesador avanzado
-    const lastAdvancedResult = this.advancedProcessor.reset();
-    
+    this.spo2Processor.reset();
+    this.bpProcessor.reset();
+    this.arrhythmiaProcessor.reset();
+    this.signalProcessor.reset();
+    this.glucoseProcessor.reset();
+    this.lipidProcessor.reset();
     this.isCalibrating = false;
     
     if (this.calibrationTimer) {
@@ -460,7 +335,7 @@ export class VitalSignsProcessor {
   }
   
   public fullReset(): void {
-    console.log("🔄 VitalSignsProcessor: Reset completo con sistema avanzado");
+    console.log("🔄 VitalSignsProcessor: Reset completo");
     
     this.lastValidResults = null;
     this.isCalibrating = false;
@@ -470,8 +345,7 @@ export class VitalSignsProcessor {
       this.calibrationTimer = null;
     }
     
-    // Reset completo del sistema avanzado
-    this.advancedProcessor.fullReset();
+    this.reset();
   }
 }
 

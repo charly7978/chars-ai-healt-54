@@ -76,8 +76,8 @@ export const useVitalSignsProcessor = () => {
     processor.forceCalibrationCompletion();
   }, [processor]);
   
-  // Process the signal with ADVANCED MATHEMATICAL algorithms
-  const processSignal = useCallback(async (value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+  // Process the signal with improved algorithms (REVERTIDO A SÍNCRONO)
+  const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
     processedSignals.current++;
     
     console.log("useVitalSignsProcessor: Procesando señal", {
@@ -93,8 +93,8 @@ export const useVitalSignsProcessor = () => {
       progresoCalibración: processor.getCalibrationProgress()
     });
     
-    // Process signal through the ADVANCED vital signs processor
-    const result = await processor.processSignal(value, rrData);
+    // Process signal through the vital signs processor (REVERTIDO A SÍNCRONO)
+    const result = processor.processSignal(value, rrData);
     const currentTime = Date.now();
     
     // Guardar para depuración
