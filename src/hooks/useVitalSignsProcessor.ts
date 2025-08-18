@@ -17,7 +17,12 @@ export const useVitalSignsProcessor = () => {
   const [lastValidResults, setLastValidResults] = useState<VitalSignsResult | null>(null);
   const lastArrhythmiaTime = useRef<number>(0);
   const hasDetectedArrhythmia = useRef<boolean>(false);
-  const sessionId = useRef<string>(Math.random().toString(36).substring(2, 9));
+  const sessionId = useRef<string>((() => {
+    // PROHIBIDO Math.random() en aplicaciones médicas - usar crypto
+    const randomBytes = new Uint32Array(2);
+    crypto.getRandomValues(randomBytes);
+    return randomBytes[0].toString(36) + randomBytes[1].toString(36);
+  })());
   const processedSignals = useRef<number>(0);
   const signalLog = useRef<{timestamp: number, value: number, result: any}[]>([]);
   
@@ -71,8 +76,8 @@ export const useVitalSignsProcessor = () => {
     processor.forceCalibrationCompletion();
   }, [processor]);
   
-  // Process the signal with improved algorithms
-  const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+  // Process the signal with ADVANCED MATHEMATICAL algorithms
+  const processSignal = useCallback(async (value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
     processedSignals.current++;
     
     console.log("useVitalSignsProcessor: Procesando señal", {
@@ -88,8 +93,8 @@ export const useVitalSignsProcessor = () => {
       progresoCalibración: processor.getCalibrationProgress()
     });
     
-    // Process signal through the vital signs processor
-    const result = processor.processSignal(value, rrData);
+    // Process signal through the ADVANCED vital signs processor
+    const result = await processor.processSignal(value, rrData);
     const currentTime = Date.now();
     
     // Guardar para depuración

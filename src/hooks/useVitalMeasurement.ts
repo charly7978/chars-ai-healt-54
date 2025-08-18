@@ -23,7 +23,12 @@ export const useVitalMeasurement = (isMeasuring: boolean) => {
       currentMeasurements: measurements,
       elapsedTime,
       timestamp: new Date().toISOString(),
-      session: Math.random().toString(36).substring(2, 9) // Identificador único para esta sesión
+      session: (() => {
+        // PROHIBIDO Math.random() en aplicaciones médicas - usar crypto
+        const randomBytes = new Uint32Array(1);
+        crypto.getRandomValues(randomBytes);
+        return randomBytes[0].toString(36);
+      })() // Identificador único para esta sesión
     });
 
     if (!isMeasuring) {
