@@ -127,10 +127,7 @@ const PPGSignalMeter = ({
     }
   }, [arrhythmiaStatus]);
 
-  // DETECCIÓN DE PICOS ELIMINADA - USAR SOLO HeartBeatProcessor
-  // PPGSignalMeter YA NO detecta picos independientemente
-  // Los picos vienen coordinados desde HeartBeatProcessor via beatMarker (value)
-  
+  // FUNCIÓN AUXILIAR PARA REGISTRAR PICOS (DEFINIDA PRIMERO)
   const recordPeakFromHeartBeat = useCallback((value: number, timestamp: number, isArrhythmia: boolean = false) => {
     // Solo REGISTRAR picos detectados externamente por HeartBeatProcessor
     if (value > 0) { // value > 0 indica que HeartBeatProcessor detectó un pico
@@ -292,7 +289,7 @@ const PPGSignalMeter = ({
     
     lastRenderTimeRef.current = currentTime;
     animationFrameRef.current = requestAnimationFrame(renderSignal);
-  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
+  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, smoothValue, preserveResults, recordPeakFromHeartBeat]);
 
   useEffect(() => {
     renderSignal();
