@@ -9,7 +9,7 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_SIGNAL_THRESHOLD = 0.04; // Reducido para captar señal más débil
   private readonly DEFAULT_MIN_CONFIDENCE = 0.50; // Reducido para mejor detección
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Restaurado a valor médicamente apropiado
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // AUMENTADO de 300 a 400ms para evitar BPM excesivo (máx 150 BPM)
   private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
 
   // Parámetros de filtrado ajustados para precisión médica
@@ -34,17 +34,17 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites para los parámetros adaptativos - Valores médicamente apropiados
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.09; // Reducido para mejor sensibilidad
+  // Límites para los parámetros adaptativos - CORREGIDOS PARA BPM PRECISO
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.15; // AUMENTADO de 0.09 a 0.15 para ser más selectivo
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.4;
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.40; // Reducido para mejor detección
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.60; // AUMENTADO de 0.40 a 0.60 para mayor precisión
   private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.90;
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
 
-  // ────────── PARÁMETROS PARA PROCESAMIENTO ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.8; // Aumentado para mejor amplificación
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.5; // Aumentado para mejor detección
+  // ────────── PARÁMETROS PARA PROCESAMIENTO (CORREGIDOS PARA BPM PRECISO) ──────────
+  private readonly SIGNAL_BOOST_FACTOR = 1.2; // REDUCIDO de 1.8 a 1.2 para evitar BPM excesivo
+  private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // REDUCIDO de 0.5 a 0.3 para menos falsos picos
   
   // Control del auto-ajuste
   private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 11; // Reducido para adaptarse más rápido
@@ -366,11 +366,11 @@ export class HeartBeatProcessor {
     let boostFactor = this.SIGNAL_BOOST_FACTOR;
     
     if (range < 1.0) {
-      // Señal débil - amplificar moderadamente
-      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.8; // Más amplificación para señales débiles
+      // Señal débil - amplificar MODERADAMENTE (CORREGIDO)
+      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.3; // REDUCIDO de 1.8 a 1.3
     } else if (range < 3.0) {
-      // Señal moderada - amplificar ligeramente
-      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.4;
+      // Señal moderada - amplificar ligeramente (CORREGIDO)
+      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.1; // REDUCIDO de 1.4 a 1.1
     } else if (range > 10.0) {
       // Señal fuerte - no amplificar
       boostFactor = 1.0;
@@ -486,10 +486,16 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // Detectar pico en máximo local: derivada negativa
-    const isOverThreshold = derivative < 0;
-    // Confianza máxima en cada detección de pico
-    const confidence = 1;
+    // DETECCIÓN DE PICOS MÁS SELECTIVA (CORREGIDO PARA BPM PRECISO)
+    const derivativeThreshold = -0.2; // Umbral más estricto para derivada
+    const amplitudeThreshold = 0.5;   // Umbral mínimo de amplitud
+    
+    const isOverThreshold = derivative < derivativeThreshold && 
+                           Math.abs(normalizedValue) > amplitudeThreshold;
+    
+    // CONFIANZA BASADA EN CALIDAD DE SEÑAL (CORREGIDO)
+    const confidence = isOverThreshold ? 
+      Math.min(1.0, Math.abs(derivative) / 2.0 + Math.abs(normalizedValue) / 5.0) : 0;
 
     return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
   }

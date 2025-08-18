@@ -18,9 +18,9 @@ export class SignalProcessor {
   private readonly BASELINE_FACTOR = 0.98; // Incrementado para mejor seguimiento (antes 0.97)
   private baselineValue: number = 0;
   
-  // PARÁMETROS DE SENSIBILIDAD EXTREMA MEJORADOS
-  private readonly PEAK_ENHANCEMENT = 5.0; // Factor de amplificación extremo para picos (antes 3.5)
-  private readonly MIN_SIGNAL_BOOST = 12.0; // Amplificación máxima para señales débiles (antes 8.0)
+  // PARÁMETROS CORREGIDOS PARA BPM PRECISO (NO EXCESIVO)
+  private readonly PEAK_ENHANCEMENT = 2.5; // REDUCIDO de 5.0 a 2.5 para evitar falsos picos
+  private readonly MIN_SIGNAL_BOOST = 4.0; // REDUCIDO de 12.0 a 4.0 para amplificación moderada
   private readonly ADAPTIVE_GAIN_ENABLED = true; // Mantener activada ganancia adaptativa
   private readonly NOISE_SUPPRESSION = 0.7; // Supresión de ruido más agresiva pero no excesiva (antes 0.8)
   
@@ -188,11 +188,11 @@ export class SignalProcessor {
     const range = this.recentMax - this.recentMin;
     const normalizedValue = value - this.baselineValue;
     
-    // AMPLIFICACIÓN EXTREMA para señales débiles
+    // AMPLIFICACIÓN MODERADA para señales débiles (CORREGIDO PARA BPM)
     if (range < 5.0) { // Umbral elevado para capturar más señales como "débiles"
-      // Amplificación extrema para señales muy débiles
+      // Amplificación MODERADA para señales muy débiles (CORREGIDO)
       const amplificationFactor = Math.max(this.MIN_SIGNAL_BOOST, 
-                                          30.0 / (range + 0.1)); // Factor más agresivo
+                                          8.0 / (range + 0.5)); // REDUCIDO de 30.0 a 8.0, denominador aumentado
       
       // Amplificación no lineal para preservar forma de onda
       const sign = Math.sign(normalizedValue);
