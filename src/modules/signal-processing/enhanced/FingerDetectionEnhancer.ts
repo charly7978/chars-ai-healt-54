@@ -24,30 +24,30 @@ export interface DetectionWindow {
 
 export class FingerDetectionEnhancer {
   private readonly CONFIG = {
-    // Enhanced detection thresholds
-    MIN_SIGNAL_STRENGTH: 0.25,      // Increased from 0.2
-    MIN_TEXTURE_QUALITY: 0.20,     // Increased from 0.15
-    MIN_COLOR_CONSISTENCY: 0.65,   // Increased from 0.5
-    MIN_MOTION_STABILITY: 0.55,     // Increased from 0.4
-    MIN_PULSATILITY_SCORE: 0.30,  // Increased from 0.25
-    MIN_PHYSIOLOGICAL_SCORE: 0.55, // Increased from 0.4
+    // Umbrales reducidos para mayor sensibilidad
+    MIN_SIGNAL_STRENGTH: 0.15,      // Reducido de 0.25
+    MIN_TEXTURE_QUALITY: 0.10,      // Reducido de 0.20
+    MIN_COLOR_CONSISTENCY: 0.45,    // Reducido de 0.65
+    MIN_MOTION_STABILITY: 0.35,     // Reducido de 0.55
+    MIN_PULSATILITY_SCORE: 0.20,    // Reducido de 0.30
+    MIN_PHYSIOLOGICAL_SCORE: 0.35,  // Reducido de 0.55
     
-    // Detection windows
-    DETECTION_WINDOW_SIZE: 15,    // Frames for consistent detection
-    CONFIDENCE_THRESHOLD: 0.75,   // Minimum confidence for valid detection
-    HYSTERESIS_FACTOR: 0.15,      // Hysteresis for stable detection
+    // Ventanas de detección más permisivas
+    DETECTION_WINDOW_SIZE: 10,    // Reducido de 15 frames
+    CONFIDENCE_THRESHOLD: 0.60,   // Reducido de 0.75
+    HYSTERESIS_FACTOR: 0.10,      // Reducido de 0.15
     
-    // Signal validation
-    MAX_NOISE_LEVEL: 0.2,         // Maximum allowed noise
-    MIN_PEAK_COUNT: 2,            // Minimum peaks for valid pulse
-    MAX_HEART_RATE: 180,          // Maximum physiological heart rate
-    MIN_HEART_RATE: 40,           // Minimum physiological heart rate
+    // Validación de señal más permisiva
+    MAX_NOISE_LEVEL: 0.35,        // Aumentado de 0.2
+    MIN_PEAK_COUNT: 1,            // Reducido de 2
+    MAX_HEART_RATE: 190,          // Aumentado de 180
+    MIN_HEART_RATE: 35,           // Reducido de 40
     
-    // Color ratio validation
-    RED_GREEN_RATIO_MIN: 0.8,     // Stricter color validation
-    RED_GREEN_RATIO_MAX: 3.0,
-    RED_BLUE_RATIO_MIN: 0.9,
-    RED_BLUE_RATIO_MAX: 3.5
+    // Validación de color más permisiva
+    RED_GREEN_RATIO_MIN: 0.6,     // Reducido de 0.8
+    RED_GREEN_RATIO_MAX: 4.0,     // Aumentado de 3.0
+    RED_BLUE_RATIO_MIN: 0.7,      // Reducido de 0.9
+    RED_BLUE_RATIO_MAX: 4.5       // Aumentado de 3.5
   };
 
   private detectionHistory: DetectionWindow[] = [];
