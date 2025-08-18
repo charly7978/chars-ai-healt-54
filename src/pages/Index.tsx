@@ -311,8 +311,8 @@ const Index = () => {
         signalQuality: heartBeatResult.signalQuality
       });
       
-      // MARCADOR DE LATIDO ESTABILIZADO (NO ERRÁTICO)
-      setBeatMarker(50); // VALOR FIJO: Consistencia visual > amplitud variable
+      // MARCADOR DE LATIDO DINÁMICO (RESTAURADO A FUNCIONAMIENTO ANTERIOR)
+      setBeatMarker(ppgValue * 100); // AMPLIFICAR para visualización clara como antes
       
       // VIBRACIÓN COORDINADA (no duplicar la del HeartBeatProcessor)
       // HeartBeatProcessor ya maneja beep + vibración internamente

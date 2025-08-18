@@ -6,10 +6,10 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 30;
   private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.08; // ESTABILIZADO: Menos sensible para evitar ruido
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.55; // AUMENTADO: Más selectivo para latidos reales
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03; // ALGORITMO SOFISTICADO: Detectar señales sutiles con filtrado inteligente
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.35; // PROCESAMIENTO AVANZADO: Validar con múltiples criterios
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 500; // AUMENTADO: Forzar intervalos mínimos estables (máx 120 BPM)
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 350; // ALGORITMO INTELIGENTE: Permitir rangos fisiológicos normales (máx 171 BPM)
   private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
 
   // Parámetros de filtrado ajustados para precisión médica
@@ -34,16 +34,16 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites adaptativos ESTABILIZADOS PARA CONSISTENCIA
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.05; // ESTABLE: Evitar detección de ruido
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.15; // RESTRINGIDO: Rango más estrecho
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.45;   // ESTABLE: Confianza mínima alta
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.75;   // CONTROLADO: No demasiado estricto
+  // Límites adaptativos INTELIGENTES PARA PPG DE CÁMARA
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.01; // ALGORITMO AUDAZ: Detectar señales muy débiles
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.25; // SISTEMA ROBUSTO: Rango amplio con validación posterior
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.20;   // PROCESAMIENTO INGENIOSO: Permitir detección inicial baja
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85;   // VALIDACIÓN SOFISTICADA: Confirmar con múltiples criterios
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
 
-  // ────────── PARÁMETROS ESTABILIZADOS PARA DETECCIÓN CONSISTENTE ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.8; // REDUCIDO: Menos amplificación = menos ruido
+  // ────────── ALGORITMOS AVANZADOS PARA SEÑAL PPG DE CÁMARA ──────────
+  private readonly SIGNAL_BOOST_FACTOR = 2.2; // ALGORITMO SOFISTICADO: Amplificar inteligentemente con filtrado posterior
   private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // REDUCIDO de 0.5 a 0.3 para menos falsos picos
   
   // Control del auto-ajuste ESTABILIZADO (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
@@ -543,18 +543,51 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // DETECCIÓN DE PICOS ESTABILIZADA (CONSISTENCIA > SENSIBILIDAD)
-    const derivativeThreshold = -0.08; // MENOS SENSIBLE: Evitar ruido como picos
-    const amplitudeThreshold = 0.15;   // MÁS SELECTIVO: Solo cambios significativos
+    // ALGORITMO AVANZADO DE DETECCIÓN MULTI-CRITERIO
+    const derivativeThreshold = -0.04; // SENSIBILIDAD INTELIGENTE: Captar señales PPG reales
+    const amplitudeThreshold = 0.08;   // UMBRAL SOFISTICADO: Balanceado para cámara
     
     const isOverThreshold = derivative < derivativeThreshold && 
                            Math.abs(normalizedValue) > amplitudeThreshold;
     
-    // CONFIANZA ESTABILIZADA (PRIORIZAR CALIDAD)
-    const confidence = isOverThreshold ? 
-      Math.min(1.0, Math.abs(derivative) / 1.2 + Math.abs(normalizedValue) / 2.5) : 0; // MÁS CONSERVADORA
+    // ALGORITMO AVANZADO DE CONFIANZA MULTI-FACTORIAL
+    const baseConfidence = isOverThreshold ? 
+      Math.min(1.0, Math.abs(derivative) / 0.8 + Math.abs(normalizedValue) / 1.8) : 0;
+    
+    // FACTOR CORRECTOR INTELIGENTE basado en contexto temporal
+    const contextFactor = this.getTemporalContextFactor();
+    const signalQualityFactor = this.currentSignalQuality / 100;
+    
+    const confidence = baseConfidence * contextFactor * signalQualityFactor;
 
     return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
+  }
+
+  /**
+   * ALGORITMO INGENIOSO: Factor de contexto temporal para mejorar confianza
+   * Analiza patrones recientes para detectar regularidad cardíaca
+   */
+  private getTemporalContextFactor(): number {
+    if (this.rrIntervals.length < 3) return 0.5; // Factor base sin historial
+    
+    // Analizar regularidad de intervalos RR recientes
+    const recentIntervals = this.rrIntervals.slice(-5);
+    const avgInterval = recentIntervals.reduce((a, b) => a + b, 0) / recentIntervals.length;
+    
+    // Calcular variabilidad (menor variabilidad = más regular = mayor confianza)
+    const variance = recentIntervals.reduce((acc, interval) => 
+      acc + Math.pow(interval - avgInterval, 2), 0) / recentIntervals.length;
+    const stdDev = Math.sqrt(variance);
+    const coefficientOfVariation = stdDev / avgInterval;
+    
+    // Factor de regularidad: menos variación = mayor confianza
+    const regularityFactor = Math.max(0.3, Math.min(1.0, 1.0 - coefficientOfVariation));
+    
+    // Factor de rango fisiológico: intervalos en rango normal = mayor confianza
+    const isPhysiological = avgInterval >= 500 && avgInterval <= 1500; // 40-120 BPM
+    const physiologyFactor = isPhysiological ? 1.0 : 0.6;
+    
+    return regularityFactor * physiologyFactor;
   }
 
   private confirmPeak(

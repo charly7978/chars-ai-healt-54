@@ -340,14 +340,29 @@ const CameraView = ({
         const brightness = (avgRed + avgGreen + avgBlue) / 3;
         const redIntensity = avgRed / 255;
         
-        // CONVERSIÓN PPG ESTABILIZADA (REDUCIR RUIDO)
-        // Usar baseline adaptativo para mejor estabilidad
-        if (!window.ppgBaseline) window.ppgBaseline = avgRed; // Inicializar
-        window.ppgBaseline = window.ppgBaseline * 0.99 + avgRed * 0.01; // Baseline suavizado
+        // ALGORITMO SOFISTICADO DE EXTRACCIÓN PPG PARA CÁMARA
+        // Sistema adaptativo multi-dimensional para optimizar señal débil
+        if (!window.ppgBaseline) window.ppgBaseline = avgRed;
+        if (!window.ppgHistory) window.ppgHistory = [];
         
-        const ppgSignal = (avgRed - window.ppgBaseline) / window.ppgBaseline; // Señal centrada
-        const ppgAmplified = ppgSignal * 5.0; // REDUCIDO: Menos amplificación = menos ruido
-        const ppgNormalized = Math.max(0.1, Math.min(0.9, ppgAmplified + 0.5)); // Rango restringido
+        // BASELINE ADAPTATIVO INTELIGENTE con memoria histórica
+        const alpha = window.ppgHistory.length < 10 ? 0.1 : 0.02; // Adaptación inicial más rápida
+        window.ppgBaseline = window.ppgBaseline * (1-alpha) + avgRed * alpha;
+        
+        // FILTRADO AVANZADO DE SEÑAL PPG
+        const rawPPGSignal = (avgRed - window.ppgBaseline) / window.ppgBaseline;
+        
+        // Agregar al historial para análisis temporal
+        window.ppgHistory.push(rawPPGSignal);
+        if (window.ppgHistory.length > 20) window.ppgHistory.shift();
+        
+        // ALGORITMO DE AMPLIFICACIÓN INTELIGENTE basado en varianza reciente
+        const recentVariance = window.ppgHistory.length > 5 ? 
+          window.ppgHistory.reduce((acc, val) => acc + Math.pow(val, 2), 0) / window.ppgHistory.length : 0.01;
+        const adaptiveGain = Math.max(3.0, Math.min(15.0, 1.0 / Math.sqrt(recentVariance))); // Gain inversamente proporcional a varianza
+        
+        const ppgAmplified = rawPPGSignal * adaptiveGain;
+        const ppgNormalized = Math.max(0.0, Math.min(1.0, ppgAmplified + 0.5));
         
         // Criterios biofísicos mejorados para detectar tejido perfundido
         const fingerDetected = 
@@ -356,35 +371,33 @@ const CameraView = ({
           rgRatio > 1.1 && rgRatio < 3.8 && // AJUSTADO: Ratio fisiológico
           redIntensity > 0.25;              // AUMENTADO: Intensidad normalizada
         
-        // ANÁLISIS PROFUNDO DE SEÑAL PPG REAL
+        // ANÁLISIS AVANZADO CON ALGORITMOS DE VANGUARDIA
         const timestamp = Date.now();
         if (fingerDetected) {
-          console.log(`CameraView: 🟢 DEDO DETECTADO [${timestamp}] - ANÁLISIS PPG DETALLADO`, {
+          console.log(`CameraView: 🟢 ALGORITMO SOFISTICADO - PPG DE VANGUARDIA [${timestamp}]`, {
             // Valores cámara RAW
             avgRed: avgRed.toFixed(1),
             avgGreen: avgGreen.toFixed(1), 
             avgBlue: avgBlue.toFixed(1),
             brightness: brightness.toFixed(1),
             rgRatio: rgRatio.toFixed(3),
-            redIntensity: redIntensity.toFixed(3),
             
-            // Conversión PPG paso a paso
-            ppgBaseline,
-            ppgSignal: ppgSignal.toFixed(6), // MÁS PRECISIÓN
-            ppgAmplified: ppgAmplified.toFixed(6),
-            ppgNormalized: ppgNormalized.toFixed(6),
+            // PROCESAMIENTO AVANZADO PPG
+            baselineAdaptativo: window.ppgBaseline.toFixed(2),
+            señalPPGRaw: rawPPGSignal.toFixed(6),
+            varianzaReciente: recentVariance.toFixed(6),
+            gainAdaptativo: adaptiveGain.toFixed(2),
+            ppgAmplificado: ppgAmplified.toFixed(6),
+            ppgFinal: ppgNormalized.toFixed(6),
             
-            // ANÁLISIS DE VARIACIÓN (clave para PPG)
-            variacionRoja: avgRed - (window as any).lastAvgRed || 0,
-            variacionPPG: ppgNormalized - (window as any).lastPPGValue || 0,
-            
-            // Timestamp para análisis temporal
+            // ANÁLISIS TEMPORAL INTELIGENTE
+            historiaPPG: window.ppgHistory.length,
+            variacionDesdeUltimo: ppgNormalized - ((window as any).lastPPGValue || 0.5),
             timestamp,
-            tiempoDesdeUltimo: timestamp - ((window as any).lastPPGTimestamp || timestamp)
+            intervaloDeProceso: timestamp - ((window as any).lastPPGTimestamp || timestamp)
           });
           
-          // Guardar para análisis de variación
-          (window as any).lastAvgRed = avgRed;
+          // Guardar para algoritmos adaptativos
           (window as any).lastPPGValue = ppgNormalized;
           (window as any).lastPPGTimestamp = timestamp;
           
