@@ -16,7 +16,7 @@ export class HeartBeatProcessor {
   private readonly MEDIAN_FILTER_WINDOW = 3;
   private readonly MOVING_AVERAGE_WINDOW = 5; // Aumentado para mejor filtrado de ruido
   private readonly EMA_ALPHA = 0.4; // Reducido para más suavizado
-  private readonly BASELINE_FACTOR = 0.85; // Aumentado para seguimiento más estable
+  private readonly BASELINE_FACTOR = 0.95; // Cambiar de 0.85 a 0.95 para adaptación MUY lenta
 
   // Parámetros de beep más estrictos
   private readonly BEEP_DURATION = 450; 
@@ -261,13 +261,13 @@ export class HeartBeatProcessor {
       };
     }
 
-    // Baseline tracking
+    // Baseline tracking - ADAPTACIÓN MUY LENTA para preservar variaciones PPG
     this.baseline = this.baseline * this.BASELINE_FACTOR + smoothed * (1 - this.BASELINE_FACTOR);
     const normalizedValue = smoothed - this.baseline;
     
-    // DEBUG: Log valores clave para diagnóstico
-    if (this.signalBuffer.length % 30 === 0) {
-      console.log(`[DEBUG] HeartBeat - baseline:${this.baseline.toFixed(2)}, smoothed:${smoothed.toFixed(2)}, normalized:${normalizedValue.toFixed(2)}, adaptiveThresh:${this.adaptiveSignalThreshold.toFixed(3)}`);
+    // Si es la primera vez, inicializar baseline con el primer valor
+    if (this.signalBuffer.length === 1) {
+      this.baseline = smoothed * 0.95; // Baseline ligeramente por debajo del primer valor
     }
     
     // Seguimiento de fuerza de señal
