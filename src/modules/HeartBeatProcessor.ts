@@ -265,6 +265,11 @@ export class HeartBeatProcessor {
     this.baseline = this.baseline * this.BASELINE_FACTOR + smoothed * (1 - this.BASELINE_FACTOR);
     const normalizedValue = smoothed - this.baseline;
     
+    // DEBUG: Log valores clave para diagnóstico
+    if (this.signalBuffer.length % 30 === 0) {
+      console.log(`[DEBUG] HeartBeat - baseline:${this.baseline.toFixed(2)}, smoothed:${smoothed.toFixed(2)}, normalized:${normalizedValue.toFixed(2)}, adaptiveThresh:${this.adaptiveSignalThreshold.toFixed(3)}`);
+    }
+    
     // Seguimiento de fuerza de señal
     this.trackSignalStrength(Math.abs(normalizedValue));
     
@@ -492,12 +497,14 @@ export class HeartBeatProcessor {
     // 1. VALIDACIÓN DE AMPLITUD REAL - debe superar umbral adaptativo
     const amplitude = Math.abs(normalizedValue);
     if (amplitude < this.adaptiveSignalThreshold) {
+      console.log(`[DEBUG] Peak rejected - amplitude too low: ${amplitude.toFixed(3)} < ${this.adaptiveSignalThreshold.toFixed(3)}`);
       return { isPeak: false, confidence: 0, rawDerivative: derivative };
     }
     
     // 2. VALIDACIÓN DE DERIVADA - debe ser negativa (bajada después del pico)
     const isNegativeDerivative = derivative < this.adaptiveDerivativeThreshold;
     if (!isNegativeDerivative) {
+      console.log(`[DEBUG] Peak rejected - derivative not negative: ${derivative.toFixed(3)} >= ${this.adaptiveDerivativeThreshold.toFixed(3)}`);
       return { isPeak: false, confidence: 0.1, rawDerivative: derivative };
     }
     
