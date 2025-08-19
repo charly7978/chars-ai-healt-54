@@ -404,14 +404,15 @@ const Index = () => {
         return;
       }
       
-    // Umbral MÁS ALTO de calidad para procesar
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 40; // Aumentado de 30 a 40
+    // UMBRAL REDUCIDO para permitir detección de latidos
+    const MIN_SIGNAL_QUALITY_TO_MEASURE = 10; // REDUCIDO de 40 a 10 para permitir más señales
       // Si no hay dedo válido o calidad insuficiente, resetear indicadores
       if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
-        console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
+        console.log("[DIAG] Index.tsx: ***CORTE DE FLUJO*** Dedo NO detectado o calidad insuficiente", {
           fingerDetected: lastSignal.fingerDetected,
           quality: lastSignal.quality,
-          minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
+          minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE,
+          RAZON_DEL_CORTE: lastSignal.fingerDetected ? "CALIDAD_INSUFICIENTE" : "DEDO_NO_DETECTADO"
         });
         setHeartRate(0);
         setHeartbeatSignal(0);
