@@ -92,9 +92,9 @@ export class SignalProcessingPipeline {
       // 1. Extraer datos PPG reales del frame de la cámara con detección de dedo humano
       const frameData = this.frameProcessor.extractFrameData(imageData);
       
-      // VALIDACIÓN CRÍTICA: Solo procesar si se detecta dedo humano real
+      // VALIDACIÓN CRÍTICA: Solo procesar si se detecta dedo humano real  
       if (!frameData.fingerDetection.isFingerDetected || 
-          frameData.fingerDetection.confidence < 0.5) {
+          frameData.fingerDetection.confidence < 0.3) {  // Reducido de 0.5 a 0.3
         
         console.log('[DEBUG] SignalProcessingPipeline - No human finger detected:', {
           detected: frameData.fingerDetection.isFingerDetected,

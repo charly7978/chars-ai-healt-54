@@ -37,17 +37,17 @@ export interface FingerMetrics {
 export class FingerDetector {
   // Parámetros anatómicos específicos para dedos humanos
   private readonly HUMAN_FINGER_CHARACTERISTICS = {
-    // Rangos de color para piel humana con sangre oxigenada
+    // Rangos de color para piel humana con sangre oxigenada - AJUSTADOS PARA REALIDAD
     skinColor: {
-      red: { min: 80, max: 220 },
-      green: { min: 50, max: 180 },
-      blue: { min: 40, max: 160 }
+      red: { min: 60, max: 240 },   // Más permisivo para diferentes tonos de piel
+      green: { min: 20, max: 200 }, // Más amplio para condiciones de iluminación
+      blue: { min: 1, max: 180 }    // Muy permisivo - cámaras pueden tener bajo canal azul
     },
-    // Ratios específicos para tejido perfundido
+    // Ratios específicos para tejido perfundido - AJUSTADOS PARA CONDICIONES REALES
     perfusionRatios: {
-      redToGreen: { min: 1.1, max: 2.8 },
-      redToBlue: { min: 1.2, max: 3.5 },
-      greenToBlue: { min: 0.8, max: 2.2 }
+      redToGreen: { min: 0.8, max: 6.0 }, // Expandido para condiciones de iluminación variables
+      redToBlue: { min: 1.0, max: 60.0 },  // Expandido para cámaras con bajo canal azul
+      greenToBlue: { min: 0.5, max: 4.0 }  // Más permisivo
     },
     // Características de textura de la piel
     texture: {
@@ -67,7 +67,7 @@ export class FingerDetector {
   private detectionHistory: boolean[] = [];
   private metricsHistory: FingerMetrics[] = [];
   private readonly HISTORY_SIZE = 10;
-  private readonly CONSENSUS_THRESHOLD = 0.7; // 70% de detecciones positivas
+  private readonly CONSENSUS_THRESHOLD = 0.5; // 50% de detecciones positivas - más permisivo
 
   constructor() {}
 
@@ -90,8 +90,8 @@ export class FingerDetector {
                          (bloodPerfusionScore * 0.35) + 
                          (skinTextureScore * 0.25);
     
-    // Umbral estricto para detección positiva
-    const isFingerDetected = combinedScore > 0.65 &&
+    // Umbral más realista para detección positiva
+    const isFingerDetected = combinedScore > 0.4 &&  // Reducido de 0.65 a 0.4
                            fingertipCharacteristics.hasPerfusion &&
                            fingertipCharacteristics.correctColorProfile;
     
