@@ -389,59 +389,74 @@ const Index = () => {
       // Control de tasa de frames para no sobrecargar el dispositivo
       if (timeSinceLastProcess >= targetFrameInterval) {
         try {
-          // Capturar frame 
-          const frame = await imageCapture.grabFrame();
+          // Capturar frame usando el método correcto
+          const blob = await imageCapture.takePhoto();
           
-          // Configurar tamaño adecuado del canvas para procesamiento
-          const targetWidth = Math.min(320, frame.width);
-          const targetHeight = Math.min(240, frame.height);
+          // Crear objeto Image desde el Blob
+          const img = new Image();
+          const url = URL.createObjectURL(blob);
           
-          tempCanvas.width = targetWidth;
-          tempCanvas.height = targetHeight;
-          
-          // Dibujar el frame en el canvas
-          tempCtx.drawImage(
-            frame, 
-            0, 0, frame.width, frame.height, 
-            0, 0, targetWidth, targetHeight
-          );
-          
-          // Mejorar la imagen para detección PPG
-          if (enhanceCtx) {
-            // Resetear canvas
-            enhanceCtx.clearRect(0, 0, enhanceCanvas.width, enhanceCanvas.height);
+          img.onload = () => {
+            URL.revokeObjectURL(url);
             
-            // Dibujar en el canvas de mejora
-            enhanceCtx.drawImage(tempCanvas, 0, 0, targetWidth, targetHeight);
+            // Configurar tamaño adecuado del canvas para procesamiento
+            const targetWidth = Math.min(320, img.width);
+            const targetHeight = Math.min(240, img.height);
             
-            // Opcionales: Ajustes para mejorar la señal roja
-            enhanceCtx.globalCompositeOperation = 'source-over';
-            enhanceCtx.fillStyle = 'rgba(255,0,0,0.05)';  // Sutil refuerzo del canal rojo
-            enhanceCtx.fillRect(0, 0, enhanceCanvas.width, enhanceCanvas.height);
-            enhanceCtx.globalCompositeOperation = 'source-over';
-          
-            // Obtener datos de la imagen mejorada
-            const imageData = enhanceCtx.getImageData(0, 0, enhanceCanvas.width, enhanceCanvas.height);
+            tempCanvas.width = targetWidth;
+            tempCanvas.height = targetHeight;
             
-            // Procesar el frame mejorado
-            processFrame(imageData);
-          } else {
-            // Fallback a procesamiento normal
-            const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
-            processFrame(imageData);
-          }
+            // Dibujar el frame en el canvas
+            tempCtx.drawImage(
+              img, 
+              0, 0, img.width, img.height, 
+              0, 0, targetWidth, targetHeight
+            );
+            
+            // Mejorar la imagen para detección PPG
+            if (enhanceCtx) {
+              // Resetear canvas
+              enhanceCtx.clearRect(0, 0, enhanceCanvas.width, enhanceCanvas.height);
+              
+              // Dibujar en el canvas de mejora
+              enhanceCtx.drawImage(tempCanvas, 0, 0, targetWidth, targetHeight);
+              
+              // Opcionales: Ajustes para mejorar la señal roja
+              enhanceCtx.globalCompositeOperation = 'source-over';
+              enhanceCtx.fillStyle = 'rgba(255,0,0,0.05)';  // Sutil refuerzo del canal rojo
+              enhanceCtx.fillRect(0, 0, enhanceCanvas.width, enhanceCanvas.height);
+              enhanceCtx.globalCompositeOperation = 'source-over';
+            
+              // Obtener datos de la imagen mejorada
+              const imageData = enhanceCtx.getImageData(0, 0, enhanceCanvas.width, enhanceCanvas.height);
+              
+              // Procesar el frame mejorado
+              processFrame(imageData);
+            } else {
+              // Fallback a procesamiento normal
+              const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
+              processFrame(imageData);
+            }
+            
+            // Actualizar contadores para monitoreo de rendimiento
+            frameCount++;
+            lastProcessTime = now;
+            
+            // Calcular FPS cada segundo
+            if (now - lastFpsUpdateTime > 1000) {
+              processingFps = frameCount;
+              frameCount = 0;
+              lastFpsUpdateTime = now;
+              console.log(`Rendimiento de procesamiento: ${processingFps} FPS`);
+            }
+          };
           
-          // Actualizar contadores para monitoreo de rendimiento
-          frameCount++;
-          lastProcessTime = now;
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            console.error('Error cargando imagen capturada');
+          };
           
-          // Calcular FPS cada segundo
-          if (now - lastFpsUpdateTime > 1000) {
-            processingFps = frameCount;
-            frameCount = 0;
-            lastFpsUpdateTime = now;
-            console.log(`Rendimiento de procesamiento: ${processingFps} FPS`);
-          }
+          img.src = url;
         } catch (error) {
           console.error("Error capturando frame:", error);
         }
