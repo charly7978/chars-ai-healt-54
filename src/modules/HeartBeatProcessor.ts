@@ -1,32 +1,32 @@
 import { KalmanFilter } from './signal-processing/KalmanFilter';
 
 export class HeartBeatProcessor {
-  // ────────── CONFIGURACIONES PRINCIPALES (Valores optimizados para precisión médica) ──────────
+  // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
   private readonly DEFAULT_SAMPLE_RATE = 60;
   private readonly DEFAULT_WINDOW_SIZE = 40;
-  private readonly DEFAULT_MIN_BPM = 30;
-  private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.04; // Reducido para captar señal más débil
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.50; // Reducido para mejor detección
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Restaurado a valor médicamente apropiado
-  private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
+  private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
+  private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.65; // AUMENTADO para ser más estricto
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
+  private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
 
-  // Parámetros de filtrado ajustados para precisión médica
+  // Parámetros de filtrado MÁS CONSERVADORES
   private readonly MEDIAN_FILTER_WINDOW = 3;
-  private readonly MOVING_AVERAGE_WINDOW = 3; // Aumentado para mejor filtrado
-  private readonly EMA_ALPHA = 0.5; // Restaurado para equilibrio entre estabilidad y respuesta
-  private readonly BASELINE_FACTOR = 0.8; // Restaurado para seguimiento adecuado
+  private readonly MOVING_AVERAGE_WINDOW = 5; // Aumentado para mejor filtrado de ruido
+  private readonly EMA_ALPHA = 0.4; // Reducido para más suavizado
+  private readonly BASELINE_FACTOR = 0.85; // Aumentado para seguimiento más estable
 
-  // Parámetros de beep y vibración
+  // Parámetros de beep más estrictos
   private readonly BEEP_DURATION = 450; 
   private readonly BEEP_VOLUME = 1.0;
-  private readonly MIN_BEEP_INTERVAL_MS = 600; // Restaurado para prevenir beeps excesivos
+  private readonly MIN_BEEP_INTERVAL_MS = 700; // Aumentado para evitar beeps excesivos
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
-  // AUTO-RESET mejorado
-  private readonly LOW_SIGNAL_THRESHOLD = 0; // Deshabilitado auto-reset por baja señal
-  private readonly LOW_SIGNAL_FRAMES = 25; // Aumentado para mayor tolerancia
+  // AUTO-RESET más agresivo para falsos positivos
+  private readonly LOW_SIGNAL_THRESHOLD = 0.02; // Umbral más alto
+  private readonly LOW_SIGNAL_FRAMES = 15; // Reducido para reset más rápido
   private lowSignalCount = 0;
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
@@ -34,21 +34,21 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites para los parámetros adaptativos - Valores médicamente apropiados
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.09; // Reducido para mejor sensibilidad
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.4;
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.40; // Reducido para mejor detección
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.90;
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
+  // Límites MÁS ESTRICTOS para parámetros adaptativos
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.12; // Aumentado significativamente
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
+  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
+  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
 
-  // ────────── PARÁMETROS PARA PROCESAMIENTO ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.8; // Aumentado para mejor amplificación
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.5; // Aumentado para mejor detección
+  // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
+  private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
+  private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // Reducido para ser más selectivo
   
-  // Control del auto-ajuste
-  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 11; // Reducido para adaptarse más rápido
-  private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.20; // Aumentado para adaptarse más rápido
+  // Control del auto-ajuste más estricto
+  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 15; // Aumentado para más estabilidad
+  private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.15; // Reducido para cambios más graduales
   
   // Variables internas
   private recentPeakAmplitudes: number[] = [];
@@ -77,15 +77,15 @@ export class HeartBeatProcessor {
   private peakCandidateValue: number = 0;
   private isArrhythmiaDetected: boolean = false;
   
-  // Variables para mejorar la detección
+  // Variables para VALIDACIÓN MÁS ESTRICTA de picos
   private peakValidationBuffer: number[] = [];
-  private readonly PEAK_VALIDATION_THRESHOLD = 0.3; // Reducido para validación más permisiva
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.3; // Nuevo: Umbral mínimo de calidad de señal para confirmar un pico
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.2; // Nuevo: Umbral mínimo de confianza para confirmar un pico
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.2; // Nuevo: Amplitud mínima para considerar un pico
-  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.003; // Nuevo: Derivada mínima para indicar un pico agudo
-  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.8; // Nuevo: Estabilidad del buffer para confirmar pico
-  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 5; // Tamaño del buffer para confirmación de pico
+  private readonly PEAK_VALIDATION_THRESHOLD = 0.5; // AUMENTADO para validación más estricta
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.5; // AUMENTADO
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.4; // AUMENTADO  
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.3; // AUMENTADO para filtrar picos pequeños
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.006; // Más estricto
+  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.9; // AUMENTADO para mayor estabilidad
+  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 7; // Aumentado para mejor confirmación
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
@@ -250,12 +250,12 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
 
-    if (this.signalBuffer.length < 20) { // Requisito apropiado para evaluación
+    if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
         bpm: 0,
         confidence: 0,
         isPeak: false,
-        filteredValue: filteredValue, // Usando la variable correctamente definida
+        filteredValue: filteredValue,
         arrhythmiaCount: 0,
         signalQuality: 0
       };

@@ -16,18 +16,18 @@ export interface ColorRatios {
  * Evalúa la calidad de la señal PPG basándose en criterios fisiológicos.
  */
 export class BiophysicalValidator {
-  // Umbrales para la pulsatilidad de la señal.
-  private readonly MIN_PULSATILITY_THRESHOLD = 0.1; // Umbral mínimo de pulsatilidad.
-  private readonly PULSATILITY_NORMALIZATION_FACTOR = 20.0; // Factor para normalizar la amplitud.
+  // Umbrales para la pulsatilidad - MÁS ESTRICTOS para reducir falsos positivos
+  private readonly MIN_PULSATILITY_THRESHOLD = 0.15; // AUMENTADO para filtrar ruido
+  private readonly PULSATILITY_NORMALIZATION_FACTOR = 25.0; // Aumentado para ser más conservador
 
-  // Rangos fisiológicos esperados para los ratios de color y la intensidad.
+  // Rangos fisiológicos MÁS ESTRICTOS
   private readonly PHYSIOLOGICAL_RANGES = {
-    // Ratio Rojo/Verde: la sangre absorbe más verde que rojo.
-    redToGreen: { min: 1.1, max: 3.5 },
-    // Ratio Rojo/Azul: similar al anterior, pero menos distintivo.
-    redToBlue: { min: 1.0, max: 4.0 },
-    // Intensidad del canal rojo: debe estar en un rango detectable, ni saturado ni muy oscuro.
-    redValue: { min: 25, max: 230 },
+    // Ratio Rojo/Verde: más estricto para validación real
+    redToGreen: { min: 1.2, max: 3.0 }, // Rango más estrecho
+    // Ratio Rojo/Azul: más conservador
+    redToBlue: { min: 1.1, max: 3.5 }, // Rango más estrecho
+    // Intensidad del canal rojo: umbrales más altos
+    redValue: { min: 35, max: 220 }, // Mínimo más alto, máximo más bajo
   };
 
   /**

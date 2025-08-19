@@ -7,14 +7,14 @@ import { ProcessedSignal } from '../../types/signal';
  */
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  // Parámetros ajustados para mejor extracción de señal
-  private readonly RED_GAIN = 1.1; // Aumentado para mejor amplificación de señal roja (antes 1.2)
-  private readonly GREEN_SUPPRESSION = 0.8; // Menos supresión para mantener información (antes 0.85)
-  private readonly SIGNAL_GAIN = 1.0; // Aumentado para mejor detección (antes 1.1)
-  private readonly EDGE_ENHANCEMENT = 0.18;  // Ajustado para mejor detección de bordes (antes 0.12)
-  private readonly MIN_RED_THRESHOLD = 0.28;  // Ligero aumento adicional
-  private readonly RG_RATIO_RANGE = [0.8, 4.0];  // Rango más estrecho
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Nuevo filtro por contraste
+  // Parámetros ajustados PARA REDUCIR FALSOS POSITIVOS - más estrictos
+  private readonly RED_GAIN = 1.0; // Reducido para evitar amplificación excesiva
+  private readonly GREEN_SUPPRESSION = 0.9; // Menos supresión para comparación más real
+  private readonly SIGNAL_GAIN = 0.9; // Reducido para evitar amplificación de ruido
+  private readonly EDGE_ENHANCEMENT = 0.15;  // Reducido para ser más conservador
+  private readonly MIN_RED_THRESHOLD = 0.35;  // AUMENTADO significativamente para filtrar ruido
+  private readonly RG_RATIO_RANGE = [1.0, 3.5];  // Rango más estricto y realista
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.18;  // AUMENTADO para mejor validación
   
   // Historia para calibración adaptativa
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
@@ -212,14 +212,14 @@ export class FrameProcessor {
     if (this.lastFrames.length >= 3) { // Reducido (antes 5)
       const avgHistRed = this.lastFrames.reduce((sum, frame) => sum + frame.red, 0) / this.lastFrames.length;
       
-      // Ganancia moderada incluso para señales muy débiles
-      if (avgHistRed < 40 && avgHistRed > this.MIN_RED_THRESHOLD && 
-          this.calculateEdgeContrast() > this.EDGE_CONTRAST_THRESHOLD) {
-        dynamicGain = 1.25; // Ganancia ligeramente reducida
-      } else if (avgHistRed <= this.MIN_RED_THRESHOLD) { // Umbral reducido
-        // Very weak signal - likely no finger present
-        dynamicGain = 1.1; // Algo de amplificación incluso con señal muy débil (antes 1.0)
-      }
+        // Ganancia REDUCIDA para señales que no cumplen criterios estrictos
+        if (avgHistRed < 50 && avgHistRed > this.MIN_RED_THRESHOLD && 
+            this.calculateEdgeContrast() > this.EDGE_CONTRAST_THRESHOLD) {
+          dynamicGain = 1.1; // Ganancia muy reducida para evitar amplificar ruido
+        } else if (avgHistRed <= this.MIN_RED_THRESHOLD) {
+          // Señal muy débil - probablemente no hay dedo
+          dynamicGain = 0.9; // Atenuar señal débil para evitar falsos positivos
+        }
     }
     
     // Calculate average values with physiologically valid minimum thresholds
@@ -227,9 +227,9 @@ export class FrameProcessor {
     const avgGreen = greenSum / pixelCount;
     const avgBlue = blueSum / pixelCount;
     
-    // Calculate color ratio indexes with proper physiological constraints - más permisivo
-    const rToGRatio = avgGreen > 3 ? avgRed / avgGreen : 1.2; 
-    const rToBRatio = avgRed / avgBlue;
+    // Calculate color ratio indexes - MÁS ESTRICTOS para reducir falsos positivos
+    const rToGRatio = avgGreen > 5 ? avgRed / avgGreen : 1.2; // Umbral más alto para validación
+    const rToBRatio = avgBlue > 1 ? avgRed / avgBlue : 1.0; // Evitar división por valores muy pequeños
     console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
     
     // Light level affects detection quality
@@ -278,19 +278,18 @@ export class FrameProcessor {
   }
   
   /**
-   * Calculate quality factor based on lighting level
-   * Both too dark and too bright conditions reduce signal quality
+   * Calculate quality factor - MÁS ESTRICTO para reducir falsos positivos
    */
   private getLightLevelQualityFactor(lightLevel: number): number {
-    // Rango óptimo ampliado - más permisivo
-    if (lightLevel >= 25 && lightLevel <= 85) { // Antes 30-80
+    // Rango óptimo más estricto
+    if (lightLevel >= 35 && lightLevel <= 75) { // Rango más estrecho
       return 1.0; // Optimal lighting
-    } else if (lightLevel < 25) {
-      // Too dark - reducción lineal en calidad pero más permisiva
-      return Math.max(0.4, lightLevel / 25); // Mínimo aumentado (antes 0.3)
+    } else if (lightLevel < 35) {
+      // Too dark - penalización más fuerte
+      return Math.max(0.2, lightLevel / 35); // Mínimo más bajo
     } else {
-      // Too bright - penalización reducida
-      return Math.max(0.4, 1.0 - (lightLevel - 85) / 60); // Límites más permisivos
+      // Too bright - penalización más fuerte  
+      return Math.max(0.2, 1.0 - (lightLevel - 75) / 50); // Límites más estrictos
     }
   }
   
@@ -303,13 +302,13 @@ export class FrameProcessor {
     // Factor ROI adaptativo mejorado
     let adaptiveROISizeFactor = this.CONFIG.ROI_SIZE_FACTOR;
     
-    // Ajustar ROI basado en valor rojo detectado - más permisivo
-    if (redValue < 25) { // Umbral reducido (antes 30)
-      // Señal débil - aumentar ROI para capturar más área
-      adaptiveROISizeFactor = Math.min(0.8, adaptiveROISizeFactor * 1.1); // Mayor aumento
-    } else if (redValue > 120) { // Umbral aumentado (antes 100)
-      // Señal fuerte - enfocar ROI en área central
-      adaptiveROISizeFactor = Math.max(0.35, adaptiveROISizeFactor * 0.97); // Menos reducción
+    // Ajustar ROI basado en valor rojo - MÁS ESTRICTO
+    if (redValue < 35) { // Umbral aumentado para ser más estricto
+      // Señal débil - pero no aumentar tanto el ROI para evitar ruido
+      adaptiveROISizeFactor = Math.min(0.7, adaptiveROISizeFactor * 1.05); // Menor aumento
+    } else if (redValue > 100) { // Umbral reducido
+      // Señal fuerte - enfocar más el ROI
+      adaptiveROISizeFactor = Math.max(0.3, adaptiveROISizeFactor * 0.95); // Mayor reducción
     }
     
     // Ensure ROI is appropriate to image size

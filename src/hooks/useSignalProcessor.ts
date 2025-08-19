@@ -74,8 +74,8 @@ export const useSignalProcessor = () => {
         }
       }
       
-      // Update statistics with valid signals only
-      if (signal.fingerDetected && signal.quality > 30) {
+      // Update statistics with STRICTER quality requirements
+      if (signal.fingerDetected && signal.quality > 45) { // Aumentado de 30 a 45
         setSignalStats(prev => {
           const newStats = {
             minValue: Math.min(prev.minValue, signal.filteredValue),
