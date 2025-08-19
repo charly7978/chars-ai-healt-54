@@ -333,8 +333,9 @@ const Index = () => {
       // Control de tasa de frames para no sobrecargar el dispositivo
       if (timeSinceLastProcess >= targetFrameInterval) {
         try {
-          // Capturar frame 
-          const frame = await imageCapture.grabFrame();
+          // Capturar frame usando takePhoto para mejor compatibilidad
+          const blob = await imageCapture.takePhoto();
+          const frame = await createImageBitmap(blob);
           
           // Configurar tamaño adecuado del canvas para procesamiento
           const targetWidth = Math.min(320, frame.width);

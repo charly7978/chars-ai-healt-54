@@ -1,4 +1,4 @@
-import { SignalQualityMetrics } from '../../types/signal';
+import { SignalQualityMetrics } from './SignalProcessingPipeline';
 
 export class SignalQualityAnalyzer {
   private readonly WINDOW_SIZE = 30; // Number of samples for quality analysis
@@ -54,10 +54,7 @@ export class SignalQualityAnalyzer {
       noiseLevel,
       perfusionIndex,
       overallQuality,
-      timestamp: now,
-      frameRate,
-      bufferUsage: this.signalBuffer.length / this.WINDOW_SIZE,
-      confidence: this.calculateConfidence()
+      timestamp: now
     };
   }
   
