@@ -1,15 +1,15 @@
 import { KalmanFilter } from './signal-processing/KalmanFilter';
 
 export class HeartBeatProcessor {
-  // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
+  // ────────── CONFIGURACIONES REALISTAS PARA DETECTAR LATIDOS REALES ──────────
   private readonly DEFAULT_SAMPLE_RATE = 60;
   private readonly DEFAULT_WINDOW_SIZE = 40;
-  private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
-  private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.65; // AUMENTADO para ser más estricto
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
+  private readonly DEFAULT_MIN_BPM = 35;
+  private readonly DEFAULT_MAX_BPM = 200;
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.02; // Reducido para detectar señales más débiles
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.25;   // Reducido para permitir detección
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.003; // Más permisivo
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300;  // Reducido para permitir más detecciones
   private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
 
   // Parámetros de filtrado MÁS CONSERVADORES
@@ -34,13 +34,13 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites MÁS ESTRICTOS para parámetros adaptativos
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.12; // Aumentado significativamente
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
+  // Límites REALISTAS para parámetros adaptativos
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.015; // Reducido para señales débiles
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.25;  
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.20;    // Más permisivo
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.70;    
+  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.02; // Más permisivo
+  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.003;
 
   // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
@@ -77,15 +77,15 @@ export class HeartBeatProcessor {
   private peakCandidateValue: number = 0;
   private isArrhythmiaDetected: boolean = false;
   
-  // Variables para VALIDACIÓN MÁS ESTRICTA de picos
+  // Variables para VALIDACIÓN REALISTA de picos
   private peakValidationBuffer: number[] = [];
-  private readonly PEAK_VALIDATION_THRESHOLD = 0.5; // AUMENTADO para validación más estricta
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.5; // AUMENTADO
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.4; // AUMENTADO  
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.3; // AUMENTADO para filtrar picos pequeños
-  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.006; // Más estricto
-  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.9; // AUMENTADO para mayor estabilidad
-  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 7; // Aumentado para mejor confirmación
+  private readonly PEAK_VALIDATION_THRESHOLD = 0.15;        // Reducido para permitir más picos
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.20;    // Reducido
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.15; // Reducido  
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.08;        // Reducido para picos más pequeños
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.002; // Más permisivo
+  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.4;   // Reducido para menor estabilidad requerida
+  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 3;       // Reducido para confirmación más rápida
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
