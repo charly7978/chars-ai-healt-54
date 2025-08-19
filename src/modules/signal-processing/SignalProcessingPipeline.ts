@@ -1,3 +1,4 @@
+import { Subject, Observable } from 'rxjs';
 import { ProcessedSignal, ProcessingError, SignalQualityMetrics } from '../../types/signal';
 import { FrameProcessor } from './FrameProcessor';
 import { SignalAnalyzer } from './SignalAnalyzer';
@@ -11,10 +12,10 @@ export class SignalProcessingPipeline {
   private qualityBuffer: Float32Array;
   private currentIndex = 0;
   
-  // Callbacks for state changes
-  private signalCallback?: (signal: ProcessedSignal) => void;
-  private errorCallback?: (error: ProcessingError) => void;
-  private qualityCallback?: (quality: SignalQualityMetrics) => void;
+  // Observables for state changes
+  private signalSubject = new Subject<ProcessedSignal>();
+  private errorSubject = new Subject<ProcessingError>();
+  private qualitySubject = new Subject<SignalQualityMetrics>();
   
   // Processing components
   private frameProcessor: FrameProcessor;
@@ -33,32 +34,23 @@ export class SignalProcessingPipeline {
     this.qualityBuffer = new Float32Array(100); // Circular buffer for quality metrics
     
     // Initialize processing components with shared configuration
-    const analyzerConfig = {
-      QUALITY_LEVELS: 100,
-      QUALITY_HISTORY_SIZE: 10,
-      MIN_CONSECUTIVE_DETECTIONS: 3,
-      MAX_CONSECUTIVE_NO_DETECTIONS: 5
-    };
-    this.frameProcessor = new FrameProcessor({
-      TEXTURE_GRID_SIZE: 4,
-      ROI_SIZE_FACTOR: 0.6
-    });
-    this.signalAnalyzer = new SignalAnalyzer(analyzerConfig);
+    this.frameProcessor = new FrameProcessor();
+    this.signalAnalyzer = new SignalAnalyzer();
     this.biophysicalValidator = new BiophysicalValidator();
     this.trendAnalyzer = new SignalTrendAnalyzer();
   }
   
   // Public API
-  public onSignal(callback: (signal: ProcessedSignal) => void): void {
-    this.signalCallback = callback;
+  public get signal$(): Observable<ProcessedSignal> {
+    return this.signalSubject.asObservable();
   }
   
-  public onError(callback: (error: ProcessingError) => void): void {
-    this.errorCallback = callback;
+  public get error$(): Observable<ProcessingError> {
+    return this.errorSubject.asObservable();
   }
   
-  public onQuality(callback: (quality: SignalQualityMetrics) => void): void {
-    this.qualityCallback = callback;
+  public get quality$(): Observable<SignalQualityMetrics> {
+    return this.qualitySubject.asObservable();
   }
   
   public start(): void {
@@ -93,12 +85,11 @@ export class SignalProcessingPipeline {
       this.qualityBuffer[this.currentIndex % this.qualityBuffer.length] = qualityMetrics.overallQuality;
       
       // 4. Update analyzers
-      const trendResult = this.trendAnalyzer.analyzeTrend(frameData.redValue);
-      const stabilityScore = this.trendAnalyzer.getStabilityScore();
+      this.trendAnalyzer.update(frameData.redValue);
+      const trend = this.trendAnalyzer.getTrend();
       
       // 5. Validate biophysical constraints
-      const pulsatilityScore = this.biophysicalValidator.getPulsatilityScore([frameData.redValue]);
-      const biophysicalValidation = pulsatilityScore > 0.03;
+      const biophysicalValidation = this.biophysicalValidator.validate(frameData);
       
       // 6. Create processed signal
       const processedSignal: ProcessedSignal = {
@@ -106,30 +97,26 @@ export class SignalProcessingPipeline {
         rawValue: frameData.redValue,
         filteredValue: this.signalBuffer[this.currentIndex],
         quality: qualityMetrics.overallQuality,
-        fingerDetected: biophysicalValidation,
-        roi: {
-          x: 0,
-          y: 0,
-          width: imageData.width,
-          height: imageData.height
-        },
-        perfusionIndex: qualityMetrics.perfusionIndex
+        fingerDetected: biophysicalValidation.isValid,
+        roi: frameData.roi,
+        perfusionIndex: qualityMetrics.perfusionIndex,
+        signalStrength: qualityMetrics.signalStrength,
+        noiseLevel: qualityMetrics.noiseLevel
       };
       
       // 7. Emit the processed signal
-      if (this.signalCallback) this.signalCallback(processedSignal);
-      if (this.qualityCallback) this.qualityCallback(qualityMetrics);
+      this.signalSubject.next(processedSignal);
+      this.qualitySubject.next(qualityMetrics);
       
       this.currentIndex++;
       
     } catch (error) {
-      if (this.errorCallback) {
-        this.errorCallback({
-          code: 'FRAME_PROCESSING_ERROR',
-          message: `Error processing frame: ${error instanceof Error ? error.message : String(error)}`,
-          timestamp: Date.now()
-        });
-      }
+      this.errorSubject.next({
+        type: 'PROCESSING_ERROR',
+        message: `Error processing frame: ${error instanceof Error ? error.message : String(error)}`,
+        timestamp: Date.now(),
+        code: 'FRAME_PROCESSING_ERROR'
+      });
     }
   }
   
@@ -166,3 +153,11 @@ export class SignalProcessingPipeline {
   }
 }
 
+// Types
+export interface SignalQualityMetrics {
+  signalStrength: number;
+  noiseLevel: number;
+  perfusionIndex: number;
+  overallQuality: number;
+  timestamp: number;
+}

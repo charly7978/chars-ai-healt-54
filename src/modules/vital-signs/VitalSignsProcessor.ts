@@ -225,7 +225,7 @@ export class VitalSignsProcessor {
     if (this.isCalibrating) {
       this.calibrationSamples++;
     }
-
+    
     const filtered = this.signalProcessor.applySMAFilter(ppgValue);
     
     const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);

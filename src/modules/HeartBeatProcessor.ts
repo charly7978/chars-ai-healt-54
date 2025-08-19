@@ -6,17 +6,17 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 30;
   private readonly DEFAULT_MAX_BPM = 220;
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03; // ALGORITMO SOFISTICADO: Detectar señales sutiles con filtrado inteligente
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.35; // PROCESAMIENTO AVANZADO: Validar con múltiples criterios
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.04; // Reducido para captar señal más débil
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.50; // Reducido para mejor detección
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.005; // Ajustado para mejor sensibilidad
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 350; // ALGORITMO INTELIGENTE: Permitir rangos fisiológicos normales (máx 171 BPM)
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // Restaurado a valor médicamente apropiado
   private readonly WARMUP_TIME_MS = 1000; // Reducido para obtener lecturas más rápido
 
   // Parámetros de filtrado ajustados para precisión médica
   private readonly MEDIAN_FILTER_WINDOW = 3;
   private readonly MOVING_AVERAGE_WINDOW = 3; // Aumentado para mejor filtrado
   private readonly EMA_ALPHA = 0.5; // Restaurado para equilibrio entre estabilidad y respuesta
-  private readonly BASELINE_FACTOR = 0.95; // AUMENTADO de 0.8 a 0.95 para mayor estabilidad de baseline
+  private readonly BASELINE_FACTOR = 0.8; // Restaurado para seguimiento adecuado
 
   // Parámetros de beep y vibración
   private readonly BEEP_DURATION = 450; 
@@ -24,9 +24,9 @@ export class HeartBeatProcessor {
   private readonly MIN_BEEP_INTERVAL_MS = 600; // Restaurado para prevenir beeps excesivos
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
-  // AUTO-RESET ESTABILIZADO (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
-  private readonly LOW_SIGNAL_THRESHOLD = 0.01; // AUMENTADO para evitar resets constantes  
-  private readonly LOW_SIGNAL_FRAMES = 60; // AUMENTADO de 25 a 60 para mayor estabilidad
+  // AUTO-RESET mejorado
+  private readonly LOW_SIGNAL_THRESHOLD = 0; // Deshabilitado auto-reset por baja señal
+  private readonly LOW_SIGNAL_FRAMES = 25; // Aumentado para mayor tolerancia
   private lowSignalCount = 0;
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
@@ -34,21 +34,21 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites adaptativos INTELIGENTES PARA PPG DE CÁMARA
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.01; // ALGORITMO AUDAZ: Detectar señales muy débiles
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.25; // SISTEMA ROBUSTO: Rango amplio con validación posterior
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.20;   // PROCESAMIENTO INGENIOSO: Permitir detección inicial baja
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85;   // VALIDACIÓN SOFISTICADA: Confirmar con múltiples criterios
+  // Límites para los parámetros adaptativos - Valores médicamente apropiados
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.09; // Reducido para mejor sensibilidad
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.4;
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.40; // Reducido para mejor detección
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.90;
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.08;
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.005;
 
-  // ────────── ALGORITMOS AVANZADOS PARA SEÑAL PPG DE CÁMARA ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 2.2; // ALGORITMO SOFISTICADO: Amplificar inteligentemente con filtrado posterior
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // REDUCIDO de 0.5 a 0.3 para menos falsos picos
+  // ────────── PARÁMETROS PARA PROCESAMIENTO ──────────
+  private readonly SIGNAL_BOOST_FACTOR = 1.8; // Aumentado para mejor amplificación
+  private readonly PEAK_DETECTION_SENSITIVITY = 0.5; // Aumentado para mejor detección
   
-  // Control del auto-ajuste ESTABILIZADO (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
-  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 20; // AUMENTADO para mayor estabilidad
-  private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.10; // REDUCIDO para cambios más graduales
+  // Control del auto-ajuste
+  private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 11; // Reducido para adaptarse más rápido
+  private readonly ADAPTIVE_TUNING_LEARNING_RATE = 0.20; // Aumentado para adaptarse más rápido
   
   // Variables internas
   private recentPeakAmplitudes: number[] = [];
@@ -235,24 +235,8 @@ export class HeartBeatProcessor {
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
   } {
-    // ANÁLISIS CRÍTICO DE SEÑAL PPG ENTRANTE
-    const timestamp = Date.now();
-    const originalValue = value;
-    
     // Aplicar amplificación razonable
     value = this.boostSignal(value);
-    
-    // LOG DETALLADO CADA 30 FRAMES (evitar spam)
-    if (this.signalBuffer.length % 30 === 0) {
-      console.log(`HeartBeatProcessor: 🔍 ANÁLISIS SEÑAL [${timestamp}]`, {
-        valorOriginal: originalValue.toFixed(6),
-        valorAmplificado: value.toFixed(6),
-        amplificacion: (value/originalValue).toFixed(2) + 'x',
-        rangoEsperado: '0.0-1.0',
-        esValido: originalValue >= 0 && originalValue <= 1,
-        bufferSize: this.signalBuffer.length
-      });
-    }
     
     const medVal = this.medianFilter(value);
     const movAvgVal = this.calculateMovingAverage(medVal);
@@ -298,32 +282,10 @@ export class HeartBeatProcessor {
     }
     this.lastValue = smoothed;
     
-    // DETECCIÓN DE PICOS CON LOGGING CRÍTICO
+    // Detección de picos médicamente válida
     const peakDetectionResult = this.enhancedPeakDetection(normalizedValue, smoothDerivative);
     let isPeak = peakDetectionResult.isPeak;
     const confidence = peakDetectionResult.confidence;
-    
-    // LOG CRÍTICO: por qué se detecta/no se detecta pico
-    if (this.signalBuffer.length % 30 === 0 || isPeak) {
-      const timeSinceLastPeak = this.lastPeakTime ? timestamp - this.lastPeakTime : 'N/A';
-      console.log(`HeartBeatProcessor: ${isPeak ? '🔥' : '⚫'} DETECCIÓN PICO [${timestamp}]`, {
-        isPeak,
-        normalizedValue: normalizedValue.toFixed(4),
-        smoothDerivative: smoothDerivative.toFixed(4),
-        confidence: confidence.toFixed(3),
-        timeSinceLastPeak: typeof timeSinceLastPeak === 'number' ? timeSinceLastPeak + 'ms' : timeSinceLastPeak,
-        umbrales: {
-          signalThreshold: this.adaptiveSignalThreshold.toFixed(4),
-          minConfidence: this.adaptiveMinConfidence.toFixed(3),
-          minPeakTime: this.DEFAULT_MIN_PEAK_TIME_MS + 'ms'
-        },
-        cumpleUmbrales: {
-          signal: Math.abs(normalizedValue) > this.adaptiveSignalThreshold,
-          confidence: confidence > this.adaptiveMinConfidence,
-          tiempo: !this.lastPeakTime || (timestamp - this.lastPeakTime) >= this.DEFAULT_MIN_PEAK_TIME_MS
-        }
-      });
-    }
     const rawDerivative = peakDetectionResult.rawDerivative;
     
     const isConfirmedPeak = this.confirmPeak(isPeak, normalizedValue, confidence);
@@ -331,44 +293,20 @@ export class HeartBeatProcessor {
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
-    // LATIDO CONFIRMADO = EJECUTAR TODO COORDINADAMENTE
     if (isConfirmedPeak && !this.isInWarmup()) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
         ? now - this.lastPeakTime
         : Number.MAX_VALUE;
 
-      console.log(`HeartBeatProcessor: 🎯 PICO CONFIRMADO [${now}]`, {
-        timeSinceLastPeak: timeSinceLastPeak === Number.MAX_VALUE ? 'PRIMERO' : timeSinceLastPeak + 'ms',
-        minRequired: this.DEFAULT_MIN_PEAK_TIME_MS + 'ms',
-        cumpleTiempo: timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS,
-        normalizedValue: normalizedValue.toFixed(4),
-        confidence: confidence.toFixed(3)
-      });
-
-      // VALIDACIÓN MÉDICAMENTE APROPIADA
+      // Validación médicamente apropiada
       if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
-        // VALIDACIÓN ESTRICTA SEGÚN CRITERIOS MÉDICOS
-        const peakIsValid = this.validatePeak(normalizedValue, confidence);
-        
-        console.log(`HeartBeatProcessor: 🔍 VALIDACIÓN PICO`, {
-          esValido: peakIsValid,
-          normalizedValue: normalizedValue.toFixed(4),
-          confidence: confidence.toFixed(3),
-          umbralMinConf: this.adaptiveMinConfidence.toFixed(3)
-        });
-        
-        if (peakIsValid) {
-          console.log(`HeartBeatProcessor: ✅ LATIDO REAL DETECTADO [${now}]`, {
-            intervaloAnterior: this.lastPeakTime ? (now - this.lastPeakTime) + 'ms' : 'PRIMERO',
-            bpmInstantaneo: this.lastPeakTime ? (60000/(now - this.lastPeakTime)).toFixed(1) : 'N/A',
-            totalIntervalos: this.getRRIntervals().intervals.length
-          });
-          
+        // Validación estricta según criterios médicos
+        if (this.validatePeak(normalizedValue, confidence)) {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
-          // COORDINAR: beep + vibración JUNTOS  
+          // Reproducir sonido y actualizar estado
           this.playHeartSound(1.0, this.isArrhythmiaDetected);
 
           this.updateBPM();
@@ -389,9 +327,10 @@ export class HeartBeatProcessor {
           }
           
           this.peaksSinceLastTuning++;
-          // SINTONIZACIÓN ADAPTIVA DESHABILITADA TEMPORALMENTE (ESTABILIDAD MÁXIMA)
-          // this.performAdaptiveTuning() - COMENTADO para evitar captación errática
-          // Los umbrales permanecen constantes para comportamiento predecible
+          if (this.peaksSinceLastTuning >= Math.floor(this.ADAPTIVE_TUNING_PEAK_WINDOW / 2)) {
+            this.performAdaptiveTuning();
+            this.peaksSinceLastTuning = 0;
+          }
         } else {
           console.log(`HeartBeatProcessor: Pico rechazado - confianza insuficiente: ${confidence}`);
           isPeak = false;
@@ -402,7 +341,7 @@ export class HeartBeatProcessor {
     // Retornar resultado con nuevos parámetros
     return {
       bpm: Math.round(this.getSmoothBPM()),
-      confidence: isPeak ? 0.85 : 0.5, // CONFIANZA FIJA para evitar oscilaciones
+      confidence: isPeak ? 0.95 : this.adjustConfidenceForSignalStrength(0.6),
       isPeak: isPeak,
       filteredValue: filteredValue, // Usando la variable correctamente definida
       arrhythmiaCount: 0,
@@ -427,11 +366,11 @@ export class HeartBeatProcessor {
     let boostFactor = this.SIGNAL_BOOST_FACTOR;
     
     if (range < 1.0) {
-      // Señal débil - amplificar MODERADAMENTE (CORREGIDO)
-      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.3; // REDUCIDO de 1.8 a 1.3
+      // Señal débil - amplificar moderadamente
+      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.8; // Más amplificación para señales débiles
     } else if (range < 3.0) {
-      // Señal moderada - amplificar ligeramente (CORREGIDO)
-      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.1; // REDUCIDO de 1.4 a 1.1
+      // Señal moderada - amplificar ligeramente
+      boostFactor = this.SIGNAL_BOOST_FACTOR * 1.4;
     } else if (range > 10.0) {
       // Señal fuerte - no amplificar
       boostFactor = 1.0;
@@ -511,12 +450,16 @@ export class HeartBeatProcessor {
     if (amplitude < this.LOW_SIGNAL_THRESHOLD) {
       this.lowSignalCount++;
       if (this.lowSignalCount >= this.LOW_SIGNAL_FRAMES) {
-        // SOLO resetear estados de detección, NO parámetros adaptativos (ESTABILIDAD)
         this.resetDetectionStates();
-        console.log("HeartBeatProcessor: auto-reset SOLO detection states (conservando parámetros adaptativos).");
+        // También reseteamos los parámetros adaptativos a sus valores por defecto
+        this.adaptiveSignalThreshold = this.DEFAULT_SIGNAL_THRESHOLD;
+        this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
+        this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
+        this.isArrhythmiaDetected = false;
+        console.log("HeartBeatProcessor: auto-reset adaptative parameters and arrhythmia flag (low signal).");
       }
     } else {
-      this.lowSignalCount = Math.max(0, this.lowSignalCount - 2); // Reducción más rápida para recuperación
+      this.lowSignalCount = Math.max(0, this.lowSignalCount - 1); // Reducción gradual
     }
   }
 
@@ -543,60 +486,12 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // ALGORITMO AVANZADO DE DETECCIÓN MULTI-CRITERIO
-    const derivativeThreshold = -0.04; // SENSIBILIDAD INTELIGENTE: Captar señales PPG reales
-    const amplitudeThreshold = 0.08;   // UMBRAL SOFISTICADO: Balanceado para cámara
-    
-    const isOverThreshold = derivative < derivativeThreshold && 
-                           Math.abs(normalizedValue) > amplitudeThreshold;
-    
-    // CONFIANZA DIRECTA (ELIMINAR BLOQUEO DE FACTORES MULTIPLICATIVOS)
-    const confidence = isOverThreshold ? 
-      Math.min(1.0, Math.abs(derivative) / 0.8 + Math.abs(normalizedValue) / 1.8) : 0;
-    
-    // FACTORES INFORMATIVOS ÚNICAMENTE (NO BLOQUEAR DETECCIÓN)
-    const contextFactor = this.getTemporalContextFactor();
-    const signalQualityFactor = this.currentSignalQuality / 100;
-    
-    // Log factores para diagnóstico (sin afectar confidence)
-    if (this.signalBuffer.length % 30 === 0) {
-      console.log('🔍 FACTORES DIAGNÓSTICO:', {
-        baseConfidence: confidence.toFixed(3),
-        contextFactor: contextFactor.toFixed(3),
-        signalQualityFactor: signalQualityFactor.toFixed(3),
-        'SIN_MULTIPLICAR': 'Evitando bloqueo de detección'
-      });
-    }
+    // Detectar pico en máximo local: derivada negativa
+    const isOverThreshold = derivative < 0;
+    // Confianza máxima en cada detección de pico
+    const confidence = 1;
 
     return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
-  }
-
-  /**
-   * ALGORITMO INGENIOSO: Factor de contexto temporal para mejorar confianza
-   * Analiza patrones recientes para detectar regularidad cardíaca
-   */
-  private getTemporalContextFactor(): number {
-    const rrData = this.getRRIntervals(); // USAR MÉTODO PÚBLICO
-    if (rrData.intervals.length < 3) return 0.5; // Factor base sin historial
-    
-    // Analizar regularidad de intervalos RR recientes
-    const recentIntervals = rrData.intervals.slice(-5);
-    const avgInterval = recentIntervals.reduce((a, b) => a + b, 0) / recentIntervals.length;
-    
-    // Calcular variabilidad (menor variabilidad = más regular = mayor confianza)
-    const variance = recentIntervals.reduce((acc, interval) => 
-      acc + Math.pow(interval - avgInterval, 2), 0) / recentIntervals.length;
-    const stdDev = Math.sqrt(variance);
-    const coefficientOfVariation = stdDev / avgInterval;
-    
-    // Factor de regularidad: menos variación = mayor confianza
-    const regularityFactor = Math.max(0.3, Math.min(1.0, 1.0 - coefficientOfVariation));
-    
-    // Factor de rango fisiológico: intervalos en rango normal = mayor confianza
-    const isPhysiological = avgInterval >= 500 && avgInterval <= 1500; // 40-120 BPM
-    const physiologyFactor = isPhysiological ? 1.0 : 0.6;
-    
-    return regularityFactor * physiologyFactor;
   }
 
   private confirmPeak(

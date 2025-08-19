@@ -18,9 +18,9 @@ export class SignalProcessor {
   private readonly BASELINE_FACTOR = 0.98; // Incrementado para mejor seguimiento (antes 0.97)
   private baselineValue: number = 0;
   
-  // PARÁMETROS CORREGIDOS PARA BPM PRECISO (NO EXCESIVO)
-  private readonly PEAK_ENHANCEMENT = 2.5; // REDUCIDO de 5.0 a 2.5 para evitar falsos picos
-  private readonly MIN_SIGNAL_BOOST = 4.0; // REDUCIDO de 12.0 a 4.0 para amplificación moderada
+  // PARÁMETROS DE SENSIBILIDAD EXTREMA MEJORADOS
+  private readonly PEAK_ENHANCEMENT = 5.0; // Factor de amplificación extremo para picos (antes 3.5)
+  private readonly MIN_SIGNAL_BOOST = 12.0; // Amplificación máxima para señales débiles (antes 8.0)
   private readonly ADAPTIVE_GAIN_ENABLED = true; // Mantener activada ganancia adaptativa
   private readonly NOISE_SUPPRESSION = 0.7; // Supresión de ruido más agresiva pero no excesiva (antes 0.8)
   
@@ -44,8 +44,8 @@ export class SignalProcessor {
    * y mejor preservación de picos cardíacos
    */
   public applySMAFilter(value: number): number {
-    // AMPLIFICACIÓN INICIAL ESTABILIZADA (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)  
-    value = value * 1.1 + 1; // REDUCIDO de 1.5x+2 a 1.1x+1 para menor oscilación
+    // NUEVO: Amplificación inicial para garantizar señal mínima detectable
+    value = value * 1.5 + 2;
     
     // Añadir valor al buffer
     this.ppgValues.push(value);
@@ -57,16 +57,16 @@ export class SignalProcessor {
     if (this.baselineValue === 0 && this.ppgValues.length > 0) {
       this.baselineValue = value;
     } else {
-      // ADAPTACIÓN ESTABILIZADA (CORREGIDO PARA EVITAR OSCILACIONES)
-      const adaptationSpeed = this.detectSignalChange() ? 0.15 : 0.05; // REDUCIDO para mayor estabilidad
+      // Adaptación dinámica ultra-rápida
+      const adaptationSpeed = this.detectSignalChange() ? 0.3 : 0.08; // Más rápida (antes 0.2 y 0.05)
       this.baselineValue = this.baselineValue * (1 - adaptationSpeed) + value * adaptationSpeed;
     }
     
     // Usar SMA como filtro inicial - ahora con estabilización mejorada
     const smaValue = this.calculateStabilizedSMA(value);
     
-    // AMPLIFICACIÓN ESTABILIZADA: Moderada en lugar de ultra-potente
-    let amplifiedValue = this.amplifyWeakSignals(smaValue); // Usar amplificación más estable
+    // MEJORA CRÍTICA: Amplificación ultra-potente para señales débiles
+    let amplifiedValue = this.ultraAmplifySignal(smaValue);
     
     // Denoising con umbral adaptativo ultra-bajo
     const denoised = this.enhancedWaveletDenoise(amplifiedValue);
@@ -76,19 +76,19 @@ export class SignalProcessor {
       // Filtrado SG mejorado con preservación extrema de picos
       const sgFiltered = this.applySavitzkyGolayFilter(denoised);
       
-      // ANÁLISIS FINAL ESTABILIZADO (SIN RETROALIMENTACIÓN TEMPORAL ERRÁTICA)
-      const enhancedValue = sgFiltered; // SIMPLIFICADO para evitar captación errática
+      // Análisis final con énfasis en picos y retroalimentación temporal
+      const enhancedValue = this.enhanceCardiacSignalWithFeedback(sgFiltered);
       
-      // TRACKING DE PICOS DESHABILITADO TEMPORALMENTE (ESTABILIDAD)
-      // this.trackPeak(enhancedValue); // COMENTADO para evitar oscilaciones
+      // Rastrear picos para análisis futuro
+      this.trackPeak(enhancedValue);
       
       return enhancedValue;
     }
     
     // Seguir usando denoised si no hay suficientes puntos para SG
-    // SIMPLIFICADO para estabilidad (CORREGIDO PARA EVITAR CAPTACIÓN ERRÁTICA)
-    const earlyEnhanced = denoised * 1.2; // REDUCIDO de 1.5 a 1.2
-    // this.trackPeak(earlyEnhanced); // COMENTADO para evitar oscilaciones
+    // pero con amplificación adicional para garantizar detección
+    const earlyEnhanced = denoised * 1.5;
+    this.trackPeak(earlyEnhanced);
     
     return earlyEnhanced;
   }
@@ -121,9 +121,9 @@ export class SignalProcessor {
    * NUEVO: Detección mejorada de cambios significativos en la señal para adaptar filtros
    */
   private detectSignalChange(): boolean {
-    if (this.ppgValues.length < 15) return false; // AUMENTADO para mayor estabilidad
+    if (this.ppgValues.length < 8) return false; // Reducido para detección más temprana
     
-    const current = this.ppgValues.slice(-8); // AUMENTADO para menor sensibilidad
+    const current = this.ppgValues.slice(-4); // Segmento más corto para respuesta más rápida
     const previous = this.ppgValues.slice(-8, -4);
     
     const currentAvg = current.reduce((a, b) => a + b, 0) / current.length;
@@ -188,11 +188,11 @@ export class SignalProcessor {
     const range = this.recentMax - this.recentMin;
     const normalizedValue = value - this.baselineValue;
     
-    // AMPLIFICACIÓN MODERADA para señales débiles (CORREGIDO PARA BPM)
+    // AMPLIFICACIÓN EXTREMA para señales débiles
     if (range < 5.0) { // Umbral elevado para capturar más señales como "débiles"
-      // Amplificación MODERADA para señales muy débiles (CORREGIDO)
+      // Amplificación extrema para señales muy débiles
       const amplificationFactor = Math.max(this.MIN_SIGNAL_BOOST, 
-                                          8.0 / (range + 0.5)); // REDUCIDO de 30.0 a 8.0, denominador aumentado
+                                          30.0 / (range + 0.1)); // Factor más agresivo
       
       // Amplificación no lineal para preservar forma de onda
       const sign = Math.sign(normalizedValue);

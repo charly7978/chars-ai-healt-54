@@ -56,13 +56,13 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // PESOS REBALANCEADOS para detección más clara de dedo real
+    // Weighted sum – weights can be tuned later or moved to config.
     const weighted =
-      redChannel * 0.20 +        // REDUCIDO de 0.30 a 0.20 (menos dependiente del rojo)
-      stability * 0.15 +         // REDUCIDO de 0.25 a 0.15
-      pulsatility * 0.35 +       // AUMENTADO de 0.25 a 0.35 (más peso a pulsatilidad)
-      biophysical * 0.25 +       // AUMENTADO de 0.15 a 0.25 (más peso a validación biofísica)
-      periodicity * 0.05;        // MANTENIDO
+      redChannel * 0.3 +
+      stability * 0.25 +
+      pulsatility * 0.25 +
+      biophysical * 0.15 +
+      periodicity * 0.05;
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
@@ -76,10 +76,10 @@ export class SignalAnalyzer {
       this.qualityHistory.reduce((acc, v) => acc + v, 0) /
       this.qualityHistory.length;
 
-    // HISTÉRESIS CORREGIDA para detección más clara
+    // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
     console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 18; // REDUCIDO de 30 a 18 para detección más sensible
+    const DETECTION_THRESHOLD = 30;
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
@@ -88,14 +88,10 @@ export class SignalAnalyzer {
       this.consecutiveDetections = 0;
     }
 
-    // HISTÉRESIS REDUCIDA para detección más rápida y clara
-    const MIN_CONSECUTIVE_DETECTIONS = 2;  // REDUCIDO de valor config
-    const MAX_CONSECUTIVE_NO_DETECTIONS = 4; // REDUCIDO de valor config
-    
-    if (this.consecutiveDetections >= MIN_CONSECUTIVE_DETECTIONS) {
+    if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
       isFingerDetected = true;
     } else if (
-      this.consecutiveNoDetections >= MAX_CONSECUTIVE_NO_DETECTIONS
+      this.consecutiveNoDetections >= this.config.MAX_CONSECUTIVE_NO_DETECTIONS
     ) {
       isFingerDetected = false;
     }

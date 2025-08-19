@@ -15,17 +15,6 @@ export interface ProcessedSignal {
   perfusionIndex?: number;
 }
 
-export interface SignalQualityMetrics {
-  signalStrength: number;
-  noiseLevel: number;
-  perfusionIndex: number;
-  overallQuality: number;
-  timestamp: number;
-  frameRate?: number;
-  bufferUsage?: number;
-  confidence?: number;
-}
-
 export interface ProcessingError {
   code: string;
   message: string;

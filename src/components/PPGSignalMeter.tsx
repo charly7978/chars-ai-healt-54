@@ -46,8 +46,8 @@ const PPGSignalMeter = ({
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 95.0; // RESTAURADO: Amplitud visual que funcionaba bien antes
-  const SMOOTHING_FACTOR = 1.5;   // RESTAURADO: Suavizado original que daba buena visualización
+  const verticalScale = 95.0;
+  const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
@@ -127,28 +127,67 @@ const PPGSignalMeter = ({
     }
   }, [arrhythmiaStatus]);
 
-  // FUNCIÓN AUXILIAR PARA REGISTRAR PICOS (DEFINIDA PRIMERO)
-  const recordPeakFromHeartBeat = useCallback((value: number, timestamp: number, isArrhythmia: boolean = false) => {
-    // Solo REGISTRAR picos detectados externamente por HeartBeatProcessor
-    if (value > 0) { // value > 0 indica que HeartBeatProcessor detectó un pico
-      const peak = {
-        time: timestamp,
-        value: value,
-        isArrhythmia
-      };
+  const detectPeaks = useCallback((points: PPGDataPoint[], now: number) => {
+    if (points.length < PEAK_DETECTION_WINDOW) return;
+    
+    const potentialPeaks: {index: number, value: number, time: number, isArrhythmia: boolean}[] = [];
+    
+    for (let i = PEAK_DETECTION_WINDOW; i < points.length - PEAK_DETECTION_WINDOW; i++) {
+      const currentPoint = points[i];
       
-      peaksRef.current.push(peak);
-      if (peaksRef.current.length > MAX_PEAKS_TO_DISPLAY) {
-        peaksRef.current = peaksRef.current.slice(-MAX_PEAKS_TO_DISPLAY);
+      const recentlyProcessed = peaksRef.current.some(
+        peak => Math.abs(peak.time - currentPoint.time) < MIN_PEAK_DISTANCE_MS
+      );
+      
+      if (recentlyProcessed) continue;
+      
+      let isPeak = true;
+      
+      for (let j = i - PEAK_DETECTION_WINDOW; j < i; j++) {
+        if (points[j].value >= currentPoint.value) {
+          isPeak = false;
+          break;
+        }
       }
       
-      console.log('PPGSignalMeter: 📍 Pico registrado desde HeartBeatProcessor', {
-        time: timestamp,
-        value: value.toFixed(3),
-        isArrhythmia,
-        totalPicos: peaksRef.current.length
-      });
+      if (isPeak) {
+        for (let j = i + 1; j <= i + PEAK_DETECTION_WINDOW; j++) {
+          if (j < points.length && points[j].value > currentPoint.value) {
+            isPeak = false;
+            break;
+          }
+        }
+      }
+      
+      if (isPeak && Math.abs(currentPoint.value) > PEAK_THRESHOLD) {
+        potentialPeaks.push({
+          index: i,
+          value: currentPoint.value,
+          time: currentPoint.time,
+          isArrhythmia: currentPoint.isArrhythmia
+        });
+      }
     }
+    
+    for (const peak of potentialPeaks) {
+      const tooClose = peaksRef.current.some(
+        existingPeak => Math.abs(existingPeak.time - peak.time) < MIN_PEAK_DISTANCE_MS
+      );
+      
+      if (!tooClose) {
+        peaksRef.current.push({
+          time: peak.time,
+          value: peak.value,
+          isArrhythmia: peak.isArrhythmia
+        });
+      }
+    }
+    
+    peaksRef.current.sort((a, b) => a.time - b.time);
+    
+    peaksRef.current = peaksRef.current
+      .filter(peak => now - peak.time < WINDOW_WIDTH_MS)
+      .slice(-MAX_PEAKS_TO_DISPLAY);
   }, []);
 
   const renderSignal = useCallback(() => {
@@ -189,11 +228,9 @@ const PPGSignalMeter = ({
       baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
     }
     
-    // SUAVIZADO INTELIGENTE (RESTAURADO A CONFIGURACIÓN EXITOSA)
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
     
-    // NORMALIZACIÓN Y ESCALADO DINÁMICO (COMO ERA ANTES)
     const normalizedValue = (baselineRef.current || 0) - smoothedValue;
     const scaledValue = normalizedValue * verticalScale;
     
@@ -213,11 +250,8 @@ const PPGSignalMeter = ({
     
     dataBufferRef.current.push(dataPoint);
     
-    // REGISTRAR PICO SI HeartBeatProcessor LO DETECTÓ (via value > 0)
-    recordPeakFromHeartBeat(value, now, isArrhythmia);
-    
-    // OBTENER PUNTOS DEL BUFFER (CRÍTICO - ESTABA FALTANDO)
     const points = dataBufferRef.current.getPoints();
+    detectPeaks(points, now);
     
     if (points.length > 1) {
       ctx.beginPath();
@@ -294,7 +328,7 @@ const PPGSignalMeter = ({
     
     lastRenderTimeRef.current = currentTime;
     animationFrameRef.current = requestAnimationFrame(renderSignal);
-  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, smoothValue, preserveResults, recordPeakFromHeartBeat]);
+  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
 
   useEffect(() => {
     renderSignal();
