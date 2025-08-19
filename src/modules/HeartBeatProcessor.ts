@@ -471,13 +471,15 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Detección de picos mejorada para señales con validación médica
+   * Detección de picos REAL - PROHIBIDA LA SIMULACIÓN
+   * Solo detecta latidos cardíacos auténticos de señales PPG reales
    */
   private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
     confidence: number;
     rawDerivative?: number;
   } {
+    // VALIDACIÓN TEMPORAL ESTRICTA - evitar detecciones demasiado frecuentes
     const now = Date.now();
     const timeSinceLastPeak = this.lastPeakTime
       ? now - this.lastPeakTime
@@ -486,12 +488,63 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // Detectar pico en máximo local: derivada negativa
-    const isOverThreshold = derivative < 0;
-    // Confianza máxima en cada detección de pico
-    const confidence = 1;
-
-    return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
+    
+    // 1. VALIDACIÓN DE AMPLITUD REAL - debe superar umbral adaptativo
+    const amplitude = Math.abs(normalizedValue);
+    if (amplitude < this.adaptiveSignalThreshold) {
+      return { isPeak: false, confidence: 0, rawDerivative: derivative };
+    }
+    
+    // 2. VALIDACIÓN DE DERIVADA - debe ser negativa (bajada después del pico)
+    const isNegativeDerivative = derivative < this.adaptiveDerivativeThreshold;
+    if (!isNegativeDerivative) {
+      return { isPeak: false, confidence: 0.1, rawDerivative: derivative };
+    }
+    
+    // 3. VALIDACIÓN DE PICO LOCAL REAL
+    if (this.signalBuffer.length >= 3) {
+      const current = normalizedValue;
+      const previous = this.signalBuffer[this.signalBuffer.length - 2] || 0;
+      const beforePrevious = this.signalBuffer[this.signalBuffer.length - 3] || 0;
+      
+      // Debe ser un máximo local real
+      const isLocalMaximum = Math.abs(current) > Math.abs(previous) && 
+                            Math.abs(previous) >= Math.abs(beforePrevious);
+      if (!isLocalMaximum) {
+        return { isPeak: false, confidence: 0, rawDerivative: derivative };
+      }
+    }
+    
+    // 4. CÁLCULO DE CONFIANZA BASADO EN DATOS REALES
+    let confidence = 0;
+    
+    // Factor de amplitud normalizada
+    const amplitudeFactor = Math.min(1, amplitude / (this.adaptiveSignalThreshold * 2.5));
+    confidence += amplitudeFactor * 0.5;
+    
+    // Factor de pendiente (derivada más pronunciada = mayor confianza)
+    const derivativeFactor = Math.min(1, Math.abs(derivative) / Math.abs(this.adaptiveDerivativeThreshold * 1.5));
+    confidence += derivativeFactor * 0.3;
+    
+    // Factor de contraste con valores recientes
+    if (this.signalBuffer.length > 3) {
+      const recentAvg = this.signalBuffer.slice(-3).reduce((a, b) => a + Math.abs(b), 0) / 3;
+      const contrastFactor = recentAvg > 0 ? Math.min(1, amplitude / recentAvg) : 0.2;
+      confidence += contrastFactor * 0.2;
+    }
+    
+    // 5. APLICAR UMBRAL DE CONFIANZA ESTRICTO
+    const isPeak = confidence >= this.adaptiveMinConfidence;
+    
+    console.log(`[DEBUG] enhancedPeakDetection REAL - amp:${amplitude.toFixed(3)}, ` +
+                `deriv:${derivative.toFixed(3)}, conf:${confidence.toFixed(3)}, ` +
+                `isPeak:${isPeak}, thresh:${this.adaptiveMinConfidence.toFixed(3)}`);
+    
+    return {
+      isPeak,
+      confidence,
+      rawDerivative: derivative
+    };
   }
 
   private confirmPeak(
@@ -514,15 +567,63 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Validación de picos basada estrictamente en criterios médicos
+   * Validación estricta de picos - SOLO LATIDOS CARDÍACOS REALES
+   * Confirma que el pico detectado es un latido auténtico, no un artefacto
    */
   private validatePeak(peakValue: number, confidence: number): boolean {
-    // Un pico es válido si tiene suficiente confianza y la calidad de la señal es alta.
-    // Esto asegura que solo los picos robustos y fisiológicamente plausibles sean considerados.
+    // PROHIBIDA LA VALIDACIÓN DE PICOS SIMULADOS O ARTIFICIALES
+    
+    // 1. Verificar confianza mínima estricta
     const isHighConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
+    if (!isHighConfidence) {
+      console.log(`[DEBUG] validatePeak - Confianza insuficiente: ${confidence} < ${this.MIN_PEAK_CONFIRMATION_CONFIDENCE}`);
+      return false;
+    }
+    
+    // 2. Verificar calidad de señal actual
     const isGoodSignalQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY;
-
-    return isHighConfidence && isGoodSignalQuality;
+    if (!isGoodSignalQuality) {
+      console.log(`[DEBUG] validatePeak - Calidad de señal insuficiente: ${this.currentSignalQuality} < ${this.MIN_PEAK_CONFIRMATION_QUALITY}`);
+      return false;
+    }
+    
+    // 3. Verificar amplitud mínima absoluta del pico
+    const amplitude = Math.abs(peakValue);
+    if (amplitude < this.PEAK_AMPLITUDE_THRESHOLD) {
+      console.log(`[DEBUG] validatePeak - Amplitud insuficiente: ${amplitude} < ${this.PEAK_AMPLITUDE_THRESHOLD}`);
+      return false;
+    }
+    
+    // 4. Validación de consistencia con picos anteriores REALES
+    if (this.peakValidationBuffer.length > 2) {
+      const recentPeaks = this.peakValidationBuffer.slice(-3);
+      const avgAmplitude = recentPeaks.reduce((a, b) => a + b, 0) / recentPeaks.length;
+      const amplitudeRatio = amplitude / (avgAmplitude + 0.01);
+      
+      // Rechazar picos muy diferentes a la historia reciente (posible artefacto)
+      if (amplitudeRatio < 0.4 || amplitudeRatio > 2.5) {
+        console.log(`[DEBUG] validatePeak - Ratio de amplitud anómalo: ${amplitudeRatio.toFixed(2)}, avg: ${avgAmplitude.toFixed(3)}`);
+        return false;
+      }
+    }
+    
+    // 5. Verificar fuerza histórica de la señal
+    if (this.recentSignalStrengths.length >= 10) {
+      const avgStrength = this.recentSignalStrengths.slice(-10).reduce((a, b) => a + b, 0) / 10;
+      if (avgStrength < 0.1) {
+        console.log(`[DEBUG] validatePeak - Fuerza histórica insuficiente: ${avgStrength.toFixed(3)}`);
+        return false;
+      }
+    }
+    
+    // 6. Actualizar buffer de validación SOLO con picos reales
+    this.peakValidationBuffer.push(amplitude);
+    if (this.peakValidationBuffer.length > this.PEAK_CONFIRMATION_BUFFER_SIZE) {
+      this.peakValidationBuffer.shift();
+    }
+    
+    console.log(`[DEBUG] validatePeak - LATIDO REAL CONFIRMADO: amp=${amplitude.toFixed(3)}, conf=${confidence.toFixed(3)}, quality=${this.currentSignalQuality.toFixed(1)}`);
+    return true;
   }
 
   private updateBPM() {

@@ -89,16 +89,49 @@ export class SignalProcessingPipeline {
     try {
       this.lastProcessedFrame = imageData;
       
-      // 1. Extraer datos PPG reales del frame de la cámara
+      // 1. Extraer datos PPG reales del frame de la cámara con detección de dedo humano
       const frameData = this.frameProcessor.extractFrameData(imageData);
       
-      // 2. Actualizar buffer de señal (manteniendo últimos N valores)
+      // VALIDACIÓN CRÍTICA: Solo procesar si se detecta dedo humano real
+      if (!frameData.fingerDetection.isFingerDetected || 
+          frameData.fingerDetection.confidence < 0.5) {
+        
+        console.log('[DEBUG] SignalProcessingPipeline - No human finger detected:', {
+          detected: frameData.fingerDetection.isFingerDetected,
+          confidence: frameData.fingerDetection.confidence,
+          anatomical: frameData.fingerDetection.anatomicalScore,
+          perfusion: frameData.fingerDetection.bloodPerfusionScore
+        });
+        
+        // Retornar señal nula - NO HAY DEDO HUMANO
+        const nullSignal: ProcessedSignal = {
+          timestamp: Date.now(),
+          rawValue: 0,
+          filteredValue: 0,
+          quality: 0,
+          fingerDetected: false,
+          roi: { x: 0, y: 0, width: 100, height: 100 },
+          perfusionIndex: 0
+        };
+        
+        if (this.signalCallback) {
+          this.signalCallback(nullSignal);
+        }
+        return;
+      }
+      
+      console.log('[DEBUG] SignalProcessingPipeline - Human finger confirmed:', {
+        confidence: frameData.fingerDetection.confidence,
+        characteristics: frameData.fingerDetection.fingertipCharacteristics
+      });
+      
+      // 2. Actualizar buffer de señal SOLO con señales válidas de dedo humano
       this.signalBuffer.push(frameData.redValue);
       if (this.signalBuffer.length > 60) { // Mantener último segundo a 60fps
         this.signalBuffer.shift();
       }
       
-      // 3. Calcular métricas de calidad REALES
+      // 3. Calcular métricas de calidad REALES integrando detección de dedo
       const qualityMetrics = this.calculateQualityMetrics(frameData);
       this.qualityBuffer.push(qualityMetrics.overallQuality);
       if (this.qualityBuffer.length > 20) {
@@ -128,14 +161,15 @@ export class SignalProcessingPipeline {
         trendResult
       );
       
-      // 8. Crear señal procesada con datos reales
+      // 8. Crear señal procesada con datos reales y validación de dedo humano
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: frameData.redValue,
         filteredValue: frameData.redValue, // Sin filtrado adicional para máxima autenticidad
-        quality: analysisResult.quality,
-        fingerDetected: analysisResult.isFingerDetected,
-        roi: { x: 0, y: 0, width: 100, height: 100 } // ROI básico
+        quality: Math.min(analysisResult.quality, frameData.fingerDetection.confidence * 100),
+        fingerDetected: analysisResult.isFingerDetected && frameData.fingerDetection.isFingerDetected,
+        roi: this.frameProcessor.detectROI(frameData.redValue, imageData),
+        perfusionIndex: frameData.fingerDetection.bloodPerfusionScore
       };
       
       // 9. Enviar señal procesada
