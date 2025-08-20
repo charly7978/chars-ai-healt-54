@@ -309,10 +309,10 @@ const CameraView = ({
     let redSum = 0, irSum = 0, greenSum = 0;
     let validPixels = 0;
     
-    // ROI centrado para evitar bordes y ruido
+    // ROI centrado para evitar bordes y ruido - CALIBRACIÓN SUTIL PARA ROBUSTEZ
     const centerX = Math.floor(width / 2);
     const centerY = Math.floor(height / 2);
-    const roiSize = Math.min(width, height) * 0.7; // ROI más amplio para mayor estabilidad
+    const roiSize = Math.min(width, height) * 0.72; // ROI ligeramente ampliado para mayor robustez
     
     const startX = Math.max(0, centerX - roiSize / 2);
     const endX = Math.min(width, centerX + roiSize / 2);

@@ -56,13 +56,13 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Weighted sum – weights optimized for stability
+    // Weighted sum – weights optimized for stability - CALIBRACIÓN SUTIL PARA ROBUSTEZ
     const weighted =
-      redChannel * 0.40 +      // Aumentado peso del canal rojo para estabilidad
-      stability * 0.35 +       // Aumentado peso de estabilidad
-      pulsatility * 0.15 +     // Reducido peso de pulsatilidad
-      biophysical * 0.08 +     // Reducido peso biofísico
-      periodicity * 0.02;      // Reducido peso de periodicidad
+      redChannel * 0.38 +      // Ligeramente reducido para mayor equilibrio
+      stability * 0.38 +       // Aumentado para mayor estabilidad
+      pulsatility * 0.16 +     // Mantenido para estabilidad
+      biophysical * 0.06 +     // Reducido para menor sensibilidad a cambios
+      periodicity * 0.02;      // Mantenido mínimo
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
@@ -73,9 +73,9 @@ export class SignalAnalyzer {
       this.qualityHistory.shift();
     }
     
-    // Promedio ponderado para mayor estabilidad
-    const recentWeight = 0.6; // Peso mayor para valores recientes
-    const historyWeight = 0.4; // Peso menor para valores históricos
+    // Promedio ponderado para mayor estabilidad - CALIBRACIÓN SUTIL
+    const recentWeight = 0.55; // Reducido sutilmente para mayor estabilidad
+    const historyWeight = 0.45; // Aumentado sutilmente para mayor estabilidad
     
     const recentValues = this.qualityHistory.slice(-3); // Últimos 3 valores
     const olderValues = this.qualityHistory.slice(0, -3); // Valores anteriores
@@ -87,9 +87,9 @@ export class SignalAnalyzer {
     
     const smoothedQuality = recentAvg * recentWeight + olderAvg * historyWeight;
 
-    // Umbrales optimizados para estabilidad
-    const DETECTION_THRESHOLD = 32; // Reducido para mayor sensibilidad
-    const RELEASE_THRESHOLD = 22;   // Umbral de liberación más bajo para estabilidad
+    // Umbrales optimizados para estabilidad - CALIBRACIÓN SUTIL A FAVOR DE LA ESTABILIDAD
+    const DETECTION_THRESHOLD = 28; // Reducido sutilmente para mayor robustez
+    const RELEASE_THRESHOLD = 18;   // Reducido sutilmente para mayor estabilidad
 
     // Hysteresis logic using consecutive detections - OPTIMIZADO para estabilidad
     let isFingerDetected = false;

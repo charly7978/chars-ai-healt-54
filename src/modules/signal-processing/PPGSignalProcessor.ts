@@ -28,19 +28,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   // Configuration with enhanced human finger detection
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 25,              // Aumentado para mayor estabilidad
+    BUFFER_SIZE: 28,              // Aumentado sutilmente para mayor robustez
     MIN_RED_THRESHOLD: 0,
     MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 25,         // Aumentado para mayor estabilidad
-    MIN_STABILITY_COUNT: 10,      // Aumentado para mayor estabilidad
-    HYSTERESIS: 2.8,              // Aumentado para mayor estabilidad
-    MIN_CONSECUTIVE_DETECTIONS: 12, // Aumentado para mayor estabilidad
-    MAX_CONSECUTIVE_NO_DETECTIONS: 8, // Aumentado para mayor estabilidad
-    QUALITY_LEVELS: 30,           // Aumentado para mayor estabilidad
-    QUALITY_HISTORY_SIZE: 20,     // Aumentado para mayor estabilidad
-    CALIBRATION_SAMPLES: 15,      // Aumentado para mayor estabilidad
+    STABILITY_WINDOW: 28,         // Aumentado sutilmente para mayor robustez
+    MIN_STABILITY_COUNT: 8,       // Reducido sutilmente para mayor sensibilidad
+    HYSTERESIS: 3.0,              // Aumentado sutilmente para mayor estabilidad
+    MIN_CONSECUTIVE_DETECTIONS: 10, // Reducido sutilmente para mayor sensibilidad
+    MAX_CONSECUTIVE_NO_DETECTIONS: 10, // Aumentado para mayor estabilidad
+    QUALITY_LEVELS: 35,           // Aumentado sutilmente para mayor robustez
+    QUALITY_HISTORY_SIZE: 25,     // Aumentado sutilmente para mayor robustez
+    CALIBRATION_SAMPLES: 18,      // Aumentado sutilmente para mayor robustez
     TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.70         // Aumentado para mayor cobertura
+    ROI_SIZE_FACTOR: 0.72         // Aumentado sutilmente para mayor cobertura
   };
   
   constructor(
@@ -284,8 +284,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Enhanced color ratio validation for human fingers (STRICT validation)
-      if ((rToGRatio < 0.8 || rToGRatio > 4.5) && !this.isCalibrating) {
+      // Enhanced color ratio validation for human fingers (ROBUST validation)
+      if ((rToGRatio < 0.75 || rToGRatio > 4.8) && !this.isCalibrating) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,
@@ -416,7 +416,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // 8. Texture consistency for human skin (new strict criterion)
     const humanTextureConsistency = textureScore > 0.3 && textureScore < 0.8;
     
-    // Combine all indicators (at least 6 out of 8 must be true for strict validation)
+    // Combine all indicators (at least 5 out of 8 must be true for robust validation)
     const validationCount = [
       humanColorTempRange,
       humanTextureRange, 
@@ -428,7 +428,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       humanTextureConsistency
     ].filter(Boolean).length;
     
-    return validationCount >= 6; // Umbral más estricto para solo dedos humanos
+    return validationCount >= 5; // Umbral más robusto pero no agresivo
   }
 
   /**

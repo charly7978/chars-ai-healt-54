@@ -8,13 +8,13 @@ import { ProcessedSignal } from '../../types/signal';
 export class FrameProcessor {
   // Configuración mejorada para detección más estable
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  private readonly RED_GAIN = 1.08; // Aumentado ligeramente para mejor detección
-  private readonly GREEN_SUPPRESSION = 0.90; // Menos supresión para comparación más real
-  private readonly SIGNAL_GAIN = 0.98; // Aumentado ligeramente para mejor estabilidad
-  private readonly EDGE_ENHANCEMENT = 0.15;  // Aumentado para mejor detección de bordes
-  private readonly MIN_RED_THRESHOLD = 0.35;  // Reducido para mayor sensibilidad
-  private readonly RG_RATIO_RANGE = [1.0, 3.5];  // Rango más amplio para estabilidad
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.18;  // Reducido para mayor sensibilidad
+  private readonly RED_GAIN = 1.06; // Reducido sutilmente para mayor equilibrio
+  private readonly GREEN_SUPPRESSION = 0.92; // Ajustado sutilmente para estabilidad
+  private readonly SIGNAL_GAIN = 0.99; // Ajustado sutilmente para estabilidad
+  private readonly EDGE_ENHANCEMENT = 0.13;  // Reducido sutilmente para estabilidad
+  private readonly MIN_RED_THRESHOLD = 0.32;  // Reducido sutilmente para mayor sensibilidad
+  private readonly RG_RATIO_RANGE = [0.95, 3.8];  // Rango ligeramente ampliado para robustez
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.17;  // Reducido sutilmente para mayor sensibilidad
   
   // Historial mejorado para estabilidad
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
@@ -29,7 +29,7 @@ export class FrameProcessor {
     // Aumentar tamaño de ROI para capturar más área
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.7, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
+      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
     };
   }
   
@@ -311,13 +311,13 @@ export class FrameProcessor {
     // Factor ROI adaptativo mejorado para mayor estabilidad
     let adaptiveROISizeFactor = this.CONFIG.ROI_SIZE_FACTOR;
     
-    // Ajustar ROI basado en valor rojo - MÁS ESTABLE Y AMPLIO
-    if (redValue < 35) { // Umbral reducido para mayor sensibilidad
+    // Ajustar ROI basado en valor rojo - MÁS ROBUSTO Y ESTABLE
+    if (redValue < 32) { // Umbral ajustado sutilmente para mayor robustez
       // Señal débil - mantener ROI amplio para capturar dedo
-      adaptiveROISizeFactor = Math.min(0.75, adaptiveROISizeFactor * 1.02); // Aumento moderado
-    } else if (redValue > 110) { // Umbral reducido para mayor estabilidad
+      adaptiveROISizeFactor = Math.min(0.78, adaptiveROISizeFactor * 1.01); // Aumento sutil
+    } else if (redValue > 105) { // Umbral ajustado sutilmente para mayor estabilidad
       // Señal fuerte - mantener ROI amplio para estabilidad
-      adaptiveROISizeFactor = Math.max(0.4, adaptiveROISizeFactor * 0.98); // Reducción mínima
+      adaptiveROISizeFactor = Math.max(0.42, adaptiveROISizeFactor * 0.99); // Reducción sutil
     }
     
     // Ensure ROI is appropriate to image size - MÁS AMPLIO
