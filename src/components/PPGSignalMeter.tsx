@@ -46,8 +46,8 @@ const PPGSignalMeter = ({
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 95.0;
-  const SMOOTHING_FACTOR = 1.5;
+  const verticalScale = 80.0; // Ajustado para preservar la amplitud exacta del latido
+  const SMOOTHING_FACTOR = 0.8; // Reducido para ondas más suaves
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
@@ -73,7 +73,9 @@ const PPGSignalMeter = ({
 
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
-    return previousValue + SMOOTHING_FACTOR * (currentValue - previousValue);
+    // Preservar la precisión del latido cardíaco - solo suavizado mínimo
+    const alpha = 0.8; // Factor de suavizado mínimo para preservar el "latigazo"
+    return previousValue * (1 - alpha) + currentValue * alpha;
   }, []);
 
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -222,11 +224,12 @@ const PPGSignalMeter = ({
       return;
     }
     
-    if (baselineRef.current === null) {
-      baselineRef.current = value;
-    } else {
-      baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
-    }
+         if (baselineRef.current === null) {
+       baselineRef.current = value;
+     } else {
+       // Línea base más precisa para preservar el latido exacto
+       baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
+     }
     
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
