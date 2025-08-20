@@ -288,19 +288,19 @@ export class FrameProcessor {
    * VERSIÓN ULTRA-ESTRICTA para eliminar falsos positivos
    */
   private calculateSkinLikeness(r: number, g: number, b: number, texture: number): number {
-    // Rangos MÁS ESTRICTOS de color de piel humana (normalizado 0-255)
-    const skinRedRange = [110, 200];   // Rango más estrecho para rojo
-    const skinGreenRange = [60, 150];  // Rango más estrecho para verde  
-    const skinBlueRange = [40, 120];   // Rango más estrecho para azul
+    // Rangos balanceados de color de piel humana (normalizado 0-255)
+    const skinRedRange = [90, 220];   // Rango más amplio para diferentes tonos
+    const skinGreenRange = [50, 170];  // Rango más amplio para verde  
+    const skinBlueRange = [30, 140];   // Rango más amplio para azul
     
     // Verificar si los valores están en rangos ESTRICTOS de piel
     const redMatch = (r >= skinRedRange[0] && r <= skinRedRange[1]) ? 1 : 0;
     const greenMatch = (g >= skinGreenRange[0] && g <= skinGreenRange[1]) ? 1 : 0;
     const blueMatch = (b >= skinBlueRange[0] && b <= skinBlueRange[1]) ? 1 : 0;
     
-    // Ratio R/G MÁS ESTRICTO de piel (1.3 - 2.3)
+    // Ratio R/G balanceado de piel (1.1 - 2.8)
     const rgRatio = g > 0 ? r / g : 0;
-    const ratioMatch = (rgRatio >= 1.3 && rgRatio <= 2.3) ? 1 : 0;
+    const ratioMatch = (rgRatio >= 1.1 && rgRatio <= 2.8) ? 1 : 0;
     
     // La textura de piel debe estar en rango MÁS ESPECÍFICO
     const textureMatch = (texture >= 0.4 && texture <= 0.7) ? 1 : 0;
@@ -353,9 +353,9 @@ export class FrameProcessor {
       this.movementHistory.shift();
     }
     
-    // Necesitamos MÁS mediciones para análisis estricto
-    if (this.movementHistory.length < 6) { // Aumentado de 4 a 6
-      return 0.1; // Valor muy bajo hasta tener suficientes datos
+    // Necesitamos suficientes mediciones para análisis
+    if (this.movementHistory.length < 4) {
+      return 0.3; // Valor moderado hasta tener suficientes datos
     }
     
     // Calcular variación en los valores de color

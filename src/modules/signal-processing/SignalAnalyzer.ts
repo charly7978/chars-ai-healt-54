@@ -56,9 +56,8 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity, skinLikeness, stabilityScore } =
       this.detectorScores;
 
-    // VALIDACIÓN ULTRA-ESTRICTA: Rechazar inmediatamente si no parece piel o hay vibraciones de mesa
-    if (skinLikeness !== undefined && skinLikeness < 0.7) { // AUMENTADO DRÁSTICAMENTE de 0.4 a 0.7
-      console.log('[DEBUG] SignalAnalyzer - RECHAZADO por skinLikeness muy baja:', skinLikeness);
+    // Validación balanceada: Rechazar solo casos claramente falsos
+    if (skinLikeness !== undefined && skinLikeness < 0.4) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -66,8 +65,7 @@ export class SignalAnalyzer {
       };
     }
     
-    if (stabilityScore !== undefined && stabilityScore < 0.6) { // AUMENTADO DRÁSTICAMENTE de 0.3 a 0.6
-      console.log('[DEBUG] SignalAnalyzer - RECHAZADO por stabilityScore muy baja (vibración mesa/pared):', stabilityScore);
+    if (stabilityScore !== undefined && stabilityScore < 0.25) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -75,9 +73,8 @@ export class SignalAnalyzer {
       };
     }
 
-    // NUEVA VALIDACIÓN: Requiere que TODOS los detectores básicos estén por encima del mínimo
-    if (redChannel < 0.4 || stability < 0.3 || pulsatility < 0.3 || biophysical < 0.3) {
-      console.log('[DEBUG] SignalAnalyzer - RECHAZADO por detectores básicos insuficientes:', { redChannel, stability, pulsatility, biophysical });
+    // Validación básica más permisiva
+    if (redChannel < 0.25 || stability < 0.2 || pulsatility < 0.2 || biophysical < 0.2) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -109,8 +106,7 @@ export class SignalAnalyzer {
 
     // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
-    console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 50; // AUMENTADO DRÁSTICAMENTE de 35 a 50 para eliminar TODOS los falsos positivos
+    const DETECTION_THRESHOLD = 35; // Umbral balanceado para permitir dedos reales
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
