@@ -164,62 +164,15 @@ export const useVitalSignsProcessor = () => {
         timestamp: new Date().toISOString()
       });
       
-      // Multi-parametric arrhythmia detection algorithm
-      if ((rmssd > 50 && rrVariation > 0.20) || // Primary condition
-          (rrSD > 35 && rrVariation > 0.18) ||  // Secondary condition
-          (lastRR > 1.4 * avgRR) ||             // Extreme outlier condition
-          (lastRR < 0.6 * avgRR)) {             // Extreme outlier condition
-          
-        console.log("useVitalSignsProcessor: Posible arritmia detectada", {
-          rmssd,
-          rrVariation,
-          rrSD,
-          condición1: rmssd > 50 && rrVariation > 0.20,
-          condición2: rrSD > 35 && rrVariation > 0.18,
-          condición3: lastRR > 1.4 * avgRR,
-          condición4: lastRR < 0.6 * avgRR,
-          timestamp: new Date().toISOString()
-        });
-        
-        if (currentTime - lastArrhythmiaTime.current >= MIN_TIME_BETWEEN_ARRHYTHMIAS &&
-            arrhythmiaCounter < MAX_ARRHYTHMIAS_PER_SESSION) {
-          
-          hasDetectedArrhythmia.current = true;
-          const nuevoContador = arrhythmiaCounter + 1;
-          setArrhythmiaCounter(nuevoContador);
-          lastArrhythmiaTime.current = currentTime;
-          
-          console.log("Arritmia confirmada:", {
-            rmssd,
-            rrVariation,
-            rrSD,
-            lastRR,
-            avgRR,
-            intervals: lastThreeIntervals,
-            counter: nuevoContador,
-            timestamp: new Date().toISOString()
-          });
-
-          return {
-            ...result,
-            arrhythmiaStatus: `ARRITMIA DETECTADA|${nuevoContador}`,
-            lastArrhythmiaData: {
-              timestamp: currentTime,
-              rmssd,
-              rrVariation
-            }
-          };
-        } else {
-          console.log("useVitalSignsProcessor: Arritmia detectada pero ignorada", {
-            motivo: currentTime - lastArrhythmiaTime.current < MIN_TIME_BETWEEN_ARRHYTHMIAS ? 
-              "Demasiado pronto desde la última" : "Máximo número de arritmias alcanzado",
-            tiempoDesdeÚltima: currentTime - lastArrhythmiaTime.current,
-            máximoPermitido: MAX_ARRHYTHMIAS_PER_SESSION,
-            contadorActual: arrhythmiaCounter,
-            timestamp: new Date().toISOString()
-          });
-        }
-      }
+      // DUPLICIDAD ELIMINADA: Usar solo ArrhythmiaProcessor para detección
+      // La detección se maneja ahora en VitalSignsProcessor.arrhythmiaProcessor
+      console.log("useVitalSignsProcessor: Datos RR calculados para ArrhythmiaProcessor", {
+        rmssd,
+        rrVariation,
+        rrSD,
+        intervals: lastThreeIntervals,
+        timestamp: new Date().toISOString()
+      });
     }
     
     // If we previously detected an arrhythmia, maintain that state

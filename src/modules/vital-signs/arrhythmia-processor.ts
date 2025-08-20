@@ -3,20 +3,20 @@
  * Advanced Arrhythmia Processor based on peer-reviewed cardiac research
  */
 export class ArrhythmiaProcessor {
-  // Configuration based on Harvard Medical School research on HRV
-  private readonly RR_WINDOW_SIZE = 10; // Increased window for better statistical power
-  private readonly RMSSD_THRESHOLD = 45; // More conservative threshold
-  private readonly ARRHYTHMIA_LEARNING_PERIOD = 6000; // Extended learning period
-  private readonly SD1_THRESHOLD = 35; // More conservative Poincaré plot SD1 threshold
-  private readonly PERFUSION_INDEX_MIN = 0.3; // Higher minimum PI for reliable detection
+  // Configuration based on Harvard Medical School research on HRV - OPTIMIZADA
+  private readonly RR_WINDOW_SIZE = 8; // Reducido para detección más rápida
+  private readonly RMSSD_THRESHOLD = 40; // Reducido para mayor sensibilidad
+  private readonly ARRHYTHMIA_LEARNING_PERIOD = 4000; // Reducido para detección más rápida
+  private readonly SD1_THRESHOLD = 30; // Reducido para mayor sensibilidad
+  private readonly PERFUSION_INDEX_MIN = 0.25; // Reducido para mayor sensibilidad
   
-  // Advanced detection parameters from Mayo Clinic research
-  private readonly PNNX_THRESHOLD = 0.25; // More conservative pNN50 threshold
-  private readonly SHANNON_ENTROPY_THRESHOLD = 1.8; // Higher entropy threshold
-  private readonly SAMPLE_ENTROPY_THRESHOLD = 1.4; // Higher sample entropy threshold
+  // Advanced detection parameters from Mayo Clinic research - OPTIMIZADOS
+  private readonly PNNX_THRESHOLD = 0.20; // Reducido para mayor sensibilidad
+  private readonly SHANNON_ENTROPY_THRESHOLD = 1.6; // Reducido para mayor sensibilidad
+  private readonly SAMPLE_ENTROPY_THRESHOLD = 1.2; // Reducido para mayor sensibilidad
   
-  // Minimum time between arrhythmias to reduce false positives
-  private readonly MIN_ARRHYTHMIA_INTERVAL = 2000; // 2 seconds minimum between detections
+  // Minimum time between arrhythmias to reduce false positives - OPTIMIZADO
+  private readonly MIN_ARRHYTHMIA_INTERVAL = 1500; // Reducido para mayor responsividad
 
   // State variables
   private rrIntervals: number[] = [];
@@ -104,7 +104,7 @@ export class ArrhythmiaProcessor {
   }
 
   /**
-   * Detecta arritmias usando múltiples métricas avanzadas de VRC
+   * Detecta arritmias usando múltiples métricas avanzadas de VRC - ALGORITMO MEJORADO
    */
   private detectArrhythmia(): void {
     if (this.rrIntervals.length < this.RR_WINDOW_SIZE) return;
@@ -153,24 +153,30 @@ export class ArrhythmiaProcessor {
     this.lastRMSSD = rmssd;
     this.lastRRVariation = rrVariation;
     
-    // Multi-parametric decision algorithm with more conservative thresholds
+    // Multi-parametric decision algorithm - ALGORITMO MEJORADO PARA MEJOR DETECCIÓN
     const timeSinceLastArrhythmia = currentTime - this.lastArrhythmiaTime;
     const newArrhythmiaState = 
       timeSinceLastArrhythmia >= this.MIN_ARRHYTHMIA_INTERVAL && (
-        // Primary condition: requires multiple criteria to be met
+        // Primary condition: Variabilidad significativa del ritmo cardíaco
         (rmssd > this.RMSSD_THRESHOLD && 
-         rrVariation > 0.25 && 
-         coefficientOfVariation > 0.15) ||
+         rrVariation > 0.18 && 
+         coefficientOfVariation > 0.12) ||
         
-        // Secondary condition: requires very strong signal quality
+        // Secondary condition: Patrones irregulares detectados
         (this.shannonEntropy > this.SHANNON_ENTROPY_THRESHOLD && 
          this.pnnX > this.PNNX_THRESHOLD && 
-         coefficientOfVariation > 0.2) ||
+         coefficientOfVariation > 0.15) ||
         
-        // Extreme variation condition: requires multiple confirmations
-        (rrVariation > 0.35 && 
-         coefficientOfVariation > 0.25 && 
-         this.sampleEntropy > this.SAMPLE_ENTROPY_THRESHOLD)
+        // Extreme variation condition: Variaciones extremas del RR
+        (rrVariation > 0.30 && 
+         coefficientOfVariation > 0.20 && 
+         this.sampleEntropy > this.SAMPLE_ENTROPY_THRESHOLD) ||
+         
+        // New condition: Intervalos RR fuera de rango normal
+        (lastRR > avgRR * 1.5 || lastRR < avgRR * 0.65) ||
+        
+        // New condition: Secuencia irregular de 3 o más latidos
+        this.detectIrregularSequence(validRRs.slice(-4))
       );
 
     // Notificar cambios en el estado de arritmia
@@ -274,6 +280,47 @@ export class ArrhythmiaProcessor {
     
     // Convert to entropy-like measure
     return -Math.log(sumCorr / (normalizedIntervals.length - 1));
+  }
+
+  /**
+   * Detecta secuencias irregulares en los últimos intervalos RR
+   */
+  private detectIrregularSequence(lastIntervals: number[]): boolean {
+    if (lastIntervals.length < 3) return false;
+    
+    // Calcular diferencias consecutivas
+    const diffs = [];
+    for (let i = 1; i < lastIntervals.length; i++) {
+      diffs.push(Math.abs(lastIntervals[i] - lastIntervals[i-1]));
+    }
+    
+    // Si hay 2 o más diferencias grandes consecutivas (>100ms), es irregular
+    let consecutiveLargeDiffs = 0;
+    for (const diff of diffs) {
+      if (diff > 100) { // 100ms es significativo para arritmias
+        consecutiveLargeDiffs++;
+      } else {
+        consecutiveLargeDiffs = 0;
+      }
+      
+      if (consecutiveLargeDiffs >= 2) {
+        return true;
+      }
+    }
+    
+    // Detectar patrón bigeminia/trigeminia (latidos alternados)
+    if (lastIntervals.length >= 4) {
+      const pattern1 = Math.abs(lastIntervals[0] - lastIntervals[2]);
+      const pattern2 = Math.abs(lastIntervals[1] - lastIntervals[3]);
+      
+      // Si los intervalos alternan de manera significativa
+      if (pattern1 < 50 && pattern2 < 50 && 
+          Math.abs(lastIntervals[0] - lastIntervals[1]) > 150) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   /**
