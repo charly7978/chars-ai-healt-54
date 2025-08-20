@@ -1,12 +1,19 @@
 
-import { ProcessedSignal, ProcessingError } from '../../types/signal';
+import type { ProcessedSignal, ProcessingError } from '../../types/signal';
 
-export { ProcessedSignal, ProcessingError };
+export type { ProcessedSignal, ProcessingError };
 
 export interface ProcessingConfig {
   bufferSize?: number;
   qualityThreshold?: number;
   calibrationSamples?: number;
+}
+
+export interface SignalQualityMetrics {
+  snr: number;
+  stability: number;
+  consistency: number;
+  overallQuality: number;
 }
 
 export interface SignalProcessorConfig {
@@ -58,11 +65,4 @@ export interface DetectionResult {
   isFingerDetected: boolean;
   quality: number;
   detectorDetails: Record<string, number | string>;
-}
-
-export interface SignalQualityMetrics {
-  snr: number;
-  stability: number;
-  consistency: number;
-  overallQuality: number;
 }

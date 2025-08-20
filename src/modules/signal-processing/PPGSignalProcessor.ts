@@ -1,4 +1,3 @@
-
 import { AdvancedFingerDetector, FingerDetectionResult } from './AdvancedFingerDetector';
 import { SignalQualityAnalyzer } from './SignalQualityAnalyzer';
 import { BufferManager } from './BufferManager';
@@ -18,7 +17,7 @@ export class PPGSignalProcessor {
   constructor(onSignalReady?: (signal: ProcessedSignal) => void, onError?: (error: any) => void) {
     this.fingerDetector = new AdvancedFingerDetector();
     this.qualityAnalyzer = new SignalQualityAnalyzer();
-    this.bufferManager = new BufferManager();
+    this.bufferManager = BufferManager.getInstance();
     
     this.onSignalReady = onSignalReady;
     this.onError = onError;
@@ -38,7 +37,6 @@ export class PPGSignalProcessor {
 
   public async calibrate(): Promise<void> {
     console.log('📡 Iniciando calibración PPG');
-    // Calibración simple - en una implementación real tendría más lógica
     await new Promise(resolve => setTimeout(resolve, 1000));
     console.log('📡 Calibración PPG completada');
   }
@@ -58,9 +56,7 @@ export class PPGSignalProcessor {
       this.lastFingerResult = this.fingerDetector.detectFinger(colorValues);
       
       // Agregar muestra al buffer
-      if (this.bufferManager.addSample) {
-        this.bufferManager.addSample(colorValues.g, Date.now());
-      }
+      this.bufferManager.addSample(colorValues.g, Date.now());
       
       // Calcular señal PPG
       const ppgValue = this.calculatePPGSignal(colorValues, this.lastFingerResult);
@@ -107,10 +103,8 @@ export class PPGSignalProcessor {
     // Advanced finger detection with multi-level consensus
     this.lastFingerResult = this.fingerDetector.detectFinger(colorValues);
     
-    // Add sample to buffer for quality analysis (si el método existe)
-    if (this.bufferManager.addSample) {
-      this.bufferManager.addSample(colorValues.g, Date.now());
-    }
+    // Add sample to buffer for quality analysis
+    this.bufferManager.addSample(colorValues.g, Date.now());
     
     // Calculate PPG signal based on finger detection
     const ppgValue = this.calculatePPGSignal(colorValues, this.lastFingerResult);
@@ -279,9 +273,7 @@ export class PPGSignalProcessor {
 
   public reset(): void {
     this.fingerDetector.reset();
-    if (this.bufferManager.clear) {
-      this.bufferManager.clear();
-    }
+    this.bufferManager.clear();
     this.qualityAnalyzer.reset();
     this.lastFingerResult = null;
     console.log('🔄 PPGSignalProcessor reiniciado');
