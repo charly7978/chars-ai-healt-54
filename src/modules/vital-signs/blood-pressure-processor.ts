@@ -61,13 +61,36 @@ export class BloodPressureProcessor {
     augmentationIndex?: number;
     arterialStiffness?: number;
   } {
+    // DEBUG: Verificar datos de entrada
+    console.log('🔍 BloodPressureProcessor DEBUG:', {
+      valuesLength: values.length,
+      firstValues: values.slice(0, 5),
+      lastValues: values.slice(-5),
+      hasValidData: values.length > 0 && values.some(v => v !== 0 && !isNaN(v))
+    });
+
     if (values.length < 50) { // Requiere más muestras para análisis avanzado
+      console.log('❌ BloodPressureProcessor: Insuficientes muestras:', values.length);
+      return { systolic: 0, diastolic: 0 };
+    }
+
+    // Verificar que los valores sean válidos
+    if (!values.some(v => v !== 0 && !isNaN(v))) {
+      console.log('❌ BloodPressureProcessor: Todos los valores son 0 o NaN');
       return { systolic: 0, diastolic: 0 };
     }
 
     // 1. ANÁLISIS AVANZADO DE ONDAS DE PULSO (PWA) con AI
     const { peakIndices, valleyIndices } = findPeaksAndValleys(values);
+    console.log('🔍 BloodPressureProcessor: Picos y valles detectados:', {
+      peaks: peakIndices.length,
+      valleys: valleyIndices.length,
+      peakIndices: peakIndices.slice(0, 5),
+      valleyIndices: valleyIndices.slice(0, 5)
+    });
+    
     if (peakIndices.length < 3) {
+      console.log('❌ BloodPressureProcessor: Insuficientes picos detectados:', peakIndices.length);
       return { systolic: 0, diastolic: 0 };
     }
 
@@ -87,21 +110,30 @@ export class BloodPressureProcessor {
     
     // 5. ANÁLISIS DE MORFOLOGÍA DE ONDAS DE PULSO avanzado
     const waveformAnalysis = this.performAdvancedWaveformAnalysis(values, peakIndices, valleyIndices);
+    console.log('🔍 BloodPressureProcessor: Análisis de ondas completado:', {
+      amplitude: waveformAnalysis.amplitude,
+      pulsePressure: waveformAnalysis.pulsePressure,
+      upstrokeTime: waveformAnalysis.upstrokeTime,
+      reflectionIndex: waveformAnalysis.reflectionIndex
+    });
     
     // 6. CÁLCULO DE PRESIÓN SISTÓLICA usando Windkessel de 4 elementos
     const systolicPressure = this.calculateAdvancedSystolicPressure(
       pulseWaveVelocity, waveformAnalysis, arterialStiffness
     );
+    console.log('🔍 BloodPressureProcessor: Presión sistólica calculada:', systolicPressure);
     
     // 7. PRESIÓN DIASTÓLICA usando modelo de compliance arterial avanzado
     const diastolicPressure = this.calculateAdvancedDiastolicPressure(
       systolicPressure, pulseWaveVelocity, arterialStiffness, waveformAnalysis
     );
+    console.log('🔍 BloodPressureProcessor: Presión diastólica calculada:', diastolicPressure);
 
     // 8. ESTIMACIÓN DE PRESIÓN CENTRAL AÓRTICA (nueva funcionalidad)
     const centralPressure = this.estimateCentralAorticPressure(
       systolicPressure, diastolicPressure, arterialStiffness, waveformAnalysis
     );
+    console.log('🔍 BloodPressureProcessor: Presión central estimada:', centralPressure);
 
     // 9. CÁLCULO DEL ÍNDICE DE AUGMENTACIÓN (AIx)
     const augmentationIndex = this.calculateAugmentationIndex(
@@ -118,13 +150,17 @@ export class BloodPressureProcessor {
     // 12. SUAVIZADO MÉDICO-GRADO usando filtros de Kalman
     const smoothedPressures = this.applyAdvancedMedicalGradeSmoothing();
 
-    return {
+    const result = {
       systolic: Math.round(smoothedPressures.systolic),
       diastolic: Math.round(smoothedPressures.diastolic),
       centralPressure: Math.round(centralPressure),
       augmentationIndex: Math.round(augmentationIndex * 100) / 100,
       arterialStiffness: Math.round(arterialStiffness * 100) / 100
     };
+
+    console.log('🎯 BloodPressureProcessor: RESULTADO FINAL:', result);
+    
+    return result;
   }
 
   /**
