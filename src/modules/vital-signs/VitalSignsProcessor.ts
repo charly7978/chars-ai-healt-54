@@ -1,3 +1,4 @@
+
 import { SuperAdvancedVitalSignsProcessor } from './SuperAdvancedVitalSignsProcessor';
 import { RealBloodPressureProcessor } from './RealBloodPressureProcessor';
 import { AdvancedGlucoseProcessor } from './AdvancedGlucoseProcessor';
@@ -70,13 +71,13 @@ export class VitalSignsProcessor {
       // Convert rrData to format expected by processors
       const rrIntervals = rrData?.intervals || [];
       
-      // Process with advanced processor - pass single value in array format with proper context
+      // Process with advanced processor - use single value
       const advancedResult = await this.superAdvancedProcessor.processAdvancedVitalSigns([ppgValue], rrIntervals);
       
-      // Process blood pressure with specialized processor - use proper method signature
+      // Process blood pressure - pass single value and empty context
       const bpResult = await this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals, {});
       
-      // Process glucose with advanced spectroscopic analysis - use proper method signature  
+      // Process glucose - pass single value and empty contexts
       const glucoseResult = await this.glucoseProcessor.processSignal(ppgValue, rrIntervals, {}, {});
       
       console.log('🎯 Resultados de procesadores especializados:', {
@@ -99,6 +100,7 @@ export class VitalSignsProcessor {
         hemoglobin: Math.round(advancedResult.hemoglobin.concentration),
         confidence: Math.round((advancedResult.validation.overallConfidence + bpResult.confidence + glucoseResult.confidence) / 3 * 100),
         quality: Math.round((bpResult.quality + glucoseResult.quality) / 2),
+        lastArrhythmiaData: advancedResult.lastArrhythmiaData,
         calibration: {
           isCalibrating: this.isCalibrating,
           progress: this.calibrationProgress
