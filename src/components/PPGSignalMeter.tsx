@@ -46,7 +46,7 @@ const PPGSignalMeter = ({
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 25.0; // Escala correcta para picos visibles sin saturación
+  const verticalScale = 120.0; // Escala aumentada para ondas visibles y picos prominentes
   const SMOOTHING_FACTOR = 0.8; // Reducido para ondas más suaves
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
@@ -227,15 +227,15 @@ const PPGSignalMeter = ({
          if (baselineRef.current === null) {
        baselineRef.current = value;
      } else {
-       // Línea base más estable para latidos precisos
-       baselineRef.current = baselineRef.current * 0.99 + value * 0.01;
+       // Línea base menos reactiva para permitir ver variaciones del latido
+       baselineRef.current = baselineRef.current * 0.97 + value * 0.03;
      }
     
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
     
-    // Corregir la orientación de la señal PPG (picos hacia arriba)
-    const normalizedValue = smoothedValue - (baselineRef.current || 0);
+    // Lógica corregida para picos hacia arriba y ondas visibles
+    const normalizedValue = (smoothedValue - (baselineRef.current || 0));
     const scaledValue = normalizedValue * verticalScale;
     
     let isArrhythmia = false;
@@ -271,10 +271,10 @@ const PPGSignalMeter = ({
         const point = points[i];
         
         const x1 = canvas.width - ((now - prevPoint.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y1 = canvas.height / 2 + prevPoint.value; // Corregido: + para picos hacia arriba
+        const y1 = canvas.height / 2 - prevPoint.value; // Canvas: - para picos hacia arriba
         
         const x2 = canvas.width - ((now - point.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y2 = canvas.height / 2 + point.value; // Corregido: + para picos hacia arriba
+        const y2 = canvas.height / 2 - point.value; // Canvas: - para picos hacia arriba
         
         if (firstPoint) {
           ctx.moveTo(x1, y1);
@@ -301,7 +301,7 @@ const PPGSignalMeter = ({
       
       peaksRef.current.forEach(peak => {
         const x = canvas.width - ((now - peak.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y = canvas.height / 2 + peak.value; // Corregido: + para picos hacia arriba
+        const y = canvas.height / 2 - peak.value; // Canvas: - para picos hacia arriba
         
         if (x >= 0 && x <= canvas.width) {
           ctx.beginPath();
