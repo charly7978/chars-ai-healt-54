@@ -1,357 +1,161 @@
-import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
-import { KalmanFilter } from './KalmanFilter';
-import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
-import { SignalTrendAnalyzer, TrendResult } from './SignalTrendAnalyzer';
-import { BiophysicalValidator } from './BiophysicalValidator';
-import { FrameProcessor } from './FrameProcessor';
-import { CalibrationHandler } from './CalibrationHandler';
-import { SignalAnalyzer } from './SignalAnalyzer';
-import { SignalProcessorConfig } from './types';
 
-/**
- * Procesador de señal PPG con detección de dedo
- * e indicador de calidad
- * PROHIBIDA LA SIMULACIÓN Y TODO TIPO DE MANIPULACIÓN FORZADA DE DATOS
- */
-export class PPGSignalProcessor implements SignalProcessorInterface {
-  public isProcessing: boolean = false;
-  public kalmanFilter: KalmanFilter;
-  public sgFilter: SavitzkyGolayFilter;
-  public trendAnalyzer: SignalTrendAnalyzer;
-  public biophysicalValidator: BiophysicalValidator;
-  public frameProcessor: FrameProcessor;
-  public calibrationHandler: CalibrationHandler;
-  public signalAnalyzer: SignalAnalyzer;
-  public lastValues: number[] = [];
-  public isCalibrating: boolean = false;
-  public frameProcessedCount = 0;
-  
-  // Configuration with stricter medically appropriate thresholds
-  public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 15,
-    MIN_RED_THRESHOLD: 0,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
-    MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 15,      // Increased for more stability assessment
-    MIN_STABILITY_COUNT: 6,   // Requires more stability for detection
-    HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 9,  // Requires more frames to confirm detection
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
-    QUALITY_LEVELS: 20,
-    QUALITY_HISTORY_SIZE: 10,
-    CALIBRATION_SAMPLES: 10,
-    TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.6
-  };
-  
-  constructor(
-    public onSignalReady?: (signal: ProcessedSignal) => void,
-    public onError?: (error: ProcessingError) => void
-  ) {
-    console.log("[DIAG] PPGSignalProcessor: Constructor", {
-      hasSignalReadyCallback: !!onSignalReady,
-      hasErrorCallback: !!onError,
-      stack: new Error().stack
-    });
+import { AdvancedFingerDetector, FingerDetectionResult } from './AdvancedFingerDetector';
+import { SignalQualityAnalyzer } from './SignalQualityAnalyzer';
+import { BufferManager } from './BufferManager';
+import type { ProcessedSignal } from './types';
+
+export class PPGSignalProcessor {
+  private fingerDetector: AdvancedFingerDetector;
+  private qualityAnalyzer: SignalQualityAnalyzer;
+  private bufferManager: BufferManager;
+  private lastFingerResult: FingerDetectionResult | null = null;
+
+  constructor() {
+    this.fingerDetector = new AdvancedFingerDetector();
+    this.qualityAnalyzer = new SignalQualityAnalyzer();
+    this.bufferManager = new BufferManager(300);
     
-    this.kalmanFilter = new KalmanFilter();
-    this.sgFilter = new SavitzkyGolayFilter();
-    this.trendAnalyzer = new SignalTrendAnalyzer();
-    this.biophysicalValidator = new BiophysicalValidator();
-    this.frameProcessor = new FrameProcessor({
-      TEXTURE_GRID_SIZE: this.CONFIG.TEXTURE_GRID_SIZE,
-      ROI_SIZE_FACTOR: this.CONFIG.ROI_SIZE_FACTOR
-    });
-    this.calibrationHandler = new CalibrationHandler({
-      CALIBRATION_SAMPLES: this.CONFIG.CALIBRATION_SAMPLES,
-      MIN_RED_THRESHOLD: this.CONFIG.MIN_RED_THRESHOLD,
-      MAX_RED_THRESHOLD: this.CONFIG.MAX_RED_THRESHOLD
-    });
-    this.signalAnalyzer = new SignalAnalyzer({
-      QUALITY_LEVELS: this.CONFIG.QUALITY_LEVELS,
-      QUALITY_HISTORY_SIZE: this.CONFIG.QUALITY_HISTORY_SIZE,
-      MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_DETECTIONS,
-      MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS
-    });
+    console.log('📡 PPGSignalProcessor inicializado con detector avanzado de dedo');
+  }
+
+  public processVideoFrame(
+    video: HTMLVideoElement,
+    canvas: HTMLCanvasElement,
+    context: CanvasRenderingContext2D
+  ): ProcessedSignal {
+    // Extract color values from video frame
+    const colorValues = this.extractColorValues(video, canvas, context);
     
-    console.log("PPGSignalProcessor: Instance created with medically appropriate configuration:", this.CONFIG);
-  }
+    // Advanced finger detection with multi-level consensus
+    this.lastFingerResult = this.fingerDetector.detectFinger(colorValues);
+    
+    // Add sample to buffer for quality analysis
+    this.bufferManager.addSample(colorValues.g, Date.now());
+    
+    // Calculate PPG signal based on finger detection
+    const ppgValue = this.calculatePPGSignal(colorValues, this.lastFingerResult);
+    
+    // Analyze signal quality
+    const quality = this.qualityAnalyzer.calculateQuality(
+      this.bufferManager.getRecentSamples(30),
+      this.lastFingerResult.isDetected
+    );
 
-  async initialize(): Promise<void> {
-    console.log("[DIAG] PPGSignalProcessor: initialize() called", {
-      hasSignalReadyCallback: !!this.onSignalReady,
-      hasErrorCallback: !!this.onError
-    });
-    try {
-      // Reset all filters and analyzers
-      this.lastValues = [];
-      this.kalmanFilter.reset();
-      this.sgFilter.reset();
-      this.trendAnalyzer.reset();
-      this.biophysicalValidator.reset();
-      this.signalAnalyzer.reset();
-      this.frameProcessedCount = 0;
-      
-      console.log("PPGSignalProcessor: System initialized with callbacks:", {
-        hasSignalReadyCallback: !!this.onSignalReady,
-        hasErrorCallback: !!this.onError
-      });
-    } catch (error) {
-      console.error("PPGSignalProcessor: Initialization error", error);
-      this.handleError("INIT_ERROR", "Error initializing advanced processor");
-    }
-  }
-
-  start(): void {
-    console.log("[DIAG] PPGSignalProcessor: start() called", { isProcessing: this.isProcessing });
-    if (this.isProcessing) return;
-    this.isProcessing = true;
-    this.initialize();
-    console.log("PPGSignalProcessor: Advanced system started");
-  }
-
-  stop(): void {
-    console.log("[DIAG] PPGSignalProcessor: stop() called", { isProcessing: this.isProcessing });
-    this.isProcessing = false;
-    this.lastValues = [];
-    this.kalmanFilter.reset();
-    this.sgFilter.reset();
-    this.trendAnalyzer.reset();
-    this.biophysicalValidator.reset();
-    this.signalAnalyzer.reset();
-    console.log("PPGSignalProcessor: Advanced system stopped");
-  }
-
-  async calibrate(): Promise<boolean> {
-    try {
-      console.log("PPGSignalProcessor: Starting adaptive calibration");
-      await this.initialize();
-      
-      // Mark calibration mode
-      this.isCalibrating = true;
-      
-      // After a period of calibration, automatically finish
-      setTimeout(() => {
-        this.isCalibrating = false;
-        console.log("PPGSignalProcessor: Adaptive calibration completed automatically");
-      }, 3000);
-      
-      console.log("PPGSignalProcessor: Adaptive calibration initiated");
-      return true;
-    } catch (error) {
-      console.error("PPGSignalProcessor: Calibration error", error);
-      this.handleError("CALIBRATION_ERROR", "Error during adaptive calibration");
-      this.isCalibrating = false;
-      return false;
-    }
-  }
-
-  processFrame(imageData: ImageData): void {
-    console.log("[DIAG] PPGSignalProcessor: processFrame() called", {
-      isProcessing: this.isProcessing,
-      hasOnSignalReadyCallback: !!this.onSignalReady,
-      imageSize: `${imageData.width}x${imageData.height}`,
-      timestamp: new Date().toISOString()
-    });
-    if (!this.isProcessing) {
-      console.log("PPGSignalProcessor: Not processing, ignoring frame");
-      return;
-    }
-
-    try {
-      // Count processed frames
-      this.frameProcessedCount++;
-      const shouldLog = this.frameProcessedCount % 30 === 0;  // Log every 30 frames
-
-      // CRITICAL CHECK: Ensure callbacks are available
-      if (!this.onSignalReady) {
-        console.error("PPGSignalProcessor: onSignalReady callback not available, cannot continue");
-        this.handleError("CALLBACK_ERROR", "Callback onSignalReady not available");
-        return;
-      }
-
-      // 1. Extract frame features with enhanced validation
-      const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
-      const roi = this.frameProcessor.detectROI(redValue, imageData);
-
-      // DEBUGGING: Log extracted redValue and ROI
-      if (shouldLog) {
-        console.log("PPGSignalProcessor DEBUG:", {
-          step: "FrameExtraction",
-          redValue: redValue,
-          roiX: roi.x,
-          roiY: roi.y,
-          roiWidth: roi.width,
-          roiHeight: roi.height,
-          textureScore,
-          rToGRatio,
-          rToBRatio
-        });
-      }
-
-      // Early rejection of invalid frames - stricter thresholds
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.9) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
-        }
-
-        const minimalSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: redValue,
-          quality: 0,
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(minimalSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Weak Signal):", minimalSignal);
-        }
-        return;
-      }
-
-      // 2. Apply multi-stage filtering to the signal
-      let filteredValue = this.kalmanFilter.filter(redValue);
-      filteredValue = this.sgFilter.filter(filteredValue);
-      // Aplicar ganancia adaptativa basada en calidad de señal
-      const adaptiveGain = Math.min(2.0, 1.0 + (extractionResult.textureScore * 0.5));
-      filteredValue = filteredValue * adaptiveGain;
-
-      // Mantener un historial de valores filtrados para el cálculo de la pulsatilidad
-      this.lastValues.push(filteredValue);
-      if (this.lastValues.length > this.CONFIG.BUFFER_SIZE) {
-        this.lastValues.shift();
-      }
-
-      // 3. Perform signal trend analysis with strict physiological validation
-      const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
-
-      if (trendResult === "non_physiological" && !this.isCalibrating) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological signal rejected");
-        }
-
-        const rejectSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: filteredValue,
-          quality: 0, 
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Trend):", rejectSignal);
-        }
-        return;
-      }
-
-      // Reactivated validation with more tolerant thresholds
-      if ((rToGRatio < 0.7 || rToGRatio > 5.0) && !this.isCalibrating) { // Rango ampliado de 0.7 a 5.0
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
-            rToGRatio,
-            rToBRatio
-          });
-        }
-
-        const rejectSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: filteredValue,
-          quality: 0, 
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Color Ratio):", rejectSignal);
-        }
-        return;
-      }
-
-      // 4. Calculate comprehensive detector scores with medical validation
-      const detectorScores = {
-        redValue,
-        redChannel: Math.min(1.0, Math.max(0, (redValue - this.CONFIG.MIN_RED_THRESHOLD) / 
-                                           (this.CONFIG.MAX_RED_THRESHOLD - this.CONFIG.MIN_RED_THRESHOLD))),
-        stability: this.trendAnalyzer.getStabilityScore(),
-        pulsatility: this.biophysicalValidator.getPulsatilityScore(this.lastValues),
-        biophysical: this.biophysicalValidator.getBiophysicalScore({
-          red: redValue,
-          green: avgGreen ?? 0,
-          blue: avgBlue ?? 0,
-        }),
-        periodicity: this.trendAnalyzer.getPeriodicityScore(),
-        skinLikeness: extractionResult.skinLikeness || 0, // Nueva validación de piel
-        stabilityScore: extractionResult.stabilityScore || 0 // Nueva detección de vibraciones
-      };
-
-      // Update analyzer with latest scores
-      this.signalAnalyzer.updateDetectorScores(detectorScores);
-
-      // 5. Perform multi-detector analysis for highly accurate finger detection
-      const detectionResult = this.signalAnalyzer.analyzeSignalMultiDetector(filteredValue, trendResult);
-      const { isFingerDetected, quality } = detectionResult;
-
-      // Calculate physiologically valid perfusion index only when finger is detected
-      const perfusionIndex = isFingerDetected && quality > 30 ? 
-                           (Math.log(redValue) * 0.55 - 1.2) : 0;
-
-      // Create processed signal object with strict validation
-      const processedSignal: ProcessedSignal = {
-        timestamp: Date.now(),
-        rawValue: redValue,
-        filteredValue: filteredValue,
-        quality: quality,
-        fingerDetected: isFingerDetected,
-        roi: roi,
-        perfusionIndex: Math.max(0, perfusionIndex)
-      };
-
-      if (shouldLog) {
-        console.log("PPGSignalProcessor: Sending validated signal:", {
-          fingerDetected: isFingerDetected,
-          quality,
-          redValue,
-          filteredValue,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // FINAL VALIDATION before sending
-      if (typeof this.onSignalReady === 'function') {
-        this.onSignalReady(processedSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Final):", processedSignal);
-        }
-      } else {
-        console.error("PPGSignalProcessor: onSignalReady is not a valid function");
-        this.handleError("CALLBACK_ERROR", "Callback onSignalReady is not a valid function");
-      }
-    } catch (error) {
-      console.error("PPGSignalProcessor: Error processing frame", error);
-      this.handleError("PROCESSING_ERROR", "Error processing frame");
-    }
-  }
-
-  private handleError(code: string, message: string): void {
-    console.error("PPGSignalProcessor: Error", code, message);
-    const error: ProcessingError = {
-      code,
-      message,
-      timestamp: Date.now()
+    const result: ProcessedSignal = {
+      ppgValue,
+      quality: Math.round(quality),
+      fingerDetected: this.lastFingerResult.isDetected,
+      confidence: this.lastFingerResult.confidence,
+      timestamp: Date.now(),
+      colorValues,
+      fingerDetails: this.lastFingerResult
     };
-    if (typeof this.onError === 'function') {
-      this.onError(error);
-    } else {
-      console.error("PPGSignalProcessor: onError callback not available, cannot report error:", error);
+
+    console.log('📊 PPG Signal processed:', {
+      fingerDetected: result.fingerDetected,
+      confidence: result.confidence.toFixed(2),
+      quality: result.quality,
+      ppgValue: result.ppgValue.toFixed(2)
+    });
+
+    return result;
+  }
+
+  private extractColorValues(
+    video: HTMLVideoElement,
+    canvas: HTMLCanvasElement,
+    context: CanvasRenderingContext2D
+  ): { r: number; g: number; b: number } {
+    const { videoWidth, videoHeight } = video;
+    
+    // Ensure canvas matches video dimensions
+    if (canvas.width !== videoWidth || canvas.height !== videoHeight) {
+      canvas.width = videoWidth;
+      canvas.height = videoHeight;
     }
+    
+    // Draw current video frame
+    context.drawImage(video, 0, 0, videoWidth, videoHeight);
+    
+    // Define ROI (Region of Interest) for finger detection
+    const roiX = Math.floor(videoWidth * 0.25);
+    const roiY = Math.floor(videoHeight * 0.25);
+    const roiWidth = Math.floor(videoWidth * 0.5);
+    const roiHeight = Math.floor(videoHeight * 0.5);
+    
+    // Extract image data from ROI
+    const imageData = context.getImageData(roiX, roiY, roiWidth, roiHeight);
+    const data = imageData.data;
+    
+    // Calculate average RGB values with improved sampling
+    let r = 0, g = 0, b = 0;
+    let validPixels = 0;
+    
+    // Sample every 4th pixel for performance while maintaining accuracy
+    for (let i = 0; i < data.length; i += 16) { // Skip more pixels for performance
+      const red = data[i];
+      const green = data[i + 1];
+      const blue = data[i + 2];
+      
+      // Only include pixels that might be skin (basic filtering)
+      if (red > 30 && green > 20 && blue > 10) {
+        r += red;
+        g += green;
+        b += blue;
+        validPixels++;
+      }
+    }
+    
+    // Return averaged values or defaults if no valid pixels
+    if (validPixels === 0) {
+      return { r: 50, g: 50, b: 50 };
+    }
+    
+    return {
+      r: Math.round(r / validPixels),
+      g: Math.round(g / validPixels),
+      b: Math.round(b / validPixels)
+    };
+  }
+
+  private calculatePPGSignal(
+    colorValues: { r: number; g: number; b: number },
+    fingerResult: FingerDetectionResult
+  ): number {
+    if (!fingerResult.isDetected || fingerResult.confidence < 0.3) {
+      return 0;
+    }
+
+    // Green channel is most sensitive to blood volume changes
+    const greenChannel = colorValues.g;
+    
+    // Apply advanced signal conditioning
+    const baselineGreen = 128; // Expected baseline for green channel
+    const deviation = greenChannel - baselineGreen;
+    
+    // Normalize by confidence and quality factors
+    const confidenceWeight = Math.max(0.1, fingerResult.confidence);
+    const qualityWeight = Math.max(0.1, fingerResult.quality / 100);
+    
+    // Calculate PPG signal with proper scaling
+    const rawPPG = deviation * confidenceWeight * qualityWeight;
+    
+    // Apply physiological bounds and scaling
+    const scaledPPG = Math.max(-50, Math.min(50, rawPPG));
+    
+    // Convert to positive range (0-100) for compatibility
+    return (scaledPPG + 50);
+  }
+
+  public getLastFingerDetectionResult(): FingerDetectionResult | null {
+    return this.lastFingerResult;
+  }
+
+  public reset(): void {
+    this.fingerDetector.reset();
+    this.bufferManager.clear();
+    this.qualityAnalyzer.reset();
+    this.lastFingerResult = null;
+    console.log('🔄 PPGSignalProcessor reiniciado');
   }
 }

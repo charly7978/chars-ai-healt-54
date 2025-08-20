@@ -1,242 +1,140 @@
 
-// SignalAnalyzer with enhanced finger detection and stability
-import { DetectorScores, DetectionResult } from './types';
-import { AdvancedFingerDetector } from './AdvancedFingerDetector';
+import { AdvancedFingerDetector, FingerDetectionResult } from './AdvancedFingerDetector';
+import { SignalQualityAnalyzer } from './SignalQualityAnalyzer';
 
-export interface SignalAnalyzerConfig {
-  QUALITY_LEVELS: number;
-  QUALITY_HISTORY_SIZE: number;
-  MIN_CONSECUTIVE_DETECTIONS: number;
-  MAX_CONSECUTIVE_NO_DETECTIONS: number;
+export interface SignalAnalysisResult {
+  quality: number;
+  fingerDetected: boolean;
+  confidence: number;
+  snr: number;
+  stability: number;
+  artifacts: number;
+  detectorDetails: Record<string, string | number>;
 }
 
-/**
- * Enhanced SignalAnalyzer with improved stability and reduced false positives
- * Uses advanced finger detection with multi-level consensus and adaptive thresholds
- */
 export class SignalAnalyzer {
-  private qualityHistory: number[] = [];
-  private consecutiveDetections = 0;
-  private consecutiveNoDetections = 0;
-  private detectorScores: DetectorScores = {
-    redChannel: 0,
-    stability: 0,
-    pulsatility: 0,
-    biophysical: 0,
-    periodicity: 0,
-  };
-  
-  private advancedDetector: AdvancedFingerDetector;
-  private stabilityBuffer: number[] = [];
-  private lastDetectionTime = 0;
-  private detectionHysteresis = 0;
+  private fingerDetector: AdvancedFingerDetector;
+  private qualityAnalyzer: SignalQualityAnalyzer;
+  private signalHistory: number[] = [];
+  private readonly MAX_HISTORY = 100;
 
-  constructor(private readonly config: SignalAnalyzerConfig) {
-    this.advancedDetector = new AdvancedFingerDetector();
+  constructor() {
+    this.fingerDetector = new AdvancedFingerDetector();
+    this.qualityAnalyzer = new SignalQualityAnalyzer();
   }
 
-  /** Reset internal state with enhanced cleanup */
-  reset(): void {
-    this.qualityHistory = [];
-    this.consecutiveDetections = 0;
-    this.consecutiveNoDetections = 0;
-    this.stabilityBuffer = [];
-    this.lastDetectionTime = 0;
-    this.detectionHysteresis = 0;
-    this.advancedDetector.reset();
-  }
-
-  /** Update detector scores with enhanced validation */
-  updateDetectorScores(scores: DetectorScores): void {
-    this.detectorScores = scores;
+  public analyzeSignal(
+    ppgValue: number,
+    colorValues: { r: number; g: number; b: number },
+    timestamp: number
+  ): SignalAnalysisResult {
+    // Update signal history
+    this.updateSignalHistory(ppgValue);
     
-    // Update stability buffer for trend analysis
-    const currentStability = scores.stability || 0;
-    this.stabilityBuffer.push(currentStability);
-    if (this.stabilityBuffer.length > 15) {
-      this.stabilityBuffer.shift();
-    }
-  }
-
-  /**
-   * Enhanced signal analysis with improved finger detection and stability
-   */
-  analyzeSignalMultiDetector(
-    filteredValue: number,
-    trendResult: unknown,
-    colorValues?: { r: number; g: number; b: number }
-  ): DetectionResult {
-    const currentTime = Date.now();
+    // Advanced finger detection
+    const fingerResult = this.fingerDetector.detectFinger(colorValues);
     
-    // Use advanced finger detector if color values are available
-    if (colorValues) {
-      const advancedResult = this.advancedDetector.detectFinger(colorValues);
-      
-      // Enhanced hysteresis and stability checking
-      const timeSinceLastDetection = currentTime - this.lastDetectionTime;
-      let finalDetection = advancedResult.isDetected;
-      let finalQuality = advancedResult.quality;
-      
-      // Apply enhanced hysteresis logic
-      if (advancedResult.isDetected) {
-        this.consecutiveDetections++;
-        this.consecutiveNoDetections = 0;
-        this.detectionHysteresis = Math.min(this.detectionHysteresis + 2, 10);
-        this.lastDetectionTime = currentTime;
-      } else {
-        this.consecutiveNoDetections++;
-        this.consecutiveDetections = 0;
-        this.detectionHysteresis = Math.max(this.detectionHysteresis - 1, 0);
-      }
-      
-      // Apply stricter consecutive detection requirements
-      const minConsecutiveRequired = Math.max(this.config.MIN_CONSECUTIVE_DETECTIONS, 8);
-      const maxConsecutiveNoDetectionsAllowed = Math.min(this.config.MAX_CONSECUTIVE_NO_DETECTIONS, 6);
-      
-      if (this.consecutiveDetections < minConsecutiveRequired) {
-        finalDetection = false;
-        finalQuality = Math.min(finalQuality, 30);
-      }
-      
-      if (this.consecutiveNoDetections >= maxConsecutiveNoDetectionsAllowed) {
-        finalDetection = false;
-        finalQuality = Math.max(finalQuality - 20, 0);
-      }
-      
-      // Additional stability check using hysteresis
-      if (this.detectionHysteresis < 3) {
-        finalDetection = false;
-      }
-      
-      // Quality boost for stable detections
-      if (this.consecutiveDetections > minConsecutiveRequired && this.detectionHysteresis > 6) {
-        finalQuality = Math.min(finalQuality + 15, 100);
-      }
-      
-      return {
-        isFingerDetected: finalDetection,
-        quality: Math.round(finalQuality),
-        detectorDetails: {
-          ...this.detectorScores,
-          advancedConfidence: advancedResult.confidence,
-          perfusionIndex: advancedResult.perfusionIndex,
-          colorValidation: advancedResult.details.colorValidation ? 1 : 0,
-          pulsatilityValidation: advancedResult.details.pulsatilityValidation ? 1 : 0,
-          stabilityValidation: advancedResult.details.stabilityValidation ? 1 : 0,
-          perfusionValidation: advancedResult.details.perfusionValidation ? 1 : 0,
-          temperatureValidation: advancedResult.details.temperatureValidation ? 1 : 0,
-          consecutiveDetections: this.consecutiveDetections,
-          consecutiveNoDetections: this.consecutiveNoDetections,
-          hysteresisLevel: this.detectionHysteresis
-        },
-      };
-    }
+    // Signal quality analysis
+    const quality = this.qualityAnalyzer.calculateQuality(
+      this.signalHistory.slice(-30),
+      fingerResult.isDetected
+    );
     
-    // Fallback detection method with enhanced validation
-    return this.performFallbackDetection(filteredValue);
-  }
-  
-  private performFallbackDetection(filteredValue: number): DetectionResult {
-    const { redChannel, stability, pulsatility, biophysical, periodicity, skinLikeness, stabilityScore } =
-      this.detectorScores;
-
-    // Enhanced validation with tighter thresholds for fallback mode
-    if (skinLikeness !== undefined && skinLikeness < 0.15) {
-      return this.createRejectResult("Low skin likeness");
-    }
+    // Calculate additional metrics
+    const snr = this.calculateSNR();
+    const stability = this.calculateStability();
+    const artifacts = this.detectArtifacts();
     
-    if (stabilityScore !== undefined && stabilityScore < 0.20) {
-      return this.createRejectResult("Low stability score");
-    }
-
-    // Stricter validation thresholds for fallback
-    if (redChannel < 0.10 || stability < 0.15 || pulsatility < 0.12 || biophysical < 0.10) {
-      return this.createRejectResult("Low detector scores");
-    }
-
-    // Enhanced weighted calculation with stability emphasis
-    const avgStability = this.stabilityBuffer.length > 0 ? 
-      this.stabilityBuffer.reduce((a, b) => a + b, 0) / this.stabilityBuffer.length : stability;
-    
-    const weighted =
-      redChannel * 0.20 +
-      avgStability * 0.30 +        // Increased weight for stability
-      pulsatility * 0.25 +
-      biophysical * 0.15 +
-      periodicity * 0.05 +
-      (skinLikeness || 0.3) * 0.05; // Reduced weight, more conservative default
-
-    const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
-
-    // Maintain quality history with enhanced smoothing
-    this.qualityHistory.push(qualityValue);
-    if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
-      this.qualityHistory.shift();
-    }
-    
-    // Enhanced smoothing algorithm
-    const smoothedQuality = this.calculateSmoothedQuality();
-
-    // Stricter hysteresis with higher thresholds
-    let isFingerDetected = false;
-    const DETECTION_THRESHOLD = 25; // Increased from 3 to 25 for more reliable detection
-    const STABLE_DETECTION_THRESHOLD = 35; // Higher threshold for stable detection
-    
-    if (smoothedQuality >= STABLE_DETECTION_THRESHOLD) {
-      this.consecutiveDetections += 2; // Faster response for high-quality signals
-      this.consecutiveNoDetections = 0;
-    } else if (smoothedQuality >= DETECTION_THRESHOLD) {
-      this.consecutiveDetections += 1;
-      this.consecutiveNoDetections = 0;
-    } else {
-      this.consecutiveNoDetections += 1;
-      this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
-    }
-
-    // Enhanced consecutive detection requirements
-    const requiredConsecutive = Math.max(this.config.MIN_CONSECUTIVE_DETECTIONS, 6);
-    const maxNoDetections = Math.min(this.config.MAX_CONSECUTIVE_NO_DETECTIONS, 4);
-    
-    if (this.consecutiveDetections >= requiredConsecutive) {
-      isFingerDetected = true;
-    } else if (this.consecutiveNoDetections >= maxNoDetections) {
-      isFingerDetected = false;
-    }
+    // Prepare detector details with proper typing
+    const detectorDetails: Record<string, string | number> = {
+      biophysicalScore: fingerResult.biophysicalScore,
+      stabilityScore: fingerResult.stabilityScore,
+      perfusionIndex: fingerResult.perfusionIndex,
+      colorValidation: fingerResult.details.colorValidation ? 1 : 0,
+      pulsatilityValidation: fingerResult.details.pulsatilityValidation ? 1 : 0,
+      stabilityValidation: fingerResult.details.stabilityValidation ? 1 : 0,
+      perfusionValidation: fingerResult.details.perfusionValidation ? 1 : 0,
+      temperatureValidation: fingerResult.details.temperatureValidation ? 1 : 0
+    };
 
     return {
-      isFingerDetected,
-      quality: Math.round(smoothedQuality),
-      detectorDetails: { 
-        ...this.detectorScores,
-        consecutiveDetections: this.consecutiveDetections,
-        consecutiveNoDetections: this.consecutiveNoDetections,
-        smoothedQuality
-      },
+      quality: Math.round(quality),
+      fingerDetected: fingerResult.isDetected,
+      confidence: fingerResult.confidence,
+      snr,
+      stability,
+      artifacts,
+      detectorDetails
     };
   }
-  
-  private calculateSmoothedQuality(): number {
-    if (this.qualityHistory.length === 0) return 0;
+
+  private updateSignalHistory(ppgValue: number): void {
+    this.signalHistory.push(ppgValue);
     
-    // Apply exponential moving average for better smoothing
-    let smoothed = this.qualityHistory[0];
-    const alpha = 0.3; // Smoothing factor
+    if (this.signalHistory.length > this.MAX_HISTORY) {
+      this.signalHistory.shift();
+    }
+  }
+
+  private calculateSNR(): number {
+    if (this.signalHistory.length < 10) return 0;
     
-    for (let i = 1; i < this.qualityHistory.length; i++) {
-      smoothed = alpha * this.qualityHistory[i] + (1 - alpha) * smoothed;
+    const recent = this.signalHistory.slice(-20);
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    
+    // Signal power (variance from mean)
+    const signalPower = recent.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recent.length;
+    
+    // Noise estimation from high-frequency differences
+    let noisePower = 0;
+    for (let i = 1; i < recent.length; i++) {
+      noisePower += Math.pow(recent[i] - recent[i-1], 2);
+    }
+    noisePower /= (recent.length - 1);
+    
+    return noisePower > 0 ? 10 * Math.log10(signalPower / noisePower) : 0;
+  }
+
+  private calculateStability(): number {
+    if (this.signalHistory.length < 15) return 0;
+    
+    const recent = this.signalHistory.slice(-15);
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const variance = recent.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recent.length;
+    const stdDev = Math.sqrt(variance);
+    
+    // Coefficient of variation (lower is more stable)
+    const cv = mean > 0 ? stdDev / mean : 1;
+    
+    // Convert to stability score (0-100, higher is better)
+    return Math.max(0, Math.min(100, (1 - cv) * 100));
+  }
+
+  private detectArtifacts(): number {
+    if (this.signalHistory.length < 10) return 0;
+    
+    const recent = this.signalHistory.slice(-10);
+    let artifactCount = 0;
+    
+    // Detect sudden spikes or drops
+    for (let i = 1; i < recent.length - 1; i++) {
+      const prev = recent[i - 1];
+      const curr = recent[i];
+      const next = recent[i + 1];
+      
+      // Check for sudden changes that don't follow physiological patterns
+      if (Math.abs(curr - prev) > 20 && Math.abs(curr - next) > 20) {
+        artifactCount++;
+      }
     }
     
-    return smoothed;
+    // Return artifact percentage
+    return Math.round((artifactCount / (recent.length - 2)) * 100);
   }
-  
-  private createRejectResult(reason: string): DetectionResult {
-    return {
-      isFingerDetected: false,
-      quality: 0,
-      detectorDetails: { 
-        ...this.detectorScores,
-        rejectionReason: reason
-      },
-    };
+
+  public reset(): void {
+    this.fingerDetector.reset();
+    this.qualityAnalyzer.reset();
+    this.signalHistory = [];
   }
 }
