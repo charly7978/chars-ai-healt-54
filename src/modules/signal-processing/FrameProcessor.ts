@@ -25,6 +25,10 @@ export class FrameProcessor {
   private roiHistory: Array<{x: number, y: number, width: number, height: number}> = [];
   private readonly ROI_HISTORY_SIZE = 5;
   
+  // Nueva: análisis de patrones de movimiento para detectar vibraciones de mesa
+  private movementHistory: Array<{avgRed: number, avgGreen: number, avgBlue: number, timestamp: number}> = [];
+  private readonly MOVEMENT_HISTORY_SIZE = 8;
+  
   constructor(config: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number }) {
     // Aumentar tamaño de ROI para capturar más área
     this.CONFIG = {
@@ -33,7 +37,16 @@ export class FrameProcessor {
     };
   }
   
-  extractFrameData(imageData: ImageData): FrameData {
+  extractFrameData(imageData: ImageData): {
+    redValue: number;
+    textureScore: number;
+    rToGRatio: number;
+    rToBRatio: number;
+    avgGreen?: number;
+    avgBlue?: number;
+    skinLikeness: number; // Nueva métrica para detectar piel vs superficie
+    stabilityScore: number; // Nueva métrica para detectar estabilidad vs vibración
+  } {
     const data = imageData.data;
     let redSum = 0;
     let greenSum = 0;
@@ -201,9 +214,10 @@ export class FrameProcessor {
         textureScore: 0,   // Sin textura
         rToGRatio: 1,      // Ratio neutro
         rToBRatio: 1,      // Ratio neutro
-        avgRed: 0,
         avgGreen: 0,
-        avgBlue: 0
+        avgBlue: 0,
+        skinLikeness: 0,   // Sin similitud con piel
+        stabilityScore: 0  // Sin estabilidad
       };
     }
     
@@ -226,6 +240,12 @@ export class FrameProcessor {
     const avgRed = Math.max(0, (redSum / pixelCount) * dynamicGain);
     const avgGreen = greenSum / pixelCount;
     const avgBlue = blueSum / pixelCount;
+    
+    // NUEVA: Análisis de similitud con piel humana
+    const skinLikeness = this.calculateSkinLikeness(avgRed, avgGreen, avgBlue, textureScore);
+    
+    // NUEVA: Análisis de estabilidad vs vibraciones de mesa
+    const stabilityScore = this.calculateStabilityScore(avgRed, avgGreen, avgBlue);
     
     // Calculate color ratio indexes - MÁS ESTRICTOS para reducir falsos positivos
     const rToGRatio = avgGreen > 5 ? avgRed / avgGreen : 1.2; // Umbral más alto para validación
@@ -253,15 +273,89 @@ export class FrameProcessor {
     
     return {
       redValue: avgRed,
-      avgRed,
-      avgGreen,
-      avgBlue,
       textureScore,
       rToGRatio,
-      rToBRatio
+      rToBRatio,
+      avgGreen,
+      avgBlue,
+      skinLikeness,
+      stabilityScore
     };
   }
   
+  /**
+   * Análisis de similitud con piel humana vs superficies artificiales
+   */
+  private calculateSkinLikeness(r: number, g: number, b: number, texture: number): number {
+    // Rangos típicos de color de piel humana (normalizado 0-255)
+    const skinRedRange = [95, 220];   // Rojo típico de piel
+    const skinGreenRange = [40, 170]; // Verde típico de piel  
+    const skinBlueRange = [20, 135];  // Azul típico de piel
+    
+    // Verificar si los valores están en rangos típicos de piel
+    const redMatch = (r >= skinRedRange[0] && r <= skinRedRange[1]) ? 1 : 0;
+    const greenMatch = (g >= skinGreenRange[0] && g <= skinGreenRange[1]) ? 1 : 0;
+    const blueMatch = (b >= skinBlueRange[0] && b <= skinBlueRange[1]) ? 1 : 0;
+    
+    // Ratio R/G típico de piel (1.1 - 2.8)
+    const rgRatio = g > 0 ? r / g : 0;
+    const ratioMatch = (rgRatio >= 1.1 && rgRatio <= 2.8) ? 1 : 0;
+    
+    // La textura de piel debe estar en rango medio (no muy lisa como metal/vidrio)
+    const textureMatch = (texture >= 0.3 && texture <= 0.8) ? 1 : 0;
+    
+    // Puntaje combinado (máximo 5, normalizado a 0-1)
+    const totalScore = (redMatch + greenMatch + blueMatch + ratioMatch + textureMatch) / 5;
+    
+    return Math.max(0, Math.min(1, totalScore));
+  }
+  
+  /**
+   * Análisis de estabilidad para detectar vibraciones de mesa vs contacto de dedo
+   */
+  private calculateStabilityScore(r: number, g: number, b: number): number {
+    const now = Date.now();
+    
+    // Agregar medición actual al historial
+    this.movementHistory.push({ avgRed: r, avgGreen: g, avgBlue: b, timestamp: now });
+    
+    // Mantener solo mediciones recientes
+    if (this.movementHistory.length > this.MOVEMENT_HISTORY_SIZE) {
+      this.movementHistory.shift();
+    }
+    
+    // Necesitamos al menos 4 mediciones para análisis
+    if (this.movementHistory.length < 4) {
+      return 0.5; // Valor neutro
+    }
+    
+    // Calcular variación en los valores de color
+    const recentMeasurements = this.movementHistory.slice(-4);
+    let redVariance = 0, greenVariance = 0, blueVariance = 0;
+    
+    const avgRed = recentMeasurements.reduce((sum, m) => sum + m.avgRed, 0) / recentMeasurements.length;
+    const avgGreen = recentMeasurements.reduce((sum, m) => sum + m.avgGreen, 0) / recentMeasurements.length;
+    const avgBlue = recentMeasurements.reduce((sum, m) => sum + m.avgBlue, 0) / recentMeasurements.length;
+    
+    recentMeasurements.forEach(m => {
+      redVariance += Math.pow(m.avgRed - avgRed, 2);
+      greenVariance += Math.pow(m.avgGreen - avgGreen, 2);
+      blueVariance += Math.pow(m.avgBlue - avgBlue, 2);
+    });
+    
+    const totalVariance = (redVariance + greenVariance + blueVariance) / (recentMeasurements.length * 3);
+    
+    // Las vibraciones de mesa causan alta varianza artificial
+    // El contacto de dedo real tiene varianza natural más baja
+    if (totalVariance > 500) {
+      return 0.2; // Alta varianza = probablemente vibración de mesa
+    } else if (totalVariance < 50) {
+      return 0.9; // Baja varianza controlada = buen contacto de dedo
+    } else {
+      return Math.max(0.3, 1 - (totalVariance / 500)); // Escala gradual
+    }
+  }
+
   private calculateEdgeContrast(): number {
     if (this.lastFrames.length < 2) return 0;
     

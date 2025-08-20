@@ -42,6 +42,8 @@ export interface FrameData {
   textureScore: number;
   rToGRatio: number;
   rToBRatio: number;
+  skinLikeness: number; // Análisis de similitud con piel humana
+  stabilityScore: number; // Detección de vibraciones vs contacto real
 }
 
 export interface DetectionResult {

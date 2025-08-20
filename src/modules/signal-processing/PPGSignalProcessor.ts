@@ -280,7 +280,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const detectorScores = {
         redValue,
         redChannel: Math.min(1.0, Math.max(0, (redValue - this.CONFIG.MIN_RED_THRESHOLD) / 
-                                          (this.CONFIG.MAX_RED_THRESHOLD - this.CONFIG.MIN_RED_THRESHOLD))),
+                                           (this.CONFIG.MAX_RED_THRESHOLD - this.CONFIG.MIN_RED_THRESHOLD))),
         stability: this.trendAnalyzer.getStabilityScore(),
         pulsatility: this.biophysicalValidator.getPulsatilityScore(this.lastValues),
         biophysical: this.biophysicalValidator.getBiophysicalScore({
@@ -288,7 +288,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           green: avgGreen ?? 0,
           blue: avgBlue ?? 0,
         }),
-        periodicity: this.trendAnalyzer.getPeriodicityScore()
+        periodicity: this.trendAnalyzer.getPeriodicityScore(),
+        skinLikeness: extractionResult.skinLikeness || 0, // Nueva validación de piel
+        stabilityScore: extractionResult.stabilityScore || 0 // Nueva detección de vibraciones
       };
 
       // Update analyzer with latest scores
