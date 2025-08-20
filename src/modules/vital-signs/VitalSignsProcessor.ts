@@ -70,14 +70,14 @@ export class VitalSignsProcessor {
       // Convert rrData to format expected by processors
       const rrIntervals = rrData?.intervals || [];
       
-      // Process with advanced processor - pass single value and intervals correctly
+      // Process with advanced processor - pass single value in array format with proper context
       const advancedResult = await this.superAdvancedProcessor.processAdvancedVitalSigns([ppgValue], rrIntervals);
       
-      // Process blood pressure with specialized processor - pass single value
-      const bpResult = await this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals);
+      // Process blood pressure with specialized processor - use proper method signature
+      const bpResult = await this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals, {});
       
-      // Process glucose with advanced spectroscopic analysis - pass single value
-      const glucoseResult = await this.glucoseProcessor.processSignal(ppgValue, rrIntervals);
+      // Process glucose with advanced spectroscopic analysis - use proper method signature  
+      const glucoseResult = await this.glucoseProcessor.processSignal(ppgValue, rrIntervals, {}, {});
       
       console.log('🎯 Resultados de procesadores especializados:', {
         spo2: advancedResult.spo2,

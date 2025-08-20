@@ -163,11 +163,7 @@ export class AdvancedMathematicalProcessor {
   }> {
     
     // VALIDACIÓN ANTI-SIMULACIÓN
-    const simulationCheck = await simulationEradicator.validateBiophysicalSignal(
-      [...redSignal, ...irSignal], 
-      Date.now(), 
-      {}
-    );
+    const simulationCheck = simulationEradicator.validateBiophysicalSignal([...redSignal, ...irSignal]);
     
     if (simulationCheck.isSimulation) {
       throw new Error(`SIMULACIÓN DETECTADA: ${simulationCheck.violationDetails.join(', ')}`);
@@ -586,9 +582,7 @@ export class AdvancedMathematicalProcessor {
   }> {
     
     // VALIDACIÓN ANTI-SIMULACIÓN
-    const simulationCheck = await simulationEradicator.validateBiophysicalSignal(
-      ppgSignal, Date.now(), {}
-    );
+    const simulationCheck = simulationEradicator.validateBiophysicalSignal(ppgSignal);
     
     if (simulationCheck.isSimulation) {
       throw new Error(`SIMULACIÓN DETECTADA: ${simulationCheck.violationDetails.join(', ')}`);
