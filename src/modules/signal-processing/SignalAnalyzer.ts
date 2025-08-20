@@ -74,7 +74,7 @@ export class SignalAnalyzer {
     }
 
     // Validación básica moderada
-    if (redChannel < 0.15 || stability < 0.15 || pulsatility < 0.15 || biophysical < 0.15) {
+    if (redChannel < 0.15 || stability < 0.13 || pulsatility < 0.11 || biophysical < 0.15) {
       return {
         isFingerDetected: false,
         quality: 0,
