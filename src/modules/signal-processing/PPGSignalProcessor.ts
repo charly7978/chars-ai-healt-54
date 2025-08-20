@@ -29,7 +29,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // Configuration with stricter medically appropriate thresholds
   public readonly CONFIG: SignalProcessorConfig = {
     BUFFER_SIZE: 25,
-    MIN_RED_THRESHOLD: 2,     // Umbral mínimo de rojo a 0 para aceptar señales débiles
+    MIN_RED_THRESHOLD: 1,     // Umbral muy bajo para aceptar señales débiles
     MAX_RED_THRESHOLD: 240,
     STABILITY_WINDOW: 15,      // Increased for more stability assessment
     MIN_STABILITY_COUNT: 6,   // Requires more stability for detection

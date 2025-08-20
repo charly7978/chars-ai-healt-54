@@ -73,8 +73,8 @@ export class SignalAnalyzer {
       };
     }
 
-    // Validación básica moderada
-    if (redChannel < 0.15 || stability < 0.13 || pulsatility < 0.11 || biophysical < 0.15) {
+    // Validación básica más permisiva para dedo humano
+    if (redChannel < 0.12 || stability < 0.10 || pulsatility < 0.09 || biophysical < 0.12) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -106,7 +106,7 @@ export class SignalAnalyzer {
 
     // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
-    const DETECTION_THRESHOLD = 11; // Sutilmente más bajo
+    const DETECTION_THRESHOLD = 9; // Más bajo para favorecer detección
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;

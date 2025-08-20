@@ -288,10 +288,10 @@ export class FrameProcessor {
    * VERSIÓN ULTRA-ESTRICTA para eliminar falsos positivos
    */
   private calculateSkinLikeness(r: number, g: number, b: number, texture: number): number {
-    // Rangos muy amplios para diferentes tipos de piel
-    const skinRedRange = [60, 240];   
-    const skinGreenRange = [30, 200];   
-    const skinBlueRange = [20, 160];
+    // Rangos más amplios para diferentes tipos de piel
+    const skinRedRange = [50, 250];   
+    const skinGreenRange = [25, 210];   
+    const skinBlueRange = [15, 170];
     
     // Verificar si los valores están en rangos ESTRICTOS de piel
     const redMatch = (r >= skinRedRange[0] && r <= skinRedRange[1]) ? 1 : 0;
