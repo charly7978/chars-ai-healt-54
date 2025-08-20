@@ -11,9 +11,9 @@ export class FrameProcessor {
   private readonly RED_GAIN = 1.0; // Reducido para evitar amplificación excesiva
   private readonly GREEN_SUPPRESSION = 0.9; // Menos supresión para comparación más real
   private readonly SIGNAL_GAIN = 0.9; // Reducido para evitar amplificación de ruido
-  private readonly EDGE_ENHANCEMENT = 0.35;  // Reducido para ser más conservador
-  private readonly MIN_RED_THRESHOLD = 0.25;  // AUMENTADO significativamente para filtrar ruido
-  private readonly RG_RATIO_RANGE = [1.0, 4.5];  // Rango más estricto y realista
+  private readonly EDGE_ENHANCEMENT = 0.15;  // Reducido para ser más conservador
+  private readonly MIN_RED_THRESHOLD = 0.35;  // AUMENTADO significativamente para filtrar ruido
+  private readonly RG_RATIO_RANGE = [1.0, 3.5];  // Rango más estricto y realista
   private readonly EDGE_CONTRAST_THRESHOLD = 0.18;  // AUMENTADO para mejor validación
   
   // Historia para calibración adaptativa
@@ -33,7 +33,7 @@ export class FrameProcessor {
     // Aumentar tamaño de ROI para capturar más área
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.99, config.ROI_SIZE_FACTOR * 1.20) // Aumentar tamaño ROI sin exceder 0.8
+      ROI_SIZE_FACTOR: Math.min(0.7, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
     };
   }
   

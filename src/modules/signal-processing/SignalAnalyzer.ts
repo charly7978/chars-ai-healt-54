@@ -56,8 +56,8 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity, skinLikeness, stabilityScore } =
       this.detectorScores;
 
-    // Validación moderada
-    if (skinLikeness !== undefined && skinLikeness < 0.1) {
+    // Validación permisiva: Solo rechazar casos extremos
+    if (skinLikeness !== undefined && skinLikeness < 0.2) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -65,7 +65,7 @@ export class SignalAnalyzer {
       };
     }
     
-    if (stabilityScore !== undefined && stabilityScore < 0.2) {
+    if (stabilityScore !== undefined && stabilityScore < 0.1) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -73,8 +73,8 @@ export class SignalAnalyzer {
       };
     }
 
-    // Validación básica moderada
-    if (redChannel < 0.15 || stability < 0.13 || pulsatility < 0.11 || biophysical < 0.05) {
+    // Validación básica muy permisiva
+    if (redChannel < 0.1 || stability < 0.1 || pulsatility < 0.1 || biophysical < 0.1) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -84,13 +84,13 @@ export class SignalAnalyzer {
 
     // Weighted sum - ahora incluye las nuevas métricas anti-mesa
     const weighted =
-      redChannel * 0.15 +
+      redChannel * 0.25 +
       stability * 0.2 +
       pulsatility * 0.2 +
       biophysical * 0.15 +
       periodicity * 0.05 +
-      (skinLikeness || 0.2) * 0.1 + // Peso para similitud con piel
-      (stabilityScore || 0.2) * 0.05; // Peso para estabilidad vs vibración
+      (skinLikeness || 0.5) * 0.1 + // Peso para similitud con piel
+      (stabilityScore || 0.5) * 0.05; // Peso para estabilidad vs vibración
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
@@ -106,7 +106,7 @@ export class SignalAnalyzer {
 
     // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
-    const DETECTION_THRESHOLD = 21; // Sutilmente más bajo
+    const DETECTION_THRESHOLD = 25; // Umbral muy permisivo
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
