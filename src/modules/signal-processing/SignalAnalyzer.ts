@@ -1,3 +1,4 @@
+
 // SignalAnalyzer rebuilt to remove corrupted content
 import { DetectorScores, DetectionResult } from './types';
 import { AdvancedFingerDetector } from './AdvancedFingerDetector';
@@ -69,7 +70,11 @@ export class SignalAnalyzer {
           ...this.detectorScores,
           advancedConfidence: advancedResult.confidence,
           perfusionIndex: advancedResult.perfusionIndex,
-          biophysicalValidation: advancedResult.details
+          colorValidation: advancedResult.details.colorValidation ? 1 : 0,
+          pulsatilityValidation: advancedResult.details.pulsatilityValidation ? 1 : 0,
+          stabilityValidation: advancedResult.details.stabilityValidation ? 1 : 0,
+          perfusionValidation: advancedResult.details.perfusionValidation ? 1 : 0,
+          temperatureValidation: advancedResult.details.temperatureValidation ? 1 : 0
         },
       };
     }
