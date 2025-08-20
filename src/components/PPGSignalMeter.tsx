@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Fingerprint, AlertCircle, Signal } from 'lucide-react';
+import { Fingerprint, AlertCircle } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
@@ -41,7 +41,6 @@ const PPGSignalMeter = ({
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Configuración original del monitor - NO TOCAR
   const WINDOW_WIDTH_MS = 2300;
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 800;
@@ -57,49 +56,6 @@ const PPGSignalMeter = ({
   const MIN_PEAK_DISTANCE_MS = 400;
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
-
-  // SIMPLIFICADO: Usar directamente la calidad calculada por el procesador
-  const [realTimeQuality, setRealTimeQuality] = useState(0);
-  const signalHistoryRef = useRef<number[]>([]);
-
-  // REAL: Cálculo de calidad basado únicamente en la señal real
-  const calculateTrueSignalQuality = useCallback((currentValue: number, detectedFinger: boolean) => {
-    if (!detectedFinger) {
-      setRealTimeQuality(0);
-      signalHistoryRef.current = [];
-      return 0;
-    }
-
-    // Usar la calidad proporcionada por el procesador (que ya es real)
-    // Solo agregar validación adicional mínima
-    signalHistoryRef.current.push(currentValue);
-    if (signalHistoryRef.current.length > 15) {
-      signalHistoryRef.current.shift();
-    }
-
-    // Si hay suficiente historial, validar que la señal sea consistente
-    if (signalHistoryRef.current.length >= 8) {
-      const recentSignals = signalHistoryRef.current.slice(-8);
-      const range = Math.max(...recentSignals) - Math.min(...recentSignals);
-      
-      // Si no hay variación mínima, la calidad debe ser baja
-      if (range < 3) {
-        setRealTimeQuality(Math.min(quality, 15)); // Limitar calidad si no hay señal real
-        return Math.min(quality, 15);
-      }
-    }
-
-    // Usar la calidad real del procesador sin modificaciones
-    setRealTimeQuality(quality);
-    return quality;
-  }, [quality]);
-
-  useEffect(() => {
-    calculateTrueSignalQuality(value, isFingerDetected);
-  }, [value, isFingerDetected, calculateTrueSignalQuality]);
-
-  // Usar calidad real calculada
-  const displayQuality = realTimeQuality;
 
   useEffect(() => {
     if (!dataBufferRef.current) {
@@ -234,7 +190,6 @@ const PPGSignalMeter = ({
       .slice(-MAX_PEAKS_TO_DISPLAY);
   }, []);
 
-  // Función de renderizado original - NO MODIFICAR LA VISUALIZACIÓN
   const renderSignal = useCallback(() => {
     if (!canvasRef.current || !dataBufferRef.current) {
       animationFrameRef.current = requestAnimationFrame(renderSignal);
@@ -373,7 +328,7 @@ const PPGSignalMeter = ({
     
     lastRenderTimeRef.current = currentTime;
     animationFrameRef.current = requestAnimationFrame(renderSignal);
-  }, [value, displayQuality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
+  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
 
   useEffect(() => {
     renderSignal();
@@ -413,44 +368,19 @@ const PPGSignalMeter = ({
       />
 
       <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span className="text-lg font-bold text-black/80">PPG</span>
-          
-          {/* Display de calidad REAL sin modificaciones */}
-          <div className="w-[200px]">
-            <div className={`h-1.5 w-full rounded-full bg-gradient-to-r transition-all duration-500 ease-in-out`}
-                 style={{ backgroundColor: getQualityColor(displayQuality) }}>
+          <div className="w-[180px]">
+            <div className={`h-1 w-full rounded-full bg-gradient-to-r ${getQualityColor(quality)} transition-all duration-1000 ease-in-out`}>
               <div
-                className="h-full rounded-full bg-white/30 animate-pulse transition-all duration-500"
-                style={{ width: `${isFingerDetected ? displayQuality : 0}%` }}
+                className="h-full rounded-full bg-white/20 animate-pulse transition-all duration-1000"
+                style={{ width: `${isFingerDetected ? quality : 0}%` }}
               />
             </div>
-            
-            <div className="flex justify-between items-center mt-1">
-              <span className="text-[7px] text-center font-medium transition-colors duration-700" 
-                    style={{ color: displayQuality > 60 ? '#0EA5E9' : '#F59E0B' }}>
-                {getQualityText(displayQuality, isFingerDetected, 'meter')}
-              </span>
-              <span className="text-[7px] font-bold text-black/70">
-                {displayQuality}%
-              </span>
-            </div>
-            
-            {/* Indicador de señal real */}
-            {isFingerDetected && displayQuality > 0 && (
-              <div className="flex gap-2 mt-0.5">
-                <div className="flex items-center gap-1">
-                  <Signal className="h-2 w-2 text-blue-600" />
-                  <span className="text-[6px] text-black/60">REAL</span>
-                </div>
-                {displayQuality >= 70 && (
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                    <span className="text-[6px] text-green-600">PPG OK</span>
-                  </div>
-                )}
-              </div>
-            )}
+            <span className="text-[8px] text-center mt-0.5 font-medium transition-colors duration-700 block" 
+                  style={{ color: quality > 60 ? '#0EA5E9' : '#F59E0B' }}>
+              {getQualityText(quality, isFingerDetected, 'meter')}
+            </span>
           </div>
         </div>
 
@@ -458,27 +388,15 @@ const PPGSignalMeter = ({
           <Fingerprint
             className={`h-8 w-8 transition-colors duration-300 ${
               !isFingerDetected ? 'text-gray-400' :
-              displayQuality > 75 ? 'text-green-500' :
-              displayQuality > 50 ? 'text-yellow-500' :
-              displayQuality > 25 ? 'text-orange-500' :
+              quality > 75 ? 'text-green-500' :
+              quality > 50 ? 'text-yellow-500' :
               'text-red-500'
             }`}
             strokeWidth={1.5}
           />
           <span className="text-[8px] text-center font-medium text-black/80">
-            {isFingerDetected ? 
-              `Calidad: ${displayQuality}%` : 
-              "Ubique su dedo"
-            }
+            {isFingerDetected ? "Dedo detectado" : "Ubique su dedo"}
           </span>
-          
-          {/* Alerta de calidad mejorada */}
-          {isFingerDetected && displayQuality < 35 && (
-            <div className="flex items-center gap-1 mt-1">
-              <AlertCircle className="h-3 w-3 text-amber-500" />
-              <span className="text-[6px] text-amber-600">Ajuste posición</span>
-            </div>
-          )}
         </div>
       </div>
 
