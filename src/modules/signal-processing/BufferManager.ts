@@ -1,8 +1,6 @@
-
 export class BufferManager {
   private static instance: BufferManager;
   private buffers: Map<string, ArrayBuffer | SharedArrayBuffer> = new Map();
-  private samples: number[] = [];
   
   private constructor() {}
   
@@ -11,30 +9,6 @@ export class BufferManager {
       BufferManager.instance = new BufferManager();
     }
     return BufferManager.instance;
-  }
-  
-  /**
-   * Add a sample to the buffer
-   */
-  public addSample(value: number, timestamp: number): void {
-    this.samples.push(value);
-    if (this.samples.length > 1000) {
-      this.samples.shift();
-    }
-  }
-
-  /**
-   * Get recent samples
-   */
-  public getRecentSamples(count: number = 30): number[] {
-    return this.samples.slice(-count);
-  }
-
-  /**
-   * Clear all samples
-   */
-  public clear(): void {
-    this.samples = [];
   }
   
   /**
@@ -112,6 +86,7 @@ export class BufferManager {
     const buffer = this.buffers.get(name);
     if (!buffer) return null;
     
+    // This is a simplified implementation - in reality, you'd need to track the type
     return buffer.byteLength / 4; // Assuming Float32 by default
   }
   

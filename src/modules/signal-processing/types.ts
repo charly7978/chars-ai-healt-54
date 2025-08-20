@@ -1,20 +1,5 @@
 
-import type { ProcessedSignal, ProcessingError } from '../../types/signal';
-
-export type { ProcessedSignal, ProcessingError };
-
-export interface ProcessingConfig {
-  bufferSize?: number;
-  qualityThreshold?: number;
-  calibrationSamples?: number;
-}
-
-export interface SignalQualityMetrics {
-  snr: number;
-  stability: number;
-  consistency: number;
-  overallQuality: number;
-}
+import { ProcessedSignal, ProcessingError } from '../../types/signal';
 
 export interface SignalProcessorConfig {
   BUFFER_SIZE: number;
@@ -57,8 +42,6 @@ export interface FrameData {
   textureScore: number;
   rToGRatio: number;
   rToBRatio: number;
-  skinLikeness: number;
-  stabilityScore: number;
 }
 
 export interface DetectionResult {

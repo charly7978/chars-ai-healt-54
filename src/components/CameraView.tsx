@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
-import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
+import { AdvancedVitalSignsProcessor, BiometricReading } from '../modules/vital-signs/VitalSignsProcessor';
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -17,7 +17,7 @@ const CameraView = ({
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const vitalProcessor = useRef(new VitalSignsProcessor());
+  const vitalProcessor = useRef(new AdvancedVitalSignsProcessor());
   const [torchEnabled, setTorchEnabled] = useState(false);
   const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
   const lastFrameTimeRef = useRef<number>(0);
@@ -289,22 +289,15 @@ const CameraView = ({
   const processFrame = (frameData: ImageData) => {
     const { red, ir, green } = extractPPGSignals(frameData);
     
-    const results = vitalProcessor.current.processSignal(red[0]);
+    const results = vitalProcessor.current.processSignal({
+      red,
+      ir, 
+      green,
+      timestamp: Date.now()
+    });
     
     if (results) {
-      if (typeof results === 'object' && 'then' in results) {
-        // Handle Promise result
-        results.then((resolvedResults: any) => {
-          if (resolvedResults) {
-            handleResults(resolvedResults);
-          }
-        }).catch((error: any) => {
-          console.error("CameraView: Error processing vital signs", error);
-        });
-      } else {
-        // Handle synchronous result
-        handleResults(results);
-      }
+      handleResults(results);
     }
   };
 
@@ -328,12 +321,12 @@ const CameraView = ({
     };
   };
 
-  const handleResults = (results: VitalSignsResult) => {
+  const handleResults = (results: BiometricReading) => {
     console.log('Mediciones biométricas:', {
       spo2: results.spo2.toFixed(1) + '%',
-      pressure: results.pressure + ' mmHg',
+      pressure: results.sbp + '/' + results.dbp + ' mmHg',
       glucose: results.glucose.toFixed(0) + ' mg/dL',
-      confidence: (results.confidence || 0).toFixed(1) + '%'
+      confidence: (results.confidence * 100).toFixed(1) + '%'
     });
   };
 

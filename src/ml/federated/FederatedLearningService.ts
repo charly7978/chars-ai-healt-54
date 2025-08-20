@@ -1,6 +1,6 @@
 import * as tf from '@tensorflow/tfjs';
 import { securityService } from '../../security/SecurityService';
-import { DataAnonymizer } from '../../security/DataAnonymizer';
+import { dataAnonymizer } from '../../security/DataAnonymizer';
 
 interface FederatedLearningConfig {
   serverUrl: string;
@@ -31,11 +31,9 @@ export class FederatedLearningService {
   private isTraining = false;
   private clientId: string;
   private privacyNoiseScale: number;
-  private dataAnonymizer: DataAnonymizer;
 
   constructor(model: tf.LayersModel, config: Partial<FederatedLearningConfig> = {}) {
     this.model = model;
-    this.dataAnonymizer = DataAnonymizer.getInstance();
     this.config = {
       serverUrl: 'https://federated-server.example.com',
       modelName: 'health-monitoring-model',
@@ -289,7 +287,7 @@ export class FederatedLearningService {
     return {
       weights: update,
       numSamples: totalSamples,
-      metadata: this.dataAnonymizer.anonymizeData({
+      metadata: dataAnonymizer.anonymize({
         timestamp: Date.now(),
         clientId: this.clientId,
         metrics: {
@@ -298,14 +296,17 @@ export class FederatedLearningService {
             (sum, update) => sum + (update.metadata.metrics?.loss || 0) * update.numSamples, 0
           ) / totalSamples
         }
-      }),
+      }, {}),
     };
   }
 
   private anonymizeUpdate(update: ModelUpdate): ModelUpdate {
     return {
       ...update,
-      metadata: this.dataAnonymizer.anonymizeData(update.metadata)
+      metadata: dataAnonymizer.anonymize(update.metadata, {
+        removeFields: ['clientId'],
+        pseudonymizeFields: ['clientId']
+      })
     };
   }
 
