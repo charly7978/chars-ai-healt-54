@@ -11,9 +11,9 @@ export class FrameProcessor {
   private readonly RED_GAIN = 1.0; // Reducido para evitar amplificación excesiva
   private readonly GREEN_SUPPRESSION = 0.9; // Menos supresión para comparación más real
   private readonly SIGNAL_GAIN = 0.9; // Reducido para evitar amplificación de ruido
-  private readonly EDGE_ENHANCEMENT = 0.15;  // Reducido para ser más conservador
-  private readonly MIN_RED_THRESHOLD = 0.35;  // AUMENTADO significativamente para filtrar ruido
-  private readonly RG_RATIO_RANGE = [1.0, 3.5];  // Rango más estricto y realista
+  private readonly EDGE_ENHANCEMENT = 0.35;  // Reducido para ser más conservador
+  private readonly MIN_RED_THRESHOLD = 0.25;  // AUMENTADO significativamente para filtrar ruido
+  private readonly RG_RATIO_RANGE = [1.0, 4.5];  // Rango más estricto y realista
   private readonly EDGE_CONTRAST_THRESHOLD = 0.18;  // AUMENTADO para mejor validación
   
   // Historia para calibración adaptativa
@@ -33,7 +33,7 @@ export class FrameProcessor {
     // Aumentar tamaño de ROI para capturar más área
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.7, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
+      ROI_SIZE_FACTOR: Math.min(0.99, config.ROI_SIZE_FACTOR * 1.20) // Aumentar tamaño ROI sin exceder 0.8
     };
   }
   
@@ -288,10 +288,10 @@ export class FrameProcessor {
    * VERSIÓN ULTRA-ESTRICTA para eliminar falsos positivos
    */
   private calculateSkinLikeness(r: number, g: number, b: number, texture: number): number {
-    // Rangos más amplios para diferentes tipos de piel
-    const skinRedRange = [50, 250];   
-    const skinGreenRange = [25, 210];   
-    const skinBlueRange = [15, 170];
+    // Rangos muy amplios para diferentes tipos de piel
+    const skinRedRange = [60, 240];   
+    const skinGreenRange = [30, 200];   
+    const skinBlueRange = [20, 160];
     
     // Verificar si los valores están en rangos ESTRICTOS de piel
     const redMatch = (r >= skinRedRange[0] && r <= skinRedRange[1]) ? 1 : 0;
