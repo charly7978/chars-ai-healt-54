@@ -12,14 +12,14 @@ export interface SignalQualityMetrics {
 }
 
 export class PPGSignalProcessor {
-  private readonly MAX_CONSECUTIVE_DETECTIONS = 6;
-  private readonly MAX_CONSECUTIVE_NO_DETECTIONS = 4;
+  private readonly MAX_CONSECUTIVE_DETECTIONS = 4; // Reducido
+  private readonly MAX_CONSECUTIVE_NO_DETECTIONS = 6; // Aumentado
   
   private consecutiveDetections: number = 0;
   private consecutiveNoDetections: number = 0;
   private lastFingerDetected: boolean = false;
   
-  // USAR EXCLUSIVAMENTE EL EXTRACTOR AVANZADO
+  // EXTRACTOR OPTIMIZADO PARA MÁXIMA SENSIBILIDAD
   private ppgExtractor: AdvancedPPGExtractor;
   private qualityAnalyzer: SignalQualityAnalyzer;
   
@@ -31,29 +31,29 @@ export class PPGSignalProcessor {
     onSignalReady?: (signal: any) => void,
     onError?: (error: any) => void
   ) {
-    console.log("🔬 PPGSignalProcessor: Inicializando con extractor PPG REAL avanzado");
+    console.log("🔬 PPGSignalProcessor: Inicializando con MÁXIMA SENSIBILIDAD");
     this.onSignalReady = onSignalReady || null;
     this.onError = onError || null;
     
-    // COMPONENTES REALES ÚNICAMENTE
+    // COMPONENTES OPTIMIZADOS
     this.ppgExtractor = new AdvancedPPGExtractor();
     this.qualityAnalyzer = new SignalQualityAnalyzer();
   }
 
   public start(): void {
-    console.log("🚀 PPGSignalProcessor: Iniciando procesamiento PPG REAL mejorado");
+    console.log("🚀 PPGSignalProcessor: INICIANDO con sensibilidad MÁXIMA");
     this.isProcessing = true;
     this.ppgExtractor.reset();
     this.qualityAnalyzer.reset();
   }
 
   public stop(): void {
-    console.log("⏹️ PPGSignalProcessor: Deteniendo procesamiento PPG");
+    console.log("⏹️ PPGSignalProcessor: Deteniendo procesamiento");
     this.isProcessing = false;
   }
 
   public reset(): void {
-    console.log("🔄 PPGSignalProcessor: Reset completo del sistema PPG");
+    console.log("🔄 PPGSignalProcessor: Reset con configuración OPTIMIZADA");
     this.consecutiveDetections = 0;
     this.consecutiveNoDetections = 0;
     this.lastFingerDetected = false;
@@ -63,16 +63,15 @@ export class PPGSignalProcessor {
 
   public async calibrate(): Promise<void> {
     return new Promise((resolve) => {
-      console.log("🎯 PPGSignalProcessor: Calibrando extractor PPG avanzado");
+      console.log("🎯 PPGSignalProcessor: Calibración OPTIMIZADA iniciada");
       
-      // Reset completo del sistema
       this.reset();
       
-      // Tiempo de calibración para estabilizar algoritmos
+      // Tiempo de calibración reducido
       setTimeout(() => {
-        console.log("✅ PPGSignalProcessor: Calibración PPG completada");
+        console.log("✅ PPGSignalProcessor: Calibración OPTIMIZADA completada");
         resolve();
-      }, 2000);
+      }, 1500); // Más rápido
     });
   }
 
@@ -82,12 +81,12 @@ export class PPGSignalProcessor {
     try {
       const now = Date.now();
       
-      // USAR ÚNICAMENTE EL EXTRACTOR AVANZADO - NO MÁS SEÑALES DÉBILES
+      // EXTRACCIÓN OPTIMIZADA
       const ppgResult = this.ppgExtractor.extractPPGSignal(imageData);
       
-      // Log cada 60 frames para monitoreo de señal real
-      if (Math.floor(now / 100) % 60 === 0) {
-        console.log("🔍 PPGSignalProcessor: Análisis señal PPG REAL", {
+      // Log cada 45 frames para monitoreo
+      if (Math.floor(now / 100) % 45 === 0) {
+        console.log("🔍 PPGSignalProcessor: SEÑAL OPTIMIZADA", {
           rawSignal: ppgResult.rawSignal.toFixed(3),
           filteredSignal: ppgResult.filteredSignal.toFixed(3),
           quality: ppgResult.quality,
@@ -97,13 +96,13 @@ export class PPGSignalProcessor {
         });
       }
       
-      // Métricas de calidad usando el analizador
+      // Métricas de calidad
       const qualityMetrics = this.qualityAnalyzer.calculateMetrics(ppgResult.filteredSignal);
       
-      // Histéresis mejorada para detección estable
-      const fingerDetected = this.applyImprovedHysteresis(ppgResult.fingerDetected, ppgResult.quality);
+      // Histéresis OPTIMIZADA para estabilidad
+      const fingerDetected = this.applyOptimizedHysteresis(ppgResult.fingerDetected, ppgResult.quality);
       
-      // Señal procesada final con datos REALES
+      // Señal final OPTIMIZADA
       const signal = {
         timestamp: now,
         fingerDetected,
@@ -115,21 +114,21 @@ export class PPGSignalProcessor {
         signalStrength: qualityMetrics.signalStrength
       };
       
-      // Validar que la señal es suficientemente fuerte
-      if (fingerDetected && ppgResult.quality < 20) {
-        console.warn("⚠️ PPGSignalProcessor: Señal detectada pero calidad muy baja", {
+      // Validación más permisiva
+      if (fingerDetected && ppgResult.quality < 15) {
+        console.warn("⚠️ PPGSignalProcessor: Señal detectada con calidad muy baja", {
           quality: ppgResult.quality,
           snr: ppgResult.snr
         });
       }
       
-      // Enviar señal mejorada
+      // Enviar señal
       if (this.onSignalReady) {
         this.onSignalReady(signal);
       }
       
     } catch (error) {
-      console.error("❌ PPGSignalProcessor: Error crítico en procesamiento:", error);
+      console.error("❌ PPGSignalProcessor: Error en procesamiento:", error);
       if (this.onError) {
         this.onError({
           code: 'PPG_PROCESSING_ERROR',
@@ -141,21 +140,21 @@ export class PPGSignalProcessor {
   }
 
   /**
-   * Histéresis mejorada con validación de calidad
+   * Histéresis OPTIMIZADA para mejor detección
    */
-  private applyImprovedHysteresis(currentDetection: boolean, quality: number): boolean {
-    if (currentDetection && quality > 25) {
+  private applyOptimizedHysteresis(currentDetection: boolean, quality: number): boolean {
+    if (currentDetection && quality > 15) { // Umbral más bajo
       this.consecutiveDetections = Math.min(this.consecutiveDetections + 1, this.MAX_CONSECUTIVE_DETECTIONS);
       this.consecutiveNoDetections = 0;
     } else {
       this.consecutiveNoDetections = Math.min(this.consecutiveNoDetections + 1, this.MAX_CONSECUTIVE_NO_DETECTIONS);
-      if (this.consecutiveNoDetections >= 2) {
+      if (this.consecutiveNoDetections >= 3) { // Más tolerante
         this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
       }
     }
     
-    // Requerir menos detecciones consecutivas pero con mejor calidad
-    const isDetected = this.consecutiveDetections >= 3 && quality > 20;
+    // Requiere menos detecciones consecutivas
+    const isDetected = this.consecutiveDetections >= 2 && quality > 12; // Más permisivo
     this.lastFingerDetected = isDetected;
     
     return isDetected;
