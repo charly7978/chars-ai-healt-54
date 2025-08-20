@@ -56,38 +56,55 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity } =
       this.detectorScores;
 
-    // Weighted sum – weights can be tuned later or moved to config.
+    // Weighted sum – weights optimized for stability
     const weighted =
-      redChannel * 0.3 +
-      stability * 0.25 +
-      pulsatility * 0.25 +
-      biophysical * 0.15 +
-      periodicity * 0.05;
+      redChannel * 0.35 +      // Aumentado peso del canal rojo
+      stability * 0.30 +       // Aumentado peso de estabilidad
+      pulsatility * 0.20 +     // Reducido peso de pulsatilidad
+      biophysical * 0.12 +     // Reducido peso biofísico
+      periodicity * 0.03;      // Reducido peso de periodicidad
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
 
-    // Maintain moving average over last N frames.
+    // Maintain moving average over last N frames with improved stability
     this.qualityHistory.push(qualityValue);
     if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
       this.qualityHistory.shift();
     }
-    const smoothedQuality =
-      this.qualityHistory.reduce((acc, v) => acc + v, 0) /
-      this.qualityHistory.length;
+    
+    // Promedio ponderado para mayor estabilidad
+    const recentWeight = 0.6; // Peso mayor para valores recientes
+    const historyWeight = 0.4; // Peso menor para valores históricos
+    
+    const recentValues = this.qualityHistory.slice(-3); // Últimos 3 valores
+    const olderValues = this.qualityHistory.slice(0, -3); // Valores anteriores
+    
+    const recentAvg = recentValues.length > 0 ? 
+      recentValues.reduce((acc, v) => acc + v, 0) / recentValues.length : 0;
+    const olderAvg = olderValues.length > 0 ? 
+      olderValues.reduce((acc, v) => acc + v, 0) / olderValues.length : 0;
+    
+    const smoothedQuality = recentAvg * recentWeight + olderAvg * historyWeight;
 
-    // Hysteresis logic using consecutive detections.
+    // Hysteresis logic using consecutive detections - OPTIMIZADO para estabilidad
     let isFingerDetected = false;
     console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    const DETECTION_THRESHOLD = 30;
+    
+    // Umbrales optimizados para estabilidad
+    const DETECTION_THRESHOLD = 35; // Aumentado para mayor estabilidad
+    const RELEASE_THRESHOLD = 25;   // Umbral de liberación más bajo
+    
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
-    } else {
+    } else if (smoothedQuality < RELEASE_THRESHOLD) {
       this.consecutiveNoDetections += 1;
       this.consecutiveDetections = 0;
     }
+    // Entre umbrales: mantener estado anterior para estabilidad
 
+    // Lógica de detección más estable
     if (this.consecutiveDetections >= this.config.MIN_CONSECUTIVE_DETECTIONS) {
       isFingerDetected = true;
     } else if (
@@ -95,6 +112,7 @@ export class SignalAnalyzer {
     ) {
       isFingerDetected = false;
     }
+    // Si no se cumple ninguna condición, mantener el estado anterior
 
     return {
       isFingerDetected,

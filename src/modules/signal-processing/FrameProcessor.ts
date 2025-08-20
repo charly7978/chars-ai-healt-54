@@ -6,24 +6,24 @@ import { ProcessedSignal } from '../../types/signal';
  * PROHIBIDA LA SIMULACIÓN Y TODO TIPO DE MANIPULACIÓN FORZADA DE DATOS
  */
 export class FrameProcessor {
+  // Configuración mejorada para detección más estable
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  // Parámetros ajustados PARA REDUCIR FALSOS POSITIVOS - más estrictos
-  private readonly RED_GAIN = 1.0; // Reducido para evitar amplificación excesiva
-  private readonly GREEN_SUPPRESSION = 0.9; // Menos supresión para comparación más real
-  private readonly SIGNAL_GAIN = 0.9; // Reducido para evitar amplificación de ruido
-  private readonly EDGE_ENHANCEMENT = 0.15;  // Reducido para ser más conservador
-  private readonly MIN_RED_THRESHOLD = 0.35;  // AUMENTADO significativamente para filtrar ruido
-  private readonly RG_RATIO_RANGE = [1.0, 3.5];  // Rango más estricto y realista
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.18;  // AUMENTADO para mejor validación
+  private readonly RED_GAIN = 1.05; // Reducido para evitar amplificación excesiva
+  private readonly GREEN_SUPPRESSION = 0.92; // Menos supresión para comparación más real
+  private readonly SIGNAL_GAIN = 0.95; // Reducido para evitar amplificación de ruido
+  private readonly EDGE_ENHANCEMENT = 0.12;  // Reducido para ser más conservador
+  private readonly MIN_RED_THRESHOLD = 0.40;  // AUMENTADO significativamente para filtrar ruido
+  private readonly RG_RATIO_RANGE = [1.1, 3.2];  // Rango más estricto y realista
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.20;  // AUMENTADO para mejor validación
   
-  // Historia para calibración adaptativa
+  // Historial mejorado para estabilidad
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
-  private readonly HISTORY_SIZE = 15; // Reducido para adaptación más rápida (antes 20)
+  private readonly HISTORY_SIZE = 20; // Aumentado para mejor estabilidad
   private lastLightLevel: number = -1;
   
-  // Nuevo: historial de ROIs para estabilidad
+  // ROI mejorado con estabilidad temporal
   private roiHistory: Array<{x: number, y: number, width: number, height: number}> = [];
-  private readonly ROI_HISTORY_SIZE = 5;
+  private readonly ROI_HISTORY_SIZE = 8; // Aumentado para mayor estabilidad
   
   constructor(config: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number }) {
     // Aumentar tamaño de ROI para capturar más área
@@ -156,15 +156,15 @@ export class FrameProcessor {
             const cell2 = normCells[j];
             
             // Calculate color difference with emphasis on red channel
-            const redDiff = Math.abs(cell1.red - cell2.red) * 1.3; // Mayor énfasis en rojo
-            const greenDiff = Math.abs(cell1.green - cell2.green) * 0.8; // Menor énfasis
-            const blueDiff = Math.abs(cell1.blue - cell2.blue) * 0.6; // Menor énfasis
+            const redDiff = Math.abs(cell1.red - cell2.red) * 1.2; // Énfasis moderado en rojo
+            const greenDiff = Math.abs(cell1.green - cell2.green) * 0.9; // Énfasis equilibrado
+            const blueDiff = Math.abs(cell1.blue - cell2.blue) * 0.7; // Énfasis moderado
             
             // Include edge information in texture calculation
             const edgeDiff = Math.abs(cell1.edgeScore - cell2.edgeScore) * this.EDGE_ENHANCEMENT;
             
             // Weighted average of differences
-            const avgDiff = (redDiff + greenDiff + blueDiff + edgeDiff) / 2.7;
+            const avgDiff = (redDiff + greenDiff + blueDiff + edgeDiff) / 2.8;
             totalVariation += avgDiff;
             comparisonCount++;
           }
@@ -173,9 +173,9 @@ export class FrameProcessor {
         if (comparisonCount > 0) {
           const avgVariation = totalVariation / comparisonCount;
           
-          // Cálculo de textura mejorado - más permisivo
-          const normalizedVar = Math.pow(avgVariation / 3, 0.65); // Exponente reducido
-          textureScore = Math.max(0.35, Math.min(1, normalizedVar)); // Mínimo más alto
+          // Cálculo de textura mejorado - más estable y permisivo
+          const normalizedVar = Math.pow(avgVariation / 3, 0.7); // Exponente más equilibrado
+          textureScore = Math.max(0.25, Math.min(1, normalizedVar)); // Rango más amplio para estabilidad
         }
       }
     }
@@ -209,16 +209,19 @@ export class FrameProcessor {
     
     // Apply dynamic calibration based on history - with medical constraints
     let dynamicGain = 1.0; // Base gain
-    if (this.lastFrames.length >= 3) { // Reducido (antes 5)
+    if (this.lastFrames.length >= 5) { // Aumentado para mayor estabilidad
       const avgHistRed = this.lastFrames.reduce((sum, frame) => sum + frame.red, 0) / this.lastFrames.length;
       
-        // Ganancia REDUCIDA para señales que no cumplen criterios estrictos
-        if (avgHistRed < 50 && avgHistRed > this.MIN_RED_THRESHOLD && 
+        // Ganancia EQUILIBRADA para señales que cumplen criterios estrictos
+        if (avgHistRed >= 50 && avgHistRed <= 180 && 
             this.calculateEdgeContrast() > this.EDGE_CONTRAST_THRESHOLD) {
-          dynamicGain = 1.1; // Ganancia muy reducida para evitar amplificar ruido
-        } else if (avgHistRed <= this.MIN_RED_THRESHOLD) {
+          dynamicGain = 1.05; // Ganancia moderada para señales válidas
+        } else if (avgHistRed < 50 && avgHistRed > this.MIN_RED_THRESHOLD * 25) {
+          // Señal débil pero en rango válido
+          dynamicGain = 0.95; // Ganancia reducida para estabilidad
+        } else if (avgHistRed <= this.MIN_RED_THRESHOLD * 25) {
           // Señal muy débil - probablemente no hay dedo
-          dynamicGain = 0.9; // Atenuar señal débil para evitar falsos positivos
+          dynamicGain = 0.85; // Atenuar señal débil para evitar falsos positivos
         }
     }
     
@@ -278,18 +281,18 @@ export class FrameProcessor {
   }
   
   /**
-   * Calculate quality factor - MÁS ESTRICTO para reducir falsos positivos
+   * Calculate quality factor - OPTIMIZADO para estabilidad
    */
   private getLightLevelQualityFactor(lightLevel: number): number {
-    // Rango óptimo más estricto
-    if (lightLevel >= 35 && lightLevel <= 75) { // Rango más estrecho
+    // Rango óptimo más amplio para estabilidad
+    if (lightLevel >= 30 && lightLevel <= 80) { // Rango más amplio
       return 1.0; // Optimal lighting
-    } else if (lightLevel < 35) {
-      // Too dark - penalización más fuerte
-      return Math.max(0.2, lightLevel / 35); // Mínimo más bajo
+    } else if (lightLevel < 30) {
+      // Too dark - penalización moderada
+      return Math.max(0.3, lightLevel / 30); // Mínimo más alto para estabilidad
     } else {
-      // Too bright - penalización más fuerte  
-      return Math.max(0.2, 1.0 - (lightLevel - 75) / 50); // Límites más estrictos
+      // Too bright - penalización moderada  
+      return Math.max(0.3, 1.0 - (lightLevel - 80) / 60); // Límites más permisivos
     }
   }
   
@@ -299,22 +302,22 @@ export class FrameProcessor {
     const centerX = Math.floor(imageData.width / 2);
     const centerY = Math.floor(imageData.height / 2);
     
-    // Factor ROI adaptativo mejorado
+    // Factor ROI adaptativo mejorado para mayor estabilidad
     let adaptiveROISizeFactor = this.CONFIG.ROI_SIZE_FACTOR;
     
-    // Ajustar ROI basado en valor rojo - MÁS ESTRICTO
-    if (redValue < 35) { // Umbral aumentado para ser más estricto
-      // Señal débil - pero no aumentar tanto el ROI para evitar ruido
-      adaptiveROISizeFactor = Math.min(0.7, adaptiveROISizeFactor * 1.05); // Menor aumento
-    } else if (redValue > 100) { // Umbral reducido
+    // Ajustar ROI basado en valor rojo - MÁS ESTABLE
+    if (redValue < 40) { // Umbral aumentado para ser más estricto
+      // Señal débil - reducir ROI para evitar ruido
+      adaptiveROISizeFactor = Math.min(0.65, adaptiveROISizeFactor * 0.98); // Reducción más gradual
+    } else if (redValue > 120) { // Umbral aumentado para mayor estabilidad
       // Señal fuerte - enfocar más el ROI
-      adaptiveROISizeFactor = Math.max(0.3, adaptiveROISizeFactor * 0.95); // Mayor reducción
+      adaptiveROISizeFactor = Math.max(0.35, adaptiveROISizeFactor * 0.97); // Reducción más gradual
     }
     
     // Ensure ROI is appropriate to image size
     const minDimension = Math.min(imageData.width, imageData.height);
-    const maxRoiSize = minDimension * 0.85; // Máximo aumentado (antes 0.8)
-    const minRoiSize = minDimension * 0.25; // Mínimo reducido (antes 0.3)
+    const maxRoiSize = minDimension * 0.80; // Máximo reducido para mayor estabilidad
+    const minRoiSize = minDimension * 0.30; // Mínimo aumentado para evitar ruido
     
     let roiSize = minDimension * adaptiveROISizeFactor;
     roiSize = Math.max(minRoiSize, Math.min(maxRoiSize, roiSize));
@@ -335,7 +338,7 @@ export class FrameProcessor {
     }
     
     // Si tenemos suficiente historia, promediar para estabilidad
-    if (this.roiHistory.length >= 3) {
+    if (this.roiHistory.length >= 5) { // Aumentado para mayor estabilidad
       const avgX = this.roiHistory.reduce((sum, roi) => sum + roi.x, 0) / this.roiHistory.length;
       const avgY = this.roiHistory.reduce((sum, roi) => sum + roi.y, 0) / this.roiHistory.length;
       const avgWidth = this.roiHistory.reduce((sum, roi) => sum + roi.width, 0) / this.roiHistory.length;

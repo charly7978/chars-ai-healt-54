@@ -8,13 +8,13 @@ export type TrendResult = "stable" | "unstable" | "non_physiological";
 export class SignalTrendAnalyzer {
   private valueHistory: number[] = [];
   private derivativeHistory: number[] = [];
-  private readonly HISTORY_SIZE = 50; // Store ~1.6s of data at 30fps
-  private readonly STABILITY_WINDOW = 15;
-  private readonly PERIODICITY_WINDOW = 30;
+  private readonly HISTORY_SIZE = 60; // Aumentado para mayor estabilidad
+  private readonly STABILITY_WINDOW = 20; // Aumentado para mayor estabilidad
+  private readonly PERIODICITY_WINDOW = 40; // Aumentado para mayor estabilidad
 
-  // Thresholds for physiological validation
-  private readonly MAX_VALUE_JUMP = 25; // Max change between consecutive frames
-  private readonly MAX_STD_DEV = 15;    // Max standard deviation for a stable signal
+  // Umbrales optimizados para estabilidad
+  private readonly MAX_VALUE_JUMP = 30; // Aumentado para mayor estabilidad
+  private readonly MAX_STD_DEV = 18;    // Aumentado para mayor estabilidad
 
   reset(): void {
     this.valueHistory = [];
@@ -31,8 +31,8 @@ export class SignalTrendAnalyzer {
       const lastValue = this.valueHistory[this.valueHistory.length - 1];
       const jump = Math.abs(value - lastValue);
 
-      // Check for sudden, non-physiological jumps
-      if (jump > this.MAX_VALUE_JUMP) {
+      // Check for sudden, non-physiological jumps - más permisivo para estabilidad
+      if (jump > this.MAX_VALUE_JUMP * 1.5) { // Factor de tolerancia aumentado
         this.reset(); // Reset on large jump
         return "non_physiological";
       }
@@ -50,7 +50,8 @@ export class SignalTrendAnalyzer {
       recentHistory.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b, 0) / recentHistory.length
     );
 
-    if (stdDev > this.MAX_STD_DEV) {
+    // Análisis más permisivo para estabilidad
+    if (stdDev > this.MAX_STD_DEV * 1.2) { // Factor de tolerancia aumentado
       return "unstable";
     }
 

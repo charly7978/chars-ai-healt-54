@@ -305,19 +305,52 @@ const CameraView = ({
     const { width, height, data } = frameData;
     const pixelCount = width * height;
     
-    // Promedios de canales
+    // Promedios de canales con ROI centrado para mayor estabilidad
     let redSum = 0, irSum = 0, greenSum = 0;
+    let validPixels = 0;
     
-    for (let i = 0; i < pixelCount * 4; i += 4) {
-      redSum += data[i];     // Canal Rojo
-      greenSum += data[i+1]; // Canal Verde
-      irSum += data[i+2];    // Canal Infrarrojo (asumiendo configuración cámara)
+    // ROI centrado para evitar bordes y ruido
+    const centerX = Math.floor(width / 2);
+    const centerY = Math.floor(height / 2);
+    const roiSize = Math.min(width, height) * 0.6; // ROI más pequeño para estabilidad
+    
+    const startX = Math.max(0, centerX - roiSize / 2);
+    const endX = Math.min(width, centerX + roiSize / 2);
+    const startY = Math.max(0, centerY - roiSize / 2);
+    const endY = Math.min(height, centerY + roiSize / 2);
+    
+    // Extraer señales solo del ROI para mayor estabilidad
+    for (let y = startY; y < endY; y++) {
+      for (let x = startX; x < endX; x++) {
+        const i = (y * width + x) * 4;
+        const r = data[i];     // Canal Rojo
+        const g = data[i+1];   // Canal Verde
+        const b = data[i+2];   // Canal Azul (IR)
+        
+        // Validar que los valores estén en rango fisiológico
+        if (r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) {
+          redSum += r;
+          greenSum += g;
+          irSum += b;
+          validPixels++;
+        }
+      }
     }
     
+    // Calcular promedios solo de píxeles válidos
+    if (validPixels > 0) {
+      return {
+        red: [redSum / validPixels],
+        ir: [irSum / validPixels],
+        green: [greenSum / validPixels]
+      };
+    }
+    
+    // Fallback si no hay píxeles válidos
     return {
-      red: [redSum / pixelCount],
-      ir: [irSum / pixelCount],
-      green: [greenSum / pixelCount]
+      red: [0],
+      ir: [0],
+      green: [0]
     };
   };
 

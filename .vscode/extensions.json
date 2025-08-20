@@ -1,5 +1,6 @@
 {
     "recommendations": [
-        "ramgopal.flutter-assets-generator"
+        "ramgopal.flutter-assets-generator",
+        "codium.codium"
     ]
 }
