@@ -16,6 +16,11 @@ export interface VitalSignsResult {
   hemoglobin: number;
   confidence?: number;
   quality?: number;
+  lastArrhythmiaData?: {
+    timestamp: number;
+    rmssd: number;
+    rrVariation: number;
+  };
 }
 
 export class VitalSignsProcessor {
@@ -59,13 +64,14 @@ export class VitalSignsProcessor {
       // Process with advanced mathematical algorithms
       console.log('🧮 Ejecutando algoritmos matemáticos avanzados para signos vitales...');
       
-      // Convertir rrData a formato que espera el processor
+      // Convertir rrData a formato que espera el processor - fixed argument order
       const rrIntervals = rrData?.intervals || [];
       
+      // Make call synchronous by awaiting and handling properly
       const advancedResult = this.superAdvancedProcessor.processAdvancedVitalSigns(ppgValue, rrIntervals);
       
-      // Process blood pressure with specialized processor
-      const bpResult = this.bloodPressureProcessor.processSignal(ppgValue, [], []);
+      // Process blood pressure with specialized processor - fixed arguments
+      const bpResult = this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals, [], Date.now());
       
       // Process glucose with advanced spectroscopic analysis
       const glucoseResult = this.glucoseProcessor.processSignal(ppgValue, rrIntervals);

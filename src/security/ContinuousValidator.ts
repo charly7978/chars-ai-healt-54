@@ -17,8 +17,8 @@ export class ContinuousValidator {
 
   constructor() {
     this.securityService = new SecurityService();
-    this.logger = new AdvancedLogger();
-    this.dataAnonymizer = new DataAnonymizer();
+    this.logger = AdvancedLogger.getInstance(); // Use singleton
+    this.dataAnonymizer = DataAnonymizer.getInstance(); // Use singleton
   }
 
   public validateVitalSigns(data: any): ValidationResult {

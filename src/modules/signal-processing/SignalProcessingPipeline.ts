@@ -1,4 +1,3 @@
-
 import { AdvancedFingerDetector, FingerDetectionResult } from './AdvancedFingerDetector';
 import { SignalQualityAnalyzer } from './SignalQualityAnalyzer';
 import { BufferManager } from './BufferManager';
@@ -12,8 +11,8 @@ export class SignalProcessingPipeline {
 
   constructor(config: ProcessingConfig = {}) {
     this.fingerDetector = new AdvancedFingerDetector();
-    this.qualityAnalyzer = new SignalQualityAnalyzer(config);
-    this.bufferManager = new BufferManager(config.bufferSize || 300);
+    this.qualityAnalyzer = new SignalQualityAnalyzer();
+    this.bufferManager = BufferManager.getInstance();
   }
 
   public async initialize(): Promise<void> {
@@ -42,7 +41,7 @@ export class SignalProcessingPipeline {
     this.bufferManager.addSample(colorValues.r, Date.now());
     
     // Calculate PPG signal
-    const ppgValue = this.calculatePPGSignal(colorValues, fingerResult);
+    const ppgSignal = this.calculatePPGSignal(colorValues, fingerResult);
     
     // Analyze signal quality
     const quality = this.qualityAnalyzer.calculateQuality(
@@ -51,13 +50,18 @@ export class SignalProcessingPipeline {
     );
 
     return {
-      ppgValue,
+      timestamp: Date.now(),
+      rawValue: ppgSignal,
+      filteredValue: ppgSignal,
       quality: Math.round(quality),
       fingerDetected: fingerResult.isDetected,
-      confidence: fingerResult.confidence,
-      timestamp: Date.now(),
-      colorValues,
-      fingerDetails: fingerResult
+      roi: {
+        x: 0,
+        y: 0,
+        width: canvas.width,
+        height: canvas.height
+      },
+      perfusionIndex: fingerResult.perfusionIndex
     };
   }
 
