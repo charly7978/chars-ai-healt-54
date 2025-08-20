@@ -66,6 +66,21 @@ export class PPGSignalProcessor {
     this.initialStalePenaltyApplied = false;
   }
 
+  public async calibrate(): Promise<void> {
+    return new Promise((resolve) => {
+      console.log("PPGSignalProcessor: Starting calibration process");
+      
+      // Reset calibration state
+      this.reset();
+      
+      // Simple calibration - just reset internal state
+      setTimeout(() => {
+        console.log("PPGSignalProcessor: Calibration completed");
+        resolve();
+      }, 1000);
+    });
+  }
+
   public processFrame(imageData: ImageData): void {
     if (!this.isProcessing) return;
     
