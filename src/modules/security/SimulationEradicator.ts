@@ -1,5 +1,4 @@
-
-import { ContinuousValidator } from './ContinuousValidator';
+import { ContinuousValidator } from '../../security/ContinuousValidator';
 
 class SimulationEradicator {
   private validator: ContinuousValidator;
@@ -53,8 +52,10 @@ class SimulationEradicator {
     return true;
   }
 
-  public validateBiophysicalSignal(signal: number[]): boolean {
-    if (signal.length < 5) return true;
+  public validateBiophysicalSignal(signal: number[]): { isSimulation: boolean; violationDetails: string[] } {
+    if (signal.length < 5) return { isSimulation: false, violationDetails: [] };
+
+    const violations: string[] = [];
 
     // Calculate biophysical metrics
     const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
@@ -62,8 +63,8 @@ class SimulationEradicator {
     
     // Check for physiologically realistic variance
     if (variance < 0.1) {
+      violations.push('Too low variance - insufficient biological variation');
       console.warn('⚠️ Biophysical validation failed - too low variance');
-      return false;
     }
 
     // Check for realistic signal range (PPG values)
@@ -71,18 +72,21 @@ class SimulationEradicator {
     const maxVal = Math.max(...signal);
     
     if (maxVal - minVal < 1.0) {
+      violations.push('Insufficient signal range - lack of pulsatile variation');
       console.warn('⚠️ Biophysical validation failed - insufficient signal range');
-      return false;
     }
 
     // Calculate spectral entropy (simplified)
     const spectralEntropy = this.calculateSpectralEntropy(signal);
     if (spectralEntropy < 0.5) {
+      violations.push('Low spectral entropy - artificial signal characteristics');
       console.warn('⚠️ Biophysical validation failed - low spectral entropy');
-      return false;
     }
 
-    return true;
+    return {
+      isSimulation: violations.length > 0,
+      violationDetails: violations
+    };
   }
 
   private calculateSpectralEntropy(signal: number[]): number {
