@@ -1,3 +1,4 @@
+
 /**
  * @file BiophysicalValidator.ts
  * @description Valida si una señal PPG se adhiere a características fisiológicas conocidas.
@@ -9,6 +10,18 @@ export interface ColorRatios {
   red: number;
   green: number;
   blue: number;
+}
+
+export interface SignalValidationInput {
+  value: number;
+  timestamp: number;
+  quality: number;
+}
+
+export interface SignalValidationResult {
+  isValid: boolean;
+  score: number;
+  reason?: string;
 }
 
 /**
@@ -29,6 +42,59 @@ export class BiophysicalValidator {
     // Intensidad del canal rojo: umbrales más altos
     redValue: { min: 35, max: 220 }, // Mínimo más alto, máximo más bajo
   };
+
+  // Buffer para validación temporal
+  private signalBuffer: number[] = [];
+  private readonly BUFFER_SIZE = 10;
+
+  /**
+   * Valida una señal PPG individual basándose en criterios biofísicos
+   */
+  public validateSignal(input: SignalValidationInput): SignalValidationResult {
+    // Agregar al buffer para análisis temporal
+    this.signalBuffer.push(input.value);
+    if (this.signalBuffer.length > this.BUFFER_SIZE) {
+      this.signalBuffer.shift();
+    }
+
+    // Validaciones básicas
+    if (input.quality < 30) {
+      return {
+        isValid: false,
+        score: 0,
+        reason: 'Calidad de señal insuficiente'
+      };
+    }
+
+    // Validar rango fisiológico del valor
+    if (Math.abs(input.value) < 0.01) {
+      return {
+        isValid: false,
+        score: 0,
+        reason: 'Amplitud de señal demasiado baja'
+      };
+    }
+
+    // Si tenemos suficientes muestras, validar pulsatilidad
+    let pulsatilityScore = 0;
+    if (this.signalBuffer.length >= 5) {
+      pulsatilityScore = this.getPulsatilityScore(this.signalBuffer);
+    }
+
+    // Calcular puntuación combinada
+    const qualityScore = Math.min(1, input.quality / 100);
+    const amplitudeScore = Math.min(1, Math.abs(input.value) / 10);
+    
+    const totalScore = (qualityScore * 0.4 + amplitudeScore * 0.3 + pulsatilityScore * 0.3);
+    
+    const isValid = totalScore > 0.3 && pulsatilityScore > 0.1;
+
+    return {
+      isValid,
+      score: totalScore,
+      reason: isValid ? undefined : 'Señal no cumple criterios biofísicos'
+    };
+  }
 
   /**
    * Calcula un puntaje de pulsatilidad, que representa la fuerza de la señal cardíaca.
@@ -98,6 +164,6 @@ export class BiophysicalValidator {
    * Reinicia el estado del validador.
    */
   public reset(): void {
-    // Actualmente no hay estado que reiniciar en esta implementación, pero se mantiene por consistencia.
+    this.signalBuffer = [];
   }
 }
