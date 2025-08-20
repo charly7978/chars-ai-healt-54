@@ -239,7 +239,7 @@ export class FrameProcessor {
     const lightLevelFactor = this.getLightLevelQualityFactor(this.lastLightLevel);
     
     // More detailed logging for diagnostics
-    console.log("FrameProcessor: Extracted data:", {
+    console.log("FrameProcessor: Extracted data - MEJORAS APLICADAS:", {
       avgRed: avgRed.toFixed(1), 
       avgGreen: avgGreen.toFixed(1), 
       avgBlue: avgBlue.toFixed(1),
@@ -251,7 +251,13 @@ export class FrameProcessor {
       dynamicGain: dynamicGain.toFixed(2),
       pixelCount,
       frameSize: `${imageData.width}x${imageData.height}`,
-      roiSize: `${roiSize.toFixed(1)}`
+      roiSize: `${roiSize.toFixed(1)}`,
+      config: {
+        RED_GAIN: this.RED_GAIN,
+        HISTORY_SIZE: this.HISTORY_SIZE,
+        ROI_HISTORY_SIZE: this.ROI_HISTORY_SIZE,
+        MIN_RED_THRESHOLD: this.MIN_RED_THRESHOLD
+      }
     });
     
     return {

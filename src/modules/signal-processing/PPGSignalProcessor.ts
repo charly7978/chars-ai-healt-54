@@ -150,7 +150,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       isProcessing: this.isProcessing,
       hasOnSignalReadyCallback: !!this.onSignalReady,
       imageSize: `${imageData.width}x${imageData.height}`,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      config: this.CONFIG // Log de configuración para verificar mejoras
     });
     if (!this.isProcessing) {
       console.log("PPGSignalProcessor: Not processing, ignoring frame");
@@ -180,7 +181,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       );
 
       if (shouldLog) {
-        console.log("PPGSignalProcessor DEBUG:", {
+        console.log("PPGSignalProcessor DEBUG - MEJORAS APLICADAS:", {
           step: "FrameExtraction",
           redValue: redValue,
           humanMorphologyValid,
@@ -190,7 +191,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           roiHeight: roi.height,
           textureScore,
           rToGRatio,
-          rToBRatio
+          rToBRatio,
+          config: {
+            BUFFER_SIZE: this.CONFIG.BUFFER_SIZE,
+            MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_DETECTIONS,
+            MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS
+          }
         });
       }
 

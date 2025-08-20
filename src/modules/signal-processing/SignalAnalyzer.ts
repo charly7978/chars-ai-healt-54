@@ -87,13 +87,31 @@ export class SignalAnalyzer {
     
     const smoothedQuality = recentAvg * recentWeight + olderAvg * historyWeight;
 
-    // Hysteresis logic using consecutive detections - OPTIMIZADO para estabilidad
-    let isFingerDetected = false;
-    console.log('[DEBUG] SignalAnalyzer - detectorScores:', this.detectorScores, 'smoothedQuality:', smoothedQuality);
-    
     // Umbrales optimizados para estabilidad
     const DETECTION_THRESHOLD = 35; // Aumentado para mayor estabilidad
     const RELEASE_THRESHOLD = 25;   // Umbral de liberación más bajo
+
+    // Hysteresis logic using consecutive detections - OPTIMIZADO para estabilidad
+    let isFingerDetected = false;
+    console.log('[DEBUG] SignalAnalyzer - MEJORAS APLICADAS:', {
+      detectorScores: this.detectorScores, 
+      smoothedQuality: smoothedQuality,
+      weights: {
+        redChannel: 0.35,
+        stability: 0.30,
+        pulsatility: 0.20,
+        biophysical: 0.12,
+        periodicity: 0.03
+      },
+      thresholds: {
+        DETECTION_THRESHOLD: DETECTION_THRESHOLD,
+        RELEASE_THRESHOLD: RELEASE_THRESHOLD
+      },
+      config: {
+        MIN_CONSECUTIVE_DETECTIONS: this.config.MIN_CONSECUTIVE_DETECTIONS,
+        MAX_CONSECUTIVE_NO_DETECTIONS: this.config.MAX_CONSECUTIVE_NO_DETECTIONS
+      }
+    });
     
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
