@@ -1,3 +1,4 @@
+
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
@@ -76,8 +77,8 @@ export const useVitalSignsProcessor = () => {
     processor.forceCalibrationCompletion();
   }, [processor]);
   
-  // Process the signal with improved algorithms (REVERTIDO A SÍNCRONO)
-  const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+  // Process the signal with improved algorithms (NOW ASYNC)
+  const processSignal = useCallback(async (value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
     processedSignals.current++;
     
     console.log("useVitalSignsProcessor: Procesando señal", {
@@ -93,8 +94,8 @@ export const useVitalSignsProcessor = () => {
       progresoCalibración: processor.getCalibrationProgress()
     });
     
-    // Process signal through the vital signs processor (REVERTIDO A SÍNCRONO)
-    const result = processor.processSignal(value, rrData);
+    // Process signal through the vital signs processor (NOW AWAIT)
+    const result = await processor.processSignal(value, rrData);
     const currentTime = Date.now();
     
     // Guardar para depuración
@@ -117,36 +118,16 @@ export const useVitalSignsProcessor = () => {
     }
     
     // Si tenemos un resultado válido, guárdalo
-    if (result && typeof result === 'object' && 'then' in result) {
-      // Handle Promise result
-      result.then((resolvedResult: any) => {
-        if (resolvedResult.spo2 > 0 && resolvedResult.glucose > 0 && resolvedResult.lipids.totalCholesterol > 0) {
-          console.log("useVitalSignsProcessor: Resultado válido detectado", {
-            spo2: resolvedResult.spo2,
-            presión: resolvedResult.pressure,
-            glucosa: resolvedResult.glucose,
-            lípidos: resolvedResult.lipids,
-            timestamp: new Date().toISOString()
-          });
-          
-          setLastValidResults(resolvedResult);
-        }
-      }).catch((error: any) => {
-        console.error("useVitalSignsProcessor: Error processing result", error);
+    if (result && result.spo2 > 0 && result.glucose > 0 && result.lipids?.totalCholesterol > 0) {
+      console.log("useVitalSignsProcessor: Resultado válido detectado", {
+        spo2: result.spo2,
+        presión: result.pressure,
+        glucosa: result.glucose,
+        lípidos: result.lipids,
+        timestamp: new Date().toISOString()
       });
-    } else if (result && typeof result === 'object') {
-      // Handle synchronous result
-      if (result.spo2 > 0 && result.glucose > 0 && result.lipids?.totalCholesterol > 0) {
-        console.log("useVitalSignsProcessor: Resultado válido detectado", {
-          spo2: result.spo2,
-          presión: result.pressure,
-          glucosa: result.glucose,
-          lípidos: result.lipids,
-          timestamp: new Date().toISOString()
-        });
-        
-        setLastValidResults(result);
-      }
+      
+      setLastValidResults(result);
     }
     
     // Enhanced RR interval analysis (more robust than previous)

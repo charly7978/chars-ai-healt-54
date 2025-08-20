@@ -73,13 +73,13 @@ export class VitalSignsProcessor {
       
       // Process with advanced processor - convert single value to array for processing
       const ppgArray = [ppgValue];
-      const advancedResult = await this.superAdvancedProcessor.processAdvancedVitalSigns(ppgArray, rrIntervals);
+      const advancedResult = await this.superAdvancedProcessor.processAdvancedVitalSigns(ppgArray, rrIntervals, {});
       
       // Process blood pressure with specialized processor
-      const bpResult = await this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals);
+      const bpResult = await this.bloodPressureProcessor.processSignal(ppgArray, rrIntervals, {});
       
       // Process glucose with advanced spectroscopic analysis
-      const glucoseResult = await this.glucoseProcessor.processSignal(ppgValue, rrIntervals);
+      const glucoseResult = await this.glucoseProcessor.processSignal(ppgArray, rrIntervals, {}, {});
       
       console.log('🎯 Resultados de procesadores especializados:', {
         spo2: advancedResult.spo2,
