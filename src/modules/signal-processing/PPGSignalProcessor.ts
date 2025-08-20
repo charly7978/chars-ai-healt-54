@@ -29,7 +29,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // Configuration with stricter medically appropriate thresholds
   public readonly CONFIG: SignalProcessorConfig = {
     BUFFER_SIZE: 25,
-    MIN_RED_THRESHOLD: 1,     // Umbral muy bajo para aceptar señales débiles
+    MIN_RED_THRESHOLD: 0.5,   // Umbral ultra bajo para aceptar señales débiles
     MAX_RED_THRESHOLD: 240,
     STABILITY_WINDOW: 15,      // Increased for more stability assessment
     MIN_STABILITY_COUNT: 6,   // Requires more stability for detection
@@ -189,8 +189,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection of invalid frames - más permisivo
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.3) {
+      // Early rejection of invalid frames - ultra permisivo
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.1) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
         }
