@@ -10,15 +10,23 @@ interface ValidationResult {
 }
 
 export class ContinuousValidator {
+  private static instance: ContinuousValidator;
   private securityService: SecurityService;
   private logger: AdvancedLogger;
   private dataAnonymizer: DataAnonymizer;
   private validationHistory: ValidationResult[] = [];
 
-  constructor() {
+  private constructor() {
     this.securityService = new SecurityService();
     this.logger = AdvancedLogger.getInstance(); // Use singleton
     this.dataAnonymizer = DataAnonymizer.getInstance(); // Use singleton
+  }
+
+  public static getInstance(): ContinuousValidator {
+    if (!ContinuousValidator.instance) {
+      ContinuousValidator.instance = new ContinuousValidator();
+    }
+    return ContinuousValidator.instance;
   }
 
   public validateVitalSigns(data: any): ValidationResult {

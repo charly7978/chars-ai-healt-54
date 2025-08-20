@@ -292,7 +292,19 @@ const CameraView = ({
     const results = vitalProcessor.current.processSignal(red[0]);
     
     if (results) {
-      handleResults(results);
+      if (typeof results === 'object' && 'then' in results) {
+        // Handle Promise result
+        results.then((resolvedResults: any) => {
+          if (resolvedResults) {
+            handleResults(resolvedResults);
+          }
+        }).catch((error: any) => {
+          console.error("CameraView: Error processing vital signs", error);
+        });
+      } else {
+        // Handle synchronous result
+        handleResults(results);
+      }
     }
   };
 

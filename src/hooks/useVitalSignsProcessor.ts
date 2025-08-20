@@ -117,16 +117,36 @@ export const useVitalSignsProcessor = () => {
     }
     
     // Si tenemos un resultado válido, guárdalo
-    if (result.spo2 > 0 && result.glucose > 0 && result.lipids.totalCholesterol > 0) {
-      console.log("useVitalSignsProcessor: Resultado válido detectado", {
-        spo2: result.spo2,
-        presión: result.pressure,
-        glucosa: result.glucose,
-        lípidos: result.lipids,
-        timestamp: new Date().toISOString()
+    if (result && typeof result === 'object' && 'then' in result) {
+      // Handle Promise result
+      result.then((resolvedResult: any) => {
+        if (resolvedResult.spo2 > 0 && resolvedResult.glucose > 0 && resolvedResult.lipids.totalCholesterol > 0) {
+          console.log("useVitalSignsProcessor: Resultado válido detectado", {
+            spo2: resolvedResult.spo2,
+            presión: resolvedResult.pressure,
+            glucosa: resolvedResult.glucose,
+            lípidos: resolvedResult.lipids,
+            timestamp: new Date().toISOString()
+          });
+          
+          setLastValidResults(resolvedResult);
+        }
+      }).catch((error: any) => {
+        console.error("useVitalSignsProcessor: Error processing result", error);
       });
-      
-      setLastValidResults(result);
+    } else if (result && typeof result === 'object') {
+      // Handle synchronous result
+      if (result.spo2 > 0 && result.glucose > 0 && result.lipids?.totalCholesterol > 0) {
+        console.log("useVitalSignsProcessor: Resultado válido detectado", {
+          spo2: result.spo2,
+          presión: result.pressure,
+          glucosa: result.glucose,
+          lípidos: result.lipids,
+          timestamp: new Date().toISOString()
+        });
+        
+        setLastValidResults(result);
+      }
     }
     
     // Enhanced RR interval analysis (more robust than previous)

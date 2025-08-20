@@ -50,10 +50,10 @@ export class VitalSignsProcessor {
     console.log('🏥 VitalSignsProcessor inicializado con procesadores avanzados');
   }
 
-  public processSignal(
+  public async processSignal(
     ppgValue: number, 
     rrData?: { intervals: number[], lastPeakTime: number | null }
-  ): VitalSignsResult {
+  ): Promise<VitalSignsResult> {
     try {
       // Anti-simulation validation (non-blocking)
       try {
@@ -73,13 +73,13 @@ export class VitalSignsProcessor {
       
       // Process with advanced processor - convert single value to array for processing
       const ppgArray = [ppgValue];
-      const advancedResult = this.superAdvancedProcessor.processAdvancedVitalSigns(ppgArray, rrIntervals);
+      const advancedResult = await this.superAdvancedProcessor.processAdvancedVitalSigns(ppgArray, rrIntervals);
       
       // Process blood pressure with specialized processor
-      const bpResult = this.bloodPressureProcessor.processSignal(ppgArray, rrIntervals);
+      const bpResult = await this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals);
       
       // Process glucose with advanced spectroscopic analysis
-      const glucoseResult = this.glucoseProcessor.processSignal(ppgArray, rrIntervals);
+      const glucoseResult = await this.glucoseProcessor.processSignal(ppgValue, rrIntervals);
       
       console.log('🎯 Resultados de procesadores especializados:', {
         spo2: advancedResult.spo2,
