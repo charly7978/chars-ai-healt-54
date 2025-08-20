@@ -23,6 +23,8 @@ export class VitalSignsProcessor {
   private bloodPressureProcessor: RealBloodPressureProcessor;
   private glucoseProcessor: AdvancedGlucoseProcessor;
   private sessionId: string;
+  private isCalibrating = false;
+  private calibrationProgress = 0;
 
   constructor(userAge: number = 35) {
     this.superAdvancedProcessor = new SuperAdvancedVitalSignsProcessor();
@@ -39,10 +41,10 @@ export class VitalSignsProcessor {
     console.log('🏥 VitalSignsProcessor inicializado con procesadores avanzados');
   }
 
-  public async processSignal(
+  public processSignal(
     ppgValue: number, 
-    rrData: number[]
-  ): Promise<VitalSignsResult> {
+    rrData?: { intervals: number[], lastPeakTime: number | null }
+  ): VitalSignsResult {
     try {
       // Anti-simulation validation (non-blocking)
       try {
@@ -57,19 +59,22 @@ export class VitalSignsProcessor {
       // Process with advanced mathematical algorithms
       console.log('🧮 Ejecutando algoritmos matemáticos avanzados para signos vitales...');
       
-      const advancedResult = await this.superAdvancedProcessor.processAdvancedVitalSigns(ppgValue, rrData);
+      // Convertir rrData a formato que espera el processor
+      const rrIntervals = rrData?.intervals || [];
+      
+      const advancedResult = this.superAdvancedProcessor.processAdvancedVitalSigns(ppgValue, rrIntervals);
       
       // Process blood pressure with specialized processor
       const bpResult = this.bloodPressureProcessor.processSignal(ppgValue, [], []);
       
       // Process glucose with advanced spectroscopic analysis
-      const glucoseResult = this.glucoseProcessor.processSignal(ppgValue, rrData);
+      const glucoseResult = this.glucoseProcessor.processSignal(ppgValue, rrIntervals);
       
       console.log('🎯 Resultados de procesadores especializados:', {
         spo2: advancedResult.spo2,
         presionSistolica: bpResult.systolic,
         presionDiastolica: bpResult.diastolic,
-        glucosa: glucoseResult.value,
+        glucosa: glucoseResult.glucose,
         confianza: Math.min(advancedResult.validation.overallConfidence, bpResult.confidence, glucoseResult.confidence)
       });
 
@@ -77,7 +82,7 @@ export class VitalSignsProcessor {
         spo2: Math.round(advancedResult.spo2),
         pressure: `${bpResult.systolic}/${bpResult.diastolic}`,
         arrhythmiaStatus: advancedResult.arrhythmiaStatus,
-        glucose: Math.round(glucoseResult.value),
+        glucose: Math.round(glucoseResult.glucose),
         lipids: {
           totalCholesterol: Math.round(advancedResult.lipids.totalCholesterol),
           triglycerides: Math.round(advancedResult.lipids.triglycerides)
@@ -107,10 +112,38 @@ export class VitalSignsProcessor {
     }
   }
 
-  public reset(): void {
+  public startCalibration(): void {
+    this.isCalibrating = true;
+    this.calibrationProgress = 0;
+    console.log('🔄 Iniciando calibración de signos vitales');
+  }
+
+  public forceCalibrationCompletion(): void {
+    this.isCalibrating = false;
+    this.calibrationProgress = 100;
+    console.log('🔄 Calibración forzada completada');
+  }
+
+  public isCurrentlyCalibrating(): boolean {
+    return this.isCalibrating;
+  }
+
+  public getCalibrationProgress(): number {
+    return this.calibrationProgress;
+  }
+
+  public reset(): VitalSignsResult | null {
     this.superAdvancedProcessor.reset();
     this.bloodPressureProcessor.reset();
     this.glucoseProcessor.reset();
+    this.isCalibrating = false;
+    this.calibrationProgress = 0;
     console.log('🔄 Procesadores de signos vitales reiniciados');
+    return null;
+  }
+
+  public fullReset(): void {
+    this.reset();
+    console.log('🔄 Reset completo de procesadores de signos vitales');
   }
 }

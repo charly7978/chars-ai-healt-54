@@ -1,6 +1,14 @@
 
 import { ProcessedSignal, ProcessingError } from '../../types/signal';
 
+export { ProcessedSignal, ProcessingError };
+
+export interface ProcessingConfig {
+  bufferSize?: number;
+  qualityThreshold?: number;
+  calibrationSamples?: number;
+}
+
 export interface SignalProcessorConfig {
   BUFFER_SIZE: number;
   MIN_RED_THRESHOLD: number;
@@ -42,12 +50,19 @@ export interface FrameData {
   textureScore: number;
   rToGRatio: number;
   rToBRatio: number;
-  skinLikeness: number; // Análisis de similitud con piel humana
-  stabilityScore: number; // Detección de vibraciones vs contacto real
+  skinLikeness: number;
+  stabilityScore: number;
 }
 
 export interface DetectionResult {
   isFingerDetected: boolean;
   quality: number;
   detectorDetails: Record<string, number | string>;
+}
+
+export interface SignalQualityMetrics {
+  snr: number;
+  stability: number;
+  consistency: number;
+  overallQuality: number;
 }
