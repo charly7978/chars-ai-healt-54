@@ -13,7 +13,7 @@ export interface SignalQualityMetrics {
 }
 
 export class SignalProcessingPipeline {
-  // Componentes de procesamiento real
+  // COMPONENTES REALES ÚNICAMENTE - NO MÁS SEÑALES DÉBILES
   private ppgExtractor: AdvancedPPGExtractor;
   private signalAnalyzer: SignalAnalyzer;
   private biophysicalValidator: BiophysicalValidator;
@@ -23,15 +23,15 @@ export class SignalProcessingPipeline {
   private frameCount = 0;
   
   constructor() {
-    console.log('🔬 SignalProcessingPipeline: Inicializando pipeline PPG avanzado');
+    console.log('🔬 SignalProcessingPipeline: Pipeline PPG REAL inicializado - SIN SIMULACIONES');
     
-    // Inicializar componentes reales
+    // Inicializar ÚNICAMENTE componentes reales
     this.ppgExtractor = new AdvancedPPGExtractor();
     this.signalAnalyzer = new SignalAnalyzer({
       QUALITY_LEVELS: 5,
-      QUALITY_HISTORY_SIZE: 20,
-      MIN_CONSECUTIVE_DETECTIONS: 4,
-      MAX_CONSECUTIVE_NO_DETECTIONS: 8
+      QUALITY_HISTORY_SIZE: 15,
+      MIN_CONSECUTIVE_DETECTIONS: 3,
+      MAX_CONSECUTIVE_NO_DETECTIONS: 6
     });
     this.biophysicalValidator = new BiophysicalValidator();
   }
@@ -56,18 +56,18 @@ export class SignalProcessingPipeline {
   public start(): void {
     if (this.isProcessing) return;
     
-    console.log('🚀 SignalProcessingPipeline: Iniciando procesamiento PPG REAL avanzado');
+    console.log('🚀 SignalProcessingPipeline: INICIANDO procesamiento PPG REAL - Solo señales auténticas');
     this.isProcessing = true;
     this.frameCount = 0;
     
-    // Reset de todos los componentes
+    // Reset de TODOS los componentes reales
     this.ppgExtractor.reset();
     this.signalAnalyzer.reset();
     this.biophysicalValidator.reset();
   }
   
   public stop(): void {
-    console.log('⏹️ SignalProcessingPipeline: Deteniendo procesamiento');
+    console.log('⏹️ SignalProcessingPipeline: Deteniendo procesamiento REAL');
     this.isProcessing = false;
   }
   
@@ -77,59 +77,78 @@ export class SignalProcessingPipeline {
     try {
       this.frameCount++;
       
-      // 1. Extraer señal PPG avanzada
+      // 1. EXTRACCIÓN PPG AVANZADA REAL - método CHROM + filtros
       const ppgResult = this.ppgExtractor.extractPPGSignal(imageData);
       
-      // 2. Análisis adicional de la señal
-      const analysisResult = this.signalAnalyzer.analyzeSignalMultiDetector(
-        ppgResult.filteredSignal,
-        { trend: 'STABLE' }
-      );
-      
-      // 3. Validación biofísica
+      // 2. VALIDACIÓN BIOFÍSICA ESTRICTA
       const biophysicalResult = this.biophysicalValidator.validateSignal({
         value: ppgResult.filteredSignal,
         timestamp: Date.now(),
         quality: ppgResult.quality
       });
       
-      // 4. Combinar resultados
-      const finalQuality = Math.min(ppgResult.quality, analysisResult.quality * 100);
-      const finalDetection = ppgResult.fingerDetected && analysisResult.isFingerDetected && biophysicalResult.isValid;
+      // 3. ANÁLISIS DE SEÑAL ADICIONAL
+      this.signalAnalyzer.updateDetectorScores({
+        redChannel: ppgResult.fingerDetected ? 0.8 : 0.2,
+        stability: Math.min(1, ppgResult.snr / 15),
+        pulsatility: Math.min(1, Math.abs(ppgResult.filteredSignal) / 5),
+        biophysical: biophysicalResult.score,
+        periodicity: ppgResult.quality / 100
+      });
       
-      // 5. Crear señal procesada
+      const analysisResult = this.signalAnalyzer.analyzeSignalMultiDetector(
+        ppgResult.filteredSignal,
+        { trend: 'STABLE' }
+      );
+      
+      // 4. COMBINACIÓN DE RESULTADOS - SOLO SEÑALES VÁLIDAS
+      const finalQuality = Math.min(
+        ppgResult.quality, 
+        analysisResult.quality,
+        biophysicalResult.score * 100
+      );
+      
+      const finalDetection = ppgResult.fingerDetected && 
+                           analysisResult.isFingerDetected && 
+                           biophysicalResult.isValid &&
+                           finalQuality > 25; // Umbral mínimo más estricto
+      
+      // 5. SEÑAL PROCESADA FINAL - 100% REAL
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
-        rawValue: Math.round(ppgResult.rawSignal * 100) / 100,
-        filteredValue: Math.round(ppgResult.filteredSignal * 100) / 100,
+        rawValue: Math.round(ppgResult.rawSignal * 1000) / 1000,
+        filteredValue: Math.round(ppgResult.filteredSignal * 1000) / 1000,
         quality: Math.round(finalQuality),
         fingerDetected: finalDetection,
         roi: { x: 0, y: 0, width: 100, height: 100 },
-        perfusionIndex: this.calculatePerfusionIndex(ppgResult)
+        perfusionIndex: this.calculateRealPerfusionIndex(ppgResult)
       };
       
-      // 6. Métricas de calidad
+      // 6. MÉTRICAS DE CALIDAD REALES
       const qualityMetrics: SignalQualityMetrics = {
-        signalStrength: ppgResult.snr / 20, // Normalizar SNR
-        noiseLevel: Math.max(0, 1 - ppgResult.snr / 15),
+        signalStrength: Math.min(1, Math.abs(ppgResult.filteredSignal) / 10),
+        noiseLevel: Math.max(0, 1 - ppgResult.snr / 20),
         perfusionIndex: processedSignal.perfusionIndex || 0,
         overallQuality: finalQuality,
         timestamp: Date.now()
       };
       
-      // 7. Log periódico para monitoreo
-      if (this.frameCount % 60 === 0) {
-        console.log("SignalProcessingPipeline: Estado procesamiento", {
+      // 7. LOG DETALLADO CADA 90 FRAMES
+      if (this.frameCount % 90 === 0) {
+        console.log("🔍 SignalProcessingPipeline: Estado REAL detallado", {
           frame: this.frameCount,
-          quality: finalQuality,
-          snr: ppgResult.snr,
+          ppgQuality: ppgResult.quality,
+          finalQuality: finalQuality,
+          snr: ppgResult.snr.toFixed(1),
           fingerDetected: finalDetection,
-          rawSignal: ppgResult.rawSignal,
-          filteredSignal: ppgResult.filteredSignal
+          rawSignal: ppgResult.rawSignal.toFixed(3),
+          filteredSignal: ppgResult.filteredSignal.toFixed(3),
+          biophysicalValid: biophysicalResult.isValid,
+          biophysicalScore: biophysicalResult.score.toFixed(2)
         });
       }
       
-      // 8. Enviar resultados
+      // 8. ENVÍO DE RESULTADOS REALES
       if (this.signalCallback) {
         this.signalCallback(processedSignal);
       }
@@ -140,12 +159,12 @@ export class SignalProcessingPipeline {
       
     } catch (error) {
       const errorData: ProcessingError = {
-        message: `Error en pipeline PPG: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Error en pipeline PPG REAL: ${error instanceof Error ? error.message : String(error)}`,
         timestamp: Date.now(),
-        code: 'PPG_PIPELINE_ERROR'
+        code: 'REAL_PPG_PIPELINE_ERROR'
       };
       
-      console.error("SignalProcessingPipeline: Error crítico", errorData);
+      console.error("❌ SignalProcessingPipeline: Error crítico REAL", errorData);
       
       if (this.errorCallback) {
         this.errorCallback(errorData);
@@ -153,11 +172,14 @@ export class SignalProcessingPipeline {
     }
   }
   
-  private calculatePerfusionIndex(ppgResult: any): number {
-    // Índice de perfusión basado en amplitud de señal PPG
-    const amplitude = Math.abs(ppgResult.filteredSignal);
-    const dcComponent = Math.abs(ppgResult.rawSignal) || 1;
+  private calculateRealPerfusionIndex(ppgResult: any): number {
+    // Índice de perfusión REAL basado en amplitud AC/DC
+    const acComponent = Math.abs(ppgResult.filteredSignal);
+    const dcComponent = Math.abs(ppgResult.rawSignal) || 0.1;
     
-    return Math.min(10, (amplitude / dcComponent) * 100);
+    const perfusionIndex = (acComponent / dcComponent) * 100;
+    
+    // Limitar a rango fisiológico real (0.1% - 20%)
+    return Math.max(0.1, Math.min(20, perfusionIndex));
   }
 }
