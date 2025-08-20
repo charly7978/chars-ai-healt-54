@@ -285,33 +285,62 @@ export class FrameProcessor {
   
   /**
    * Análisis de similitud con piel humana vs superficies artificiales
+   * VERSIÓN ULTRA-ESTRICTA para eliminar falsos positivos
    */
   private calculateSkinLikeness(r: number, g: number, b: number, texture: number): number {
-    // Rangos típicos de color de piel humana (normalizado 0-255)
-    const skinRedRange = [95, 220];   // Rojo típico de piel
-    const skinGreenRange = [40, 170]; // Verde típico de piel  
-    const skinBlueRange = [20, 135];  // Azul típico de piel
+    // Rangos MÁS ESTRICTOS de color de piel humana (normalizado 0-255)
+    const skinRedRange = [110, 200];   // Rango más estrecho para rojo
+    const skinGreenRange = [60, 150];  // Rango más estrecho para verde  
+    const skinBlueRange = [40, 120];   // Rango más estrecho para azul
     
-    // Verificar si los valores están en rangos típicos de piel
+    // Verificar si los valores están en rangos ESTRICTOS de piel
     const redMatch = (r >= skinRedRange[0] && r <= skinRedRange[1]) ? 1 : 0;
     const greenMatch = (g >= skinGreenRange[0] && g <= skinGreenRange[1]) ? 1 : 0;
     const blueMatch = (b >= skinBlueRange[0] && b <= skinBlueRange[1]) ? 1 : 0;
     
-    // Ratio R/G típico de piel (1.1 - 2.8)
+    // Ratio R/G MÁS ESTRICTO de piel (1.3 - 2.3)
     const rgRatio = g > 0 ? r / g : 0;
-    const ratioMatch = (rgRatio >= 1.1 && rgRatio <= 2.8) ? 1 : 0;
+    const ratioMatch = (rgRatio >= 1.3 && rgRatio <= 2.3) ? 1 : 0;
     
-    // La textura de piel debe estar en rango medio (no muy lisa como metal/vidrio)
-    const textureMatch = (texture >= 0.3 && texture <= 0.8) ? 1 : 0;
+    // La textura de piel debe estar en rango MÁS ESPECÍFICO
+    const textureMatch = (texture >= 0.4 && texture <= 0.7) ? 1 : 0;
     
-    // Puntaje combinado (máximo 5, normalizado a 0-1)
-    const totalScore = (redMatch + greenMatch + blueMatch + ratioMatch + textureMatch) / 5;
+    // NUEVA VALIDACIÓN: Temperatura de color debe ser compatible con piel
+    const colorTemp = this.calculateColorTemperature(r, g, b);
+    const tempMatch = (colorTemp >= 3000 && colorTemp <= 7000) ? 1 : 0; // Rango de temperatura de piel
+    
+    // Puntaje combinado MÁS ESTRICTO (máximo 6, normalizado a 0-1)
+    const totalScore = (redMatch + greenMatch + blueMatch + ratioMatch + textureMatch + tempMatch) / 6;
+    
+    // PENALIZACIÓN ADICIONAL si algún componente básico falla completamente
+    if (redMatch === 0 || greenMatch === 0 || ratioMatch === 0) {
+      return 0; // Falla automática si no cumple criterios básicos
+    }
     
     return Math.max(0, Math.min(1, totalScore));
   }
   
   /**
-   * Análisis de estabilidad para detectar vibraciones de mesa vs contacto de dedo
+   * Calcula temperatura de color aproximada para validar piel humana
+   */
+  private calculateColorTemperature(r: number, g: number, b: number): number {
+    // Aproximación simple de temperatura de color en Kelvin
+    if (r === 0 && g === 0 && b === 0) return 0;
+    
+    const rNorm = r / 255;
+    const gNorm = g / 255;
+    const bNorm = b / 255;
+    
+    // Fórmula simplificada para temperatura de color
+    if (rNorm > gNorm) {
+      return 3000 + (gNorm / rNorm) * 3000; // Tonos cálidos típicos de piel
+    } else {
+      return 6000 + (bNorm / gNorm) * 2000; // Evitar tonos fríos
+    }
+  }
+  
+  /**
+   * Análisis ULTRA-ESTRICTO de estabilidad para detectar vibraciones vs dedo real
    */
   private calculateStabilityScore(r: number, g: number, b: number): number {
     const now = Date.now();
@@ -319,18 +348,18 @@ export class FrameProcessor {
     // Agregar medición actual al historial
     this.movementHistory.push({ avgRed: r, avgGreen: g, avgBlue: b, timestamp: now });
     
-    // Mantener solo mediciones recientes
+    // Mantener solo mediciones MUY recientes
     if (this.movementHistory.length > this.MOVEMENT_HISTORY_SIZE) {
       this.movementHistory.shift();
     }
     
-    // Necesitamos al menos 4 mediciones para análisis
-    if (this.movementHistory.length < 4) {
-      return 0.5; // Valor neutro
+    // Necesitamos MÁS mediciones para análisis estricto
+    if (this.movementHistory.length < 6) { // Aumentado de 4 a 6
+      return 0.1; // Valor muy bajo hasta tener suficientes datos
     }
     
     // Calcular variación en los valores de color
-    const recentMeasurements = this.movementHistory.slice(-4);
+    const recentMeasurements = this.movementHistory.slice(-6); // Usar más mediciones
     let redVariance = 0, greenVariance = 0, blueVariance = 0;
     
     const avgRed = recentMeasurements.reduce((sum, m) => sum + m.avgRed, 0) / recentMeasurements.length;
@@ -345,14 +374,19 @@ export class FrameProcessor {
     
     const totalVariance = (redVariance + greenVariance + blueVariance) / (recentMeasurements.length * 3);
     
-    // Las vibraciones de mesa causan alta varianza artificial
-    // El contacto de dedo real tiene varianza natural más baja
-    if (totalVariance > 500) {
-      return 0.2; // Alta varianza = probablemente vibración de mesa
-    } else if (totalVariance < 50) {
-      return 0.9; // Baja varianza controlada = buen contacto de dedo
+    // CRITERIOS MÁS ESTRICTOS: 
+    // - Vibraciones de mesa/pared = alta varianza artificial O muy baja varianza (superficie rígida)
+    // - Dedo real = varianza natural moderada con micro-movimientos vasculares
+    
+    if (totalVariance > 300) { // Reducido umbral para ser más estricto
+      return 0.1; // Alta varianza = probablemente vibración
+    } else if (totalVariance < 20) { // Aumentado umbral mínimo
+      return 0.1; // Muy baja varianza = superficie rígida sin pulso
+    } else if (totalVariance >= 50 && totalVariance <= 200) {
+      // Rango óptimo para dedo humano con micro-circulación
+      return 0.9;
     } else {
-      return Math.max(0.3, 1 - (totalVariance / 500)); // Escala gradual
+      return Math.max(0.2, 0.6 - (Math.abs(totalVariance - 125) / 300)); // Penalización gradual
     }
   }
 
