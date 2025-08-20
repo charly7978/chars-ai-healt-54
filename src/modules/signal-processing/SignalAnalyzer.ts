@@ -56,8 +56,8 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity, skinLikeness, stabilityScore } =
       this.detectorScores;
 
-    // Validación permisiva: Solo rechazar casos extremos
-    if (skinLikeness !== undefined && skinLikeness < 0.2) {
+    // Validación moderada
+    if (skinLikeness !== undefined && skinLikeness < 0.3) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -65,7 +65,7 @@ export class SignalAnalyzer {
       };
     }
     
-    if (stabilityScore !== undefined && stabilityScore < 0.1) {
+    if (stabilityScore !== undefined && stabilityScore < 0.2) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -73,8 +73,8 @@ export class SignalAnalyzer {
       };
     }
 
-    // Validación básica muy permisiva
-    if (redChannel < 0.1 || stability < 0.1 || pulsatility < 0.1 || biophysical < 0.1) {
+    // Validación básica moderada
+    if (redChannel < 0.15 || stability < 0.15 || pulsatility < 0.15 || biophysical < 0.15) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -106,7 +106,7 @@ export class SignalAnalyzer {
 
     // Hysteresis logic using consecutive detections.
     let isFingerDetected = false;
-    const DETECTION_THRESHOLD = 25; // Umbral muy permisivo
+    const DETECTION_THRESHOLD = 30;
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
