@@ -57,7 +57,7 @@ export class SignalAnalyzer {
       this.detectorScores;
 
     // Validación moderada
-    if (skinLikeness !== undefined && skinLikeness < 0.2) {
+    if (skinLikeness !== undefined && skinLikeness < 0.1) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -84,13 +84,13 @@ export class SignalAnalyzer {
 
     // Weighted sum - ahora incluye las nuevas métricas anti-mesa
     const weighted =
-      redChannel * 0.25 +
+      redChannel * 0.15 +
       stability * 0.2 +
       pulsatility * 0.2 +
       biophysical * 0.15 +
       periodicity * 0.05 +
-      (skinLikeness || 0.5) * 0.1 + // Peso para similitud con piel
-      (stabilityScore || 0.5) * 0.05; // Peso para estabilidad vs vibración
+      (skinLikeness || 0.2) * 0.1 + // Peso para similitud con piel
+      (stabilityScore || 0.2) * 0.05; // Peso para estabilidad vs vibración
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
