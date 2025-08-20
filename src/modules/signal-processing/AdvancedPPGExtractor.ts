@@ -2,26 +2,29 @@
 import { ImageData } from '../../types/image';
 
 /**
- * Extractor PPG optimizado para máxima sensibilidad y detección real
- * Algoritmos médicos validados con umbrales más permisivos
+ * Extractor PPG SELECTIVO - Solo señales pulsátiles reales de dedo
+ * NO objetos sólidos ni superficies estáticas
  */
 export class AdvancedPPGExtractor {
   private signalHistory: number[] = [];
   private filteredHistory: number[] = [];
   private baseline: number = 0;
-  private adaptiveGain: number = 2.5; // Ganancia inicial más alta
+  private adaptiveGain: number = 1.5;
   private noiseEstimate: number = 0;
   
-  // Filtros más permisivos para mejor detección
-  private readonly LOWPASS_ALPHA = 0.25;  // Más suave
-  private readonly HIGHPASS_ALPHA = 0.75; // Menos agresivo
+  // Buffer para detectar PULSATILIDAD REAL
+  private pulsatilityBuffer: number[] = [];
+  private movementBuffer: number[] = [];
+  
+  // Filtros optimizados para PPG real
+  private readonly LOWPASS_ALPHA = 0.15;
+  private readonly HIGHPASS_ALPHA = 0.85;
   private lowpassState: number = 0;
   private highpassState: number = 0;
   private highpassPrev: number = 0;
   
-  // Parámetros optimizados para detección mejorada
-  private readonly ANALYSIS_WINDOW = 80; // Ventana más pequeña
-  private readonly MIN_SIGNAL_AMPLITUDE = 0.3; // Umbral más bajo
+  private readonly ANALYSIS_WINDOW = 60;
+  private readonly PULSATILITY_WINDOW = 40;
   
   constructor() {
     this.reset();
@@ -30,17 +33,16 @@ export class AdvancedPPGExtractor {
   public reset(): void {
     this.signalHistory = [];
     this.filteredHistory = [];
+    this.pulsatilityBuffer = [];
+    this.movementBuffer = [];
     this.baseline = 0;
-    this.adaptiveGain = 2.5; // Ganancia inicial alta
+    this.adaptiveGain = 1.5;
     this.noiseEstimate = 0;
     this.lowpassState = 0;
     this.highpassState = 0;
     this.highpassPrev = 0;
   }
   
-  /**
-   * Extrae señal PPG optimizada para máxima sensibilidad
-   */
   public extractPPGSignal(imageData: ImageData): {
     rawSignal: number;
     filteredSignal: number;
@@ -48,37 +50,47 @@ export class AdvancedPPGExtractor {
     snr: number;
     fingerDetected: boolean;
   } {
-    // 1. Extraer RGB con ROI más grande y sensible
-    const rgbValues = this.extractOptimizedROI(imageData);
+    // 1. Extraer RGB de ROI centrada
+    const rgbValues = this.extractCenteredROI(imageData);
     
-    // 2. Aplicar método CHROM mejorado para mejor señal
-    const chromSignal = this.applyImprovedCHROM(rgbValues);
+    // 2. Aplicar CHROM para señal PPG
+    const chromSignal = this.applySelectiveCHROM(rgbValues);
     
-    // 3. Baseline adaptativo más rápido
-    this.updateFastBaseline(chromSignal);
+    // 3. Baseline adaptativo lento
+    this.updateSlowBaseline(chromSignal);
     
-    // 4. Normalización mejorada
+    // 4. Normalización
     const normalizedSignal = chromSignal - this.baseline;
     
-    // 5. Filtrado optimizado
-    const filteredSignal = this.applyOptimizedFilter(normalizedSignal);
+    // 5. Filtrado PPG específico
+    const filteredSignal = this.applyPPGFilter(normalizedSignal);
     
-    // 6. Amplificación más agresiva
-    const amplifiedSignal = this.applyStrongAmplification(filteredSignal);
+    // 6. Amplificación controlada
+    const amplifiedSignal = this.applyControlledAmplification(filteredSignal);
     
     // 7. Actualizar historiales
     this.signalHistory.push(amplifiedSignal);
     this.filteredHistory.push(amplifiedSignal);
+    this.pulsatilityBuffer.push(amplifiedSignal);
+    this.movementBuffer.push(Math.abs(amplifiedSignal - (this.signalHistory[this.signalHistory.length - 2] || 0)));
     
     if (this.signalHistory.length > this.ANALYSIS_WINDOW) {
       this.signalHistory.shift();
       this.filteredHistory.shift();
     }
     
-    // 8. Métricas optimizadas para mejor detección
-    const quality = this.calculateOptimizedQuality();
-    const snr = this.calculateImprovedSNR();
-    const fingerDetected = this.detectFingerOptimized(rgbValues, quality, amplifiedSignal);
+    if (this.pulsatilityBuffer.length > this.PULSATILITY_WINDOW) {
+      this.pulsatilityBuffer.shift();
+    }
+    
+    if (this.movementBuffer.length > 20) {
+      this.movementBuffer.shift();
+    }
+    
+    // 8. Análisis SELECTIVO de señal
+    const quality = this.calculateSelectiveQuality();
+    const snr = this.calculatePPGSNR();
+    const fingerDetected = this.detectRealPPGSignal(rgbValues, quality, amplifiedSignal);
     
     return {
       rawSignal: normalizedSignal,
@@ -90,13 +102,13 @@ export class AdvancedPPGExtractor {
   }
   
   /**
-   * ROI optimizada para máxima captura de señal
+   * ROI centrada y estable
    */
-  private extractOptimizedROI(imageData: ImageData): { r: number; g: number; b: number } {
+  private extractCenteredROI(imageData: ImageData): { r: number; g: number; b: number } {
     const { data, width, height } = imageData;
     
-    // ROI más grande y centrada mejor
-    const roiSize = Math.min(width, height) * 0.75; // Más grande
+    // ROI pequeña y centrada
+    const roiSize = Math.min(width, height) * 0.4;
     const centerX = Math.floor(width / 2);
     const centerY = Math.floor(height / 2);
     const halfRoi = Math.floor(roiSize / 2);
@@ -104,8 +116,8 @@ export class AdvancedPPGExtractor {
     let rSum = 0, gSum = 0, bSum = 0;
     let pixelCount = 0;
     
-    // Muestreo menos espaciado para más datos
-    const sampleStep = 2; // Cada 2 píxeles
+    // Muestreo regular
+    const sampleStep = 3;
     
     for (let y = centerY - halfRoi; y < centerY + halfRoi; y += sampleStep) {
       for (let x = centerX - halfRoi; x < centerX + halfRoi; x += sampleStep) {
@@ -119,7 +131,7 @@ export class AdvancedPPGExtractor {
       }
     }
     
-    if (pixelCount === 0) return { r: 128, g: 128, b: 128 }; // Valor neutro
+    if (pixelCount === 0) return { r: 128, g: 128, b: 128 };
     
     return {
       r: rSum / pixelCount,
@@ -129,48 +141,46 @@ export class AdvancedPPGExtractor {
   }
   
   /**
-   * Método CHROM mejorado para señal más fuerte
+   * CHROM selectivo para PPG
    */
-  private applyImprovedCHROM(rgb: { r: number; g: number; b: number }): number {
+  private applySelectiveCHROM(rgb: { r: number; g: number; b: number }): number {
     const { r, g, b } = rgb;
     
-    // Normalización más estable
     const total = r + g + b;
-    if (total < 50) return 0; // Muy oscuro
+    if (total < 100) return 0;
     
     const rNorm = r / total;
     const gNorm = g / total;
     const bNorm = b / total;
     
-    // CHROM optimizado para mejor señal PPG
-    const chromPrimary = 3 * rNorm - 2 * gNorm;
-    const chromSecondary = 1.5 * rNorm - gNorm - 0.5 * bNorm;
+    // CHROM clásico optimizado
+    const chromX = 3 * rNorm - 2 * gNorm;
+    const chromY = 1.5 * rNorm - gNorm - 0.5 * bNorm;
     
-    // Combinación optimizada
-    return chromPrimary * 0.8 + chromSecondary * 0.2;
+    return chromX * 0.7 + chromY * 0.3;
   }
   
   /**
-   * Baseline más rápido y adaptativo
+   * Baseline lento y estable
    */
-  private updateFastBaseline(signal: number): void {
+  private updateSlowBaseline(signal: number): void {
     if (this.baseline === 0) {
       this.baseline = signal;
     } else {
-      // Adaptación más rápida para seguir cambios
-      const adaptationRate = 0.005; // Más rápido
+      // Adaptación muy lenta para estabilidad
+      const adaptationRate = 0.001;
       this.baseline = this.baseline * (1 - adaptationRate) + signal * adaptationRate;
     }
   }
   
   /**
-   * Filtrado optimizado menos agresivo
+   * Filtrado específico para PPG
    */
-  private applyOptimizedFilter(signal: number): number {
-    // Filtro pasa bajos menos agresivo
+  private applyPPGFilter(signal: number): number {
+    // Filtro pasa bajos
     this.lowpassState = this.lowpassState + this.LOWPASS_ALPHA * (signal - this.lowpassState);
     
-    // Filtro pasa altos menos agresivo
+    // Filtro pasa altos
     const highpassInput = this.lowpassState;
     const highpassOutput = this.HIGHPASS_ALPHA * (this.highpassState + highpassInput - this.highpassPrev);
     this.highpassState = highpassOutput;
@@ -180,133 +190,193 @@ export class AdvancedPPGExtractor {
   }
   
   /**
-   * Amplificación más agresiva y adaptativa
+   * Amplificación controlada
    */
-  private applyStrongAmplification(signal: number): number {
-    if (this.signalHistory.length < 20) {
-      return signal * 4.0; // Amplificación inicial muy alta
+  private applyControlledAmplification(signal: number): number {
+    if (this.signalHistory.length < 30) {
+      return signal * 2.0;
     }
     
-    // Amplitud reciente
-    const recentSignals = this.signalHistory.slice(-20);
+    const recentSignals = this.signalHistory.slice(-30);
     const amplitude = Math.max(...recentSignals) - Math.min(...recentSignals);
     
-    // Ganancia más agresiva
-    const targetAmplitude = 15.0; // Target más alto
-    if (amplitude > 0.05) {
-      this.adaptiveGain = Math.min(15.0, Math.max(1.0, targetAmplitude / amplitude));
+    const targetAmplitude = 8.0;
+    if (amplitude > 0.1) {
+      this.adaptiveGain = Math.min(5.0, Math.max(0.5, targetAmplitude / amplitude));
     }
     
     return signal * this.adaptiveGain;
   }
   
   /**
-   * Calidad optimizada con umbrales más bajos
+   * Calidad SELECTIVA - Solo señales PPG reales
    */
-  private calculateOptimizedQuality(): number {
-    if (this.filteredHistory.length < 30) return 30; // Empezar con calidad decente
+  private calculateSelectiveQuality(): number {
+    if (this.filteredHistory.length < 40) return 5; // Muy baja al inicio
     
-    const recentSignals = this.filteredHistory.slice(-30);
+    const recentSignals = this.filteredHistory.slice(-40);
     
-    // 1. Amplitud más permisiva
+    // 1. Pulsatilidad REAL - Lo más importante
+    const pulsatilityScore = this.calculateRealPulsatility(recentSignals);
+    if (pulsatilityScore < 20) return 5; // Si no es pulsátil, calidad muy baja
+    
+    // 2. Amplitud mínima requerida
     const max = Math.max(...recentSignals);
     const min = Math.min(...recentSignals);
     const amplitude = max - min;
-    const amplitudeScore = Math.min(100, amplitude * 3); // Factor más bajo
+    const amplitudeScore = Math.min(100, amplitude * 8);
     
-    // 2. Estabilidad menos estricta
+    // 3. Estabilidad de la señal
     const mean = recentSignals.reduce((a, b) => a + b, 0) / recentSignals.length;
     const variance = recentSignals.reduce((a, b) => a + (b - mean) ** 2, 0) / recentSignals.length;
-    const stabilityScore = Math.max(20, 100 - variance * 1); // Menos penalización
+    const stabilityScore = Math.max(0, 100 - variance * 2);
     
-    // 3. Pulsatilidad más tolerante
-    const pulsatilityScore = this.calculateTolerantPulsatility(recentSignals);
+    // 4. SNR
+    const snr = this.calculatePPGSNR();
+    const snrScore = Math.min(100, Math.max(0, (snr - 5) * 10));
     
-    // 4. SNR mejorado
-    const snr = this.calculateImprovedSNR();
-    const snrScore = Math.min(100, Math.max(10, (snr - 2) * 15)); // Umbral más bajo
+    // 5. Detección de movimiento excesivo
+    const movementPenalty = this.calculateMovementPenalty();
     
-    // Combinación más permisiva
+    // Combinación con peso ALTO en pulsatilidad
     const finalQuality = Math.round(
-      amplitudeScore * 0.25 +
+      pulsatilityScore * 0.5 +
+      amplitudeScore * 0.2 +
       stabilityScore * 0.15 +
-      pulsatilityScore * 0.35 +
-      snrScore * 0.25
-    );
+      snrScore * 0.15
+    ) - movementPenalty;
     
-    return Math.max(15, Math.min(100, finalQuality)); // Mínimo 15%
+    return Math.max(5, Math.min(100, finalQuality));
   }
   
   /**
-   * Pulsatilidad más tolerante
+   * Pulsatilidad REAL - Detecta patrones cardíacos
    */
-  private calculateTolerantPulsatility(signals: number[]): number {
-    if (signals.length < 15) return 40; // Valor por defecto razonable
+  private calculateRealPulsatility(signals: number[]): number {
+    if (signals.length < 20) return 0;
     
+    // Buscar patrones rítmicos reales
     let peakCount = 0;
     let valleyCount = 0;
+    let rhythmScore = 0;
     
-    // Detección más sensible
-    for (let i = 3; i < signals.length - 3; i++) {
+    // Detectar picos y valles con umbral adaptativo
+    const mean = signals.reduce((a, b) => a + b, 0) / signals.length;
+    const std = Math.sqrt(signals.reduce((a, b) => a + (b - mean) ** 2, 0) / signals.length);
+    const threshold = std * 0.5;
+    
+    for (let i = 2; i < signals.length - 2; i++) {
       const current = signals[i];
-      const neighbors = [signals[i-3], signals[i-2], signals[i-1], signals[i+1], signals[i+2], signals[i+3]];
-      const avgNeighbors = neighbors.reduce((a, b) => a + b, 0) / neighbors.length;
+      const prev = signals[i-1];
+      const next = signals[i+1];
+      const prev2 = signals[i-2];
+      const next2 = signals[i+2];
       
-      if (current > avgNeighbors + 0.5) peakCount++; // Umbral más bajo
-      if (current < avgNeighbors - 0.5) valleyCount++; // Umbral más bajo
+      // Pico: mayor que vecinos con margen
+      if (current > prev && current > next && 
+          current > prev2 && current > next2 && 
+          current > mean + threshold) {
+        peakCount++;
+      }
+      
+      // Valle: menor que vecinos con margen
+      if (current < prev && current < next && 
+          current < prev2 && current < next2 && 
+          current < mean - threshold) {
+        valleyCount++;
+      }
     }
     
-    // Más tolerante con la pulsatilidad
+    // Verificar ritmo cardíaco plausible (0.5-3 Hz)
     const totalVariations = peakCount + valleyCount;
-    const pulsatilityRatio = Math.min(totalVariations / 3, 1); // Más permisivo
+    const expectedVariations = signals.length / 10; // Aprox para FC normal
     
-    return Math.max(25, pulsatilityRatio * 100); // Mínimo 25%
+    if (totalVariations >= expectedVariations * 0.3 && totalVariations <= expectedVariations * 3) {
+      rhythmScore = 100;
+    } else {
+      rhythmScore = Math.max(0, 50 - Math.abs(totalVariations - expectedVariations) * 5);
+    }
+    
+    return Math.min(100, rhythmScore);
   }
   
   /**
-   * SNR mejorado y más permisivo
+   * SNR específico para PPG
    */
-  private calculateImprovedSNR(): number {
-    if (this.filteredHistory.length < 30) return 8; // SNR inicial decente
+  private calculatePPGSNR(): number {
+    if (this.filteredHistory.length < 30) return 3;
     
     const recentSignals = this.filteredHistory.slice(-30);
     const mean = recentSignals.reduce((a, b) => a + b, 0) / recentSignals.length;
     
-    // Potencia de señal
+    // Potencia de señal pulsátil
     const signalPower = recentSignals.reduce((a, b) => a + (b - mean) ** 2, 0) / recentSignals.length;
     
-    // Estimación de ruido más conservadora
+    // Estimación de ruido por diferencias de alta frecuencia
     let noisePower = 0;
-    for (let i = 2; i < recentSignals.length; i++) {
-      const diff = recentSignals[i] - 2 * recentSignals[i-1] + recentSignals[i-2];
+    for (let i = 1; i < recentSignals.length; i++) {
+      const diff = recentSignals[i] - recentSignals[i-1];
       noisePower += diff * diff;
     }
-    noisePower /= (recentSignals.length - 2);
-    noisePower = Math.max(noisePower, 0.01); // Piso de ruido
+    noisePower /= (recentSignals.length - 1);
+    noisePower = Math.max(noisePower, 0.001);
     
     const snr = 10 * Math.log10(signalPower / noisePower);
-    return Math.max(3, Math.min(25, snr)); // Rango realista
+    return Math.max(0, Math.min(30, snr));
   }
   
   /**
-   * Detección de dedo optimizada y más permisiva
+   * Penalización por movimiento excesivo
    */
-  private detectFingerOptimized(rgb: { r: number; g: number; b: number }, quality: number, signal: number): boolean {
+  private calculateMovementPenalty(): number {
+    if (this.movementBuffer.length < 10) return 0;
+    
+    const recentMovement = this.movementBuffer.slice(-10);
+    const avgMovement = recentMovement.reduce((a, b) => a + b, 0) / recentMovement.length;
+    
+    // Penalizar movimiento excesivo
+    if (avgMovement > 2.0) {
+      return Math.min(30, (avgMovement - 2.0) * 10);
+    }
+    
+    return 0;
+  }
+  
+  /**
+   * Detección SELECTIVA de señal PPG real
+   */
+  private detectRealPPGSignal(rgb: { r: number; g: number; b: number }, quality: number, signal: number): boolean {
     const { r, g, b } = rgb;
     
-    // Criterios más permisivos para piel
-    const hasMinIntensity = r > 20 && g > 15 && b > 10; // Más bajo
-    const isRedDominant = r > g * 0.9; // Menos estricto
-    const hasReasonableRatio = (r / (g + 1)) > 0.9 && (r / (g + 1)) < 4.0; // Más amplio
-    const notSaturated = r < 252 && g < 252 && b < 252; // Más permisivo
+    // 1. Verificaciones básicas de piel
+    const hasMinIntensity = r > 40 && g > 25 && b > 15;
+    const isRedDominant = r > g * 1.1 && r > b * 1.2;
+    const hasReasonableRatio = (r / (g + 1)) > 1.1 && (r / (g + 1)) < 2.5;
+    const notSaturated = r < 240 && g < 240 && b < 240;
     
-    // Verificación de señal mínima más baja
-    const hasSignal = quality > 12 && Math.abs(signal) > 0.3; // Umbrales más bajos
+    // 2. Verificación de señal PPG mínima
+    const hasSignal = quality > 25 && Math.abs(signal) > 1.0;
     
-    // Verificación de intensidad total
+    // 3. Verificación de pulsatilidad REAL
+    const hasPulsatility = this.pulsatilityBuffer.length >= 20 && 
+                          this.calculateRealPulsatility(this.pulsatilityBuffer.slice(-20)) > 30;
+    
+    // 4. Verificación de intensidad total
     const totalIntensity = r + g + b;
-    const hasGoodIntensity = totalIntensity > 60 && totalIntensity < 720; // Rango amplio
+    const hasGoodIntensity = totalIntensity > 120 && totalIntensity < 600;
     
-    return hasMinIntensity && isRedDominant && hasReasonableRatio && notSaturated && hasSignal && hasGoodIntensity;
+    // 5. Verificación de movimiento controlado
+    const hasControlledMovement = this.movementBuffer.length < 10 || 
+                                 (this.movementBuffer.slice(-10).reduce((a, b) => a + b, 0) / 10) < 3.0;
+    
+    // TODAS las condiciones deben cumplirse para detección válida
+    return hasMinIntensity && 
+           isRedDominant && 
+           hasReasonableRatio && 
+           notSaturated && 
+           hasSignal && 
+           hasPulsatility && 
+           hasGoodIntensity && 
+           hasControlledMovement;
   }
 }
