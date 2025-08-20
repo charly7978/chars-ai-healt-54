@@ -404,8 +404,8 @@ const Index = () => {
         return;
       }
       
-    // Umbral MÁS ALTO de calidad para procesar
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 40; // Aumentado de 30 a 40
+    // Umbral sutilmente más alto para reducir falsos positivos
+    const MIN_SIGNAL_QUALITY_TO_MEASURE = 45; // Aumentado sutilmente para mayor precisión
       // Si no hay dedo válido o calidad insuficiente, resetear indicadores
       if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
         console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {

@@ -7,9 +7,9 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
   private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
   private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.65; // AUMENTADO para ser más estricto
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.70; // Aumentado sutilmente para mayor precisión
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.009; // Ligeramente más estricto
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 450; // Aumentado sutilmente para evitar detecciones falsas
   private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
 
   // Parámetros de filtrado MÁS CONSERVADORES
@@ -79,10 +79,10 @@ export class HeartBeatProcessor {
   
   // Variables para VALIDACIÓN MÁS ESTRICTA de picos
   private peakValidationBuffer: number[] = [];
-  private readonly PEAK_VALIDATION_THRESHOLD = 0.5; // AUMENTADO para validación más estricta
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.5; // AUMENTADO
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.4; // AUMENTADO  
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.3; // AUMENTADO para filtrar picos pequeños
+  private readonly PEAK_VALIDATION_THRESHOLD = 0.55; // Aumentado sutilmente para mayor precisión
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.55; // Aumentado sutilmente
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.45; // Aumentado sutilmente
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.35; // Aumentado sutilmente para filtrar mejor picos pequeños
   private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.006; // Más estricto
   private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.9; // AUMENTADO para mayor estabilidad
   private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 7; // Aumentado para mejor confirmación
