@@ -288,22 +288,22 @@ export class FrameProcessor {
    * VERSIÓN ULTRA-ESTRICTA para eliminar falsos positivos
    */
   private calculateSkinLikeness(r: number, g: number, b: number, texture: number): number {
-    // Rangos balanceados de color de piel humana (normalizado 0-255)
-    const skinRedRange = [90, 220];   // Rango más amplio para diferentes tonos
-    const skinGreenRange = [50, 170];  // Rango más amplio para verde  
-    const skinBlueRange = [30, 140];   // Rango más amplio para azul
+    // Rangos muy amplios para diferentes tipos de piel
+    const skinRedRange = [60, 240];   
+    const skinGreenRange = [30, 200];   
+    const skinBlueRange = [20, 160];
     
     // Verificar si los valores están en rangos ESTRICTOS de piel
     const redMatch = (r >= skinRedRange[0] && r <= skinRedRange[1]) ? 1 : 0;
     const greenMatch = (g >= skinGreenRange[0] && g <= skinGreenRange[1]) ? 1 : 0;
     const blueMatch = (b >= skinBlueRange[0] && b <= skinBlueRange[1]) ? 1 : 0;
     
-    // Ratio R/G balanceado de piel (1.1 - 2.8)
+    // Ratio R/G muy permisivo (0.8 - 3.5)
     const rgRatio = g > 0 ? r / g : 0;
-    const ratioMatch = (rgRatio >= 1.1 && rgRatio <= 2.8) ? 1 : 0;
+    const ratioMatch = (rgRatio >= 0.8 && rgRatio <= 3.5) ? 1 : 0;
     
-    // La textura de piel debe estar en rango MÁS ESPECÍFICO
-    const textureMatch = (texture >= 0.4 && texture <= 0.7) ? 1 : 0;
+    // La textura de piel puede variar mucho
+    const textureMatch = (texture >= 0.2 && texture <= 0.9) ? 1 : 0;
     
     // NUEVA VALIDACIÓN: Temperatura de color debe ser compatible con piel
     const colorTemp = this.calculateColorTemperature(r, g, b);
@@ -312,9 +312,9 @@ export class FrameProcessor {
     // Puntaje combinado MÁS ESTRICTO (máximo 6, normalizado a 0-1)
     const totalScore = (redMatch + greenMatch + blueMatch + ratioMatch + textureMatch + tempMatch) / 6;
     
-    // PENALIZACIÓN ADICIONAL si algún componente básico falla completamente
-    if (redMatch === 0 || greenMatch === 0 || ratioMatch === 0) {
-      return 0; // Falla automática si no cumple criterios básicos
+    // PENALIZACIÓN REDUCIDA - solo fallar en casos extremos
+    if (redMatch === 0 && greenMatch === 0) {
+      return 0.1; // Permitir casos borderline
     }
     
     return Math.max(0, Math.min(1, totalScore));
