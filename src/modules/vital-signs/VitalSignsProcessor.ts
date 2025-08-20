@@ -64,14 +64,14 @@ export class VitalSignsProcessor {
       // Process with advanced mathematical algorithms
       console.log('🧮 Ejecutando algoritmos matemáticos avanzados para signos vitales...');
       
-      // Convertir rrData a formato que espera el processor - fixed argument order
+      // Convert rrData to format expected by processors
       const rrIntervals = rrData?.intervals || [];
       
-      // Make call synchronous by awaiting and handling properly
+      // Process with advanced processor - make sure it's synchronous
       const advancedResult = this.superAdvancedProcessor.processAdvancedVitalSigns(ppgValue, rrIntervals);
       
-      // Process blood pressure with specialized processor - fixed arguments
-      const bpResult = this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals, [], Date.now());
+      // Process blood pressure with specialized processor - correct arguments
+      const bpResult = this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals, Date.now());
       
       // Process glucose with advanced spectroscopic analysis
       const glucoseResult = this.glucoseProcessor.processSignal(ppgValue, rrIntervals);
