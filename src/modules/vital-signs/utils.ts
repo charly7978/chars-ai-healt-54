@@ -30,6 +30,12 @@ export function calculateStandardDeviation(values: number[]): number {
  * Finds peaks and valleys in a signal
  */
 export function findPeaksAndValleys(values: number[]): { peakIndices: number[]; valleyIndices: number[] } {
+  console.log('🔍 findPeaksAndValleys DEBUG:', {
+    valuesLength: values.length,
+    firstValues: values.slice(0, 10),
+    lastValues: values.slice(-10)
+  });
+
   const peakIndices: number[] = [];
   const valleyIndices: number[] = [];
 
@@ -41,6 +47,14 @@ export function findPeaksAndValleys(values: number[]): { peakIndices: number[]; 
       valleyIndices.push(i);
     }
   }
+
+  console.log('🔍 findPeaksAndValleys: Picos y valles encontrados:', {
+    peakIndices: peakIndices.slice(0, 10),
+    valleyIndices: valleyIndices.slice(0, 10),
+    totalPeaks: peakIndices.length,
+    totalValleys: valleyIndices.length
+  });
+
   return { peakIndices, valleyIndices };
 }
 
@@ -52,12 +66,32 @@ export function calculateAmplitude(
   peakIndices: number[],
   valleyIndices: number[]
 ): number {
-  if (!peakIndices.length || !valleyIndices.length) return 0;
+  console.log('🔍 calculateAmplitude DEBUG:', {
+    valuesLength: values.length,
+    peakCount: peakIndices.length,
+    valleyCount: valleyIndices.length,
+    firstPeakIndex: peakIndices[0],
+    firstValleyIndex: valleyIndices[0],
+    firstPeakValue: peakIndices[0] !== undefined ? values[peakIndices[0]] : 'N/A',
+    firstValleyValue: valleyIndices[0] !== undefined ? values[valleyIndices[0]] : 'N/A'
+  });
+
+  if (!peakIndices.length || !valleyIndices.length) {
+    console.log('❌ calculateAmplitude: Sin picos o valles');
+    return 0;
+  }
 
   let sum = 0;
   const len = Math.min(peakIndices.length, valleyIndices.length);
   for (let i = 0; i < len; i++) {
-    sum += values[peakIndices[i]] - values[valleyIndices[i]];
+    const peakValue = values[peakIndices[i]];
+    const valleyValue = values[valleyIndices[i]];
+    const difference = peakValue - valleyValue;
+    sum += difference;
+    console.log(`🔍 calculateAmplitude: Pico ${i}: ${peakValue}, Valle ${i}: ${valleyValue}, Diferencia: ${difference}`);
   }
-  return sum / len;
+  
+  const result = sum / len;
+  console.log('🔍 calculateAmplitude: Resultado final:', result);
+  return result;
 }

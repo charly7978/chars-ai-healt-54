@@ -202,31 +202,45 @@ export class BloodPressureProcessor {
     complianceIndex: number;
     peripheralResistance: number;
   } {
+    console.log('🔍 performAdvancedWaveformAnalysis: Iniciando análisis con:', {
+      valuesLength: values.length,
+      peakCount: peakIndices.length,
+      valleyCount: valleyIndices.length
+    });
+
     // 1. ANÁLISIS DE AMPLITUD AVANZADO
     const amplitude = calculateAmplitude(values, peakIndices, valleyIndices);
+    console.log('🔍 Amplitud calculada:', amplitude);
     
     // 2. TIEMPO DE SUBIDA SISTÓLICA (upstroke time)
     const upstrokeTime = this.calculateAdvancedUpstrokeTime(values, peakIndices);
+    console.log('🔍 Tiempo de upstroke:', upstrokeTime);
     
     // 3. DETECCIÓN DE INCISURA DICRÓTICA
     const dicroticNotch = this.detectDicroticNotch(values, peakIndices);
+    console.log('🔍 Incisura dicrótica:', dicroticNotch);
     
     // 4. ÍNDICE DE REFLEXIÓN ARTERIAL
     const reflectionIndex = this.calculateReflectionIndex(values, peakIndices, valleyIndices);
+    console.log('🔍 Índice de reflexión:', reflectionIndex);
     
     // 5. ÍNDICE DE RIGIDEZ ARTERIAL basado en morfología
     const stiffnessIndex = this.calculateMorphologyBasedStiffness(values, peakIndices, upstrokeTime);
+    console.log('🔍 Índice de rigidez:', stiffnessIndex);
     
     // 6. ÍNDICE DE COMPLIANCE ARTERIAL
     const complianceIndex = this.calculateComplianceIndex(values, amplitude, stiffnessIndex);
+    console.log('🔍 Índice de compliance:', complianceIndex);
     
     // 7. RESISTENCIA PERIFÉRICA estimada
     const peripheralResistance = this.estimatePeripheralResistance(amplitude, stiffnessIndex, complianceIndex);
+    console.log('🔍 Resistencia periférica:', peripheralResistance);
     
     // 8. PRESIÓN DE PULSO basada en análisis avanzado
     const pulsePressure = this.calculateAdvancedPulsePressure(amplitude, stiffnessIndex, reflectionIndex);
+    console.log('🔍 Presión de pulso:', pulsePressure);
 
-    return {
+    const result = {
       amplitude,
       pulsePressure,
       upstrokeTime,
@@ -236,6 +250,9 @@ export class BloodPressureProcessor {
       complianceIndex,
       peripheralResistance
     };
+
+    console.log('🔍 performAdvancedWaveformAnalysis: Resultado completo:', result);
+    return result;
   }
 
   /**
