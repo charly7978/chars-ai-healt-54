@@ -41,13 +41,13 @@ const PPGSignalMeter = ({
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const WINDOW_WIDTH_MS = 2900;
+  const WINDOW_WIDTH_MS = 2300;
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 120.0; // Escala aumentada para ondas visibles y picos prominentes
-  const SMOOTHING_FACTOR = 1.9; // Reducido para ondas más suaves
+  const verticalScale = 95.0;
+  const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
@@ -73,9 +73,7 @@ const PPGSignalMeter = ({
 
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
-    // Ondas suaves y naturales como ondas eléctricas reales
-    const alpha = 0.01; // Factor bajo para ondas suaves y naturales
-    return previousValue * (1 - alpha) + currentValue * alpha;
+    return previousValue + SMOOTHING_FACTOR * (currentValue - previousValue);
   }, []);
 
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -224,23 +222,17 @@ const PPGSignalMeter = ({
       return;
     }
     
-         if (baselineRef.current === null) {
-       baselineRef.current = value;
-     } else {
-       // Línea base más reactiva para ondas naturales y sueltas
-       baselineRef.current = baselineRef.current * 0.85 + value * 0.15;
-     }
+    if (baselineRef.current === null) {
+      baselineRef.current = value;
+    } else {
+      baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
+    }
     
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
     
-    // Lógica para ondas naturales y sueltas como ondas eléctricas
-    const normalizedValue = (smoothedValue - (baselineRef.current || 0));
-    // Aplicar suavizado adicional para ondas más naturales
-    const waveSmoothedValue = lastValueRef.current !== null ? 
-      normalizedValue * 0.7 + (lastValueRef.current - (baselineRef.current || 0)) * 0.3 :
-      normalizedValue;
-    const scaledValue = waveSmoothedValue * verticalScale;
+    const normalizedValue = (baselineRef.current || 0) - smoothedValue;
+    const scaledValue = normalizedValue * verticalScale;
     
     let isArrhythmia = false;
     if (rawArrhythmiaData && 
@@ -264,7 +256,7 @@ const PPGSignalMeter = ({
     if (points.length > 1) {
       ctx.beginPath();
       ctx.strokeStyle = '#0EA5E9';
-      ctx.lineWidth = 1.5; // Línea más fina para ondas más suaves
+      ctx.lineWidth = 2;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
@@ -275,10 +267,10 @@ const PPGSignalMeter = ({
         const point = points[i];
         
         const x1 = canvas.width - ((now - prevPoint.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y1 = canvas.height / 2 - prevPoint.value; // Canvas: - para picos hacia arriba
+        const y1 = canvas.height / 2 - prevPoint.value;
         
         const x2 = canvas.width - ((now - point.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y2 = canvas.height / 2 - point.value; // Canvas: - para picos hacia arriba
+        const y2 = canvas.height / 2 - point.value;
         
         if (firstPoint) {
           ctx.moveTo(x1, y1);
@@ -305,7 +297,7 @@ const PPGSignalMeter = ({
       
       peaksRef.current.forEach(peak => {
         const x = canvas.width - ((now - peak.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y = canvas.height / 2 - peak.value; // Canvas: - para picos hacia arriba
+        const y = canvas.height / 2 - peak.value;
         
         if (x >= 0 && x <= canvas.width) {
           ctx.beginPath();
