@@ -1,6 +1,5 @@
 import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
-import { FingerDetector, FingerDetectionResult } from './FingerDetector';
 
 /**
  * Processes video frames to extract PPG signals and detect ROI
@@ -8,7 +7,6 @@ import { FingerDetector, FingerDetectionResult } from './FingerDetector';
  */
 export class FrameProcessor {
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  private readonly fingerDetector: FingerDetector;
   // Parámetros ajustados PARA REDUCIR FALSOS POSITIVOS - más estrictos
   private readonly RED_GAIN = 1.0; // Reducido para evitar amplificación excesiva
   private readonly GREEN_SUPPRESSION = 0.9; // Menos supresión para comparación más real
@@ -33,12 +31,9 @@ export class FrameProcessor {
       ...config,
       ROI_SIZE_FACTOR: Math.min(0.7, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
     };
-    
-    // Inicializar detector de dedo humano específico
-    this.fingerDetector = new FingerDetector();
   }
   
-  extractFrameData(imageData: ImageData): FrameData & { fingerDetection: FingerDetectionResult } {
+  extractFrameData(imageData: ImageData): FrameData {
     const data = imageData.data;
     let redSum = 0;
     let greenSum = 0;
@@ -198,10 +193,9 @@ export class FrameProcessor {
       }
     }
     
-    // No pixels detected - return enhanced default values with finger detection
+    // No pixels detected - return enhanced default values
     if (pixelCount < 1) {
       console.warn("FrameProcessor: No pixels detected. Returning zero-signal state.");
-      const defaultFingerDetection = this.fingerDetector.detectFinger(imageData);
       return { 
         redValue: 0,       // Un valor inequívoco de no-señal
         textureScore: 0,   // Sin textura
@@ -209,8 +203,7 @@ export class FrameProcessor {
         rToBRatio: 1,      // Ratio neutro
         avgRed: 0,
         avgGreen: 0,
-        avgBlue: 0,
-        fingerDetection: defaultFingerDetection
+        avgBlue: 0
       };
     }
     
@@ -237,18 +230,6 @@ export class FrameProcessor {
     // Calculate color ratio indexes - MÁS ESTRICTOS para reducir falsos positivos
     const rToGRatio = avgGreen > 5 ? avgRed / avgGreen : 1.2; // Umbral más alto para validación
     const rToBRatio = avgBlue > 1 ? avgRed / avgBlue : 1.0; // Evitar división por valores muy pequeños
-    // Detectar dedo humano específico ANTES de procesar señal
-    const fingerDetection = this.fingerDetector.detectFinger(imageData);
-    
-    console.log('[DEBUG] FrameProcessor - Finger Detection:', {
-      detected: fingerDetection.isFingerDetected,
-      confidence: fingerDetection.confidence.toFixed(3),
-      anatomical: fingerDetection.anatomicalScore.toFixed(3),
-      perfusion: fingerDetection.bloodPerfusionScore.toFixed(3),
-      texture: fingerDetection.skinTextureScore.toFixed(3),
-      characteristics: fingerDetection.fingertipCharacteristics
-    });
-    
     console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
     
     // Light level affects detection quality
@@ -277,8 +258,7 @@ export class FrameProcessor {
       avgBlue,
       textureScore,
       rToGRatio,
-      rToBRatio,
-      fingerDetection
+      rToBRatio
     };
   }
   

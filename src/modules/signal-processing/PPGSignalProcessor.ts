@@ -34,8 +34,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     STABILITY_WINDOW: 15,      // Increased for more stability assessment
     MIN_STABILITY_COUNT: 6,   // Requires more stability for detection
     HYSTERESIS: 2.5,          // Increased hysteresis for stable detection
-    MIN_CONSECUTIVE_DETECTIONS: 3,  // Reducido para confirmación más rápida
-    MAX_CONSECUTIVE_NO_DETECTIONS: 8,  // Más permisivo para mantener detección
+    MIN_CONSECUTIVE_DETECTIONS: 9,  // Requires more frames to confirm detection
+    MAX_CONSECUTIVE_NO_DETECTIONS: 4,  // Quicker to lose detection when finger is removed
     QUALITY_LEVELS: 20,
     QUALITY_HISTORY_SIZE: 10,
     CALIBRATION_SAMPLES: 10,
