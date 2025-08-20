@@ -1,5 +1,6 @@
 // SignalAnalyzer rebuilt to remove corrupted content
 import { DetectorScores, DetectionResult } from './types';
+import { AdvancedFingerDetector } from './AdvancedFingerDetector';
 
 export interface SignalAnalyzerConfig {
   QUALITY_LEVELS: number;
@@ -29,14 +30,19 @@ export class SignalAnalyzer {
     biophysical: 0,
     periodicity: 0,
   };
+  
+  private advancedDetector: AdvancedFingerDetector;
 
-  constructor(private readonly config: SignalAnalyzerConfig) {}
+  constructor(private readonly config: SignalAnalyzerConfig) {
+    this.advancedDetector = new AdvancedFingerDetector();
+  }
 
   /** Reset internal state (useful when starting/stopping the processor). */
   reset(): void {
     this.qualityHistory = [];
     this.consecutiveDetections = 0;
     this.consecutiveNoDetections = 0;
+    this.advancedDetector.reset();
   }
 
   /** Update latest detector scores provided each frame by the processor. */
@@ -45,19 +51,35 @@ export class SignalAnalyzer {
   }
 
   /**
-   * Calculate overall quality and finger detection decision.
-   * @param filteredValue Unused for now but kept for future algorithm updates.
-   * @param trendResult   Additional context (e.g., from SignalTrendAnalyzer).
+   * Calculate overall quality and finger detection decision using advanced detection.
    */
   analyzeSignalMultiDetector(
     filteredValue: number,
-    trendResult: unknown
+    trendResult: unknown,
+    colorValues?: { r: number; g: number; b: number }
   ): DetectionResult {
+    // Use advanced finger detector if color values are available
+    if (colorValues) {
+      const advancedResult = this.advancedDetector.detectFinger(colorValues);
+      
+      return {
+        isFingerDetected: advancedResult.isDetected,
+        quality: advancedResult.quality,
+        detectorDetails: {
+          ...this.detectorScores,
+          advancedConfidence: advancedResult.confidence,
+          perfusionIndex: advancedResult.perfusionIndex,
+          biophysicalValidation: advancedResult.details
+        },
+      };
+    }
+    
+    // Fallback to original detection method with very permissive thresholds
     const { redChannel, stability, pulsatility, biophysical, periodicity, skinLikeness, stabilityScore } =
       this.detectorScores;
 
-    // Validación permisiva: Solo rechazar casos extremos
-    if (skinLikeness !== undefined && skinLikeness < 0.2) {
+    // Ultra-permissive validation for fallback mode
+    if (skinLikeness !== undefined && skinLikeness < 0.05) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -65,7 +87,7 @@ export class SignalAnalyzer {
       };
     }
     
-    if (stabilityScore !== undefined && stabilityScore < 0.1) {
+    if (stabilityScore !== undefined && stabilityScore < 0.05) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -73,8 +95,8 @@ export class SignalAnalyzer {
       };
     }
 
-    // Validación básica muy permisiva
-    if (redChannel < 0.1 || stability < 0.1 || pulsatility < 0.1 || biophysical < 0.1) {
+    // Very basic validation - ultra-permissive
+    if (redChannel < 0.03 || stability < 0.03 || pulsatility < 0.03 || biophysical < 0.03) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -82,20 +104,19 @@ export class SignalAnalyzer {
       };
     }
 
-    // Weighted sum - ahora incluye las nuevas métricas anti-mesa
+    // Weighted sum with ultra-tolerant new metrics
     const weighted =
       redChannel * 0.25 +
       stability * 0.2 +
       pulsatility * 0.2 +
       biophysical * 0.15 +
       periodicity * 0.05 +
-      (skinLikeness || 0.5) * 0.1 + // Peso para similitud con piel
-      (stabilityScore || 0.5) * 0.05; // Peso para estabilidad vs vibración
+      (skinLikeness || 0.5) * 0.1 +
+      (stabilityScore || 0.5) * 0.05;
 
-    // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
 
-    // Maintain moving average over last N frames.
+    // Maintain moving average
     this.qualityHistory.push(qualityValue);
     if (this.qualityHistory.length > this.config.QUALITY_HISTORY_SIZE) {
       this.qualityHistory.shift();
@@ -104,9 +125,10 @@ export class SignalAnalyzer {
       this.qualityHistory.reduce((acc, v) => acc + v, 0) /
       this.qualityHistory.length;
 
-    // Hysteresis logic using consecutive detections.
+    // Hysteresis logic with ultra-low threshold
     let isFingerDetected = false;
-    const DETECTION_THRESHOLD = 25; // Umbral muy permisivo
+    const DETECTION_THRESHOLD = 3; // Ultra-permissive threshold
+    
     if (smoothedQuality >= DETECTION_THRESHOLD) {
       this.consecutiveDetections += 1;
       this.consecutiveNoDetections = 0;
