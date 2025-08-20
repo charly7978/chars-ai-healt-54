@@ -57,7 +57,7 @@ export class SignalAnalyzer {
       this.detectorScores;
 
     // Validación moderada
-    if (skinLikeness !== undefined && skinLikeness < 0.3) {
+    if (skinLikeness !== undefined && skinLikeness < 0.2) {
       return {
         isFingerDetected: false,
         quality: 0,
