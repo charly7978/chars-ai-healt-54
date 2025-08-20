@@ -73,8 +73,8 @@ const PPGSignalMeter = ({
 
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
-    // Preservar la precisión del latido cardíaco - solo suavizado mínimo
-    const alpha = 0.8; // Factor de suavizado mínimo para preservar el "latigazo"
+    // Ondas más reactivas y sensibles - suavizado mínimo
+    const alpha = 0.95; // Factor muy alto para máxima reactividad
     return previousValue * (1 - alpha) + currentValue * alpha;
   }, []);
 
@@ -227,8 +227,8 @@ const PPGSignalMeter = ({
          if (baselineRef.current === null) {
        baselineRef.current = value;
      } else {
-       // Línea base menos reactiva para permitir ver variaciones del latido
-       baselineRef.current = baselineRef.current * 0.97 + value * 0.03;
+       // Línea base muy estable para ondas más sueltas y reactivas
+       baselineRef.current = baselineRef.current * 0.995 + value * 0.005;
      }
     
     const smoothedValue = smoothValue(value, lastValueRef.current);
