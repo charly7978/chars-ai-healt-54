@@ -58,156 +58,47 @@ const PPGSignalMeter = ({
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
 
-  // Mejorado: Cálculo de calidad más preciso y permisivo
+  // SIMPLIFICADO: Usar directamente la calidad calculada por el procesador
   const [realTimeQuality, setRealTimeQuality] = useState(0);
-  const [signalStrength, setSignalStrength] = useState(0);
-  const [signalStability, setSignalStability] = useState(0);
-  const qualityHistoryRef = useRef<number[]>([]);
   const signalHistoryRef = useRef<number[]>([]);
 
-  // Algoritmo mejorado para calidad de señal PPG más realista
-  const calculateRealSignalQuality = useCallback((currentValue: number, detectedFinger: boolean) => {
+  // REAL: Cálculo de calidad basado únicamente en la señal real
+  const calculateTrueSignalQuality = useCallback((currentValue: number, detectedFinger: boolean) => {
     if (!detectedFinger) {
       setRealTimeQuality(0);
-      setSignalStrength(0);
-      setSignalStability(0);
+      signalHistoryRef.current = [];
       return 0;
     }
 
-    // Agregar a historial con ventana más grande para mejor análisis
+    // Usar la calidad proporcionada por el procesador (que ya es real)
+    // Solo agregar validación adicional mínima
     signalHistoryRef.current.push(currentValue);
-    if (signalHistoryRef.current.length > 50) { // Aumentado de 30 a 50
+    if (signalHistoryRef.current.length > 15) {
       signalHistoryRef.current.shift();
     }
 
-    if (signalHistoryRef.current.length < 8) { // Reducido de 5 a 8
-      return quality; // Usar calidad proporcionada si no hay suficientes datos
+    // Si hay suficiente historial, validar que la señal sea consistente
+    if (signalHistoryRef.current.length >= 8) {
+      const recentSignals = signalHistoryRef.current.slice(-8);
+      const range = Math.max(...recentSignals) - Math.min(...recentSignals);
+      
+      // Si no hay variación mínima, la calidad debe ser baja
+      if (range < 3) {
+        setRealTimeQuality(Math.min(quality, 15)); // Limitar calidad si no hay señal real
+        return Math.min(quality, 15);
+      }
     }
 
-    const recentSignals = signalHistoryRef.current.slice(-20); // Aumentado de -15 a -20
-    
-    // 1. Fuerza de Señal PPG (más permisiva para señales humanas reales)
-    const maxSignal = Math.max(...recentSignals);
-    const minSignal = Math.min(...recentSignals);
-    const signalRange = maxSignal - minSignal;
-    
-    // Umbral más bajo para señales PPG reales (reducido de 50 a 25)
-    const strengthScore = Math.min(100, Math.max(0, (signalRange / 25) * 100));
-    
-    // 2. Estabilidad de Señal (más tolerante a variaciones naturales)
-    const mean = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
-    const variance = recentSignals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recentSignals.length;
-    const stdDev = Math.sqrt(variance);
-    const coefficientOfVariation = mean > 0 ? stdDev / mean : 1;
-    
-    // Más tolerante a variaciones (aumentado multiplicador de 100 a 120)
-    const stabilityScore = Math.min(100, Math.max(0, (1 - coefficientOfVariation) * 120));
-    
-    // 3. Detección de Pulsatilidad (mejorada para PPG humano)
-    let pulsatilityScore = 50; // Base score más alto para señales detectadas
-    if (recentSignals.length >= 12) {
-      const peaks = [];
-      const valleys = [];
-      
-      // Detección más sofisticada de picos y valles
-      for (let i = 2; i < recentSignals.length - 2; i++) {
-        const current = recentSignals[i];
-        const prev1 = recentSignals[i-1];
-        const prev2 = recentSignals[i-2];
-        const next1 = recentSignals[i+1];
-        const next2 = recentSignals[i+2];
-        
-        // Pico: mayor que sus vecinos
-        if (current > prev1 && current > next1 && current > prev2 && current > next2) {
-          peaks.push({ index: i, value: current });
-        }
-        
-        // Valle: menor que sus vecinos
-        if (current < prev1 && current < next1 && current < prev2 && current < next2) {
-          valleys.push({ index: i, value: current });
-        }
-      }
-      
-      // Evaluación mejorada de pulsatilidad
-      const expectedRhythm = recentSignals.length / 12; // ~1.5-2 latidos por ventana
-      const actualPeaks = peaks.length;
-      const actualValleys = valleys.length;
-      
-      if (actualPeaks >= 1 && actualValleys >= 1) {
-        const rhythmScore = Math.min(100, (actualPeaks / expectedRhythm) * 70);
-        const alternatingPattern = Math.abs(actualPeaks - actualValleys) <= 1 ? 30 : 15;
-        pulsatilityScore = rhythmScore + alternatingPattern;
-      }
-    }
-    
-    // 4. Relación Señal-Ruido mejorada para PPG
-    const acComponent = stdDev;
-    const dcComponent = mean;
-    let snrScore = 40; // Base score más alto
-    
-    if (dcComponent > 0) {
-      const snrRatio = acComponent / dcComponent;
-      // Rango óptimo para PPG humano: 0.01 - 0.1
-      if (snrRatio >= 0.005 && snrRatio <= 0.15) {
-        snrScore = Math.min(100, 40 + (snrRatio * 400)); // Amplificado
-      }
-    }
-    
-    // 5. Bonus por estabilidad temporal
-    let stabilityBonus = 0;
-    if (qualityHistoryRef.current.length >= 3) {
-      const recentQualities = qualityHistoryRef.current.slice(-3);
-      const avgRecentQuality = recentQualities.reduce((sum, q) => sum + q, 0) / recentQualities.length;
-      const qualityVariance = recentQualities.reduce((sum, q) => sum + Math.pow(q - avgRecentQuality, 2), 0) / recentQualities.length;
-      
-      if (qualityVariance < 100) { // Baja varianza = estabilidad
-        stabilityBonus = 15;
-      }
-    }
-    
-    // Combinación ponderada optimizada para señales PPG humanas
-    const combinedQuality = (
-      strengthScore * 0.25 +      // 25% fuerza de señal
-      stabilityScore * 0.20 +     // 20% estabilidad
-      pulsatilityScore * 0.30 +   // 30% pulsatilidad (más importante)
-      snrScore * 0.20 +          // 20% relación señal-ruido
-      stabilityBonus * 0.05      // 5% bonus estabilidad
-    );
-    
-    // Actualizar métricas individuales
-    setSignalStrength(Math.round(strengthScore));
-    setSignalStability(Math.round(stabilityScore));
-    
-    // Suavizado mejorado de la calidad
-    const smoothedQuality = Math.round(Math.min(100, Math.max(0, combinedQuality)));
-    qualityHistoryRef.current.push(smoothedQuality);
-    if (qualityHistoryRef.current.length > 8) { // Historial más largo
-      qualityHistoryRef.current.shift();
-    }
-    
-    // Promedio ponderado que favorece valores recientes
-    const weights = [0.4, 0.3, 0.2, 0.1]; // Más peso a valores recientes
-    let weightedSum = 0;
-    let totalWeight = 0;
-    
-    for (let i = 0; i < Math.min(qualityHistoryRef.current.length, weights.length); i++) {
-      const idx = qualityHistoryRef.current.length - 1 - i;
-      const weight = weights[i];
-      weightedSum += qualityHistoryRef.current[idx] * weight;
-      totalWeight += weight;
-    }
-    
-    const finalQuality = totalWeight > 0 ? Math.round(weightedSum / totalWeight) : smoothedQuality;
-    setRealTimeQuality(finalQuality);
-    
-    return finalQuality;
+    // Usar la calidad real del procesador sin modificaciones
+    setRealTimeQuality(quality);
+    return quality;
   }, [quality]);
 
   useEffect(() => {
-    calculateRealSignalQuality(value, isFingerDetected);
-  }, [value, isFingerDetected, calculateRealSignalQuality]);
+    calculateTrueSignalQuality(value, isFingerDetected);
+  }, [value, isFingerDetected, calculateTrueSignalQuality]);
 
-  // Usar calidad calculada en tiempo real
+  // Usar calidad real calculada
   const displayQuality = realTimeQuality;
 
   useEffect(() => {
@@ -525,7 +416,7 @@ const PPGSignalMeter = ({
         <div className="flex items-center gap-3">
           <span className="text-lg font-bold text-black/80">PPG</span>
           
-          {/* Display de calidad mejorado */}
+          {/* Display de calidad REAL sin modificaciones */}
           <div className="w-[200px]">
             <div className={`h-1.5 w-full rounded-full bg-gradient-to-r transition-all duration-500 ease-in-out`}
                  style={{ backgroundColor: getQualityColor(displayQuality) }}>
@@ -545,17 +436,19 @@ const PPGSignalMeter = ({
               </span>
             </div>
             
-            {/* Métricas de señal mejoradas */}
+            {/* Indicador de señal real */}
             {isFingerDetected && displayQuality > 0 && (
               <div className="flex gap-2 mt-0.5">
                 <div className="flex items-center gap-1">
                   <Signal className="h-2 w-2 text-blue-600" />
-                  <span className="text-[6px] text-black/60">F:{signalStrength}%</span>
+                  <span className="text-[6px] text-black/60">REAL</span>
                 </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
-                  <span className="text-[6px] text-black/60">E:{signalStability}%</span>
-                </div>
+                {displayQuality >= 70 && (
+                  <div className="flex items-center gap-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                    <span className="text-[6px] text-green-600">PPG OK</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
