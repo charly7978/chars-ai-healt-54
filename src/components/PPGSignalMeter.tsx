@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Fingerprint, AlertCircle } from 'lucide-react';
+import { Fingerprint, AlertCircle, Signal } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
@@ -56,6 +56,101 @@ const PPGSignalMeter = ({
   const MIN_PEAK_DISTANCE_MS = 400;
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
+
+  // Enhanced quality calculation state
+  const [realTimeQuality, setRealTimeQuality] = useState(0);
+  const [signalStrength, setSignalStrength] = useState(0);
+  const [signalStability, setSignalStability] = useState(0);
+  const qualityHistoryRef = useRef<number[]>([]);
+  const signalHistoryRef = useRef<number[]>([]);
+
+  // Calculate REAL signal quality metrics
+  const calculateRealSignalQuality = useCallback((currentValue: number, detectedFinger: boolean) => {
+    if (!detectedFinger) {
+      setRealTimeQuality(0);
+      setSignalStrength(0);
+      setSignalStability(0);
+      return 0;
+    }
+
+    // Add to signal history for analysis
+    signalHistoryRef.current.push(currentValue);
+    if (signalHistoryRef.current.length > 30) {
+      signalHistoryRef.current.shift();
+    }
+
+    if (signalHistoryRef.current.length < 5) {
+      return quality; // Use provided quality if not enough data
+    }
+
+    const recentSignals = signalHistoryRef.current.slice(-15);
+    
+    // 1. Signal Strength (based on amplitude)
+    const maxSignal = Math.max(...recentSignals);
+    const minSignal = Math.min(...recentSignals);
+    const signalRange = maxSignal - minSignal;
+    const strengthScore = Math.min(100, Math.max(0, (signalRange / 50) * 100));
+    
+    // 2. Signal Stability (based on consistency)
+    const mean = recentSignals.reduce((sum, val) => sum + val, 0) / recentSignals.length;
+    const variance = recentSignals.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recentSignals.length;
+    const stdDev = Math.sqrt(variance);
+    const coefficientOfVariation = mean > 0 ? stdDev / mean : 1;
+    const stabilityScore = Math.min(100, Math.max(0, (1 - coefficientOfVariation) * 100));
+    
+    // 3. Pulsatility Detection (look for rhythmic patterns)
+    let pulsatilityScore = 0;
+    if (recentSignals.length >= 10) {
+      const peaks = [];
+      for (let i = 1; i < recentSignals.length - 1; i++) {
+        if (recentSignals[i] > recentSignals[i-1] && recentSignals[i] > recentSignals[i+1]) {
+          peaks.push(i);
+        }
+      }
+      
+      // Score based on reasonable number of peaks (expecting ~1-2 per second at 30fps)
+      const expectedPeaks = recentSignals.length / 15; // Rough estimate
+      const peakScore = peaks.length > 0 ? Math.min(1, expectedPeaks / Math.max(peaks.length, 1)) : 0;
+      pulsatilityScore = peakScore * 100;
+    }
+    
+    // 4. Signal-to-Noise Ratio
+    const acComponent = stdDev;
+    const dcComponent = mean;
+    const snrScore = dcComponent > 0 ? Math.min(100, (acComponent / dcComponent) * 200) : 0;
+    
+    // Combine all metrics with weights
+    const combinedQuality = (
+      strengthScore * 0.3 +     // 30% signal strength
+      stabilityScore * 0.25 +   // 25% stability
+      pulsatilityScore * 0.25 + // 25% pulsatility
+      snrScore * 0.2           // 20% SNR
+    );
+    
+    // Update individual metrics for display
+    setSignalStrength(Math.round(strengthScore));
+    setSignalStability(Math.round(stabilityScore));
+    
+    // Smooth the quality updates
+    const smoothedQuality = Math.round(combinedQuality);
+    qualityHistoryRef.current.push(smoothedQuality);
+    if (qualityHistoryRef.current.length > 5) {
+      qualityHistoryRef.current.shift();
+    }
+    
+    const avgQuality = qualityHistoryRef.current.reduce((sum, q) => sum + q, 0) / qualityHistoryRef.current.length;
+    setRealTimeQuality(Math.round(avgQuality));
+    
+    return Math.round(avgQuality);
+  }, [quality]);
+
+  // Update quality calculation when values change
+  useEffect(() => {
+    calculateRealSignalQuality(value, isFingerDetected);
+  }, [value, isFingerDetected, calculateRealSignalQuality]);
+
+  // Use real-time calculated quality instead of provided quality
+  const displayQuality = realTimeQuality;
 
   useEffect(() => {
     if (!dataBufferRef.current) {
@@ -328,7 +423,7 @@ const PPGSignalMeter = ({
     
     lastRenderTimeRef.current = currentTime;
     animationFrameRef.current = requestAnimationFrame(renderSignal);
-  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
+  }, [value, displayQuality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
 
   useEffect(() => {
     renderSignal();
@@ -368,19 +463,43 @@ const PPGSignalMeter = ({
       />
 
       <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <span className="text-lg font-bold text-black/80">PPG</span>
-          <div className="w-[180px]">
-            <div className={`h-1 w-full rounded-full bg-gradient-to-r ${getQualityColor(quality)} transition-all duration-1000 ease-in-out`}>
+          
+          {/* Enhanced Quality Display */}
+          <div className="w-[200px]">
+            <div className={`h-1.5 w-full rounded-full bg-gradient-to-r transition-all duration-500 ease-in-out`}
+                 style={{ backgroundColor: getQualityColor(displayQuality) }}>
               <div
-                className="h-full rounded-full bg-white/20 animate-pulse transition-all duration-1000"
-                style={{ width: `${isFingerDetected ? quality : 0}%` }}
+                className="h-full rounded-full bg-white/30 animate-pulse transition-all duration-500"
+                style={{ width: `${isFingerDetected ? displayQuality : 0}%` }}
               />
             </div>
-            <span className="text-[8px] text-center mt-0.5 font-medium transition-colors duration-700 block" 
-                  style={{ color: quality > 60 ? '#0EA5E9' : '#F59E0B' }}>
-              {getQualityText(quality, isFingerDetected, 'meter')}
-            </span>
+            
+            {/* Real-time quality metrics */}
+            <div className="flex justify-between items-center mt-1">
+              <span className="text-[7px] text-center font-medium transition-colors duration-700" 
+                    style={{ color: displayQuality > 60 ? '#0EA5E9' : '#F59E0B' }}>
+                {getQualityText(displayQuality, isFingerDetected, 'meter')}
+              </span>
+              <span className="text-[7px] font-bold text-black/70">
+                {displayQuality}%
+              </span>
+            </div>
+            
+            {/* Signal metrics */}
+            {isFingerDetected && displayQuality > 0 && (
+              <div className="flex gap-2 mt-0.5">
+                <div className="flex items-center gap-1">
+                  <Signal className="h-2 w-2 text-blue-600" />
+                  <span className="text-[6px] text-black/60">{signalStrength}%</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                  <span className="text-[6px] text-black/60">{signalStability}%</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -388,15 +507,27 @@ const PPGSignalMeter = ({
           <Fingerprint
             className={`h-8 w-8 transition-colors duration-300 ${
               !isFingerDetected ? 'text-gray-400' :
-              quality > 75 ? 'text-green-500' :
-              quality > 50 ? 'text-yellow-500' :
+              displayQuality > 75 ? 'text-green-500' :
+              displayQuality > 50 ? 'text-yellow-500' :
+              displayQuality > 25 ? 'text-orange-500' :
               'text-red-500'
             }`}
             strokeWidth={1.5}
           />
           <span className="text-[8px] text-center font-medium text-black/80">
-            {isFingerDetected ? "Dedo detectado" : "Ubique su dedo"}
+            {isFingerDetected ? 
+              `Calidad: ${displayQuality}%` : 
+              "Ubique su dedo"
+            }
           </span>
+          
+          {/* Quality warning */}
+          {isFingerDetected && displayQuality < 30 && (
+            <div className="flex items-center gap-1 mt-1">
+              <AlertCircle className="h-3 w-3 text-amber-500" />
+              <span className="text-[6px] text-amber-600">Ajuste posición</span>
+            </div>
+          )}
         </div>
       </div>
 

@@ -9,7 +9,7 @@ import { SignalAnalyzer } from './SignalAnalyzer';
 import { SignalProcessorConfig } from './types';
 
 /**
- * Procesador de señal PPG con detección de dedo mejorada
+ * Procesador de señal PPG con detección de dedo mejorada y más permisiva
  * e indicador de calidad con validaciones biofísicas humanas
  * PROHIBIDA LA SIMULACIÓN Y TODO TIPO DE MANIPULACIÓN FORZADA DE DATOS
  */
@@ -26,21 +26,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public isCalibrating: boolean = false;
   public frameProcessedCount = 0;
   
-  // Configuration with enhanced human finger detection
+  // Configuration with more permissive human finger detection
   public readonly CONFIG: SignalProcessorConfig = {
     BUFFER_SIZE: 15,
     MIN_RED_THRESHOLD: 0,
     MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 15,
-    MIN_STABILITY_COUNT: 7,        // Increased slightly for more stable detection
-    HYSTERESIS: 2.2,               // Slightly reduced for better sensitivity
-    MIN_CONSECUTIVE_DETECTIONS: 8, // Reduced by 1 for better responsiveness
-    MAX_CONSECUTIVE_NO_DETECTIONS: 4,
+    STABILITY_WINDOW: 12,          // Reduced for faster detection
+    MIN_STABILITY_COUNT: 5,        // Reduced from 7 to 5 for easier detection
+    HYSTERESIS: 1.8,               // Reduced from 2.2 for more sensitivity
+    MIN_CONSECUTIVE_DETECTIONS: 6, // Reduced from 8 for faster response
+    MAX_CONSECUTIVE_NO_DETECTIONS: 5, // Increased from 4 for better stability
     QUALITY_LEVELS: 20,
-    QUALITY_HISTORY_SIZE: 10,
-    CALIBRATION_SAMPLES: 10,
+    QUALITY_HISTORY_SIZE: 8,       // Reduced for more responsive quality
+    CALIBRATION_SAMPLES: 8,        // Reduced for faster calibration
     TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.6
+    ROI_SIZE_FACTOR: 0.65          // Slightly increased ROI for better coverage
   };
   
   constructor(
@@ -174,7 +174,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
-      // ENHANCED HUMAN MORPHOLOGY VALIDATION (subtle but effective)
+      // MORE PERMISSIVE human morphology validation
       const humanMorphologyValid = this.validateHumanFingerMorphology(
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, rToGRatio, rToBRatio
       );
@@ -194,10 +194,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection if non-human morphology detected
-      if (!humanMorphologyValid && !this.isCalibrating) {
+      // More lenient rejection - only reject obvious non-human patterns
+      if (!humanMorphologyValid && !this.isCalibrating && redValue > 40) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-human morphology detected, rejecting signal");
+          console.log("PPGSignalProcessor: Obvious non-human morphology detected, rejecting signal");
         }
 
         const rejectSignal: ProcessedSignal = {
@@ -214,8 +214,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Early rejection of invalid frames - stricter thresholds
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.9) {
+      // More permissive threshold for weak signals
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.7) { // Reduced from 0.9
         if (shouldLog) {
           console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
         }
@@ -231,9 +231,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         };
 
         this.onSignalReady(minimalSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Weak Signal):", minimalSignal);
-        }
         return;
       }
 
@@ -253,12 +250,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.lastValues.shift();
       }
 
-      // 3. Perform signal trend analysis with strict physiological validation
+      // 3. Perform signal trend analysis with more permissive physiological validation
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
 
-      if (trendResult === "non_physiological" && !this.isCalibrating) {
+      if (trendResult === "non_physiological" && !this.isCalibrating && redValue > 60) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological signal rejected");
+          console.log("PPGSignalProcessor: Strong non-physiological signal rejected");
         }
 
         const rejectSignal: ProcessedSignal = {
@@ -272,16 +269,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         };
 
         this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Trend):", rejectSignal);
-        }
         return;
       }
 
-      // Enhanced color ratio validation for human fingers
-      if ((rToGRatio < 0.8 || rToGRatio > 4.5) && !this.isCalibrating) {
+      // More permissive color ratio validation for human fingers
+      if ((rToGRatio < 0.6 || rToGRatio > 5.0) && !this.isCalibrating && redValue > 50) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
+          console.log("PPGSignalProcessor: Extreme color ratio detected:", {
             rToGRatio,
             rToBRatio
           });
@@ -298,24 +292,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         };
 
         this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Color Ratio):", rejectSignal);
-        }
         return;
       }
 
-      // 4. Calculate comprehensive detector scores with enhanced human validation
+      // 4. Calculate comprehensive detector scores with REAL quality metrics
       const detectorScores = {
         redValue,
         redChannel: Math.min(1.0, Math.max(0, (redValue - this.CONFIG.MIN_RED_THRESHOLD) / 
                                           (this.CONFIG.MAX_RED_THRESHOLD - this.CONFIG.MIN_RED_THRESHOLD))),
         stability: this.trendAnalyzer.getStabilityScore(),
-        pulsatility: this.biophysicalValidator.getPulsatilityScore(this.lastValues),
+        pulsatility: this.calculateRealPulsatilityScore(this.lastValues), // Real pulsatility
         biophysical: this.biophysicalValidator.getBiophysicalScore({
           red: redValue,
           green: avgGreen ?? 0,
           blue: avgBlue ?? 0,
-        }) * (humanMorphologyValid ? 1.1 : 0.7), // Boost for human morphology
+        }) * (humanMorphologyValid ? 1.15 : 0.8), // Boost for confirmed human morphology
         periodicity: this.trendAnalyzer.getPeriodicityScore()
       };
 
@@ -327,10 +318,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const { isFingerDetected, quality } = detectionResult;
 
       // Calculate physiologically valid perfusion index only when finger is detected
-      const perfusionIndex = isFingerDetected && quality > 30 ? 
-                           (Math.log(redValue) * 0.55 - 1.2) : 0;
+      const perfusionIndex = isFingerDetected && quality > 25 ? 
+                           this.calculateRealPerfusionIndex(this.lastValues) : 0;
 
-      // Create processed signal object with strict validation
+      // Create processed signal object with REAL quality metrics
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,
@@ -347,7 +338,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           quality,
           redValue,
           filteredValue,
-          humanMorphologyValid,
+          realPulsatility: detectorScores.pulsatility,
+          realPerfusion: perfusionIndex,
           timestamp: new Date().toISOString()
         });
       }
@@ -355,9 +347,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // FINAL VALIDATION before sending
       if (typeof this.onSignalReady === 'function') {
         this.onSignalReady(processedSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Final):", processedSignal);
-        }
       } else {
         console.error("PPGSignalProcessor: onSignalReady is not a valid function");
         this.handleError("CALLBACK_ERROR", "Callback onSignalReady is not a valid function");
@@ -369,8 +358,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * Subtle validation of human finger morphology to prevent false positives
-   * Uses physiological characteristics typical of human fingers
+   * MORE PERMISSIVE validation of human finger morphology
    */
   private validateHumanFingerMorphology(
     red: number, 
@@ -380,26 +368,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     rToGRatio: number, 
     rToBRatio: number
   ): boolean {
-    // Human finger characteristics (subtle validation)
+    // Human finger characteristics (more permissive validation)
     
-    // 1. Color temperature consistency (human skin has specific warmth)
+    // 1. Color temperature consistency (more lenient range)
     const colorTemperature = (red + green) / (blue + 1);
-    const humanColorTempRange = colorTemperature >= 1.5 && colorTemperature <= 6.0;
+    const humanColorTempRange = colorTemperature >= 1.2 && colorTemperature <= 7.0; // Expanded range
     
-    // 2. Texture complexity (human skin has moderate texture)
-    const humanTextureRange = textureScore >= 0.15 && textureScore <= 0.85;
+    // 2. Texture complexity (more lenient range)
+    const humanTextureRange = textureScore >= 0.1 && textureScore <= 0.9; // Expanded range
     
-    // 3. Vascular undertone (subtle red dominance in human fingers)
-    const vascularUndertone = red > green * 0.9 && red > blue * 1.1;
+    // 3. Vascular undertone (more permissive)
+    const vascularUndertone = red > green * 0.8 && red > blue * 0.9; // More lenient
     
-    // 4. Physiological color ratios for human tissue
-    const physiologicalRatios = rToGRatio >= 0.9 && rToGRatio <= 4.0 && 
-                               rToBRatio >= 1.0 && rToBRatio <= 3.5;
+    // 4. Physiological color ratios for human tissue (more permissive)
+    const physiologicalRatios = rToGRatio >= 0.7 && rToGRatio <= 4.5 && 
+                               rToBRatio >= 0.8 && rToBRatio <= 4.0; // Expanded ranges
     
-    // 5. Minimum signal strength for human capillary perfusion
-    const minCapillaryPerfusion = red >= 25 && green >= 20 && blue >= 15;
+    // 5. Minimum signal strength for human capillary perfusion (more lenient)
+    const minCapillaryPerfusion = red >= 20 && green >= 15 && blue >= 10; // Reduced thresholds
     
-    // Combine all subtle indicators (at least 4 out of 5 must be true)
+    // Combine all indicators (now only need 3 out of 5 to be true)
     const validationCount = [
       humanColorTempRange,
       humanTextureRange, 
@@ -408,7 +396,49 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       minCapillaryPerfusion
     ].filter(Boolean).length;
     
-    return validationCount >= 4;
+    return validationCount >= 3; // Reduced from 4 to 3
+  }
+
+  /**
+   * Calculate REAL pulsatility score based on actual PPG signal variations
+   */
+  private calculateRealPulsatilityScore(values: number[]): number {
+    if (values.length < 5) return 0;
+    
+    // Calculate AC component (pulsatile variations)
+    const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+    const variations = values.map(val => Math.abs(val - mean));
+    const acComponent = variations.reduce((sum, val) => sum + val, 0) / variations.length;
+    
+    // Calculate DC component (baseline)
+    const dcComponent = mean;
+    
+    // Real pulsatility index (AC/DC ratio)
+    const pulsatilityRatio = dcComponent > 0 ? acComponent / dcComponent : 0;
+    
+    // Normalize to 0-1 range based on typical human PPG values
+    return Math.min(1.0, Math.max(0, pulsatilityRatio * 5.0));
+  }
+
+  /**
+   * Calculate REAL perfusion index from PPG signal
+   */
+  private calculateRealPerfusionIndex(values: number[]): number {
+    if (values.length < 10) return 0;
+    
+    // Get recent values for real-time calculation
+    const recentValues = values.slice(-10);
+    const mean = recentValues.reduce((sum, val) => sum + val, 0) / recentValues.length;
+    
+    // Calculate standard deviation (AC component approximation)
+    const variance = recentValues.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / recentValues.length;
+    const stdDev = Math.sqrt(variance);
+    
+    // Real perfusion index: (AC/DC) * 100
+    const perfusionIndex = mean > 0 ? (stdDev / mean) * 100 : 0;
+    
+    // Clamp to physiologically reasonable range (0-20%)
+    return Math.min(20, Math.max(0, perfusionIndex));
   }
 
   /**
