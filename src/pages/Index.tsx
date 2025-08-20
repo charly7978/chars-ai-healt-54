@@ -419,9 +419,8 @@ const Index = () => {
         return;
       }
 
-    console.log("[DIAG] Index.tsx: Dedo detectado y calidad suficiente. Procesando latidos y signos vitales.");
     // Señal válida, procesar latidos y signos vitales
-    const heartBeatResult = processHeartBeat(lastSignal.filteredValue);
+    const heartBeatResult = processHeartBeat(lastSignal.filteredValue, lastSignal.fingerDetected, lastSignal.timestamp);
     setHeartRate(heartBeatResult.bpm);
     setHeartbeatSignal(heartBeatResult.filteredValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);

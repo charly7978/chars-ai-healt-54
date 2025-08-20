@@ -57,7 +57,7 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  const processSignal = useCallback((value: number, fingerDetected: boolean = true): HeartBeatResult => {
+  const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     const now = Date.now();
     detectionAttempts.current++;
     
@@ -93,7 +93,7 @@ export const useHeartBeatProcessor = () => {
       timestamp: new Date().toISOString()
     });
 
-    const result = processorRef.current.processSignal(value);
+    const result = processorRef.current.processSignal(value, timestamp);
     const rrData = processorRef.current.getRRIntervals();
     const currentQuality = result.signalQuality || 0;
     

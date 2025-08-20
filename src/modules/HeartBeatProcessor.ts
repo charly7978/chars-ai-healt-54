@@ -227,7 +227,10 @@ export class HeartBeatProcessor {
     }
   }
 
-  public processSignal(value: number): {
+  private lastProcessedTimestamp = 0;
+  private lastProcessedValue: number | null = null;
+
+  public processSignal(value: number, timestamp?: number): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
@@ -235,6 +238,22 @@ export class HeartBeatProcessor {
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
   } {
+    // Deduplicación por timestamp y valor para evitar procesamiento múltiple
+    const currentTimestamp = timestamp || Date.now();
+    if (this.lastProcessedTimestamp === currentTimestamp && this.lastProcessedValue === value) {
+      // Señal duplicada, devolver último resultado sin procesar
+      return {
+        bpm: Math.round(this.getSmoothBPM()),
+        confidence: 0.6,
+        isPeak: false,
+        filteredValue: value,
+        arrhythmiaCount: 0,
+        signalQuality: this.currentSignalQuality
+      };
+    }
+    
+    this.lastProcessedTimestamp = currentTimestamp;
+    this.lastProcessedValue = value;
     // Aplicar amplificación razonable
     value = this.boostSignal(value);
     
