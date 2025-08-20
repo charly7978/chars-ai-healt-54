@@ -21,6 +21,10 @@ export interface VitalSignsResult {
     rmssd: number;
     rrVariation: number;
   };
+  calibration?: {
+    isCalibrating: boolean;
+    progress: number;
+  };
 }
 
 export class VitalSignsProcessor {
@@ -67,14 +71,15 @@ export class VitalSignsProcessor {
       // Convert rrData to format expected by processors
       const rrIntervals = rrData?.intervals || [];
       
-      // Process with advanced processor - make sure it's synchronous
+      // Process with advanced processor - pass array of values for proper processing
+      const ppgArray = [ppgValue]; // Convert single value to array for processing
       const advancedResult = this.superAdvancedProcessor.processAdvancedVitalSigns(ppgValue, rrIntervals);
       
       // Process blood pressure with specialized processor - correct arguments
       const bpResult = this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals, Date.now());
       
-      // Process glucose with advanced spectroscopic analysis
-      const glucoseResult = this.glucoseProcessor.processSignal(ppgValue, rrIntervals);
+      // Process glucose with advanced spectroscopic analysis - pass array
+      const glucoseResult = this.glucoseProcessor.processSignal(ppgArray, rrIntervals);
       
       console.log('🎯 Resultados de procesadores especializados:', {
         spo2: advancedResult.spo2,
@@ -95,7 +100,11 @@ export class VitalSignsProcessor {
         },
         hemoglobin: Math.round(advancedResult.hemoglobin.concentration),
         confidence: Math.round((advancedResult.validation.overallConfidence + bpResult.confidence + glucoseResult.confidence) / 3 * 100),
-        quality: Math.round((bpResult.quality + glucoseResult.quality) / 2)
+        quality: Math.round((bpResult.quality + glucoseResult.quality) / 2),
+        calibration: {
+          isCalibrating: this.isCalibrating,
+          progress: this.calibrationProgress
+        }
       };
 
     } catch (error) {
@@ -113,7 +122,11 @@ export class VitalSignsProcessor {
         },
         hemoglobin: 14.5,
         confidence: 30,
-        quality: 40
+        quality: 40,
+        calibration: {
+          isCalibrating: this.isCalibrating,
+          progress: this.calibrationProgress
+        }
       };
     }
   }
