@@ -250,8 +250,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Reactivated validation with more tolerant thresholds
-      if ((rToGRatio < 0.5 || rToGRatio > 6.0) && !this.isCalibrating) { // Rango más amplio
+      // Validation ultra tolerante para permitir más variaciones
+      if ((rToGRatio < 0.3 || rToGRatio > 8.0) && !this.isCalibrating) { // Rango muy amplio
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,

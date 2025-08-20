@@ -56,8 +56,8 @@ export class SignalAnalyzer {
     const { redChannel, stability, pulsatility, biophysical, periodicity, skinLikeness, stabilityScore } =
       this.detectorScores;
 
-    // Validación moderada
-    if (skinLikeness !== undefined && skinLikeness < 0.1) {
+    // Validación muy relajada para permitir más detecciones
+    if (skinLikeness !== undefined && skinLikeness < 0.05) {
       return {
         isFingerDetected: false,
         quality: 0,
@@ -65,7 +65,7 @@ export class SignalAnalyzer {
       };
     }
     
-    if (stabilityScore !== undefined && stabilityScore < 0.2) {
+    if (stabilityScore !== undefined && stabilityScore < 0.1) {
       return {
         isFingerDetected: false,
         quality: 0,
