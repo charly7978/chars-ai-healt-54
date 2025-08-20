@@ -1,3 +1,4 @@
+
 /**
  * @file SimulationEradicator.ts
  * @description Sistema de erradicación de simulaciones con algoritmos matemáticos extremos
@@ -53,7 +54,7 @@ export class SimulationEradicator {
   private validationHistory: number[] = [];
   
   private constructor() {
-    this.validator = new ContinuousValidator();
+    this.validator = ContinuousValidator.getInstance();
     this.initializeAdvancedMath();
   }
 
@@ -136,6 +137,79 @@ export class SimulationEradicator {
     }
 
     return true;
+  }
+
+  public validateBiophysicalSignal(signal: number[]): boolean {
+    if (signal.length < 5) return true;
+
+    // Calculate biophysical metrics
+    const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
+    const variance = signal.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / signal.length;
+    
+    // Check for physiologically realistic variance
+    if (variance < 0.1) {
+      console.warn('⚠️ Biophysical validation failed - too low variance');
+      return false;
+    }
+
+    // Check for realistic signal range (PPG values)
+    const minVal = Math.min(...signal);
+    const maxVal = Math.max(...signal);
+    
+    if (maxVal - minVal < 1.0) {
+      console.warn('⚠️ Biophysical validation failed - insufficient signal range');
+      return false;
+    }
+
+    // Calculate spectral entropy (simplified)
+    const spectralEntropy = this.calculateSpectralEntropy(signal);
+    if (spectralEntropy < 0.5) {
+      console.warn('⚠️ Biophysical validation failed - low spectral entropy');
+      return false;
+    }
+
+    return true;
+  }
+
+  private calculateSpectralEntropy(signal: number[]): number {
+    // Simplified spectral entropy calculation
+    const fft = this.simpleFFT(signal);
+    const powerSpectrum = fft.map(val => val * val);
+    const totalPower = powerSpectrum.reduce((a, b) => a + b, 0);
+    
+    if (totalPower === 0) return 0;
+    
+    const normalizedSpectrum = powerSpectrum.map(p => p / totalPower);
+    let entropy = 0;
+    
+    for (const p of normalizedSpectrum) {
+      if (p > 0) {
+        entropy -= p * Math.log2(p);
+      }
+    }
+    
+    return entropy / Math.log2(normalizedSpectrum.length);
+  }
+
+  private simpleFFT(signal: number[]): number[] {
+    // Simplified FFT implementation for spectral analysis
+    const N = signal.length;
+    const result = new Array(N).fill(0);
+    
+    for (let k = 0; k < N; k++) {
+      let real = 0;
+      let imag = 0;
+      
+      for (let n = 0; n < N; n++) {
+        const angle = -2 * Math.PI * k * n / N;
+        real += signal[n] * Math.cos(angle);
+        imag += signal[n] * Math.sin(angle);
+      }
+      
+      result[k] = Math.sqrt(real * real + imag * imag);
+    }
+    
+    return result;
   }
 
   public reset(): void {

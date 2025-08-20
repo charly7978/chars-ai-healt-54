@@ -37,7 +37,7 @@ export class VitalSignsProcessor {
 
   constructor(userAge: number = 35) {
     this.superAdvancedProcessor = new SuperAdvancedVitalSignsProcessor();
-    this.bloodPressureProcessor = new RealBloodPressureProcessor(userAge);
+    this.bloodPressureProcessor = new RealBloodPressureProcessor();
     this.glucoseProcessor = new AdvancedGlucoseProcessor();
     
     // Generate secure session ID
@@ -71,14 +71,14 @@ export class VitalSignsProcessor {
       // Convert rrData to format expected by processors
       const rrIntervals = rrData?.intervals || [];
       
-      // Process with advanced processor - pass array of values for proper processing
-      const ppgArray = [ppgValue]; // Convert single value to array for processing
-      const advancedResult = this.superAdvancedProcessor.processAdvancedVitalSigns(ppgValue, rrIntervals);
+      // Process with advanced processor - convert single value to array for processing
+      const ppgArray = [ppgValue];
+      const advancedResult = this.superAdvancedProcessor.processAdvancedVitalSigns(ppgArray, rrIntervals);
       
-      // Process blood pressure with specialized processor - correct arguments
-      const bpResult = this.bloodPressureProcessor.processSignal(ppgValue, rrIntervals, Date.now());
+      // Process blood pressure with specialized processor
+      const bpResult = this.bloodPressureProcessor.processSignal(ppgArray, rrIntervals);
       
-      // Process glucose with advanced spectroscopic analysis - pass array
+      // Process glucose with advanced spectroscopic analysis
       const glucoseResult = this.glucoseProcessor.processSignal(ppgArray, rrIntervals);
       
       console.log('🎯 Resultados de procesadores especializados:', {
