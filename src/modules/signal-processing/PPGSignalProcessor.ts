@@ -28,19 +28,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   // Configuration with enhanced human finger detection
   public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 20,              // Aumentado para mayor estabilidad
+    BUFFER_SIZE: 25,              // Aumentado para mayor estabilidad
     MIN_RED_THRESHOLD: 0,
     MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 20,         // Aumentado para mayor estabilidad
-    MIN_STABILITY_COUNT: 8,       // Aumentado para mayor estabilidad
-    HYSTERESIS: 2.5,              // Aumentado para mayor estabilidad
-    MIN_CONSECUTIVE_DETECTIONS: 10, // Aumentado para mayor estabilidad
-    MAX_CONSECUTIVE_NO_DETECTIONS: 6, // Aumentado para mayor estabilidad
-    QUALITY_LEVELS: 25,           // Aumentado para mayor estabilidad
-    QUALITY_HISTORY_SIZE: 15,     // Aumentado para mayor estabilidad
-    CALIBRATION_SAMPLES: 12,      // Aumentado para mayor estabilidad
+    STABILITY_WINDOW: 25,         // Aumentado para mayor estabilidad
+    MIN_STABILITY_COUNT: 10,      // Aumentado para mayor estabilidad
+    HYSTERESIS: 2.8,              // Aumentado para mayor estabilidad
+    MIN_CONSECUTIVE_DETECTIONS: 12, // Aumentado para mayor estabilidad
+    MAX_CONSECUTIVE_NO_DETECTIONS: 8, // Aumentado para mayor estabilidad
+    QUALITY_LEVELS: 30,           // Aumentado para mayor estabilidad
+    QUALITY_HISTORY_SIZE: 20,     // Aumentado para mayor estabilidad
+    CALIBRATION_SAMPLES: 15,      // Aumentado para mayor estabilidad
     TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.65         // Aumentado para mayor estabilidad
+    ROI_SIZE_FACTOR: 0.70         // Aumentado para mayor cobertura
   };
   
   constructor(
@@ -284,8 +284,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         return;
       }
 
-      // Enhanced color ratio validation for human fingers (more stable)
-      if ((rToGRatio < 0.75 || rToGRatio > 4.8) && !this.isCalibrating) {
+      // Enhanced color ratio validation for human fingers (STRICT validation)
+      if ((rToGRatio < 0.8 || rToGRatio > 4.5) && !this.isCalibrating) {
         if (shouldLog) {
           console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
             rToGRatio,
@@ -377,6 +377,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   /**
    * Enhanced validation of human finger morphology to prevent false positives
    * Uses physiological characteristics typical of human fingers with improved stability
+   * STRICT validation to only detect human fingers
    */
   private validateHumanFingerMorphology(
     red: number, 
@@ -386,39 +387,48 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     rToGRatio: number, 
     rToBRatio: number
   ): boolean {
-    // Human finger characteristics (enhanced validation for stability)
+    // Human finger characteristics (STRICT validation for human-only detection)
     
     // 1. Color temperature consistency (human skin has specific warmth)
     const colorTemperature = (red + green) / (blue + 1);
-    const humanColorTempRange = colorTemperature >= 1.3 && colorTemperature <= 6.5; // Rango ampliado
+    const humanColorTempRange = colorTemperature >= 1.4 && colorTemperature <= 6.0; // Rango más estricto
     
     // 2. Texture complexity (human skin has moderate texture)
-    const humanTextureRange = textureScore >= 0.20 && textureScore <= 0.90; // Rango ampliado
+    const humanTextureRange = textureScore >= 0.25 && textureScore <= 0.85; // Rango más estricto
     
     // 3. Vascular undertone (subtle red dominance in human fingers)
-    const vascularUndertone = red > green * 0.85 && red > blue * 1.05; // Umbrales más permisivos
+    const vascularUndertone = red > green * 0.9 && red > blue * 1.15; // Umbrales más estrictos
     
-    // 4. Physiological color ratios for human tissue (more permissive for stability)
-    const physiologicalRatios = rToGRatio >= 0.85 && rToGRatio <= 4.2 && 
-                               rToBRatio >= 0.95 && rToBRatio <= 4.0; // Rangos ampliados
+    // 4. Physiological color ratios for human tissue (strict validation)
+    const physiologicalRatios = rToGRatio >= 0.9 && rToGRatio <= 4.0 && 
+                               rToBRatio >= 1.0 && rToBRatio <= 3.8; // Rangos más estrictos
     
-    // 5. Minimum signal strength for human capillary perfusion (more permissive)
-    const minCapillaryPerfusion = red >= 22 && green >= 18 && blue >= 12; // Umbrales reducidos
+    // 5. Minimum signal strength for human capillary perfusion (strict)
+    const minCapillaryPerfusion = red >= 25 && green >= 20 && blue >= 15; // Umbrales más estrictos
     
-    // 6. Signal stability check (new criterion for stability)
+    // 6. Signal stability check (strict)
     const signalStability = red > 0 && green > 0 && blue > 0; // Señal válida
     
-    // Combine all indicators (at least 4 out of 6 must be true for stability)
+    // 7. Human-specific color balance (new strict criterion)
+    const humanColorBalance = (red > green * 1.1) && (red > blue * 1.2) && 
+                             (green > blue * 0.8) && (green < red * 0.9);
+    
+    // 8. Texture consistency for human skin (new strict criterion)
+    const humanTextureConsistency = textureScore > 0.3 && textureScore < 0.8;
+    
+    // Combine all indicators (at least 6 out of 8 must be true for strict validation)
     const validationCount = [
       humanColorTempRange,
       humanTextureRange, 
       vascularUndertone,
       physiologicalRatios,
       minCapillaryPerfusion,
-      signalStability
+      signalStability,
+      humanColorBalance,
+      humanTextureConsistency
     ].filter(Boolean).length;
     
-    return validationCount >= 4; // Mantener umbral de 4 para estabilidad
+    return validationCount >= 6; // Umbral más estricto para solo dedos humanos
   }
 
   /**

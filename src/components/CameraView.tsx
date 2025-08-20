@@ -312,7 +312,7 @@ const CameraView = ({
     // ROI centrado para evitar bordes y ruido
     const centerX = Math.floor(width / 2);
     const centerY = Math.floor(height / 2);
-    const roiSize = Math.min(width, height) * 0.6; // ROI más pequeño para estabilidad
+    const roiSize = Math.min(width, height) * 0.7; // ROI más amplio para mayor estabilidad
     
     const startX = Math.max(0, centerX - roiSize / 2);
     const endX = Math.min(width, centerX + roiSize / 2);

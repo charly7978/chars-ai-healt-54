@@ -17,17 +17,17 @@ export interface ColorRatios {
  */
 export class BiophysicalValidator {
   // Umbrales para la pulsatilidad - OPTIMIZADOS para estabilidad
-  private readonly MIN_PULSATILITY_THRESHOLD = 0.12; // Reducido para mayor sensibilidad
-  private readonly PULSATILITY_NORMALIZATION_FACTOR = 30.0; // Aumentado para mejor normalización
+  private readonly MIN_PULSATILITY_THRESHOLD = 0.10; // Reducido para mayor sensibilidad
+  private readonly PULSATILITY_NORMALIZATION_FACTOR = 35.0; // Aumentado para mejor normalización
 
   // Rangos fisiológicos OPTIMIZADOS para estabilidad
   private readonly PHYSIOLOGICAL_RANGES = {
     // Ratio Rojo/Verde: más permisivo para estabilidad
-    redToGreen: { min: 1.1, max: 3.2 }, // Rango ligeramente ampliado
+    redToGreen: { min: 1.0, max: 3.5 }, // Rango ligeramente ampliado
     // Ratio Rojo/Azul: más permisivo para estabilidad
-    redToBlue: { min: 1.0, max: 3.8 }, // Rango ligeramente ampliado
+    redToBlue: { min: 0.95, max: 4.0 }, // Rango ligeramente ampliado
     // Intensidad del canal rojo: umbrales optimizados
-    redValue: { min: 30, max: 230 }, // Mínimo reducido, máximo aumentado para estabilidad
+    redValue: { min: 28, max: 235 }, // Mínimo reducido, máximo aumentado para estabilidad
   };
 
   /**

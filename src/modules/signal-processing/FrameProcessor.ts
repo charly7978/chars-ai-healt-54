@@ -8,22 +8,22 @@ import { ProcessedSignal } from '../../types/signal';
 export class FrameProcessor {
   // Configuración mejorada para detección más estable
   private readonly CONFIG: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number };
-  private readonly RED_GAIN = 1.05; // Reducido para evitar amplificación excesiva
-  private readonly GREEN_SUPPRESSION = 0.92; // Menos supresión para comparación más real
-  private readonly SIGNAL_GAIN = 0.95; // Reducido para evitar amplificación de ruido
-  private readonly EDGE_ENHANCEMENT = 0.12;  // Reducido para ser más conservador
-  private readonly MIN_RED_THRESHOLD = 0.40;  // AUMENTADO significativamente para filtrar ruido
-  private readonly RG_RATIO_RANGE = [1.1, 3.2];  // Rango más estricto y realista
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.20;  // AUMENTADO para mejor validación
+  private readonly RED_GAIN = 1.08; // Aumentado ligeramente para mejor detección
+  private readonly GREEN_SUPPRESSION = 0.90; // Menos supresión para comparación más real
+  private readonly SIGNAL_GAIN = 0.98; // Aumentado ligeramente para mejor estabilidad
+  private readonly EDGE_ENHANCEMENT = 0.15;  // Aumentado para mejor detección de bordes
+  private readonly MIN_RED_THRESHOLD = 0.35;  // Reducido para mayor sensibilidad
+  private readonly RG_RATIO_RANGE = [1.0, 3.5];  // Rango más amplio para estabilidad
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.18;  // Reducido para mayor sensibilidad
   
   // Historial mejorado para estabilidad
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
-  private readonly HISTORY_SIZE = 20; // Aumentado para mejor estabilidad
+  private readonly HISTORY_SIZE = 25; // Aumentado para mayor estabilidad
   private lastLightLevel: number = -1;
   
   // ROI mejorado con estabilidad temporal
   private roiHistory: Array<{x: number, y: number, width: number, height: number}> = [];
-  private readonly ROI_HISTORY_SIZE = 8; // Aumentado para mayor estabilidad
+  private readonly ROI_HISTORY_SIZE = 10; // Aumentado para mayor estabilidad
   
   constructor(config: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number }) {
     // Aumentar tamaño de ROI para capturar más área
@@ -209,19 +209,19 @@ export class FrameProcessor {
     
     // Apply dynamic calibration based on history - with medical constraints
     let dynamicGain = 1.0; // Base gain
-    if (this.lastFrames.length >= 5) { // Aumentado para mayor estabilidad
+    if (this.lastFrames.length >= 6) { // Aumentado para mayor estabilidad
       const avgHistRed = this.lastFrames.reduce((sum, frame) => sum + frame.red, 0) / this.lastFrames.length;
       
-        // Ganancia EQUILIBRADA para señales que cumplen criterios estrictos
-        if (avgHistRed >= 50 && avgHistRed <= 180 && 
+        // Ganancia OPTIMIZADA para señales que cumplen criterios estrictos
+        if (avgHistRed >= 45 && avgHistRed <= 190 && 
             this.calculateEdgeContrast() > this.EDGE_CONTRAST_THRESHOLD) {
-          dynamicGain = 1.05; // Ganancia moderada para señales válidas
-        } else if (avgHistRed < 50 && avgHistRed > this.MIN_RED_THRESHOLD * 25) {
+          dynamicGain = 1.08; // Ganancia aumentada para señales válidas
+        } else if (avgHistRed < 45 && avgHistRed > this.MIN_RED_THRESHOLD * 25) {
           // Señal débil pero en rango válido
-          dynamicGain = 0.95; // Ganancia reducida para estabilidad
+          dynamicGain = 1.0; // Ganancia neutra para estabilidad
         } else if (avgHistRed <= this.MIN_RED_THRESHOLD * 25) {
           // Señal muy débil - probablemente no hay dedo
-          dynamicGain = 0.85; // Atenuar señal débil para evitar falsos positivos
+          dynamicGain = 0.9; // Atenuar señal débil para evitar falsos positivos
         }
     }
     
@@ -311,19 +311,19 @@ export class FrameProcessor {
     // Factor ROI adaptativo mejorado para mayor estabilidad
     let adaptiveROISizeFactor = this.CONFIG.ROI_SIZE_FACTOR;
     
-    // Ajustar ROI basado en valor rojo - MÁS ESTABLE
-    if (redValue < 40) { // Umbral aumentado para ser más estricto
-      // Señal débil - reducir ROI para evitar ruido
-      adaptiveROISizeFactor = Math.min(0.65, adaptiveROISizeFactor * 0.98); // Reducción más gradual
-    } else if (redValue > 120) { // Umbral aumentado para mayor estabilidad
-      // Señal fuerte - enfocar más el ROI
-      adaptiveROISizeFactor = Math.max(0.35, adaptiveROISizeFactor * 0.97); // Reducción más gradual
+    // Ajustar ROI basado en valor rojo - MÁS ESTABLE Y AMPLIO
+    if (redValue < 35) { // Umbral reducido para mayor sensibilidad
+      // Señal débil - mantener ROI amplio para capturar dedo
+      adaptiveROISizeFactor = Math.min(0.75, adaptiveROISizeFactor * 1.02); // Aumento moderado
+    } else if (redValue > 110) { // Umbral reducido para mayor estabilidad
+      // Señal fuerte - mantener ROI amplio para estabilidad
+      adaptiveROISizeFactor = Math.max(0.4, adaptiveROISizeFactor * 0.98); // Reducción mínima
     }
     
-    // Ensure ROI is appropriate to image size
+    // Ensure ROI is appropriate to image size - MÁS AMPLIO
     const minDimension = Math.min(imageData.width, imageData.height);
-    const maxRoiSize = minDimension * 0.80; // Máximo reducido para mayor estabilidad
-    const minRoiSize = minDimension * 0.30; // Mínimo aumentado para evitar ruido
+    const maxRoiSize = minDimension * 0.85; // Máximo aumentado para mayor cobertura
+    const minRoiSize = minDimension * 0.35; // Mínimo aumentado para mayor estabilidad
     
     let roiSize = minDimension * adaptiveROISizeFactor;
     roiSize = Math.max(minRoiSize, Math.min(maxRoiSize, roiSize));
@@ -344,7 +344,7 @@ export class FrameProcessor {
     }
     
     // Si tenemos suficiente historia, promediar para estabilidad
-    if (this.roiHistory.length >= 5) { // Aumentado para mayor estabilidad
+    if (this.roiHistory.length >= 6) { // Aumentado para mayor estabilidad
       const avgX = this.roiHistory.reduce((sum, roi) => sum + roi.x, 0) / this.roiHistory.length;
       const avgY = this.roiHistory.reduce((sum, roi) => sum + roi.y, 0) / this.roiHistory.length;
       const avgWidth = this.roiHistory.reduce((sum, roi) => sum + roi.width, 0) / this.roiHistory.length;

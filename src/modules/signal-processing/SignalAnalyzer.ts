@@ -58,11 +58,11 @@ export class SignalAnalyzer {
 
     // Weighted sum – weights optimized for stability
     const weighted =
-      redChannel * 0.35 +      // Aumentado peso del canal rojo
-      stability * 0.30 +       // Aumentado peso de estabilidad
-      pulsatility * 0.20 +     // Reducido peso de pulsatilidad
-      biophysical * 0.12 +     // Reducido peso biofísico
-      periodicity * 0.03;      // Reducido peso de periodicidad
+      redChannel * 0.40 +      // Aumentado peso del canal rojo para estabilidad
+      stability * 0.35 +       // Aumentado peso de estabilidad
+      pulsatility * 0.15 +     // Reducido peso de pulsatilidad
+      biophysical * 0.08 +     // Reducido peso biofísico
+      periodicity * 0.02;      // Reducido peso de periodicidad
 
     // Map 0-1 range to 0-100 and clamp.
     const qualityValue = Math.min(100, Math.max(0, Math.round(weighted * 100)));
@@ -88,8 +88,8 @@ export class SignalAnalyzer {
     const smoothedQuality = recentAvg * recentWeight + olderAvg * historyWeight;
 
     // Umbrales optimizados para estabilidad
-    const DETECTION_THRESHOLD = 35; // Aumentado para mayor estabilidad
-    const RELEASE_THRESHOLD = 25;   // Umbral de liberación más bajo
+    const DETECTION_THRESHOLD = 32; // Reducido para mayor sensibilidad
+    const RELEASE_THRESHOLD = 22;   // Umbral de liberación más bajo para estabilidad
 
     // Hysteresis logic using consecutive detections - OPTIMIZADO para estabilidad
     let isFingerDetected = false;
