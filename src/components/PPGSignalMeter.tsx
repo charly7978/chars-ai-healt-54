@@ -41,13 +41,13 @@ const PPGSignalMeter = ({
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const WINDOW_WIDTH_MS = 2300;
+  const WINDOW_WIDTH_MS = 2900;
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
   const verticalScale = 120.0; // Escala aumentada para ondas visibles y picos prominentes
-  const SMOOTHING_FACTOR = 1.6; // Reducido para ondas más suaves
+  const SMOOTHING_FACTOR = 1.9; // Reducido para ondas más suaves
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
@@ -74,7 +74,7 @@ const PPGSignalMeter = ({
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
     // Ondas suaves y naturales como ondas eléctricas reales
-    const alpha = 0.3; // Factor bajo para ondas suaves y naturales
+    const alpha = 0.01; // Factor bajo para ondas suaves y naturales
     return previousValue * (1 - alpha) + currentValue * alpha;
   }, []);
 
