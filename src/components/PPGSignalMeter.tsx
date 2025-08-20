@@ -73,8 +73,8 @@ const PPGSignalMeter = ({
 
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
-    // Ondas más reactivas y sensibles - suavizado mínimo
-    const alpha = 0.95; // Factor muy alto para máxima reactividad
+    // Ondas suaves y naturales como ondas eléctricas reales
+    const alpha = 0.3; // Factor bajo para ondas suaves y naturales
     return previousValue * (1 - alpha) + currentValue * alpha;
   }, []);
 
@@ -227,16 +227,20 @@ const PPGSignalMeter = ({
          if (baselineRef.current === null) {
        baselineRef.current = value;
      } else {
-       // Línea base muy estable para ondas más sueltas y reactivas
-       baselineRef.current = baselineRef.current * 0.995 + value * 0.005;
+       // Línea base más reactiva para ondas naturales y sueltas
+       baselineRef.current = baselineRef.current * 0.85 + value * 0.15;
      }
     
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
     
-    // Lógica corregida para picos hacia arriba y ondas visibles
+    // Lógica para ondas naturales y sueltas como ondas eléctricas
     const normalizedValue = (smoothedValue - (baselineRef.current || 0));
-    const scaledValue = normalizedValue * verticalScale;
+    // Aplicar suavizado adicional para ondas más naturales
+    const waveSmoothedValue = lastValueRef.current !== null ? 
+      normalizedValue * 0.7 + (lastValueRef.current - (baselineRef.current || 0)) * 0.3 :
+      normalizedValue;
+    const scaledValue = waveSmoothedValue * verticalScale;
     
     let isArrhythmia = false;
     if (rawArrhythmiaData && 
@@ -260,7 +264,7 @@ const PPGSignalMeter = ({
     if (points.length > 1) {
       ctx.beginPath();
       ctx.strokeStyle = '#0EA5E9';
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1.5; // Línea más fina para ondas más suaves
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
