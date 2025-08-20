@@ -47,10 +47,19 @@ export class SignalProcessor {
     // NUEVO: Amplificación inicial para garantizar señal mínima detectable
     value = value * 1.5 + 2;
     
-    // Añadir valor al buffer
+    // Añadir valor al buffer con LIMPIEZA AUTOMÁTICA
     this.ppgValues.push(value);
+    
+    // LIMPIEZA AUTOMÁTICA: Mantener solo el tamaño necesario
     if (this.ppgValues.length > this.WINDOW_SIZE) {
-      this.ppgValues.shift();
+      // Eliminar elementos antiguos de forma eficiente
+      const excessCount = this.ppgValues.length - this.WINDOW_SIZE;
+      this.ppgValues.splice(0, excessCount);
+    }
+    
+    // LIMPIEZA PERIÓDICA: Cada 100 frames, limpiar buffers auxiliares
+    if (this.ppgValues.length % 100 === 0) {
+      this.cleanupAuxiliaryBuffers();
     }
     
     // MEJORA: Actualizar línea base con respuesta adaptativa
@@ -377,6 +386,28 @@ export class SignalProcessor {
     this.recentMin = 0;
     this.peakHistory = [];
     this.stabilizationBuffer = [];
+  }
+
+  /**
+   * LIMPIEZA AUTOMÁTICA de buffers auxiliares para prevenir degradación
+   */
+  private cleanupAuxiliaryBuffers(): void {
+    // Limpiar buffers que pueden acumular datos innecesarios
+    if (this.peakHistory.length > this.PEAK_HISTORY_SIZE) {
+      this.peakHistory = this.peakHistory.slice(-this.PEAK_HISTORY_SIZE);
+    }
+    
+    if (this.stabilizationBuffer.length > this.STAB_BUFFER_SIZE) {
+      this.stabilizationBuffer = this.stabilizationBuffer.slice(-this.STAB_BUFFER_SIZE);
+    }
+    
+    // Log de limpieza para debugging
+    console.log('🧹 SignalProcessor: Limpieza automática de buffers', {
+      ppgValuesLength: this.ppgValues.length,
+      peakHistoryLength: this.peakHistory.length,
+      stabilizationBufferLength: this.stabilizationBuffer.length,
+      timestamp: new Date().toISOString()
+    });
   }
 
   /**

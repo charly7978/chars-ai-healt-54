@@ -238,6 +238,10 @@ export class HeartBeatProcessor {
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
   } {
+    // LIMPIEZA AUTOMÁTICA: Cada 50 frames, limpiar buffers para prevenir degradación
+    if (this.values.length % 50 === 0) {
+      this.cleanupBuffers();
+    }
     // Deduplicación por timestamp y valor para evitar procesamiento múltiple
     const currentTimestamp = timestamp || Date.now();
     if (this.lastProcessedTimestamp === currentTimestamp && this.lastProcessedValue === value) {
@@ -595,6 +599,42 @@ export class HeartBeatProcessor {
     }
     const sum = finalSet.reduce((acc, val) => acc + val, 0);
     return Math.round(sum / finalSet.length);
+  }
+
+  /**
+   * LIMPIEZA AUTOMÁTICA de buffers para prevenir degradación gradual
+   */
+  private cleanupBuffers(): void {
+    // Limpiar buffers que pueden acumular datos innecesarios
+    if (this.bpmHistory.length > 20) {
+      this.bpmHistory = this.bpmHistory.slice(-20);
+    }
+    
+    if (this.recentPeakAmplitudes.length > 10) {
+      this.recentPeakAmplitudes = this.recentPeakAmplitudes.slice(-10);
+    }
+    
+    if (this.recentPeakConfidences.length > 10) {
+      this.recentPeakConfidences = this.recentPeakConfidences.slice(-10);
+    }
+    
+    if (this.recentPeakDerivatives.length > 10) {
+      this.recentPeakDerivatives = this.recentPeakDerivatives.slice(-10);
+    }
+    
+    if (this.recentSignalStrengths.length > this.SIGNAL_STRENGTH_HISTORY) {
+      this.recentSignalStrengths = this.recentSignalStrengths.slice(-this.SIGNAL_STRENGTH_HISTORY);
+    }
+    
+    // Log de limpieza para debugging
+    console.log('🧹 HeartBeatProcessor: Limpieza automática de buffers', {
+      bpmHistoryLength: this.bpmHistory.length,
+      recentPeakAmplitudesLength: this.recentPeakAmplitudes.length,
+      recentPeakConfidencesLength: this.recentPeakConfidences.length,
+      recentPeakDerivativesLength: this.recentPeakDerivatives.length,
+      recentSignalStrengthsLength: this.recentSignalStrengths.length,
+      timestamp: new Date().toISOString()
+    });
   }
 
   public reset() {

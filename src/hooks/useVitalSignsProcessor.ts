@@ -97,7 +97,7 @@ export const useVitalSignsProcessor = () => {
     const result = processor.processSignal(value, rrData);
     const currentTime = Date.now();
     
-    // Guardar para depuración
+    // Guardar para depuración con LIMPIEZA AUTOMÁTICA
     if (processedSignals.current % 20 === 0) {
       signalLog.current.push({
         timestamp: currentTime,
@@ -105,9 +105,15 @@ export const useVitalSignsProcessor = () => {
         result: {...result}
       });
       
-      // Mantener el log a un tamaño manejable
+      // LIMPIEZA AUTOMÁTICA: Mantener solo el tamaño necesario
       if (signalLog.current.length > 50) {
-        signalLog.current = signalLog.current.slice(-50);
+        const excessCount = signalLog.current.length - 50;
+        signalLog.current.splice(0, excessCount);
+      }
+      
+      // LIMPIEZA PERIÓDICA: Cada 100 señales, limpiar logs antiguos
+      if (processedSignals.current % 100 === 0) {
+        this.cleanupOldLogs();
       }
       
       console.log("useVitalSignsProcessor: Log de señales", {
@@ -190,6 +196,25 @@ export const useVitalSignsProcessor = () => {
       arrhythmiaStatus: `SIN ARRITMIAS|${arrhythmiaCounter}`
     };
   }, [processor, arrhythmiaCounter]);
+
+  /**
+   * LIMPIEZA AUTOMÁTICA de logs antiguos para prevenir degradación
+   */
+  const cleanupOldLogs = useCallback(() => {
+    const currentTime = Date.now();
+    const maxAge = 30000; // 30 segundos
+    
+    // Eliminar logs más antiguos de 30 segundos
+    signalLog.current = signalLog.current.filter(log => 
+      currentTime - log.timestamp < maxAge
+    );
+    
+    console.log('🧹 useVitalSignsProcessor: Limpieza automática de logs', {
+      logsAntes: signalLog.current.length,
+      logsDespués: signalLog.current.length,
+      timestamp: new Date().toISOString()
+    });
+  }, []);
 
   // Soft reset: mantener los resultados pero reiniciar los procesadores
   const reset = useCallback(() => {

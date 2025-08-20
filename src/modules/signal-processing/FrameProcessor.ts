@@ -337,10 +337,18 @@ export class FrameProcessor {
     };
     
     console.log('[DEBUG] FrameProcessor detectROI - newROI:', newROI);
-    // Guardar historia de ROIs para estabilidad
+    // Guardar historia de ROIs para estabilidad con LIMPIEZA AUTOMÁTICA
     this.roiHistory.push(newROI);
+    
+    // LIMPIEZA AUTOMÁTICA: Mantener solo el tamaño necesario
     if (this.roiHistory.length > this.ROI_HISTORY_SIZE) {
-      this.roiHistory.shift();
+      const excessCount = this.roiHistory.length - this.ROI_HISTORY_SIZE;
+      this.roiHistory.splice(0, excessCount);
+    }
+    
+    // LIMPIEZA PERIÓDICA: Cada 100 frames, limpiar buffers auxiliares
+    if (this.roiHistory.length % 100 === 0) {
+      this.cleanupAuxiliaryBuffers();
     }
     
     // Si tenemos suficiente historia, promediar para estabilidad
@@ -360,5 +368,22 @@ export class FrameProcessor {
     
     // Si no hay suficiente historia, usar el nuevo ROI directamente
     return newROI;
+  }
+
+  /**
+   * LIMPIEZA AUTOMÁTICA de buffers auxiliares para prevenir degradación
+   */
+  private cleanupAuxiliaryBuffers(): void {
+    // Limpiar buffers que pueden acumular datos innecesarios
+    if (this.lastFrames.length > this.HISTORY_SIZE) {
+      this.lastFrames = this.lastFrames.slice(-this.HISTORY_SIZE);
+    }
+    
+    // Log de limpieza para debugging
+    console.log('🧹 FrameProcessor: Limpieza automática de buffers', {
+      roiHistoryLength: this.roiHistory.length,
+      lastFramesLength: this.lastFrames.length,
+      timestamp: new Date().toISOString()
+    });
   }
 }
