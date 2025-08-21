@@ -310,8 +310,11 @@ const CameraView = ({
     }
     
     // ✅ UNIFICADO: Usar solo el procesador principal
+    // ✅ CORREGIR: Normalizar el valor RGB (0-255) a PPG (0-1) para detección correcta
+    const normalizedPPGValue = red[0] / 255; // Normalizar de 0-255 a 0-1
+    
     const results = processVitalSigns(
-      red[0], // Usar solo el valor principal
+      normalizedPPGValue, // Valor normalizado para detección correcta
       undefined // Sin datos RR por ahora
     );
     
@@ -322,6 +325,7 @@ const CameraView = ({
 
   // ✅ RESTAURAR FUNCIÓN: Calcular calidad de señal para detección de dedo
   const calculateSignalQuality = (red: number, ir: number, green: number): number => {
+    // ✅ CORREGIR: Los valores ya están en 0-255, no necesitan normalización aquí
     // Validar que los valores estén en rango fisiológico
     if (red < 10 || green < 10 || ir < 10) return 0;
     
