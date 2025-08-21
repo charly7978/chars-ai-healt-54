@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
@@ -29,6 +28,7 @@ const Index = () => {
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
   const [beatMarker, setBeatMarker] = useState(0);
+  const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
@@ -44,7 +44,7 @@ const Index = () => {
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
-  // HOOKS
+  // HOOKS ÚNICOS
   const { 
     startProcessing, 
     stopProcessing, 
@@ -81,7 +81,7 @@ const Index = () => {
     crypto.getRandomValues(randomBytes);
     sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
     
-    console.log(`🚀 INICIALIZACIÓN ÚNICA: ${sessionIdRef.current}`);
+    console.log(`🚀 INICIALIZACIÓN ÚNICA GARANTIZADA: ${sessionIdRef.current}`);
     
     return () => {
       initializationLock.current = false;
@@ -97,7 +97,7 @@ const Index = () => {
       }
       setIsFullscreen(true);
     } catch (err) {
-      console.log('Fullscreen no disponible:', err);
+      console.log('Error pantalla completa:', err);
     }
   };
   
@@ -133,12 +133,26 @@ const Index = () => {
   }, []);
 
   useEffect(() => {
+    const preventScroll = (e: Event) => e.preventDefault();
+    const options = { passive: false };
+    
+    document.body.addEventListener('touchmove', preventScroll, options);
+    document.body.addEventListener('scroll', preventScroll, options);
+
+    return () => {
+      document.body.removeEventListener('touchmove', preventScroll);
+      document.body.removeEventListener('scroll', preventScroll);
+    };
+  }, []);
+
+  useEffect(() => {
     if (lastValidResults && !isMonitoring) {
       setVitalSigns(lastValidResults);
       setShowResults(true);
     }
   }, [lastValidResults, isMonitoring]);
 
+  // FUNCIÓN DE INICIO MEJORADA
   const startMonitoring = () => {
     if (systemState.current !== 'IDLE') {
       console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current}`);
@@ -146,7 +160,7 @@ const Index = () => {
     }
     
     systemState.current = 'STARTING';
-    console.log(`🎬 INICIO MONITOREO - ${sessionIdRef.current}`);
+    console.log(`🎬 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
     enterFullScreen();
     setIsMonitoring(true);
@@ -158,7 +172,8 @@ const Index = () => {
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    console.log(`🔧 Iniciando calibración`);
+    // CALIBRACIÓN CON TIMEOUT REDUCIDO
+    console.log(`🔧 Calibración iniciada`);
     setIsCalibrating(true);
     startCalibration();
     
@@ -167,7 +182,7 @@ const Index = () => {
         systemState.current = 'ACTIVE';
       }
       setIsCalibrating(false);
-    }, 2000);
+    }, 2000); // REDUCIDO DE 3000 A 2000ms
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -252,6 +267,7 @@ const Index = () => {
       calibrationProgress: 0,
       lastArrhythmiaData: undefined
     });
+    setArrhythmiaCount("--");
     setSignalQuality(0);
     lastArrhythmiaData.current = null;
     setCalibrationProgress(0);
@@ -260,36 +276,30 @@ const Index = () => {
     systemState.current = 'IDLE';
   };
 
-  // PROCESAMIENTO CORREGIDO PARA BPM REAL
+  // PROCESAMIENTO CON UMBRALES MÁS PERMISIVOS
   useEffect(() => {
     if (!lastSignal || !lastResult) return;
 
-    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 15) || lastResult.channels[0];
+    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 20) || lastResult.channels[0]; // REDUCIDO DE 30 A 20
     setSignalQuality(bestChannel?.quality || 0);
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 10; // MUY PERMISIVO PARA DEBUG
+    const MIN_SIGNAL_QUALITY = 15; // REDUCIDO DE 25 A 15 - MÁS PERMISIVO
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
-      console.log(`⚠️ Señal baja: dedo=${bestChannel?.isFingerDetected}, calidad=${bestChannel?.quality}`);
+      // NO RESETEAR INMEDIATAMENTE - dar más tiempo
+      console.log(`⚠️ Calidad baja: dedo=${bestChannel?.isFingerDetected}, calidad=${bestChannel?.quality}`);
       return;
     }
 
-    // PROCESAR SEÑAL CARDÍACA CON VALORES REALES
     const heartBeatResult = processHeartBeat(
       lastSignal.filteredValue, 
       lastSignal.fingerDetected, 
       lastSignal.timestamp
     );
     
-    // USAR BPM AGREGADO SI ESTÁ DISPONIBLE, SINO EL DEL HEARTBEAT
-    const finalBpm = lastResult.aggregatedBPM && lastResult.aggregatedBPM > 50 && lastResult.aggregatedBPM < 200 
-      ? lastResult.aggregatedBPM 
-      : (heartBeatResult.bpm && heartBeatResult.bpm > 50 && heartBeatResult.bpm < 200 ? heartBeatResult.bpm : 0);
-    
-    console.log(`💓 BPM DEBUG: agregado=${lastResult.aggregatedBPM}, heartbeat=${heartBeatResult.bpm}, final=${finalBpm}`);
-    
+    const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
     setHeartbeatSignal(lastSignal.filteredValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
@@ -304,7 +314,10 @@ const Index = () => {
       
       if (vitals.lastArrhythmiaData) {
         lastArrhythmiaData.current = vitals.lastArrhythmiaData;
-        const isArrhythmiaDetected = vitals.arrhythmiaStatus.includes("DETECTADA");
+        const [status, count] = vitals.arrhythmiaStatus.split('|');
+        setArrhythmiaCount(count || "0");
+        
+        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
         if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
           arrhythmiaDetectedRef.current = isArrhythmiaDetected;
           setArrhythmiaState(isArrhythmiaDetected);
@@ -356,23 +369,16 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-      {/* INDICADORES LIMPIOS */}
-      <div className="absolute top-4 left-4 text-white z-50 bg-black/50 p-3 rounded-lg text-sm">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${lastSignal?.fingerDetected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          <span>Dedo: {lastSignal?.fingerDetected ? 'OK' : 'NO'}</span>
-        </div>
-        <div className="flex items-center gap-2 mt-1">
-          <div className={`w-3 h-3 rounded-full ${signalQuality > 30 ? 'bg-green-500' : signalQuality > 15 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
-          <span>Calidad: {signalQuality}%</span>
-        </div>
-        <div className="flex items-center gap-2 mt-1">
-          <div className={`w-3 h-3 rounded-full ${heartRate > 0 ? 'bg-green-500' : 'bg-gray-500'}`}></div>
-          <span>BPM: {heartRate || '--'}</span>
-        </div>
-        <div className="text-xs text-gray-300 mt-1">
-          Canales: {lastResult?.channels.length || 0} | Frames: {framesProcessed}
-        </div>
+      {/* DEBUG MEJORADO */}
+      <div className="absolute top-4 left-4 text-white z-50 bg-black/70 p-2 rounded text-xs">
+        <div>Canales: {lastResult?.channels.length || 0}</div>
+        <div>BPM: {lastResult?.aggregatedBPM || '--'}</div>
+        <div>Calidad: {signalQuality}%</div>
+        <div>Frames: {framesProcessed}</div>
+        <div>Estado: {systemState.current}</div>
+        {rrIntervals.length > 0 && (
+          <div>RR: {rrIntervals.map(i => i + 'ms').join(', ')}</div>
+        )}
       </div>
 
       {!isFullscreen && (
@@ -384,7 +390,7 @@ const Index = () => {
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
             </svg>
-            <p className="text-lg font-semibold">Toca para pantalla completa</p>
+            <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
           </div>
         </button>
       )}
