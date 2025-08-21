@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
@@ -11,7 +10,6 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
-  // ESTADO ÚNICO Y DEFINITIVO
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
@@ -36,19 +34,17 @@ const Index = () => {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   
-  // REFERENCIAS ÚNICAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  // CONTROL ÚNICO DE ESTADO
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
-  // HOOKS ÚNICOS - USANDO EL NUEVO SISTEMA MULTICANAL
+  // HOOKS ÚNICOS
   const { 
     startProcessing, 
     stopProcessing, 
@@ -77,7 +73,6 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
-  // INICIALIZACIÓN ÚNICA
   useEffect(() => {
     if (initializationLock.current) return;
     
@@ -87,32 +82,20 @@ const Index = () => {
     sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
     
     console.log(`🚀 INICIALIZACIÓN ÚNICA GARANTIZADA: ${sessionIdRef.current}`);
-    console.log(`📊 Debug Info - Signal: ${JSON.stringify(signalDebugInfo)}, Heart: ${JSON.stringify(heartDebugInfo)}`);
     
     return () => {
-      console.log(`🚀 DESTRUCCIÓN CONTROLADA: ${sessionIdRef.current}`);
       initializationLock.current = false;
     };
   }, []);
 
-  // PANTALLA COMPLETA
   const enterFullScreen = async () => {
     if (isFullscreen) return;
-    
     try {
       const docEl = document.documentElement;
       if (docEl.requestFullscreen) {
         await docEl.requestFullscreen();
-      } else if ((docEl as any).webkitRequestFullscreen) {
-        await (docEl as any).webkitRequestFullscreen();
       }
-      
-      if (screen.orientation?.lock) {
-        await screen.orientation.lock('portrait').catch(() => {});
-      }
-      
       setIsFullscreen(true);
-      console.log(`📱 Pantalla completa activada ÚNICA - ${sessionIdRef.current}`);
     } catch (err) {
       console.log('Error pantalla completa:', err);
     }
@@ -120,22 +103,14 @@ const Index = () => {
   
   const exitFullScreen = () => {
     if (!isFullscreen) return;
-    
     try {
       if (document.exitFullscreen) {
         document.exitFullscreen();
-      } else if ((document as any).webkitExitFullscreen) {
-        (document as any).webkitExitFullscreen();
       }
-      
-      screen.orientation?.unlock();
       setIsFullscreen(false);
-    } catch (err) {
-      console.log('Error saliendo de pantalla completa:', err);
-    }
+    } catch (err) {}
   };
 
-  // INICIALIZACIÓN AUTOMÁTICA
   useEffect(() => {
     const timer = setTimeout(() => enterFullScreen(), 1000);
     
@@ -157,7 +132,6 @@ const Index = () => {
     };
   }, []);
 
-  // PREVENIR SCROLL
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
     const options = { passive: false };
@@ -171,46 +145,45 @@ const Index = () => {
     };
   }, []);
 
-  // SINCRONIZACIÓN ÚNICA DE RESULTADOS
   useEffect(() => {
     if (lastValidResults && !isMonitoring) {
       setVitalSigns(lastValidResults);
       setShowResults(true);
-      console.log(`✅ Resultados ÚNICOS sincronizados - ${sessionIdRef.current}`, lastValidResults);
     }
   }, [lastValidResults, isMonitoring]);
 
-  // FUNCIÓN ÚNICA DE INICIO
+  // FUNCIÓN DE INICIO MEJORADA
   const startMonitoring = () => {
     if (systemState.current !== 'IDLE') {
-      console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current} - ${sessionIdRef.current}`);
+      console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current}`);
       return;
     }
     
     systemState.current = 'STARTING';
     console.log(`🎬 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
-    if (navigator.vibrate) {
-      navigator.vibrate([200]);
-    }
-    
     enterFullScreen();
     setIsMonitoring(true);
     setIsCameraOn(true);
     setShowResults(false);
     
-    // PROCESAMIENTO ÚNICO
     startProcessing();
     
-    // RESET ÚNICO
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // CALIBRACIÓN ÚNICA
-    console.log(`🔧 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
-    startAutoCalibration();
+    // CALIBRACIÓN CON TIMEOUT REDUCIDO
+    console.log(`🔧 Calibración iniciada`);
+    setIsCalibrating(true);
+    startCalibration();
     
-    // TEMPORIZADOR ÚNICO
+    setTimeout(() => {
+      if (systemState.current === 'CALIBRATING') {
+        systemState.current = 'ACTIVE';
+      }
+      setIsCalibrating(false);
+    }, 2000); // REDUCIDO DE 3000 A 2000ms
+    
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
     }
@@ -227,33 +200,12 @@ const Index = () => {
     }, 1000);
     
     systemState.current = 'ACTIVE';
-    console.log(`✅ SISTEMA ÚNICO ACTIVO - ${sessionIdRef.current}`);
   };
 
-  // CALIBRACIÓN ÚNICA
-  const startAutoCalibration = () => {
-    if (isCalibrating || systemState.current === 'CALIBRATING') return;
-    
-    systemState.current = 'CALIBRATING';
-    console.log(`🎯 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
-    setIsCalibrating(true);
-    startCalibration();
-    
-    setTimeout(() => {
-      if (systemState.current === 'CALIBRATING') {
-        systemState.current = 'ACTIVE';
-      }
-    }, 3000);
-  };
-
-  // FINALIZACIÓN ÚNICA
   const finalizeMeasurement = () => {
-    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') {
-      return;
-    }
+    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') return;
     
     systemState.current = 'STOPPING';
-    console.log(`🏁 FINALIZACIÓN ÚNICA - ${sessionIdRef.current}`);
     
     if (isCalibrating) {
       forceCalibrationCompletion();
@@ -280,12 +232,10 @@ const Index = () => {
     setCalibrationProgress(0);
     
     systemState.current = 'IDLE';
-    console.log(`✅ FINALIZACIÓN COMPLETADA - ${sessionIdRef.current}`);
   };
 
   const handleReset = () => {
     systemState.current = 'STOPPING';
-    console.log(`🔄 RESET ÚNICO TOTAL - ${sessionIdRef.current}`);
     
     setIsMonitoring(false);
     setIsCameraOn(false);
@@ -324,36 +274,31 @@ const Index = () => {
     arrhythmiaDetectedRef.current = false;
     
     systemState.current = 'IDLE';
-    console.log(`✅ RESET TOTAL COMPLETADO - ${sessionIdRef.current}`);
   };
 
-  // PROCESAMIENTO ÚNICO DE SEÑALES - USANDO EL NUEVO SISTEMA MULTICANAL
+  // PROCESAMIENTO CON UMBRALES MÁS PERMISIVOS
   useEffect(() => {
     if (!lastSignal || !lastResult) return;
 
-    // Usar la calidad del mejor canal
-    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 30) || lastResult.channels[0];
+    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 20) || lastResult.channels[0]; // REDUCIDO DE 30 A 20
     setSignalQuality(bestChannel?.quality || 0);
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 25; // Más permisivo para el nuevo sistema
+    const MIN_SIGNAL_QUALITY = 15; // REDUCIDO DE 25 A 15 - MÁS PERMISIVO
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
-      setHeartRate(0);
-      setHeartbeatSignal(0);
-      setBeatMarker(0);
+      // NO RESETEAR INMEDIATAMENTE - dar más tiempo
+      console.log(`⚠️ Calidad baja: dedo=${bestChannel?.isFingerDetected}, calidad=${bestChannel?.quality}`);
       return;
     }
 
-    // PROCESAMIENTO ÚNICO DE LATIDOS
     const heartBeatResult = processHeartBeat(
       lastSignal.filteredValue, 
       lastSignal.fingerDetected, 
       lastSignal.timestamp
     );
     
-    // Usar el BPM agregado del sistema multicanal si está disponible
     const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
     setHeartbeatSignal(lastSignal.filteredValue);
@@ -363,7 +308,6 @@ const Index = () => {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES
     const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
@@ -391,7 +335,6 @@ const Index = () => {
     }
   }, [lastSignal, lastResult, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
-  // CONTROL DE CALIBRACIÓN ÚNICO
   useEffect(() => {
     if (!isCalibrating) return;
     
@@ -402,18 +345,12 @@ const Index = () => {
       if (currentProgress >= 100) {
         clearInterval(interval);
         setIsCalibrating(false);
-        console.log(`✅ Calibración ÚNICA finalizada - ${sessionIdRef.current}`);
-        
-        if (navigator.vibrate) {
-          navigator.vibrate([100]);
-        }
       }
     }, 500);
 
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
-  // TOGGLE ÚNICO
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
@@ -432,14 +369,18 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-      {/* DEBUG ÚNICO */}
-      {rrIntervals.length > 0 && (
-        <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded text-xs">
-          RR: {rrIntervals.map(i => i + 'ms').join(', ')}
-        </div>
-      )}
+      {/* DEBUG MEJORADO */}
+      <div className="absolute top-4 left-4 text-white z-50 bg-black/70 p-2 rounded text-xs">
+        <div>Canales: {lastResult?.channels.length || 0}</div>
+        <div>BPM: {lastResult?.aggregatedBPM || '--'}</div>
+        <div>Calidad: {signalQuality}%</div>
+        <div>Frames: {framesProcessed}</div>
+        <div>Estado: {systemState.current}</div>
+        {rrIntervals.length > 0 && (
+          <div>RR: {rrIntervals.map(i => i + 'ms').join(', ')}</div>
+        )}
+      </div>
 
-      {/* OVERLAY PANTALLA COMPLETA */}
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -462,31 +403,12 @@ const Index = () => {
             targetFps={30}
             targetW={160}
             enableTorch={true}
+            isFingerDetected={lastSignal?.fingerDetected || false}
+            signalQuality={signalQuality}
           />
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER DE ESTADO ÚNICO */}
-          <div className="px-4 py-2 flex justify-around items-center bg-black/20">
-            <div className="text-white text-lg">
-              Calidad: {signalQuality}
-            </div>
-            <div className="text-white text-lg">
-              {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
-            </div>
-            <div className="text-white text-lg">
-              Estado: {systemState.current}
-            </div>
-          </div>
-
-          {/* PANEL DE DEBUG ÚNICO */}
-          <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
-            <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
-            <div>Frames: {framesProcessed}</div>
-            <div>Canales: {lastResult?.channels.length || 0}</div>
-            <div>BPM Agregado: {lastResult?.aggregatedBPM || '--'}</div>
-          </div>
-
           <div className="flex-1">
             <PPGSignalMeter 
               value={beatMarker}
@@ -500,7 +422,6 @@ const Index = () => {
             />
           </div>
 
-          {/* DISPLAYS DE SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
@@ -542,7 +463,6 @@ const Index = () => {
             </div>
           </div>
 
-          {/* BOTONERA ÚNICA */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 

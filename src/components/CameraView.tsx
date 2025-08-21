@@ -1,12 +1,6 @@
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CameraSample } from '@/types';
-
-/**
- * CameraView: captura desde la cámara trasera, intenta activar torch (linterna)
- * y calcula por frame: promedio canal rojo, desviación y diff con frame previo.
- * No renderiza UI: emite muestras por onSample.
- */
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -15,7 +9,6 @@ interface CameraViewProps {
   targetFps?: number;
   targetW?: number;
   enableTorch?: boolean;
-  // Props existentes para compatibilidad
   isFingerDetected?: boolean;
   signalQuality?: number;
 }
@@ -36,6 +29,8 @@ const CameraView: React.FC<CameraViewProps> = ({
   const rafRef = useRef<number | null>(null);
   const prevRRef = useRef<number | null>(null);
   const lastFrameTimeRef = useRef<number>(0);
+  const [cameraError, setCameraError] = useState<string>("");
+  const [isStreaming, setIsStreaming] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -43,31 +38,47 @@ const CameraView: React.FC<CameraViewProps> = ({
     const start = async () => {
       try {
         console.log(`🎥 Iniciando cámara - Monitoreo: ${isMonitoring}`);
+        setCameraError("");
         
-        const constraints: any = {
+        // Solicitar permisos explícitamente primero
+        const permissions = await navigator.permissions.query({name: 'camera' as PermissionName});
+        if (permissions.state === 'denied') {
+          throw new Error('Permisos de cámara denegados');
+        }
+
+        const constraints: MediaStreamConstraints = {
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: targetFps }
+            width: { ideal: 640, min: 320 },
+            height: { ideal: 480, min: 240 },
+            frameRate: { ideal: targetFps, min: 15 }
           },
           audio: false
         };
 
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         if (!mounted) return;
+        
         streamRef.current = stream;
         onStreamReady?.(stream);
+        setIsStreaming(true);
 
         console.log(`✅ Stream obtenido correctamente`);
 
-        // crear video oculto
+        // crear video visible para debug
         if (!videoRef.current) {
           const v = document.createElement('video');
           v.autoplay = true;
           v.playsInline = true;
           v.muted = true;
-          v.style.display = 'none';
+          v.style.position = 'absolute';
+          v.style.top = '10px';
+          v.style.right = '10px';
+          v.style.width = '120px';
+          v.style.height = '90px';
+          v.style.zIndex = '50';
+          v.style.border = '2px solid #00ff00';
+          v.style.borderRadius = '8px';
           document.body.appendChild(v);
           videoRef.current = v;
         }
@@ -81,24 +92,20 @@ const CameraView: React.FC<CameraViewProps> = ({
           canvasRef.current = c;
         }
 
-        // intentar encender torch si la cámara lo permite y usuario quiere
+        // intentar linterna
         try {
           const [track] = stream.getVideoTracks();
           const capabilities = (track as any).getCapabilities?.();
-          if (enableTorch && capabilities && capabilities.torch) {
-            console.log(`💡 Intentando activar linterna...`);
-            try {
-              await (track as any).applyConstraints({ advanced: [{ torch: true }] });
-              console.log(`✅ Linterna activada`);
-            } catch (e) {
-              console.log(`⚠️ No se pudo activar linterna automáticamente`);
-            }
+          if (enableTorch && capabilities?.torch) {
+            console.log(`💡 Activando linterna...`);
+            await (track as any).applyConstraints({ advanced: [{ torch: true }] });
+            console.log(`✅ Linterna activada`);
           }
         } catch (e) {
-          console.log(`⚠️ Error con linterna:`, e);
+          console.log(`⚠️ Linterna no disponible`);
         }
 
-        // esperar video metadata
+        // esperar video cargado
         await new Promise<void>((resolve) => {
           const v = videoRef.current!;
           if (v.readyState >= 1) return resolve();
@@ -106,22 +113,29 @@ const CameraView: React.FC<CameraViewProps> = ({
           v.addEventListener('loadedmetadata', onLoaded);
         });
 
-        console.log(`🎬 Iniciando loop de procesamiento...`);
-
+        console.log(`🎬 Iniciando procesamiento de frames...`);
+        
         const loop = (ts: number) => {
+          if (!mounted || !isMonitoring) return;
+          
           const now = performance.now();
           const dt = now - lastFrameTimeRef.current;
           const minDt = 1000 / targetFps;
+          
           if (!lastFrameTimeRef.current || dt >= minDt) {
             lastFrameTimeRef.current = now;
             captureAndEmit();
           }
+          
           rafRef.current = requestAnimationFrame(loop);
         };
 
         rafRef.current = requestAnimationFrame(loop);
-      } catch (err) {
-        console.error('CameraView: error al abrir la cámara', err);
+        
+      } catch (err: any) {
+        console.error('❌ Error cámara:', err);
+        setCameraError(err.message || 'Error desconocido de cámara');
+        setIsStreaming(false);
       }
     };
 
@@ -132,12 +146,15 @@ const CameraView: React.FC<CameraViewProps> = ({
 
       const aspect = v.videoHeight / v.videoWidth;
       const targetH = Math.round(targetW * aspect);
+      
       if (c.width !== targetW || c.height !== targetH) {
         c.width = targetW;
         c.height = targetH;
       }
+      
       const ctx = c.getContext('2d');
       if (!ctx) return;
+      
       ctx.drawImage(v, 0, 0, c.width, c.height);
       const img = ctx.getImageData(0, 0, c.width, c.height);
       const d = img.data;
@@ -148,6 +165,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         sum += r;
         sum2 += r * r;
       }
+      
       const len = d.length / 4;
       const mean = sum / len;
       const variance = Math.max(0, sum2 / len - mean * mean);
@@ -163,7 +181,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         frameDiff
       };
 
-      console.log(`📊 Sample: rMean=${mean.toFixed(1)}, rStd=${std.toFixed(1)}, frameDiff=${frameDiff.toFixed(1)}`);
+      console.log(`📊 Sample: rMean=${mean.toFixed(1)}, std=${std.toFixed(1)}, diff=${frameDiff.toFixed(1)}`);
       onSample?.(sample);
     };
 
@@ -172,14 +190,58 @@ const CameraView: React.FC<CameraViewProps> = ({
     return () => {
       mounted = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      const s = streamRef.current; if (s) s.getTracks().forEach(t => t.stop());
-      if (videoRef.current) { try { document.body.removeChild(videoRef.current); } catch (e) {} videoRef.current = null; }
-      if (canvasRef.current) { try { document.body.removeChild(canvasRef.current); } catch (e) {} canvasRef.current = null; }
+      const s = streamRef.current; 
+      if (s) s.getTracks().forEach(t => t.stop());
+      if (videoRef.current) { 
+        try { document.body.removeChild(videoRef.current); } catch (e) {} 
+        videoRef.current = null; 
+      }
+      if (canvasRef.current) { 
+        try { document.body.removeChild(canvasRef.current); } catch (e) {} 
+        canvasRef.current = null; 
+      }
+      setIsStreaming(false);
     };
   }, [isMonitoring, onSample, onStreamReady, targetFps, targetW, enableTorch]);
 
-  // Este componente no renderiza UI visible (la app principal controla la UI completa)
-  return null;
+  // Renderizar estado de la cámara
+  return (
+    <div className="absolute inset-0 bg-black flex items-center justify-center">
+      {!isMonitoring && (
+        <div className="text-white text-center">
+          <div className="text-xl mb-2">📷</div>
+          <div>Cámara desactivada</div>
+        </div>
+      )}
+      
+      {isMonitoring && !isStreaming && !cameraError && (
+        <div className="text-white text-center">
+          <div className="text-xl mb-2 animate-pulse">🔄</div>
+          <div>Iniciando cámara...</div>
+        </div>
+      )}
+      
+      {cameraError && (
+        <div className="text-red-500 text-center p-4">
+          <div className="text-xl mb-2">❌</div>
+          <div className="font-bold">Error de Cámara</div>
+          <div className="text-sm mt-2">{cameraError}</div>
+          <div className="text-xs mt-2">Asegúrate de permitir el acceso a la cámara</div>
+        </div>
+      )}
+      
+      {isStreaming && (
+        <div className="text-white text-center">
+          <div className="text-xl mb-2">📹</div>
+          <div>Cámara activa</div>
+          <div className="text-sm mt-2">
+            Dedo: {isFingerDetected ? '✅' : '❌'} | 
+            Calidad: {signalQuality}%
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default CameraView;

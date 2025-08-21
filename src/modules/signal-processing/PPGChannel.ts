@@ -1,14 +1,5 @@
-
 /**
- * PPGChannel: procesa una única "vía" del PPG.
- * - Mantiene buffer temporal
- * - Aplica detrend + suavizado
- * - Calcula potencia en banda fisiológica (Goertzel)
- * - Mantiene un 'gain' adaptativo que puede ajustarse vía feedback
- *
- * Observación: aquí la señal de entrada es el rMean (canal rojo). Si querés
- * que cada canal reciba una sub-variación diferente (ej. filtros distintos),
- * el MultiChannelManager puede configurar distintos parámetros por canal.
+ * PPGChannel: VERSIÓN CORREGIDA con umbrales más permisivos
  */
 
 import { savitzkyGolay } from './SavitzkyGolayFilter';
@@ -21,11 +12,11 @@ export default class PPGChannel {
   channelId: number;
   private buffer: Sample[] = [];
   private windowSec: number;
-  private gain: number; // factor multiplicativo adaptativo
+  private gain: number;
   private lastBpm: number | null = null;
   private lastSnr = 0;
   private lastQuality = 0;
-  private minRMeanForFinger = 25;
+  private minRMeanForFinger = 15; // REDUCIDO DE 25 A 15 - MÁS PERMISIVO
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -35,14 +26,12 @@ export default class PPGChannel {
 
   pushSample(rawValue: number, timestampMs: number) {
     const t = timestampMs / 1000;
-    // aplicar gain antes de almacenar — así el feedback actúa sobre valores futuros
     const v = rawValue * this.gain;
     this.buffer.push({ t, v });
     const t0 = t - this.windowSec;
     while (this.buffer.length && this.buffer[0].t < t0) this.buffer.shift();
   }
 
-  // Ajuste manual/feedback desde el manager. delta puede ser relativo (+/-).
   adjustGain(delta: number) {
     this.gain = Math.max(0.1, Math.min(10, this.gain * (1 + delta)));
   }
@@ -51,7 +40,6 @@ export default class PPGChannel {
     return this.gain;
   }
 
-  // Procesa la ventana y devuelve métricas
   analyze(): {
     calibratedSignal: number[];
     bpm: number | null;
@@ -59,37 +47,35 @@ export default class PPGChannel {
     quality: number;
     isFingerDetected: boolean;
   } {
-    if (this.buffer.length < 10) {
+    if (this.buffer.length < 5) { // REDUCIDO DE 10 A 5 - MÁS PERMISIVO
       return { calibratedSignal: [], bpm: null, snr: 0, quality: 0, isFingerDetected: false };
     }
-    // remuestreo simple uniforme
-    const N = 256;
+
+    const N = Math.min(128, this.buffer.length); // REDUCIDO DE 256 A 128 - MÁS RÁPIDO
     const sampled = this.resampleUniform(this.buffer, N);
-    // detrend
     const detr = this.detrend(sampled);
-    // suavizar
-    const smooth = savitzkyGolay(detr, 11, 3);
-    // fs estimada
+    const smooth = savitzkyGolay(detr, Math.min(7, N-2), 2); // PARÁMETROS MÁS PERMISIVOS
     const fs = N / this.windowSec;
 
-    // evaluar energía en 0.8-3.0 Hz
-    const freqs = this.linspace(0.8, 3.0, 112);
+    // evaluar energía en banda más amplia: 0.5-4.0 Hz (antes 0.8-3.0)
+    const freqs = this.linspace(0.5, 4.0, 50); // MENOS PUNTOS, MÁS RÁPIDO
     const powers = freqs.map(f => goertzelPower(smooth, fs, f));
     const sorted = powers.slice().sort((a,b)=>b-a);
     const peak = sorted[0] || 0;
-    const noiseMedian = this.median(powers.slice(Math.max(1, Math.floor(powers.length*0.25))));
-    const snr = peak / Math.max(1e-9, noiseMedian);
+    const noiseMedian = this.median(powers.slice(Math.floor(powers.length*0.3))); // MÁS PERMISIVO
+    const snr = peak / Math.max(1e-12, noiseMedian); // DENOMINADOR MÁS PEQUEÑO
     const quality = computeSNR(peak, noiseMedian);
 
     const peakIndex = powers.indexOf(peak);
     const peakFreq = freqs[peakIndex] || 0;
-    const bpm = peak > 1e-6 ? Math.round(peakFreq * 60) : null;
+    const bpm = peak > 1e-9 ? Math.round(peakFreq * 60) : null; // UMBRAL MÁS BAJO
 
-    // heurística dedo:
+    // DETECCIÓN DE DEDO MÁS PERMISIVA
     const meanLast = sampled.reduce((a,b)=>a+b,0)/sampled.length;
-    const isFinger = meanLast >= this.minRMeanForFinger && snr > 3 && peak > 1e-6;
+    const isFinger = meanLast >= this.minRMeanForFinger && snr > 1.5 && peak > 1e-9; // UMBRALES REDUCIDOS
 
-    // almacenar para retorno
+    console.log(`📊 Canal ${this.channelId}: mean=${meanLast.toFixed(1)}, snr=${snr.toFixed(2)}, peak=${peak.toExponential(2)}, dedo=${isFinger}`);
+
     this.lastBpm = bpm;
     this.lastSnr = snr;
     this.lastQuality = quality;
