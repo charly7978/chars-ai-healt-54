@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
-import { AdvancedVitalSignsProcessor, BiometricReading } from '../modules/vital-signs/VitalSignsProcessor';
+import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -17,7 +17,7 @@ const CameraView = ({
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const vitalProcessor = useRef(new AdvancedVitalSignsProcessor());
+  const vitalProcessor = useRef(new VitalSignsProcessor());
   const [torchEnabled, setTorchEnabled] = useState(false);
   const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
   const lastFrameTimeRef = useRef<number>(0);
@@ -289,12 +289,11 @@ const CameraView = ({
   const processFrame = (frameData: ImageData) => {
     const { red, ir, green } = extractPPGSignals(frameData);
     
-    const results = vitalProcessor.current.processSignal({
-      red,
-      ir, 
-      green,
-      timestamp: Date.now()
-    });
+    // ✅ UNIFICADO: Usar solo el procesador principal
+    const results = vitalProcessor.current.processSignal(
+      red[0], // Usar solo el valor principal
+      undefined // Sin datos RR por ahora
+    );
     
     if (results) {
       handleResults(results);
@@ -354,12 +353,12 @@ const CameraView = ({
     };
   };
 
-  const handleResults = (results: BiometricReading) => {
+  const handleResults = (results: VitalSignsResult) => {
     console.log('Mediciones biométricas:', {
       spo2: results.spo2.toFixed(1) + '%',
-      pressure: results.sbp + '/' + results.dbp + ' mmHg',
+      pressure: results.pressure + ' mmHg',
       glucose: results.glucose.toFixed(0) + ' mg/dL',
-      confidence: (results.confidence * 100).toFixed(1) + '%'
+      arrhythmiaStatus: results.arrhythmiaStatus
     });
   };
 
