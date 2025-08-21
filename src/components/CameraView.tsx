@@ -292,6 +292,23 @@ const CameraView = ({
   const processFrame = (frameData: ImageData) => {
     const { red, ir, green } = extractPPGSignals(frameData);
     
+    // ✅ RESTAURAR DETECCIÓN DE DEDO: Calcular calidad de señal
+    const signalQuality = calculateSignalQuality(red[0], ir[0], green[0]);
+    const fingerDetected = signalQuality > 30; // Umbral de detección
+    
+    console.log("📊 Frame procesado:", { 
+      red: red[0], 
+      ir: ir[0], 
+      green: green[0],
+      signalQuality,
+      fingerDetected
+    });
+    
+    // ✅ RESTAURAR CALLBACK: Notificar detección de dedo
+    if (onFingerDetected) {
+      onFingerDetected(fingerDetected, signalQuality);
+    }
+    
     // ✅ UNIFICADO: Usar solo el procesador principal
     const results = processVitalSigns(
       red[0], // Usar solo el valor principal
@@ -301,6 +318,27 @@ const CameraView = ({
     if (results) {
       handleResults(results);
     }
+  };
+
+  // ✅ RESTAURAR FUNCIÓN: Calcular calidad de señal para detección de dedo
+  const calculateSignalQuality = (red: number, ir: number, green: number): number => {
+    // Validar que los valores estén en rango fisiológico
+    if (red < 10 || green < 10 || ir < 10) return 0;
+    
+    // Calcular ratios fisiológicos
+    const rToGRatio = red / green;
+    const rToIRRatio = red / ir;
+    
+    // Validar ratios fisiológicos (dedo humano)
+    if (rToGRatio < 0.8 || rToGRatio > 2.5) return 0;
+    if (rToIRRatio < 0.6 || rToIRRatio > 3.0) return 0;
+    
+    // Calcular calidad basada en intensidad y estabilidad
+    const intensity = (red + green + ir) / 3;
+    const stabilityBonus = Math.min(20, intensity / 10);
+    
+    // Calidad final (0-100)
+    return Math.min(100, Math.max(0, intensity + stabilityBonus));
   };
 
   const extractPPGSignals = (frameData: ImageData) => {
@@ -365,6 +403,41 @@ const CameraView = ({
     });
   };
 
+  // ✅ RESTAURAR FUNCIÓN: Procesamiento en tiempo real de frames
+  const startRealTimeProcessing = () => {
+    if (!stream || !isMonitoring) return;
+    
+    const processNextFrame = () => {
+      if (!stream || !isMonitoring) return;
+      
+      const video = videoRef.current;
+      if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) {
+        requestAnimationFrame(processNextFrame);
+        return;
+      }
+      
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      
+      ctx.drawImage(video, 0, 0);
+      const frameData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      
+      processFrame(frameData);
+      
+      // Continuar procesamiento
+      requestAnimationFrame(processNextFrame);
+    };
+    
+    // Iniciar procesamiento después de un delay para estabilizar la cámara
+    setTimeout(() => {
+      processNextFrame();
+    }, 2000);
+  };
+
   useEffect(() => {
     if (isMonitoring && !stream) {
       if (process.env.NODE_ENV !== 'production') {
@@ -385,42 +458,13 @@ const CameraView = ({
     };
   }, [isMonitoring]);
 
+  // ✅ RESTAURAR: Activar procesamiento en tiempo real cuando la cámara esté lista
   useEffect(() => {
-    if (!stream || !deviceSupportsTorch || !isMonitoring) return;
-    
-    const keepTorchOn = async () => {
-      if (!isMonitoring || !deviceSupportsTorch) return;
-
-      const torchIsReallyOn = stream.getVideoTracks()[0].getSettings && (stream.getVideoTracks()[0].getSettings() as any).torch === true;
-
-      if (!torchIsReallyOn) {
-        try {
-          await handleTorch(true);
-          if (process.env.NODE_ENV !== 'production') {
-            console.log("CameraView: Re-activando linterna (torch)");
-          }
-        } catch (err) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.error("CameraView: Error re-encendiendo linterna:", err);
-          }
-          torchAttempts.current++;
-          setTorchEnabled(false);
-        }
-      } else {
-        if (!torchEnabled) {
-          setTorchEnabled(true);
-        }
-      }
-    };
-    
-    const torchCheckInterval = setInterval(keepTorchOn, 2000);
-    
-    keepTorchOn();
-    
-    return () => {
-      clearInterval(torchCheckInterval);
-    };
-  }, [stream, isMonitoring, deviceSupportsTorch, torchEnabled]);
+    if (stream && isMonitoring) {
+      console.log("🎥 CameraView: Cámara lista, iniciando procesamiento en tiempo real");
+      startRealTimeProcessing();
+    }
+  }, [stream, isMonitoring]);
 
   useEffect(() => {
     if (!stream || !isMonitoring || !deviceSupportsAutoFocus) return;
