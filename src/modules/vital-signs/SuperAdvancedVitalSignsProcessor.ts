@@ -181,9 +181,9 @@ export class SuperAdvancedVitalSignsProcessor {
     DEAD_SPACE_NORMAL: 150, // mL
     
     // Constantes metabólicas
-    GLUCOSE_NORMAL_FASTING: 90, // mg/dL
+    GLUCOSE_NORMAL_FASTING: 80, // mg/dL
     INSULIN_SENSITIVITY_NORMAL: 0.357, // QUICKI
-    METABOLIC_RATE_NORMAL: 1800, // kcal/día
+    METABOLIC_RATE_NORMAL: 1700, // kcal/día
     
     // Constantes bioquímicas
     TOTAL_CHOLESTEROL_OPTIMAL: 180, // mg/dL
