@@ -47,18 +47,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // CONFIGURACIÓN OPTIMIZADA PARA DETECCIÓN REAL
   private readonly CONFIG = {
     // UMBRALES MÁS PERMISIVOS PERO PRECISOS
-    MIN_RED_THRESHOLD: 20,  // Más bajo para mejor detección
+    MIN_RED_THRESHOLD: 40,  // Más bajo para mejor detección
     MAX_RED_THRESHOLD: 250,
     MIN_DETECTION_SCORE: 0.4, // Más permisivo
     MIN_CONSECUTIVE_FOR_DETECTION: 3, // Menos frames requeridos
-    MAX_CONSECUTIVE_FOR_LOSS: 8,
+    MAX_CONSECUTIVE_FOR_LOSS: 4,
     
     // VALIDACIÓN EQUILIBRADA
     MIN_SNR_REQUIRED: 8.0, // SNR más bajo pero funcional
     SKIN_COLOR_STRICTNESS: 0.6, // Más permisivo
     PULSATILITY_MIN_REQUIRED: 0.1, // Más bajo para señales débiles
     TEXTURE_HUMAN_MIN: 0.4, // Más permisivo
-    STABILITY_FRAMES: 10, // Menos frames para estabilidad
+    STABILITY_FRAMES: 3, // Menos frames para estabilidad
     
     NOISE_THRESHOLD: 1.5,
     PEAK_PROMINENCE: 0.15, // Más sensible para detectar latidos débiles
@@ -79,7 +79,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.biophysicalValidator = new BiophysicalValidator();
     this.frameProcessor = new FrameProcessor({
       TEXTURE_GRID_SIZE: 16,
-      ROI_SIZE_FACTOR: 0.85
+      ROI_SIZE_FACTOR: 1.10
     });
     this.calibrationHandler = new CalibrationHandler({
       CALIBRATION_SAMPLES: 30,
