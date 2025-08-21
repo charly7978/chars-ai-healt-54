@@ -46,18 +46,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // CONFIGURACIÓN ULTRA-ESTRICTA PARA EVITAR FALSOS POSITIVOS
   private readonly CONFIG = {
     // UMBRALES MUY ESTRICTOS PARA DEDO REAL
-    MIN_RED_THRESHOLD: 70,  // Aumentado para exigir más señal
+    MIN_RED_THRESHOLD: 50,  // Aumentado para exigir más señal
     MAX_RED_THRESHOLD: 220, // Reducido para evitar saturación
-    MIN_DETECTION_SCORE: 0.65, // MUY ESTRICTO - Solo señal perfecta
+    MIN_DETECTION_SCORE: 0.25, // MUY ESTRICTO - Solo señal perfecta
     MIN_CONSECUTIVE_FOR_DETECTION: 5, // Más frames requeridos
     MAX_CONSECUTIVE_FOR_LOSS: 5,
     
     // VALIDACIÓN ULTRA-ESTRICTA
-    MIN_SNR_REQUIRED: 15.0, // SNR muy alto para señal limpia
+    MIN_SNR_REQUIRED: 8.0, // SNR muy alto para señal limpia
     SKIN_COLOR_STRICTNESS: 0.9, // Muy estricto en color de piel
-    PULSATILITY_MIN_REQUIRED: 0.25, // Pulsatilidad mínima alta
+    PULSATILITY_MIN_REQUIRED: 0.15, // Pulsatilidad mínima alta
     TEXTURE_HUMAN_MIN: 0.8, // Textura humana muy estricta
-    STABILITY_FRAMES: 15, // Más frames para estabilidad
+    STABILITY_FRAMES: 8, // Más frames para estabilidad
     
     // PARÁMETROS PARA DETECTAR SEÑAL REAL
     MIN_VARIANCE_RATIO: 0.15, // Varianza mínima para señal pulsátil
@@ -66,9 +66,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     PERFUSION_THRESHOLD: 0.3, // Umbral de perfusión alto
     
     NOISE_THRESHOLD: 0.8, // Más estricto
-    PEAK_PROMINENCE: 0.3, // Mayor prominencia requerida
+    PEAK_PROMINENCE: 0.2, // Mayor prominencia requerida
     VALLEY_DEPTH: 0.2,
-    SIGNAL_CONSISTENCY: 0.8 // Alta consistencia requerida
+    SIGNAL_CONSISTENCY: 0.6 // Alta consistencia requerida
   };
   
   constructor(
