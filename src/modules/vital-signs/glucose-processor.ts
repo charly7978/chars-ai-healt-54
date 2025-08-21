@@ -43,17 +43,17 @@ export class GlucoseProcessor {
     // Calculate glucose using validated model
     const baseGlucose = 83; // Baseline en estudios
     const glucoseEstimate = baseGlucose +
-      (features.derivativeRatio * 6.2) +     // antes: 7.2
+      (features.derivativeRatio * 8.2) +     // antes: 7.2
       (features.riseFallRatio * 8.5) -         // antes: 8.1 (se invierte el signo para ajustar la correlación)
-      (features.variabilityIndex * 5.0) +      // antes: -5.3, se invierte y ajusta el multiplicador
-      (features.peakWidth * 4.0) +             // antes: 4.7
+      (features.variabilityIndex * 7.0) +      // antes: -5.3, se invierte y ajusta el multiplicador
+      (features.peakWidth * 7.0) +             // antes: 4.7
       this.calibrationOffset;
     
     // Calculate confidence based on signal quality
     this.confidenceScore = this.calculateConfidence(features, recentPPG);
     
     // Apply physiological constraints
-    const maxAllowedChange = 15; // Maximum mg/dL change in short period
+    const maxAllowedChange = 10; // Maximum mg/dL change in short period
     let constrainedEstimate = this.lastEstimate;
     
     if (this.confidenceScore > this.CONFIDENCE_THRESHOLD) {
