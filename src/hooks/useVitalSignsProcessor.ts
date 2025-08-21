@@ -111,10 +111,10 @@ export const useVitalSignsProcessor = () => {
         signalLog.current.splice(0, excessCount);
       }
       
-      // LIMPIEZA PERIÓDICA: Cada 100 señales, limpiar logs antiguos
-      if (processedSignals.current % 100 === 0) {
-        this.cleanupOldLogs();
-      }
+             // LIMPIEZA PERIÓDICA: Cada 100 señales, limpiar logs antiguos
+       if (processedSignals.current % 100 === 0) {
+         cleanupOldLogs();
+       }
       
       console.log("useVitalSignsProcessor: Log de señales", {
         totalEntradas: signalLog.current.length,
