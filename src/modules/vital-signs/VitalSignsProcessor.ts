@@ -20,6 +20,14 @@ export interface VitalSignsResult {
     triglycerides: number;
   };
   hemoglobin: number;
+  // Propiedades extendidas para detección de dedo y calidad
+  fingerDetected?: boolean;
+  quality?: number;
+  timestamp?: number;
+  // Propiedades para debugging y estadísticas
+  framesProcessed?: number;
+  signalStats?: any;
+  qualityTransitions?: any;
   calibration?: {
     isCalibrating: boolean;
     progress: {
@@ -49,6 +57,7 @@ export class VitalSignsProcessor {
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED_SAMPLES: number = 40;
   private readonly CALIBRATION_DURATION_MS: number = 6000;
+  private framesProcessed: number = 0;
   
   private spo2Samples: number[] = [];
   private pressureSamples: number[] = [];
@@ -149,6 +158,8 @@ export class VitalSignsProcessor {
     ppgValue: number,
     rrData?: { intervals: number[]; lastPeakTime: number | null }
   ): VitalSignsResult {
+    this.framesProcessed++;
+    
     // Si el valor es muy bajo, se asume que no hay dedo => no medir nada
     if (ppgValue < 0.1) {
       console.log("VitalSignsProcessor: No se detecta dedo, retornando resultados previos.");
@@ -161,7 +172,8 @@ export class VitalSignsProcessor {
           totalCholesterol: 0,
           triglycerides: 0
         },
-        hemoglobin: 0
+        hemoglobin: 0,
+        framesProcessed: this.framesProcessed
       };
     }
 
@@ -199,7 +211,12 @@ export class VitalSignsProcessor {
       lastArrhythmiaData: arrhythmiaResult.lastArrhythmiaData,
       glucose,
       lipids,
-      hemoglobin
+      hemoglobin,
+      // Propiedades de detección de dedo
+      fingerDetected: ppgValue > 0.1,
+      quality: Math.min(100, Math.max(0, (ppgValue / 2) * 100)), // Calidad basada en la intensidad de la señal
+      timestamp: Date.now(),
+      framesProcessed: this.framesProcessed
     };
     
     if (this.isCalibrating) {
@@ -244,6 +261,23 @@ export class VitalSignsProcessor {
     return {
       isCalibrating: true,
       progress: { ...this.calibrationProgress }
+    };
+  }
+
+  public getSignalStats(): any {
+    return {
+      framesProcessed: this.framesProcessed,
+      ppgValuesCount: this.signalProcessor.getPPGValues().length,
+      isCalibrating: this.isCalibrating,
+      calibrationSamples: this.calibrationSamples
+    };
+  }
+
+  public getProcessingStatus(): any {
+    return {
+      isCalibrating: this.isCalibrating,
+      calibrationProgress: this.calibrationProgress,
+      framesProcessed: this.framesProcessed
     };
   }
 

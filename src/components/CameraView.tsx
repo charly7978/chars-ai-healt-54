@@ -7,6 +7,8 @@ interface CameraViewProps {
   isMonitoring: boolean;
   isFingerDetected?: boolean;
   signalQuality?: number;
+  processVitalSigns: (ppgValue: number, rrData?: { intervals: number[]; lastPeakTime: number | null }) => any;
+  onFingerDetected?: (detected: boolean, quality: number) => void;
 }
 
 const CameraView = ({ 
@@ -14,10 +16,11 @@ const CameraView = ({
   isMonitoring, 
   isFingerDetected = false, 
   signalQuality = 0,
+  processVitalSigns,
+  onFingerDetected,
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const vitalProcessor = useRef(new VitalSignsProcessor());
   const [torchEnabled, setTorchEnabled] = useState(false);
   const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
   const lastFrameTimeRef = useRef<number>(0);
@@ -290,7 +293,7 @@ const CameraView = ({
     const { red, ir, green } = extractPPGSignals(frameData);
     
     // ✅ UNIFICADO: Usar solo el procesador principal
-    const results = vitalProcessor.current.processSignal(
+    const results = processVitalSigns(
       red[0], // Usar solo el valor principal
       undefined // Sin datos RR por ahora
     );
