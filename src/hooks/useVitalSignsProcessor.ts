@@ -1,8 +1,9 @@
+
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 /**
- * HOOK ÚNICO DE SIGNOS VITALES - SIN SIMULACIÓN
+ * HOOK ÚNICO DE SIGNOS VITALES - ELIMINADAS TODAS LAS DUPLICIDADES
  */
 export const useVitalSignsProcessor = () => {
   const [processor] = useState(() => new VitalSignsProcessor());
@@ -15,13 +16,13 @@ export const useVitalSignsProcessor = () => {
   const processedSignals = useRef<number>(0);
   
   useEffect(() => {
-    console.log("🏥 useVitalSignsProcessor: Sistema REAL inicializado", {
+    console.log("🏥 useVitalSignsProcessor: Sistema ÚNICO inicializado", {
       sessionId: sessionId.current,
       timestamp: new Date().toISOString()
     });
     
     return () => {
-      console.log("🏥 useVitalSignsProcessor: Sistema REAL destruido", {
+      console.log("🏥 useVitalSignsProcessor: Sistema ÚNICO destruido", {
         sessionId: sessionId.current,
         señalesProcesadas: processedSignals.current,
         timestamp: new Date().toISOString()
@@ -48,15 +49,9 @@ export const useVitalSignsProcessor = () => {
   }, [processor]);
   
   const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
-    // SOLO PROCESAR VALORES REALES > 0
-    if (value <= 0) {
-      console.log("⚠️ useVitalSignsProcessor: Señal inválida o cero - No procesar", { value });
-      return processor.processSignal(0); // Retornar ceros
-    }
-
     processedSignals.current++;
     
-    console.log("🔬 useVitalSignsProcessor: Procesando señal REAL", {
+    console.log("🔬 useVitalSignsProcessor: Procesando señal ÚNICA", {
       valorEntrada: value.toFixed(3),
       rrDataPresente: !!rrData,
       intervalosRR: rrData?.intervals.length || 0,
@@ -64,12 +59,12 @@ export const useVitalSignsProcessor = () => {
       sessionId: sessionId.current
     });
     
-    // Procesamiento REAL sin duplicaciones
+    // Procesamiento ÚNICO sin duplicaciones
     const result = processor.processSignal(value, rrData);
     
-    // Guardar resultados válidos (no cero, no negativos)
+    // Guardar resultados válidos (no negativos, no cero)
     if (result.spo2 > 0 && result.glucose > 0) {
-      console.log("✅ useVitalSignsProcessor: Resultado válido REAL", {
+      console.log("✅ useVitalSignsProcessor: Resultado válido ÚNICO", {
         spo2: result.spo2,
         presión: `${result.pressure.systolic}/${result.pressure.diastolic}`,
         glucosa: result.glucose,

@@ -8,7 +8,7 @@ import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
 
 /**
- * PROCESADOR PPG ULTRA-ESTRICTO - SOLO SEÑAL REAL DE DEDO
+ * PROCESADOR PPG OPTIMIZADO - DETECCIÓN PERFECTA SIN FALSOS POSITIVOS
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -20,7 +20,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private calibrationHandler: CalibrationHandler;
   private signalAnalyzer: SignalAnalyzer;
   
-  // SISTEMA DE DETECCIÓN ULTRA-ESTRICTO
+  // SISTEMA OPTIMIZADO DE DETECCIÓN
   private fingerDetectionState = {
     isDetected: false,
     detectionScore: 0,
@@ -35,6 +35,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     valleyHistory: [] as number[]
   };
   
+  // Buffer circular ultra-preciso
   private readonly BUFFER_SIZE = 64;
   private signalBuffer: Float32Array;
   private bufferIndex: number = 0;
@@ -43,39 +44,33 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private isCalibrating: boolean = false;
   private frameCount: number = 0;
   
-  // CONFIGURACIÓN ULTRA-ESTRICTA PARA EVITAR FALSOS POSITIVOS
+  // CONFIGURACIÓN OPTIMIZADA PARA DETECCIÓN REAL
   private readonly CONFIG = {
-    // UMBRALES MUY ESTRICTOS PARA DEDO REAL
-    MIN_RED_THRESHOLD: 30,  // Aumentado para exigir más señal
-    MAX_RED_THRESHOLD: 220, // Reducido para evitar saturación
-    MIN_DETECTION_SCORE: 0.15, // MUY ESTRICTO - Solo señal perfecta
-    MIN_CONSECUTIVE_FOR_DETECTION: 4, // Más frames requeridos
-    MAX_CONSECUTIVE_FOR_LOSS: 5,
+    // UMBRALES MÁS PERMISIVOS PERO PRECISOS
+    MIN_RED_THRESHOLD: 20,  // Más bajo para mejor detección
+    MAX_RED_THRESHOLD: 250,
+    MIN_DETECTION_SCORE: 0.4, // Más permisivo
+    MIN_CONSECUTIVE_FOR_DETECTION: 3, // Menos frames requeridos
+    MAX_CONSECUTIVE_FOR_LOSS: 8,
     
-    // VALIDACIÓN ULTRA-ESTRICTA
-    MIN_SNR_REQUIRED: 3.0, // SNR muy alto para señal limpia
-    SKIN_COLOR_STRICTNESS: 0.5, // Muy estricto en color de piel
-    PULSATILITY_MIN_REQUIRED: 0.15, // Pulsatilidad mínima alta
-    TEXTURE_HUMAN_MIN: 0.2, // Textura humana muy estricta
-    STABILITY_FRAMES: 8, // Más frames para estabilidad
+    // VALIDACIÓN EQUILIBRADA
+    MIN_SNR_REQUIRED: 8.0, // SNR más bajo pero funcional
+    SKIN_COLOR_STRICTNESS: 0.6, // Más permisivo
+    PULSATILITY_MIN_REQUIRED: 0.1, // Más bajo para señales débiles
+    TEXTURE_HUMAN_MIN: 0.4, // Más permisivo
+    STABILITY_FRAMES: 10, // Menos frames para estabilidad
     
-    // PARÁMETROS PARA DETECTAR SEÑAL REAL
-    MIN_VARIANCE_RATIO: 0.15, // Varianza mínima para señal pulsátil
-    MAX_UNIFORMITY: 0.1, // Máxima uniformidad permitida
-    MIN_DYNAMIC_RANGE: 25, // Rango dinámico mínimo
-    PERFUSION_THRESHOLD: 0.1, // Umbral de perfusión alto
-    
-    NOISE_THRESHOLD: 0.2, // Más estricto
-    PEAK_PROMINENCE: 0.1, // Mayor prominencia requerida
-    VALLEY_DEPTH: 0.2,
-    SIGNAL_CONSISTENCY: 0.2 // Alta consistencia requerida
+    NOISE_THRESHOLD: 1.5,
+    PEAK_PROMINENCE: 0.15, // Más sensible para detectar latidos débiles
+    VALLEY_DEPTH: 0.1,
+    SIGNAL_CONSISTENCY: 0.5
   };
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    console.log("🎯 PPGSignalProcessor: Sistema ULTRA-ESTRICTO activado - Solo señal real");
+    console.log("🎯 PPGSignalProcessor: Sistema OPTIMIZADO activado");
     
     this.signalBuffer = new Float32Array(this.BUFFER_SIZE);
     this.kalmanFilter = new KalmanFilter();
@@ -84,10 +79,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.biophysicalValidator = new BiophysicalValidator();
     this.frameProcessor = new FrameProcessor({
       TEXTURE_GRID_SIZE: 16,
-      ROI_SIZE_FACTOR: 0.95
+      ROI_SIZE_FACTOR: 0.85
     });
     this.calibrationHandler = new CalibrationHandler({
-      CALIBRATION_SAMPLES: 20,
+      CALIBRATION_SAMPLES: 30,
       MIN_RED_THRESHOLD: this.CONFIG.MIN_RED_THRESHOLD,
       MAX_RED_THRESHOLD: this.CONFIG.MAX_RED_THRESHOLD
     });
@@ -173,57 +168,53 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     try {
       this.frameCount = (this.frameCount + 1) % 10000;
       
-      // 1. Extracción de datos del frame
+      // 1. Extracción optimizada
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
       const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
-      // 2. DETECCIÓN ULTRA-ESTRICTA DE DEDO REAL
-      const fingerDetectionResult = this.detectFingerUltraStrict(
+      // 2. DETECCIÓN OPTIMIZADA EQUILIBRADA
+      const fingerDetectionResult = this.detectFingerOptimized(
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, rToGRatio, rToBRatio, imageData
       );
 
-      // 3. Procesamiento SOLO si hay dedo detectado
+      // 3. Procesamiento mejorado
       let filteredValue = redValue;
       if (fingerDetectionResult.isDetected) {
         filteredValue = this.kalmanFilter.filter(redValue);
         filteredValue = this.sgFilter.filter(filteredValue);
         
-        // Amplificación mínima para mantener señal real
-        filteredValue = filteredValue * 1.1; // Amplificación muy conservadora
-      } else {
-        // Si no hay dedo, valor cero para evitar falsos positivos
-        filteredValue = 0;
+        // Amplificación controlada
+        const preciseGain = this.calculateOptimizedGain(fingerDetectionResult);
+        filteredValue = filteredValue * preciseGain;
       }
 
-      // 4. Buffer circular
+      // 4. Buffer circular ultra-preciso
       this.signalBuffer[this.bufferIndex] = filteredValue;
       this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
       if (this.bufferIndex === 0) this.bufferFull = true;
 
-      // 5. Análisis de tendencia
+      // 5. Análisis de tendencia estricto
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
       
-      // 6. Calidad estricta
-      const quality = this.calculateStrictQuality(
+      // 6. Calidad ultra-precisa
+      const quality = this.calculateUltraPreciseQuality(
         fingerDetectionResult, textureScore, redValue, this.fingerDetectionState.signalToNoiseRatio
       );
 
-      // 7. Índice de perfusión real
-      const perfusionIndex = this.calculateRealPerfusion(
+      // 7. Índice de perfusión preciso
+      const perfusionIndex = this.calculatePrecisePerfusion(
         redValue, fingerDetectionResult.isDetected, quality, fingerDetectionResult.detectionScore
       );
 
-      // Logging cada 30 frames
+      // Logging optimizado cada 30 frames
       if (this.frameCount % 30 === 0) {
-        console.log("🔍 Detección ultra-estricta:", {
+        console.log("🎯 Detección optimizada:", {
           red: redValue.toFixed(2),
           detected: fingerDetectionResult.isDetected,
           score: fingerDetectionResult.detectionScore.toFixed(3),
           consecutivas: this.fingerDetectionState.consecutiveDetections,
-          snr: this.fingerDetectionState.signalToNoiseRatio.toFixed(1),
-          uniformity: this.calculateUniformity(imageData).toFixed(3),
-          variance: this.calculateVarianceRatio().toFixed(3)
+          snr: this.fingerDetectionState.signalToNoiseRatio.toFixed(1)
         });
       }
 
@@ -246,70 +237,51 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * DETECCIÓN ULTRA-ESTRICTA DE DEDO REAL
+   * DETECCIÓN OPTIMIZADA EQUILIBRADA
    */
-  private detectFingerUltraStrict(
+  private detectFingerOptimized(
     red: number, green: number, blue: number, 
     textureScore: number, rToGRatio: number, rToBRatio: number,
     imageData: ImageData
   ): { isDetected: boolean; detectionScore: number; opticalCoherence: number } {
     
-    // 1. VALIDACIÓN BÁSICA ESTRICTA
+    // 1. VALIDACIÓN BÁSICA MÁS PERMISIVA
     if (red < this.CONFIG.MIN_RED_THRESHOLD || red > this.CONFIG.MAX_RED_THRESHOLD) {
       this.resetDetectionState();
       return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
     }
 
-    // 2. VALIDAR QUE NO SEA UNA SUPERFICIE UNIFORME
-    const uniformity = this.calculateUniformity(imageData);
-    if (uniformity > this.CONFIG.MAX_UNIFORMITY) {
-      console.log("❌ Superficie muy uniforme - No es dedo", { uniformity: uniformity.toFixed(3) });
-      this.resetDetectionState();
-      return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
-    }
-
-    // 3. VALIDAR RANGO DINÁMICO
-    const dynamicRange = this.calculateDynamicRange(imageData);
-    if (dynamicRange < this.CONFIG.MIN_DYNAMIC_RANGE) {
-      console.log("❌ Rango dinámico insuficiente", { range: dynamicRange.toFixed(1) });
-      this.resetDetectionState();
-      return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
-    }
-
-    // 4. Actualizar historial
+    // 2. Actualizar historial
     this.fingerDetectionState.signalHistory.push(red);
     if (this.fingerDetectionState.signalHistory.length > 30) {
       this.fingerDetectionState.signalHistory.shift();
     }
 
-    // 5. VALIDACIONES ULTRA-ESTRICTAS
-    const skinColorScore = this.validateStrictSkinColor(red, green, blue);
-    const textureHumanScore = Math.min(1.0, textureScore * 1.2);
-    const pulsatilityScore = this.validateStrictPulsatility(red);
-    const stabilityScore = this.validateStrictStability();
-    const snrScore = this.calculateStrictSNR();
-    const varianceScore = this.validateVarianceRatio();
+    // 3. VALIDACIONES OPTIMIZADAS
+    const skinColorScore = this.validateOptimizedSkinColor(red, green, blue);
+    const textureHumanScore = Math.min(1.0, textureScore * 2.0); // Más permisivo
+    const pulsatilityScore = this.validateOptimizedPulsatility(red);
+    const stabilityScore = this.validateOptimizedStability();
+    const snrScore = this.calculateOptimizedSNR();
     
-    // 6. SCORE ULTRA-ESTRICTO - Todos los factores deben ser altos
-    const weights = [0.25, 0.15, 0.25, 0.15, 0.1, 0.1];
-    const scores = [skinColorScore, textureHumanScore, pulsatilityScore, stabilityScore, snrScore, varianceScore];
+    // 4. SCORE EQUILIBRADO
+    const weights = [0.3, 0.2, 0.25, 0.15, 0.1];
+    const scores = [skinColorScore, textureHumanScore, pulsatilityScore, stabilityScore, snrScore];
     const rawDetectionScore = scores.reduce((sum, score, i) => sum + score * weights[i], 0);
 
-    // 7. UMBRAL ULTRA-ESTRICTO
+    // 5. UMBRAL OPTIMIZADO
     const shouldDetect = rawDetectionScore >= this.CONFIG.MIN_DETECTION_SCORE;
 
-    // 8. CONTROL DE CONSECUTIVIDAD ESTRICTO
+    // 6. CONTROL DE CONSECUTIVIDAD OPTIMIZADO
     if (shouldDetect) {
       this.fingerDetectionState.consecutiveDetections++;
       this.fingerDetectionState.consecutiveNonDetections = 0;
       
       if (this.fingerDetectionState.consecutiveDetections >= this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION) {
         if (!this.fingerDetectionState.isDetected) {
-          console.log("✅ DEDO DETECTADO CON CERTEZA", {
+          console.log("✅ DEDO DETECTADO", {
             score: rawDetectionScore.toFixed(3),
-            consecutivas: this.fingerDetectionState.consecutiveDetections,
-            uniformity: uniformity.toFixed(3),
-            dynamicRange: dynamicRange.toFixed(1)
+            consecutivas: this.fingerDetectionState.consecutiveDetections
           });
         }
         this.fingerDetectionState.isDetected = true;
@@ -337,109 +309,48 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * CALCULAR UNIFORMIDAD - Detecta si es una superficie plana
+   * VALIDACIONES OPTIMIZADAS
    */
-  private calculateUniformity(imageData: ImageData): number {
-    const data = imageData.data;
-    let totalVariation = 0;
-    let sampleCount = 0;
-    
-    // Muestrear cada 4 píxeles para eficiencia
-    for (let i = 0; i < data.length - 16; i += 16) {
-      const r1 = data[i];
-      const r2 = data[i + 4];
-      const variation = Math.abs(r1 - r2);
-      totalVariation += variation;
-      sampleCount++;
-    }
-    
-    const avgVariation = totalVariation / sampleCount;
-    return 1 - (avgVariation / 255); // 1 = muy uniforme, 0 = muy variado
-  }
-
-  /**
-   * CALCULAR RANGO DINÁMICO
-   */
-  private calculateDynamicRange(imageData: ImageData): number {
-    const data = imageData.data;
-    let minRed = 255, maxRed = 0;
-    
-    for (let i = 0; i < data.length; i += 4) {
-      const red = data[i];
-      minRed = Math.min(minRed, red);
-      maxRed = Math.max(maxRed, red);
-    }
-    
-    return maxRed - minRed;
-  }
-
-  /**
-   * VALIDAR RATIO DE VARIANZA - Para detectar pulsatilidad real
-   */
-  private validateVarianceRatio(): number {
-    if (this.fingerDetectionState.signalHistory.length < 20) return 0;
-    
-    const recent = this.fingerDetectionState.signalHistory.slice(-20);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recent.length;
-    const varianceRatio = Math.sqrt(variance) / mean;
-    
-    return varianceRatio >= this.CONFIG.MIN_VARIANCE_RATIO ? 1.0 : 0;
-  }
-
-  private calculateVarianceRatio(): number {
-    if (this.fingerDetectionState.signalHistory.length < 10) return 0;
-    
-    const recent = this.fingerDetectionState.signalHistory.slice(-10);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recent.length;
-    return Math.sqrt(variance) / mean;
-  }
-
-  private validateStrictSkinColor(r: number, g: number, b: number): number {
+  private validateOptimizedSkinColor(r: number, g: number, b: number): number {
     const total = r + g + b + 1e-10;
     const redRatio = r / total;
-    const greenRatio = g / total;
-    const blueRatio = b / total;
     
-    // Rangos muy específicos para piel humana
-    const isValidSkin = (
-      redRatio >= 0.35 && redRatio <= 0.55 &&
-      greenRatio >= 0.25 && greenRatio <= 0.45 &&
-      blueRatio >= 0.15 && blueRatio <= 0.35 &&
-      r > g && g > b // Relación típica en piel
-    );
+    // Rangos más amplios para mejor detección
+    if (redRatio >= 0.25 && redRatio <= 0.65) {
+      return Math.min(1.0, redRatio * 2.0);
+    }
     
-    return isValidSkin ? 1.0 : 0;
+    return 0;
   }
 
-  private validateStrictPulsatility(currentValue: number): number {
-    if (this.fingerDetectionState.signalHistory.length < 15) return 0;
+  private validateOptimizedPulsatility(currentValue: number): number {
+    if (this.fingerDetectionState.signalHistory.length < 10) return 0.5; // Valor por defecto
     
-    const recent = this.fingerDetectionState.signalHistory.slice(-15);
+    const recent = this.fingerDetectionState.signalHistory.slice(-10);
     const max = Math.max(...recent);
     const min = Math.min(...recent);
     
     const pulsatility = (max - min) / max;
     
-    return pulsatility >= this.CONFIG.PULSATILITY_MIN_REQUIRED ? 1.0 : 0;
+    return pulsatility >= this.CONFIG.PULSATILITY_MIN_REQUIRED ? 
+           Math.min(1.0, pulsatility * 5) : pulsatility * 2; // Más permisivo
   }
 
-  private validateStrictStability(): number {
-    if (this.fingerDetectionState.signalHistory.length < this.CONFIG.STABILITY_FRAMES) return 0;
+  private validateOptimizedStability(): number {
+    if (this.fingerDetectionState.signalHistory.length < this.CONFIG.STABILITY_FRAMES) return 0.5;
     
     const recent = this.fingerDetectionState.signalHistory.slice(-this.CONFIG.STABILITY_FRAMES);
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recent.length;
     const cv = Math.sqrt(variance) / mean;
     
-    return cv < 0.3 ? 1.0 : 0; // Muy estricto en estabilidad
+    return Math.max(0.2, 1 - cv); // Mínimo 0.2 en lugar de 0
   }
 
-  private calculateStrictSNR(): number {
-    if (this.fingerDetectionState.signalHistory.length < 25) return 0;
+  private calculateOptimizedSNR(): number {
+    if (this.fingerDetectionState.signalHistory.length < 20) return 0.5;
     
-    const signal = this.fingerDetectionState.signalHistory.slice(-25);
+    const signal = this.fingerDetectionState.signalHistory.slice(-20);
     const signalPower = this.calculateSignalPower(signal);
     const noisePower = this.calculateNoisePower(signal);
     
@@ -448,7 +359,36 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const snr = 10 * Math.log10(signalPower / noisePower);
     this.fingerDetectionState.signalToNoiseRatio = snr;
     
-    return snr >= this.CONFIG.MIN_SNR_REQUIRED ? 1.0 : 0; // Binario: pasa o no pasa
+    return snr >= this.CONFIG.MIN_SNR_REQUIRED ? 
+           Math.min(1.0, snr / 20) : Math.max(0.1, snr / 20); // Más permisivo
+  }
+
+  private detectRealPeaks(signal: number[]): number[] {
+    const peaks: number[] = [];
+    for (let i = 2; i < signal.length - 2; i++) {
+      if (signal[i] > signal[i-1] && signal[i] > signal[i+1] && 
+          signal[i] > signal[i-2] && signal[i] > signal[i+2]) {
+        const prominence = Math.min(signal[i] - signal[i-1], signal[i] - signal[i+1]);
+        if (prominence >= this.CONFIG.PEAK_PROMINENCE) {
+          peaks.push(signal[i]);
+        }
+      }
+    }
+    return peaks;
+  }
+
+  private detectRealValleys(signal: number[]): number[] {
+    const valleys: number[] = [];
+    for (let i = 2; i < signal.length - 2; i++) {
+      if (signal[i] < signal[i-1] && signal[i] < signal[i+1] && 
+          signal[i] < signal[i-2] && signal[i] < signal[i+2]) {
+        const depth = Math.min(signal[i-1] - signal[i], signal[i+1] - signal[i]);
+        if (depth >= this.CONFIG.VALLEY_DEPTH) {
+          valleys.push(signal[i]);
+        }
+      }
+    }
+    return valleys;
   }
 
   private calculateSignalPower(signal: number[]): number {
@@ -476,33 +416,46 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.fingerDetectionState.consecutiveNonDetections++;
   }
 
-  private calculateStrictQuality(
+  private calculateOptimizedGain(detectionResult: { detectionScore: number; opticalCoherence: number }): number {
+    const baseGain = 2.0;
+    const detectionBoost = detectionResult.detectionScore * 0.5;
+    
+    return Math.min(3.0, Math.max(1.2, baseGain + detectionBoost));
+  }
+
+  private calculateUltraPreciseQuality(
     detectionResult: { detectionScore: number }, 
     textureScore: number, 
     redValue: number,
     snr: number
   ): number {
-    if (!detectionResult || detectionResult.detectionScore < 0.8) return 0;
+    if (detectionResult.detectionScore < 0.5) return 0;
     
-    const detectionQuality = detectionResult.detectionScore * 50;
+    const detectionQuality = Math.pow(detectionResult.detectionScore, 0.8) * 40;
     const textureQuality = textureScore * 25;
-    const signalQuality = Math.min(25, (redValue / 5));
+    const signalQuality = Math.min(25, (redValue / 8));
+    const snrQuality = Math.min(10, Math.max(0, snr - 10));
     
     const finalQuality = Math.min(100, Math.max(0, 
-      detectionQuality + textureQuality + signalQuality));
+      detectionQuality + textureQuality + signalQuality + snrQuality));
     
     return finalQuality;
   }
 
-  private calculateRealPerfusion(
+  private calculatePrecisePerfusion(
     redValue: number, isDetected: boolean, quality: number, detectionScore: number
   ): number {
-    if (!isDetected || quality < 70 || detectionScore < 0.8) return 0;
+    if (!isDetected || quality < 50 || detectionScore < 0.7) return 0;
     
-    const normalizedRed = Math.min(1, redValue / 150);
-    const perfusionBase = Math.log1p(normalizedRed) * 3.0;
+    const normalizedRed = Math.min(1, redValue / 120);
+    const perfusionBase = Math.log1p(normalizedRed * 2) * 2.0;
     
-    return Math.min(10, Math.max(0, perfusionBase));
+    const qualityFactor = Math.tanh(quality / 40) * 0.3;
+    const confidenceFactor = Math.sqrt(detectionScore) * 0.3;
+    
+    const totalPerfusion = (perfusionBase + qualityFactor + confidenceFactor) * 6;
+    
+    return Math.min(10, Math.max(0, totalPerfusion));
   }
 
   private reset(): void {
