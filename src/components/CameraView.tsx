@@ -1,245 +1,248 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { CameraSample } from '@/types';
 
 interface CameraViewProps {
-  onStreamReady?: (stream: MediaStream) => void;
-  onSample?: (s: CameraSample) => void;
+  onSample: (sample: CameraSample) => void;
   isMonitoring: boolean;
   targetFps?: number;
   targetW?: number;
   enableTorch?: boolean;
-  isFingerDetected?: boolean;
-  signalQuality?: number;
+  isFingerDetected: boolean;
+  signalQuality: number;
 }
 
-const CameraView: React.FC<CameraViewProps> = ({
-  onStreamReady,
-  onSample,
-  isMonitoring,
+const CameraView = ({ 
+  onSample, 
+  isMonitoring, 
   targetFps = 30,
   targetW = 160,
   enableTorch = true,
-  isFingerDetected = false,
-  signalQuality = 0
-}) => {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  isFingerDetected,
+  signalQuality
+}: CameraViewProps) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const prevRRef = useRef<number | null>(null);
-  const lastFrameTimeRef = useRef<number>(0);
+  const processingRef = useRef<boolean>(false);
+  const frameCountRef = useRef<number>(0);
+  const lastProcessTimeRef = useRef<number>(0);
+  
   const [cameraError, setCameraError] = useState<string>("");
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [hasPermission, setHasPermission] = useState<boolean>(false);
 
   useEffect(() => {
-    let mounted = true;
+    if (isMonitoring) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
 
-    const start = async () => {
-      try {
-        console.log(`🎥 Iniciando cámara - Monitoreo: ${isMonitoring}`);
-        setCameraError("");
-        
-        // Solicitar permisos explícitamente primero
-        const permissions = await navigator.permissions.query({name: 'camera' as PermissionName});
-        if (permissions.state === 'denied') {
-          throw new Error('Permisos de cámara denegados');
-        }
+    return () => stopCamera();
+  }, [isMonitoring]);
 
-        const constraints: MediaStreamConstraints = {
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 640, min: 320 },
-            height: { ideal: 480, min: 240 },
-            frameRate: { ideal: targetFps, min: 15 }
-          },
-          audio: false
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        if (!mounted) return;
-        
-        streamRef.current = stream;
-        onStreamReady?.(stream);
-        setIsStreaming(true);
-
-        console.log(`✅ Stream obtenido correctamente`);
-
-        // crear video visible para debug
-        if (!videoRef.current) {
-          const v = document.createElement('video');
-          v.autoplay = true;
-          v.playsInline = true;
-          v.muted = true;
-          v.style.position = 'absolute';
-          v.style.top = '10px';
-          v.style.right = '10px';
-          v.style.width = '120px';
-          v.style.height = '90px';
-          v.style.zIndex = '50';
-          v.style.border = '2px solid #00ff00';
-          v.style.borderRadius = '8px';
-          document.body.appendChild(v);
-          videoRef.current = v;
-        }
-        videoRef.current.srcObject = stream;
-
-        // canvas para procesamiento
-        if (!canvasRef.current) {
-          const c = document.createElement('canvas');
-          c.style.display = 'none';
-          document.body.appendChild(c);
-          canvasRef.current = c;
-        }
-
-        // intentar linterna
-        try {
-          const [track] = stream.getVideoTracks();
-          const capabilities = (track as any).getCapabilities?.();
-          if (enableTorch && capabilities?.torch) {
-            console.log(`💡 Activando linterna...`);
-            await (track as any).applyConstraints({ advanced: [{ torch: true }] });
-            console.log(`✅ Linterna activada`);
-          }
-        } catch (e) {
-          console.log(`⚠️ Linterna no disponible`);
-        }
-
-        // esperar video cargado
-        await new Promise<void>((resolve) => {
-          const v = videoRef.current!;
-          if (v.readyState >= 1) return resolve();
-          const onLoaded = () => { v.removeEventListener('loadedmetadata', onLoaded); resolve(); };
-          v.addEventListener('loadedmetadata', onLoaded);
-        });
-
-        console.log(`🎬 Iniciando procesamiento de frames...`);
-        
-        const loop = (ts: number) => {
-          if (!mounted || !isMonitoring) return;
-          
-          const now = performance.now();
-          const dt = now - lastFrameTimeRef.current;
-          const minDt = 1000 / targetFps;
-          
-          if (!lastFrameTimeRef.current || dt >= minDt) {
-            lastFrameTimeRef.current = now;
-            captureAndEmit();
-          }
-          
-          rafRef.current = requestAnimationFrame(loop);
-        };
-
-        rafRef.current = requestAnimationFrame(loop);
-        
-      } catch (err: any) {
-        console.error('❌ Error cámara:', err);
-        setCameraError(err.message || 'Error desconocido de cámara');
-        setIsStreaming(false);
+  const startCamera = async () => {
+    try {
+      setCameraError("");
+      
+      // VERIFICAR PERMISOS
+      const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
+      console.log(`📷 Estado permisos: ${permission.state}`);
+      
+      if (permission.state === 'denied') {
+        throw new Error('Permisos de cámara denegados');
       }
-    };
 
-    const captureAndEmit = () => {
-      const v = videoRef.current;
-      const c = canvasRef.current;
-      if (!v || !c || !v.videoWidth || !v.videoHeight) return;
-
-      const aspect = v.videoHeight / v.videoWidth;
-      const targetH = Math.round(targetW * aspect);
-      
-      if (c.width !== targetW || c.height !== targetH) {
-        c.width = targetW;
-        c.height = targetH;
-      }
-      
-      const ctx = c.getContext('2d');
-      if (!ctx) return;
-      
-      ctx.drawImage(v, 0, 0, c.width, c.height);
-      const img = ctx.getImageData(0, 0, c.width, c.height);
-      const d = img.data;
-
-      let sum = 0, sum2 = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i];
-        sum += r;
-        sum2 += r * r;
-      }
-      
-      const len = d.length / 4;
-      const mean = sum / len;
-      const variance = Math.max(0, sum2 / len - mean * mean);
-      const std = Math.sqrt(variance);
-      const prev = prevRRef.current;
-      const frameDiff = prev == null ? 0 : Math.abs(mean - prev);
-      prevRRef.current = mean;
-
-      const sample: CameraSample = {
-        timestamp: Date.now(),
-        rMean: mean,
-        rStd: std,
-        frameDiff
+      // CONFIGURACIÓN OPTIMIZADA
+      const constraints: MediaStreamConstraints = {
+        video: {
+          facingMode: 'environment',
+          width: { ideal: targetW * 2 },
+          height: { ideal: Math.round(targetW * 1.5) },
+          frameRate: { ideal: targetFps, max: targetFps }
+        },
+        audio: false
       };
 
-      console.log(`📊 Sample: rMean=${mean.toFixed(1)}, std=${std.toFixed(1)}, diff=${frameDiff.toFixed(1)}`);
-      onSample?.(sample);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+        setHasPermission(true);
+        
+        // APLICAR TORCH SI ESTÁ DISPONIBLE
+        if (enableTorch) {
+          const track = stream.getVideoTracks()[0];
+          if ('applyConstraints' in track) {
+            try {
+              await (track as any).applyConstraints({
+                advanced: [{ torch: true }]
+              });
+              console.log("🔦 Flash activado");
+            } catch (err) {
+              console.log("⚠️ Flash no disponible:", err);
+            }
+          }
+        }
+      }
+
+      // INICIAR PROCESAMIENTO
+      processingRef.current = true;
+      processFrame();
+
+    } catch (error) {
+      console.error('Error cámara:', error);
+      setCameraError(error instanceof Error ? error.message : 'Error desconocido');
+      setHasPermission(false);
+    }
+  };
+
+  const stopCamera = () => {
+    processingRef.current = false;
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    frameCountRef.current = 0;
+    setHasPermission(false);
+  };
+
+  const processFrame = () => {
+    if (!processingRef.current || !videoRef.current || !canvasRef.current) {
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) {
+      requestAnimationFrame(processFrame);
+      return;
+    }
+
+    // CONTROL DE FPS
+    const now = performance.now();
+    const frameInterval = 1000 / targetFps;
+    
+    if (now - lastProcessTimeRef.current < frameInterval) {
+      requestAnimationFrame(processFrame);
+      return;
+    }
+    
+    lastProcessTimeRef.current = now;
+    frameCountRef.current++;
+
+    // AJUSTAR CANVAS AL TAMAÑO DEL VIDEO
+    canvas.width = targetW;
+    canvas.height = Math.round(targetW * (video.videoHeight / video.videoWidth));
+
+    // DIBUJAR FRAME
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // EXTRAER DATOS DE PÍXELES
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    // CALCULAR VALORES PROMEDIO
+    let rSum = 0, gSum = 0, bSum = 0;
+    let rSumSq = 0;
+    let validPixels = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+
+      // FILTRAR PÍXELES MUY OSCUROS O MUY CLAROS
+      if (r > 20 && r < 240 && g > 20 && g < 240 && b > 20 && b < 240) {
+        rSum += r;
+        gSum += g;
+        bSum += b;
+        rSumSq += r * r;
+        validPixels++;
+      }
+    }
+
+    if (validPixels === 0) {
+      requestAnimationFrame(processFrame);
+      return;
+    }
+
+    const rMean = rSum / validPixels;
+    const gMean = gSum / validPixels;
+    const bMean = bSum / validPixels;
+    const rStd = Math.sqrt((rSumSq / validPixels) - (rMean * rMean));
+
+    // CREAR SAMPLE OPTIMIZADA
+    const sample: CameraSample = {
+      timestamp: now,
+      rMean: rMean / 255, // Normalizar 0-1
+      rStd: rStd / 255,
+      frameDiff: frameCountRef.current > 1 ? Math.abs(rMean - (window as any).lastRMean || rMean) : 0
     };
 
-    if (isMonitoring) start();
+    (window as any).lastRMean = rMean;
 
-    return () => {
-      mounted = false;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      const s = streamRef.current; 
-      if (s) s.getTracks().forEach(t => t.stop());
-      if (videoRef.current) { 
-        try { document.body.removeChild(videoRef.current); } catch (e) {} 
-        videoRef.current = null; 
-      }
-      if (canvasRef.current) { 
-        try { document.body.removeChild(canvasRef.current); } catch (e) {} 
-        canvasRef.current = null; 
-      }
-      setIsStreaming(false);
-    };
-  }, [isMonitoring, onSample, onStreamReady, targetFps, targetW, enableTorch]);
+    // ENVIAR SAMPLE
+    onSample(sample);
 
-  // Renderizar estado de la cámara
+    // CONTINUAR PROCESAMIENTO
+    requestAnimationFrame(processFrame);
+  };
+
   return (
-    <div className="absolute inset-0 bg-black flex items-center justify-center">
-      {!isMonitoring && (
-        <div className="text-white text-center">
-          <div className="text-xl mb-2">📷</div>
-          <div>Cámara desactivada</div>
-        </div>
-      )}
-      
-      {isMonitoring && !isStreaming && !cameraError && (
-        <div className="text-white text-center">
-          <div className="text-xl mb-2 animate-pulse">🔄</div>
-          <div>Iniciando cámara...</div>
-        </div>
-      )}
-      
-      {cameraError && (
-        <div className="text-red-500 text-center p-4">
-          <div className="text-xl mb-2">❌</div>
-          <div className="font-bold">Error de Cámara</div>
-          <div className="text-sm mt-2">{cameraError}</div>
-          <div className="text-xs mt-2">Asegúrate de permitir el acceso a la cámara</div>
-        </div>
-      )}
-      
-      {isStreaming && (
-        <div className="text-white text-center">
-          <div className="text-xl mb-2">📹</div>
-          <div>Cámara activa</div>
-          <div className="text-sm mt-2">
-            Dedo: {isFingerDetected ? '✅' : '❌'} | 
-            Calidad: {signalQuality}%
+    <div className="relative w-full h-full bg-black overflow-hidden">
+      {/* VIDEO PREVIEW */}
+      <video
+        ref={videoRef}
+        className="absolute inset-0 w-full h-full object-cover"
+        autoPlay
+        playsInline
+        muted
+      />
+
+      {/* CANVAS OCULTO PARA PROCESAMIENTO */}
+      <canvas
+        ref={canvasRef}
+        className="hidden"
+      />
+
+      {/* OVERLAY DE ESTADO LIMPIO */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        {!hasPermission && (
+          <div className="bg-black/70 text-white p-4 rounded-lg text-center">
+            <div className="text-lg font-semibold mb-2">
+              {cameraError ? '❌ Error de Cámara' : '📷 Iniciando Cámara...'}
+            </div>
+            {cameraError && (
+              <div className="text-sm text-red-300">{cameraError}</div>
+            )}
           </div>
-        </div>
-      )}
+        )}
+        
+        {hasPermission && (
+          <div className="absolute bottom-4 left-4 right-4">
+            <div className="bg-black/50 text-white p-3 rounded-lg text-center">
+              <div className="text-sm">
+                Coloque su dedo sobre la cámara trasera con flash
+              </div>
+              <div className="text-xs mt-1 text-gray-300">
+                Estado: {isFingerDetected ? '✅ Dedo detectado' : '⏳ Buscando dedo'} 
+                | Calidad: {signalQuality}%
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
