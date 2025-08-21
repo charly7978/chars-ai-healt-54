@@ -20,7 +20,7 @@ export default class PPGChannel {
   private buffer: Sample[] = [];
   private windowSec: number;
   private gain: number;
-  private minRMeanForFinger = 20; // configurable
+  private minRMeanForFinger = 10; // REDUCIDO: más permisivo para detectar dedo
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -84,7 +84,18 @@ export default class PPGChannel {
 
     // decisión dedo: mean raw (antes normalización) y coverage es responsabilidad del CameraView + manager;
     const meanRaw = sampled.reduce((a,b)=>a+b,0)/sampled.length;
-    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 3 && (bpmSpectral || bpmTime);
+    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 1.5 && (bpmSpectral || bpmTime); // REDUCIDO snr de 3 a 1.5
+
+    // DEBUG: Log de detección de dedo por canal
+    console.log(`🔴 Canal ${this.channelId} - Finger Detection:`, {
+      meanRaw: meanRaw.toFixed(2),
+      minRMeanForFinger: this.minRMeanForFinger,
+      snr: snr.toFixed(2),
+      bpmSpectral,
+      bpmTime,
+      isFinger,
+      bufferLength: this.buffer.length
+    });
 
     return {
       calibratedSignal: smooth,

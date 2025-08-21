@@ -23,6 +23,17 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // Escalar ratio a 0..255 para la entrada del canal (similar al rMean usado antes)
     const inputSignal = ratio * 255;
 
+    // DEBUG: Log de muestras para diagnóstico
+    console.log('📸 CameraSample:', {
+      rMean: s.rMean.toFixed(1),
+      gMean: s.gMean.toFixed(1),
+      bMean: s.bMean.toFixed(1),
+      brightnessMean: s.brightnessMean.toFixed(1),
+      coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%',
+      frameDiff: s.frameDiff.toFixed(1),
+      inputSignal: inputSignal.toFixed(1)
+    });
+
     mgrRef.current!.pushSample(inputSignal, s.timestamp);
     const res = mgrRef.current!.analyzeAll(s.coverageRatio, s.frameDiff);
     setLastResult(res);

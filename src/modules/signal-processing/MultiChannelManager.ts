@@ -56,10 +56,24 @@ export default class MultiChannelManager {
       } as any);
     }
 
+    // DEBUG: Log de análisis de canales
+    console.log('🔍 MultiChannel Analysis:', {
+      channels: res.length,
+      fingerDetected: nFinger,
+      coverageRatio: (globalCoverageRatio * 100).toFixed(1) + '%',
+      frameDiff: globalFrameDiff.toFixed(1),
+      channelDetails: res.map(ch => ({
+        id: ch.channelId,
+        finger: ch.isFingerDetected,
+        quality: ch.quality,
+        snr: ch.snr.toFixed(2)
+      }))
+    });
+
     // consenso: requerir que >= mitad de canales detecten dedo y coverageRatio alto y bajo movimiento
     const majority = Math.ceil(this.n / 2);
-    const coverageOk = globalCoverageRatio > 0.35; // al menos ~35% pix cubiertos
-    const motionOk = globalFrameDiff < 8; // brillo estable entre frames
+    const coverageOk = globalCoverageRatio > 0.15; // REDUCIDO: al menos ~15% pix cubiertos (más permisivo)
+    const motionOk = globalFrameDiff < 15; // AUMENTADO: brillo más tolerante entre frames
     const channelConsensus = nFinger >= majority;
 
     // Actualizar debounce

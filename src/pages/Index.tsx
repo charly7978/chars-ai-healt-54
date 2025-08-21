@@ -11,7 +11,7 @@ import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isCameraOn, setIsCameraOn] = useState(true); // ACTIVADO por defecto para detectar dedo
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
@@ -359,17 +359,19 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-      {/* DEBUG MEJORADO */}
-      <div className="absolute top-4 left-4 text-white z-50 bg-black/70 p-2 rounded text-xs">
-        <div>Canales: {lastResult?.channels.length || 0}</div>
-        <div>BPM: {lastResult?.aggregatedBPM || '--'}</div>
-        <div>Calidad: {signalQuality}%</div>
-        <div>Dedo: {lastResult?.fingerDetected ? 'SÍ' : 'NO'}</div>
-        <div>Estado: {systemState.current}</div>
-        {rrIntervals.length > 0 && (
-          <div>RR: {rrIntervals.map(i => i + 'ms').join(', ')}</div>
-        )}
-      </div>
+             {/* DEBUG MEJORADO */}
+       <div className="absolute top-4 left-4 text-white z-50 bg-black/70 p-2 rounded text-xs">
+         <div>Canales: {lastResult?.channels.length || 0}</div>
+         <div>BPM: {lastResult?.aggregatedBPM || '--'}</div>
+         <div>Calidad: {signalQuality}%</div>
+         <div>Dedo: {lastResult?.fingerDetected ? 'SÍ' : 'NO'}</div>
+         <div>Estado: {systemState.current}</div>
+         <div>Cámara: {isCameraOn ? 'ON' : 'OFF'}</div>
+         <div>Coverage: {lastResult?.channels[0]?.isFingerDetected ? 'DETECTADO' : 'NO'}</div>
+         {rrIntervals.length > 0 && (
+           <div>RR: {rrIntervals.map(i => i + 'ms').join(', ')}</div>
+         )}
+       </div>
 
       {!isFullscreen && (
         <button 
