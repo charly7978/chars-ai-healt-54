@@ -3,8 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 /**
- * HOOK UNIFICADO PARA PROCESAMIENTO DE SIGNOS VITALES
- * Elimina redundancias y centraliza todo el procesamiento
+ * HOOK ÚNICO DE SIGNOS VITALES - ELIMINADAS TODAS LAS DUPLICIDADES
  */
 export const useVitalSignsProcessor = () => {
   const [processor] = useState(() => new VitalSignsProcessor());
@@ -17,13 +16,13 @@ export const useVitalSignsProcessor = () => {
   const processedSignals = useRef<number>(0);
   
   useEffect(() => {
-    console.log("🏥 useVitalSignsProcessor: Sistema unificado inicializado", {
+    console.log("🏥 useVitalSignsProcessor: Sistema ÚNICO inicializado", {
       sessionId: sessionId.current,
       timestamp: new Date().toISOString()
     });
     
     return () => {
-      console.log("🏥 useVitalSignsProcessor: Sistema unificado destruido", {
+      console.log("🏥 useVitalSignsProcessor: Sistema ÚNICO destruido", {
         sessionId: sessionId.current,
         señalesProcesadas: processedSignals.current,
         timestamp: new Date().toISOString()
@@ -32,7 +31,7 @@ export const useVitalSignsProcessor = () => {
   }, []);
   
   const startCalibration = useCallback(() => {
-    console.log("🔧 useVitalSignsProcessor: Iniciando calibración unificada", {
+    console.log("🔧 useVitalSignsProcessor: Iniciando calibración ÚNICA", {
       timestamp: new Date().toISOString(),
       sessionId: sessionId.current
     });
@@ -41,7 +40,7 @@ export const useVitalSignsProcessor = () => {
   }, [processor]);
   
   const forceCalibrationCompletion = useCallback(() => {
-    console.log("⚡ useVitalSignsProcessor: Forzando finalización de calibración", {
+    console.log("⚡ useVitalSignsProcessor: Forzando finalización ÚNICA", {
       timestamp: new Date().toISOString(),
       sessionId: sessionId.current
     });
@@ -52,24 +51,24 @@ export const useVitalSignsProcessor = () => {
   const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
     processedSignals.current++;
     
-    console.log("🔬 useVitalSignsProcessor: Procesando señal unificada", {
-      valorEntrada: value,
+    console.log("🔬 useVitalSignsProcessor: Procesando señal ÚNICA", {
+      valorEntrada: value.toFixed(3),
       rrDataPresente: !!rrData,
       intervalosRR: rrData?.intervals.length || 0,
       señalNúmero: processedSignals.current,
-      sessionId: sessionId.current,
-      timestamp: new Date().toISOString()
+      sessionId: sessionId.current
     });
     
-    // Procesamiento unificado y directo
+    // Procesamiento ÚNICO sin duplicaciones
     const result = processor.processSignal(value, rrData);
     
-    // Guardar resultados válidos
+    // Guardar resultados válidos (no negativos, no cero)
     if (result.spo2 > 0 && result.glucose > 0) {
-      console.log("✅ useVitalSignsProcessor: Resultado válido unificado", {
+      console.log("✅ useVitalSignsProcessor: Resultado válido ÚNICO", {
         spo2: result.spo2,
-        presión: result.pressure,
+        presión: `${result.pressure.systolic}/${result.pressure.diastolic}`,
         glucosa: result.glucose,
+        arritmias: result.arrhythmiaCount,
         timestamp: new Date().toISOString()
       });
       
@@ -80,7 +79,7 @@ export const useVitalSignsProcessor = () => {
   }, [processor]);
 
   const reset = useCallback(() => {
-    console.log("🔄 useVitalSignsProcessor: Reseteo unificado", {
+    console.log("🔄 useVitalSignsProcessor: Reset ÚNICO", {
       timestamp: new Date().toISOString()
     });
     
@@ -93,7 +92,7 @@ export const useVitalSignsProcessor = () => {
   }, [processor]);
   
   const fullReset = useCallback(() => {
-    console.log("🗑️ useVitalSignsProcessor: Reseteo completo unificado", {
+    console.log("🗑️ useVitalSignsProcessor: Reset completo ÚNICO", {
       timestamp: new Date().toISOString()
     });
     
@@ -111,7 +110,8 @@ export const useVitalSignsProcessor = () => {
     lastValidResults,
     getCalibrationProgress: useCallback(() => processor.getCalibrationProgress(), [processor]),
     debugInfo: {
-      processedSignals: processedSignals.current
+      processedSignals: processedSignals.current,
+      sessionId: sessionId.current
     },
   };
 };

@@ -1,281 +1,188 @@
 
-import { SpO2Processor } from './spo2-processor';
-import { BloodPressureProcessor } from './blood-pressure-processor';
-import { ArrhythmiaProcessor } from './arrhythmia-processor';
-import { SignalProcessor } from './signal-processor';
-import { GlucoseProcessor } from './glucose-processor';
-import { LipidProcessor } from './lipid-processor';
+import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
 
 export interface VitalSignsResult {
   spo2: number;
-  pressure: string;
-  arrhythmiaStatus: string;
-  lastArrhythmiaData?: { 
-    timestamp: number; 
-    rmssd: number; 
-    rrVariation: number; 
-  } | null;
   glucose: number;
-  lipids: {
-    totalCholesterol: number;
-    triglycerides: number;
+  pressure: {
+    systolic: number;
+    diastolic: number;
   };
-  hemoglobin: number;
-  calibration?: {
-    isCalibrating: boolean;
-    progress: {
-      heartRate: number;
-      spo2: number;
-      pressure: number;
-      arrhythmia: number;
-      glucose: number;
-      lipids: number;
-      hemoglobin: number;
-    };
-  };
+  arrhythmiaCount: number;
+  isCalibrating: boolean;
+  calibrationProgress: number;
 }
 
+/**
+ * PROCESADOR ÚNICO DE SIGNOS VITALES - FUENTE ÚNICA DE VERDAD
+ * Elimina duplicidades y asegura mediciones desde CERO
+ */
 export class VitalSignsProcessor {
-  private spo2Processor: SpO2Processor;
-  private bpProcessor: BloodPressureProcessor;
-  private arrhythmiaProcessor: ArrhythmiaProcessor;
-  private signalProcessor: SignalProcessor;
-  private glucoseProcessor: GlucoseProcessor;
-  private lipidProcessor: LipidProcessor;
-  
-  private lastValidResults: VitalSignsResult | null = null;
-  private isCalibrating: boolean = false;
-  private calibrationStartTime: number = 0;
+  private mathProcessor: AdvancedMathematicalProcessor;
   private calibrationSamples: number = 0;
-  private readonly CALIBRATION_REQUIRED_SAMPLES: number = 40;
-  private readonly CALIBRATION_DURATION_MS: number = 6000;
+  private readonly CALIBRATION_REQUIRED = 25;
+  private isCalibrating: boolean = false;
   
-  private calibrationProgress = {
-    heartRate: 0,
+  // ESTADO ÚNICO - SIN DUPLICACIONES
+  private measurements = {
     spo2: 0,
-    pressure: 0,
-    arrhythmia: 0,
     glucose: 0,
-    lipids: 0,
-    hemoglobin: 0
+    systolicPressure: 0,
+    diastolicPressure: 0,
+    arrhythmiaCount: 0
   };
   
-  private calibrationTimer: any = null;
-
+  private signalHistory: number[] = [];
+  private readonly HISTORY_SIZE = 50;
+  
   constructor() {
-    console.log('🚀 VitalSignsProcessor: Inicializando sistema matemático puro (SIN SIMULACIÓN)');
-    this.spo2Processor = new SpO2Processor();
-    this.bpProcessor = new BloodPressureProcessor();
-    this.arrhythmiaProcessor = new ArrhythmiaProcessor();
-    this.signalProcessor = new SignalProcessor();
-    this.glucoseProcessor = new GlucoseProcessor();
-    this.lipidProcessor = new LipidProcessor();
+    console.log("🚀 VitalSignsProcessor: Inicializando sistema ÚNICO (SIN DUPLICACIONES)");
+    this.mathProcessor = new AdvancedMathematicalProcessor();
   }
 
-  public startCalibration(): void {
-    console.log("🎯 VitalSignsProcessor: Iniciando calibración matemática avanzada");
+  startCalibration(): void {
+    console.log("🎯 VitalSignsProcessor: Iniciando calibración ÚNICA");
     this.isCalibrating = true;
-    this.calibrationStartTime = Date.now();
     this.calibrationSamples = 0;
     
-    // Iniciar timer de calibración
-    this.calibrationTimer = setTimeout(() => {
-      this.completeCalibration();
-    }, this.CALIBRATION_DURATION_MS);
-    
-    console.log("🎯 VitalSignsProcessor: Calibración iniciada - ALGORITMOS REALES ÚNICAMENTE");
-  }
-
-  public forceCalibrationCompletion(): void {
-    console.log("🎯 VitalSignsProcessor: Forzando finalización de calibración");
-    this.completeCalibration();
-  }
-
-  private completeCalibration(): void {
-    if (this.calibrationTimer) {
-      clearTimeout(this.calibrationTimer);
-      this.calibrationTimer = null;
-    }
-    
-    this.isCalibrating = false;
-    
-    // Progreso real basado en muestras procesadas
-    this.calibrationProgress = {
-      heartRate: Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED_SAMPLES) * 100),
-      spo2: Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED_SAMPLES) * 100),
-      pressure: Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED_SAMPLES) * 100),
-      arrhythmia: Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED_SAMPLES) * 100),
-      glucose: Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED_SAMPLES) * 100),
-      lipids: Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED_SAMPLES) * 100),
-      hemoglobin: 100
+    // RESETEAR TODAS LAS MEDICIONES A CERO
+    this.measurements = {
+      spo2: 0,
+      glucose: 0,
+      systolicPressure: 0,
+      diastolicPressure: 0,
+      arrhythmiaCount: 0
     };
     
-    console.log("✅ VitalSignsProcessor: Calibración matemática completada");
+    this.signalHistory = [];
   }
 
-  public processSignal(
-    ppgValue: number,
-    rrData?: { intervals: number[]; lastPeakTime: number | null }
+  forceCalibrationCompletion(): void {
+    console.log("⚡ VitalSignsProcessor: Forzando finalización de calibración");
+    this.isCalibrating = false;
+    this.calibrationSamples = this.CALIBRATION_REQUIRED;
+  }
+
+  processSignal(
+    signalValue: number, 
+    rrData?: { intervals: number[], lastPeakTime: number | null }
   ): VitalSignsResult {
     
-    // GARANTÍA: Si no hay señal PPG válida, retornar CEROS (nunca negativos)
-    if (ppgValue <= 0.1) {
-      return this.createZeroResult();
+    // Actualizar historial de señal
+    this.signalHistory.push(signalValue);
+    if (this.signalHistory.length > this.HISTORY_SIZE) {
+      this.signalHistory.shift();
     }
 
+    // Control de calibración
     if (this.isCalibrating) {
       this.calibrationSamples++;
-    }
-    
-    // Procesamiento matemático puro
-    const filtered = this.signalProcessor.applySMAFilter(ppgValue);
-    const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
-    const ppgValues = this.signalProcessor.getPPGValues();
-    
-    // CÁLCULOS REALES - GARANTÍA DE NO NEGATIVOS
-    const spo2 = Math.max(0, this.spo2Processor.calculateSpO2(ppgValues.slice(-60)));
-    const bp = this.bpProcessor.calculateBloodPressure(ppgValues.slice(-60));
-    const pressure = `${Math.max(0, bp.systolic)}/${Math.max(0, bp.diastolic)}`;
-    const glucose = Math.max(0, this.glucoseProcessor.calculateGlucose(ppgValues));
-    const lipids = this.lipidProcessor.calculateLipids(ppgValues);
-    const hemoglobin = Math.max(0, this.calculateHemoglobin(ppgValues));
-
-    // GARANTIZAR LÍPIDOS NO NEGATIVOS
-    const safeLipids = {
-      totalCholesterol: Math.max(0, lipids.totalCholesterol),
-      triglycerides: Math.max(0, lipids.triglycerides)
-    };
-
-    const result: VitalSignsResult = {
-      spo2,
-      pressure,
-      arrhythmiaStatus: arrhythmiaResult.arrhythmiaStatus,
-      lastArrhythmiaData: arrhythmiaResult.lastArrhythmiaData,
-      glucose,
-      lipids: safeLipids,
-      hemoglobin
-    };
-    
-    if (this.isCalibrating) {
-      result.calibration = {
-        isCalibrating: true,
-        progress: { ...this.calibrationProgress }
-      };
-    }
-    
-    // Solo guardar si todos los valores son válidos (>0)
-    if (spo2 > 0 && bp.systolic > 0 && bp.diastolic > 0 && glucose > 0 && 
-        safeLipids.totalCholesterol > 0 && hemoglobin > 0) {
-      this.lastValidResults = { ...result };
+      if (this.calibrationSamples >= this.CALIBRATION_REQUIRED) {
+        this.isCalibrating = false;
+        console.log("✅ VitalSignsProcessor: Calibración completada automáticamente");
+      }
     }
 
-    return result;
-  }
+    // Procesar SOLO si calibración completada y hay suficiente historial
+    if (!this.isCalibrating && this.signalHistory.length >= 10) {
+      this.calculateVitalSigns(signalValue, rrData);
+    }
 
-  /**
-   * RESULTADO CERO GARANTIZADO - NUNCA NEGATIVOS
-   */
-  private createZeroResult(): VitalSignsResult {
     return {
-      spo2: 0,
-      pressure: "0/0",
-      arrhythmiaStatus: "--",
-      glucose: 0,
-      lipids: {
-        totalCholesterol: 0,
-        triglycerides: 0
+      spo2: Math.max(0, this.measurements.spo2), // Asegurar que no sea negativo
+      glucose: Math.max(0, this.measurements.glucose),
+      pressure: {
+        systolic: Math.max(0, this.measurements.systolicPressure),
+        diastolic: Math.max(0, this.measurements.diastolicPressure)
       },
-      hemoglobin: 0
+      arrhythmiaCount: Math.max(0, this.measurements.arrhythmiaCount),
+      isCalibrating: this.isCalibrating,
+      calibrationProgress: Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100)
     };
   }
 
-  /**
-   * CÁLCULO REAL DE HEMOGLOBINA usando absorción óptica PPG
-   */
-  private calculateHemoglobin(ppgValues: number[]): number {
-    if (ppgValues.length < 50) return 0;
+  private calculateVitalSigns(
+    signalValue: number, 
+    rrData?: { intervals: number[], lastPeakTime: number | null }
+  ): void {
     
-    // Análisis de absorción basado en ley de Beer-Lambert
-    const peak = Math.max(...ppgValues);
-    const valley = Math.min(...ppgValues);
-    const ac = peak - valley;
-    const dc = ppgValues.reduce((a, b) => a + b, 0) / ppgValues.length;
-    
-    if (dc <= 0) return 0;
-    
-    // Coeficiente de extinción para hemoglobina en longitud de onda roja
-    const extinctionCoeff = 0.81; // L/(mmol·cm)
-    const pathLength = 0.5; // cm (grosor promedio dedo)
-    
-    // Aplicar ley de Beer-Lambert
-    const ratio = ac / dc;
-    const absorbance = -Math.log10(1 - ratio);
-    
-    // Conversión a concentración de hemoglobina (g/dL)
-    const hemoglobinConc = (absorbance / (extinctionCoeff * pathLength)) * 16.11; // Factor de conversión
-    
-    // Valor base fisiológico + contribución de absorción
-    const baseHemoglobin = 12.5; // g/dL valor promedio
-    const finalHemoglobin = baseHemoglobin + (hemoglobinConc - 1.0) * 1.8;
-    
-    // Rango fisiológico: 8-18 g/dL
-    return Math.max(0, Math.min(18, finalHemoglobin));
+    console.log("🔬 VitalSignsProcessor: Calculando signos vitales ÚNICOS", {
+      señal: signalValue,
+      historial: this.signalHistory.length,
+      rrIntervalos: rrData?.intervals?.length || 0
+    });
+
+    // 1. SpO2 - Usando algoritmo matemático avanzado
+    const newSpo2 = this.mathProcessor.calculateSpO2Advanced(this.signalHistory);
+    this.measurements.spo2 = Math.max(0, Math.min(100, newSpo2));
+
+    // 2. Glucosa - Correlación óptica avanzada
+    const newGlucose = this.mathProcessor.calculateGlucoseOptical(this.signalHistory, signalValue);
+    this.measurements.glucose = Math.max(0, Math.min(400, newGlucose));
+
+    // 3. Presión arterial - Análisis de tiempo de tránsito
+    if (rrData && rrData.intervals.length >= 3) {
+      const pressureResult = this.mathProcessor.calculateBloodPressureAdvanced(
+        rrData.intervals, 
+        this.signalHistory
+      );
+      this.measurements.systolicPressure = Math.max(0, Math.min(250, pressureResult.systolic));
+      this.measurements.diastolicPressure = Math.max(0, Math.min(150, pressureResult.diastolic));
+    }
+
+    // 4. Arritmias - Análisis de variabilidad
+    if (rrData && rrData.intervals.length >= 5) {
+      const arrhythmias = this.mathProcessor.detectArrhythmias(rrData.intervals);
+      this.measurements.arrhythmiaCount = Math.max(0, arrhythmias);
+    }
+
+    console.log("📊 VitalSignsProcessor: Mediciones calculadas:", {
+      spo2: this.measurements.spo2,
+      glucosa: this.measurements.glucose,
+      presión: `${this.measurements.systolicPressure}/${this.measurements.diastolicPressure}`,
+      arritmias: this.measurements.arrhythmiaCount
+    });
   }
 
-  public isCurrentlyCalibrating(): boolean {
-    return this.isCalibrating;
+  getCalibrationProgress(): number {
+    return Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100);
   }
 
-  public getCalibrationProgress(): VitalSignsResult['calibration'] {
-    if (!this.isCalibrating) return undefined;
+  reset(): VitalSignsResult | null {
+    console.log("🔄 VitalSignsProcessor: Reset ÚNICO preservando últimas mediciones válidas");
     
-    return {
-      isCalibrating: true,
-      progress: { ...this.calibrationProgress }
+    const currentResults = {
+      spo2: this.measurements.spo2,
+      glucose: this.measurements.glucose,
+      pressure: {
+        systolic: this.measurements.systolicPressure,
+        diastolic: this.measurements.diastolicPressure
+      },
+      arrhythmiaCount: this.measurements.arrhythmiaCount,
+      isCalibrating: false,
+      calibrationProgress: 100
     };
+
+    // Mantener mediciones válidas, resetear solo el historial
+    this.signalHistory = [];
+    this.isCalibrating = false;
+
+    return this.measurements.spo2 > 0 ? currentResults : null;
   }
 
-  public reset(): VitalSignsResult | null {
-    console.log("🔄 VitalSignsProcessor: Reset completo - sistema matemático puro");
+  fullReset(): void {
+    console.log("🗑️ VitalSignsProcessor: Reset COMPLETO a estado inicial");
     
-    const savedResults = this.lastValidResults;
+    this.measurements = {
+      spo2: 0,
+      glucose: 0,
+      systolicPressure: 0,
+      diastolicPressure: 0,
+      arrhythmiaCount: 0
+    };
     
-    // Reset de todos los procesadores
-    this.spo2Processor.reset();
-    this.bpProcessor.reset();
-    this.arrhythmiaProcessor.reset();
-    this.signalProcessor.reset();
-    this.glucoseProcessor.reset();
-    this.lipidProcessor.reset();
-    
-    // Reset de calibración
+    this.signalHistory = [];
     this.isCalibrating = false;
     this.calibrationSamples = 0;
-    this.calibrationStartTime = 0;
-    
-    if (this.calibrationTimer) {
-      clearTimeout(this.calibrationTimer);
-      this.calibrationTimer = null;
-    }
-    
-    this.calibrationProgress = {
-      heartRate: 0,
-      spo2: 0,
-      pressure: 0,
-      arrhythmia: 0,
-      glucose: 0,
-      lipids: 0,
-      hemoglobin: 0
-    };
-    
-    console.log("✅ VitalSignsProcessor: Reset matemático completado");
-    return savedResults;
-  }
-
-  public fullReset(): void {
-    console.log("🔄 VitalSignsProcessor: Reset completo total");
-    this.reset();
-    this.lastValidResults = null;
-    console.log("✅ VitalSignsProcessor: Reset total completado");
   }
 }
