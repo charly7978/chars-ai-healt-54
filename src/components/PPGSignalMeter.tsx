@@ -28,7 +28,7 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
-  onPeakDetected?: (peak: {time: number, value: number, isArrhythmia: boolean}) => void;
+  onPeakDetected?: (peak: {time: number, value: number, isArrhythmia: boolean, bpm: number}) => void;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
     timestamp: number;
@@ -214,12 +214,25 @@ const PPGSignalMeter = ({
           lastHeartRateRef.current = adaptiveSmoothing(bpm);
           lastPeakTimeRef.current = now;
           
+          // AGREGAR PICO VISUAL AL MONITOR CARDIACO
+          peaksRef.current.push({
+            time: now,
+            value: currentValue,
+            isArrhythmia: points[points.length - 1].isArrhythmia
+          });
+          
+          // LIMPIAR PICOS ANTIGUOS
+          peaksRef.current = peaksRef.current
+            .filter(peak => now - peak.time < WINDOW_WIDTH_MS)
+            .slice(-MAX_PEAKS_TO_DISPLAY);
+          
           // NOTIFICAR AL PADRE QUE SE DETECTÓ UN PICO (LATIDO)
           if (onPeakDetected) {
             onPeakDetected({
               time: now,
               value: currentValue,
-              isArrhythmia: points[points.length - 1].isArrhythmia
+              isArrhythmia: points[points.length - 1].isArrhythmia,
+              bpm: lastHeartRateRef.current
             });
           }
           
@@ -236,8 +249,8 @@ const PPGSignalMeter = ({
       }
     }
     
-    // ACTUALIZAR PICOS VISUALES PARA EL MONITOR CARDIACO
-    updateVisualPeaks(points, now);
+    // PICOS VISUALES MANEJADOS POR EL ALGORITMO AVANZADO (NO DUPLICAR)
+    // updateVisualPeaks(points, now); // DESACTIVADO PARA EVITAR DUPLICACIÓN
   }, [onPeakDetected]);
   
   // FUNCIÓN PARA ACTUALIZAR PICOS VISUALES (MONITOR CARDIACO)

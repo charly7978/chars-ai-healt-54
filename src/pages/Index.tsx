@@ -289,8 +289,17 @@ const Index = () => {
   };
 
   // MANEJAR PICO DETECTADO DESDE EL MONITOR CARDIACO (PPGSignalMeter)
-  const handlePeakDetected = useCallback((peak: {time: number, value: number, isArrhythmia: boolean}) => {
+  const handlePeakDetected = useCallback((peak: {time: number, value: number, isArrhythmia: boolean, bpm: number}) => {
     console.log('Index.tsx: Pico detectado por PPGSignalMeter', peak);
+    
+    // ACTUALIZAR BPM EN TIEMPO REAL
+    if (peak.bpm > 0) {
+      setHeartRate(peak.bpm);
+      setVitalSigns(prev => ({
+        ...prev,
+        heartRate: peak.bpm
+      }));
+    }
     
     // NOTIFICAR LATIDO DETECTADO (BEEP + VIBRACIÓN)
     try {
@@ -317,7 +326,7 @@ const Index = () => {
         navigator.vibrate([50, 25, 50]);
       }
       
-      console.log('Index.tsx: Beep y vibración activados por pico detectado');
+      console.log('Index.tsx: Beep, vibración y BPM actualizados por pico detectado', { bpm: peak.bpm });
     } catch (error) {
       console.warn('Error en notificación de latido:', error);
     }
