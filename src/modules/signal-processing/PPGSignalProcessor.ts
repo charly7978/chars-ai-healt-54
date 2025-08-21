@@ -56,11 +56,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // VALIDACIÓN EQUILIBRADA
     MIN_SNR_REQUIRED: 10.0, // SNR más bajo pero funcional
     SKIN_COLOR_STRICTNESS: 0.6, // Más permisivo
-    PULSATILITY_MIN_REQUIRED: 0.1, // Más bajo para señales débiles
+    PULSATILITY_MIN_REQUIRED: 0.01, // Más bajo para señales débiles
     TEXTURE_HUMAN_MIN: 0.4, // Más permisivo
-    STABILITY_FRAMES: 10, // Menos frames para estabilidad
+    STABILITY_FRAMES: 2, // Menos frames para estabilidad
     
-    NOISE_THRESHOLD: 1.5,
+    NOISE_THRESHOLD: 1.9,
     PEAK_PROMINENCE: 0.15, // Más sensible para detectar latidos débiles
     VALLEY_DEPTH: 0.1,
     SIGNAL_CONSISTENCY: 0.5
@@ -78,8 +78,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.trendAnalyzer = new SignalTrendAnalyzer();
     this.biophysicalValidator = new BiophysicalValidator();
     this.frameProcessor = new FrameProcessor({
-      TEXTURE_GRID_SIZE: 16,
-      ROI_SIZE_FACTOR: 0.85
+      TEXTURE_GRID_SIZE: 19,
+      ROI_SIZE_FACTOR: 0.99
     });
     this.calibrationHandler = new CalibrationHandler({
       CALIBRATION_SAMPLES: 30,
