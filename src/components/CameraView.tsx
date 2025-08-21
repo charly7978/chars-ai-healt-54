@@ -253,7 +253,11 @@ const CameraView = ({
         onStreamReady(newStream);
         
         // ✅ INICIAR PROCESAMIENTO EN TIEMPO REAL PARA MEDICIÓN PPG CONTINUA
-        setTimeout(() => startRealTimeProcessing(), 1000);
+        console.log("⏰ Programando inicio de procesamiento en tiempo real...");
+        setTimeout(() => {
+          console.log("🔍 Intentando iniciar procesamiento en tiempo real...");
+          startRealTimeProcessing();
+        }, 2000); // Aumentar delay para asegurar que el video esté listo
       }
     } catch (err) {
       if (process.env.NODE_ENV !== 'production') {
@@ -294,6 +298,8 @@ const CameraView = ({
   const processFrame = (frameData: ImageData) => {
     const { red, ir, green } = extractPPGSignals(frameData);
     
+    console.log("📊 Frame procesado:", { red: red[0], ir: ir[0], green: green[0] });
+    
     // ✅ UNIFICADO: Usar solo el procesador principal
     const results = vitalProcessor.current.processSignal(
       red[0], // Usar solo el valor principal
@@ -306,6 +312,8 @@ const CameraView = ({
       // Notificar detección de dedo basado en la calidad de la señal
       const signalQuality = calculateSignalQuality(red[0], ir[0], green[0]);
       const fingerDetected = signalQuality > 30; // Umbral para detección de dedo
+      
+      console.log("👆 Detección de dedo:", { fingerDetected, signalQuality });
       
       if (onFingerDetected) {
         onFingerDetected(fingerDetected, signalQuality);
@@ -320,6 +328,8 @@ const CameraView = ({
     const videoElement = videoRef.current;
     if (!videoElement) return;
     
+    console.log("🚀 Iniciando procesamiento en tiempo real de frames PPG");
+    
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -328,15 +338,18 @@ const CameraView = ({
     canvas.height = 240;
     
     const processFrameRealTime = () => {
-      if (!isMonitoring || !stream) return;
+      if (!isMonitoring || !stream || !videoElement) return;
       
       try {
-        // Capturar frame del video
-        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        
-        // Procesar frame para extraer señal PPG
-        processFrame(imageData);
+        // Verificar que el video esté listo
+        if (videoElement.readyState >= 2) {
+          // Capturar frame del video
+          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          
+          // Procesar frame para extraer señal PPG
+          processFrame(imageData);
+        }
         
         // Continuar procesamiento en tiempo real
         requestAnimationFrame(processFrameRealTime);
@@ -553,7 +566,12 @@ const CameraView = ({
         console.log("[DIAG] CameraView: Deteniendo cámara porque isMonitoring=false");
       }
       stopCamera();
+    } else if (isMonitoring && stream) {
+      // ✅ FALLBACK: Si ya hay stream y se activa monitoreo, iniciar procesamiento
+      console.log("🔄 Stream ya activo, iniciando procesamiento en tiempo real...");
+      setTimeout(() => startRealTimeProcessing(), 1000);
     }
+    
     return () => {
       if (process.env.NODE_ENV !== 'production') {
         console.log("[DIAG] CameraView: Desmontando componente, deteniendo cámara");
