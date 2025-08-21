@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+
+import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-
+import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
@@ -15,37 +16,59 @@ const Index = () => {
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
-    pressure: "--/--",
-    arrhythmiaStatus: "--",
     glucose: 0,
-    lipids: {
-      totalCholesterol: 0,
-      triglycerides: 0
-    },
     hemoglobin: 0,
-    heartRate: 0,
-    rrIntervals: []
+    pressure: { systolic: 0, diastolic: 0 },
+    arrhythmiaCount: 0,
+    arrhythmiaStatus: "SIN ARRITMIAS|0",
+    lipids: { totalCholesterol: 0, triglycerides: 0 },
+    isCalibrating: false,
+    calibrationProgress: 0,
+    lastArrhythmiaData: undefined
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
   const [beatMarker, setBeatMarker] = useState(0);
-  const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
-  const [calibrationProgress, setCalibrationProgress] = useState<VitalSignsResult['calibration']>();
+  const [calibrationProgress, setCalibrationProgress] = useState(0);
+  
   const measurementTimerRef = useRef<number | null>(null);
-  const [lastArrhythmiaData, setLastArrhythmiaData] = useState<{
-    timestamp: number;
-    rmssd: number;
-    rrVariation: number;
-  } | null>(null);
+  const arrhythmiaDetectedRef = useRef(false);
+  const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
+<<<<<<< HEAD
   // Usar el nuevo sistema multicanal
   const { handleSample, lastResult, adjustChannelGain } = useSignalProcessor(8, 6);
 
+=======
+  const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
+  const sessionIdRef = useRef<string>("");
+  const initializationLock = useRef<boolean>(false);
+  
+  // HOOKS
+  const { 
+    startProcessing, 
+    stopProcessing, 
+    lastSignal, 
+    handleSample,
+    isProcessing, 
+    framesProcessed,
+    debugInfo: signalDebugInfo,
+    lastResult
+  } = useSignalProcessor();
+  
+  const { 
+    processSignal: processHeartBeat, 
+    setArrhythmiaState,
+    reset: resetHeartBeat,
+    debugInfo: heartDebugInfo
+  } = useHeartBeatProcessor();
+  
+>>>>>>> ea85559876bf770fc2baa633a29716bb83d3b0b8
   const { 
     processSignal: processVitalSigns, 
     reset: resetVitalSigns,
@@ -56,6 +79,7 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
+<<<<<<< HEAD
   // Efecto para procesar los resultados del nuevo sistema multicanal
   useEffect(() => {
     if (lastResult) {
@@ -89,106 +113,64 @@ const Index = () => {
       }
     }
   }, [lastResult, isCameraOn, processVitalSigns]);
+=======
+  useEffect(() => {
+    if (initializationLock.current) return;
+    
+    initializationLock.current = true;
+    const randomBytes = new Uint32Array(3);
+    crypto.getRandomValues(randomBytes);
+    sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
+    
+    console.log(`🚀 INICIALIZACIÓN ÚNICA: ${sessionIdRef.current}`);
+    
+    return () => {
+      initializationLock.current = false;
+    };
+  }, []);
+>>>>>>> ea85559876bf770fc2baa633a29716bb83d3b0b8
 
   const enterFullScreen = async () => {
+    if (isFullscreen) return;
     try {
-      if (!isFullscreen) {
-        const docEl = document.documentElement;
-        
-        if (docEl.requestFullscreen) {
-          await docEl.requestFullscreen();
-        } else if ((docEl as any).webkitRequestFullscreen) {
-          await (docEl as any).webkitRequestFullscreen();
-        } else if ((docEl as any).msRequestFullscreen) {
-          await (docEl as any).msRequestFullscreen();
-        } else if ((docEl as any).mozRequestFullScreen) {
-          await (docEl as any).mozRequestFullScreen();
-        }
-        
-        // Bloquear orientación si es dispositivo móvil
-        if (screen.orientation && screen.orientation.lock) {
-          try {
-            await screen.orientation.lock('portrait');
-            console.log('Orientación portrait bloqueada');
-          } catch (err) {
-            console.log('Error al bloquear la orientación:', err);
-          }
-        }
-        
-        setIsFullscreen(true);
-        console.log("Pantalla completa activada");
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        await docEl.requestFullscreen();
       }
+      setIsFullscreen(true);
     } catch (err) {
-      console.log('Error al entrar en pantalla completa:', err);
+      console.log('Fullscreen no disponible:', err);
     }
   };
   
   const exitFullScreen = () => {
+    if (!isFullscreen) return;
     try {
-      if (isFullscreen) {
-        if (document.exitFullscreen) {
-          document.exitFullscreen();
-        } else if ((document as any).webkitExitFullscreen) {
-          (document as any).webkitExitFullscreen();
-        } else if ((document as any).msExitFullscreen) {
-          (document as any).msExitFullscreen();
-        } else if ((document as any).mozCancelFullScreen) {
-          (document as any).mozCancelFullScreen();
-        }
-        
-        // Desbloquear orientación si es necesario
-        if (screen.orientation && screen.orientation.unlock) {
-          screen.orientation.unlock();
-          console.log('Orientación desbloqueada');
-        }
-        
-        setIsFullscreen(false);
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
       }
-    } catch (err) {
-      console.log('Error al salir de pantalla completa:', err);
-    }
+      setIsFullscreen(false);
+    } catch (err) {}
   };
-  
-  // Activar pantalla completa automáticamente al cargar la página
+
   useEffect(() => {
-    setTimeout(() => {
-      enterFullScreen();
-    }, 1000); // Pequeño retraso para asegurar que todo está cargado
+    const timer = setTimeout(() => enterFullScreen(), 1000);
     
-    // Detectar cambios en el estado de pantalla completa
     const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(
         document.fullscreenElement || 
-        (document as any).webkitFullscreenElement || 
-        (document as any).msFullscreenElement || 
-        (document as any).mozFullScreenElement
+        (document as any).webkitFullscreenElement
       ));
     };
     
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
-    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
     
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
-      
-      // Asegurarse de salir del modo pantalla completa al desmontar
       exitFullScreen();
-    };
-  }, []);
-
-  useEffect(() => {
-    const preventScroll = (e: Event) => e.preventDefault();
-    document.body.addEventListener('touchmove', preventScroll, { passive: false });
-    document.body.addEventListener('scroll', preventScroll, { passive: false });
-
-    return () => {
-      document.body.removeEventListener('touchmove', preventScroll);
-      document.body.removeEventListener('scroll', preventScroll);
     };
   }, []);
 
@@ -200,6 +182,7 @@ const Index = () => {
   }, [lastValidResults, isMonitoring]);
 
   const startMonitoring = () => {
+<<<<<<< HEAD
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
@@ -240,28 +223,61 @@ const Index = () => {
           return newTime;
         });
       }, 1000);
+=======
+    if (systemState.current !== 'IDLE') {
+      console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current}`);
+      return;
+>>>>>>> ea85559876bf770fc2baa633a29716bb83d3b0b8
     }
-  };
-
-  const startAutoCalibration = () => {
-    console.log("Iniciando auto-calibración real con indicadores visuales");
-    setIsCalibrating(true);
     
-    // Iniciar la calibración en el procesador
+    systemState.current = 'STARTING';
+    console.log(`🎬 INICIO MONITOREO - ${sessionIdRef.current}`);
+    
+    enterFullScreen();
+    setIsMonitoring(true);
+    setIsCameraOn(true);
+    setShowResults(false);
+    
+    startProcessing();
+    
+    setElapsedTime(0);
+    setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
+    
+    console.log(`🔧 Iniciando calibración`);
+    setIsCalibrating(true);
     startCalibration();
     
-    // El progreso de la calibración será actualizado por el hook useVitalSignsProcessor
-    // y reflejado a través del estado calibrationProgress.
+    setTimeout(() => {
+      if (systemState.current === 'CALIBRATING') {
+        systemState.current = 'ACTIVE';
+      }
+      setIsCalibrating(false);
+    }, 2000);
     
-    // Eliminar la simulación visual con setInterval y setTimeout
-    // La lógica de calibración es ahora completamente manejada por el procesador
+    if (measurementTimerRef.current) {
+      clearInterval(measurementTimerRef.current);
+    }
+    
+    measurementTimerRef.current = window.setInterval(() => {
+      setElapsedTime(prev => {
+        const newTime = prev + 1;
+        if (newTime >= 30) {
+          finalizeMeasurement();
+          return 30;
+        }
+        return newTime;
+      });
+    }, 1000);
+    
+    systemState.current = 'ACTIVE';
   };
 
   const finalizeMeasurement = () => {
-    console.log("Finalizando medición: manteniendo resultados");
+    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') return;
+    
+    systemState.current = 'STOPPING';
     
     if (isCalibrating) {
-      console.log("Calibración en progreso al finalizar, forzando finalización");
       forceCalibrationCompletion();
     }
     
@@ -283,11 +299,14 @@ const Index = () => {
     
     setElapsedTime(0);
     setSignalQuality(0);
-    setCalibrationProgress(undefined);
+    setCalibrationProgress(0);
+    
+    systemState.current = 'IDLE';
   };
 
   const handleReset = () => {
-    console.log("Reseteando completamente la aplicación");
+    systemState.current = 'STOPPING';
+    
     setIsMonitoring(false);
     setIsCameraOn(false);
     setShowResults(false);
@@ -300,25 +319,26 @@ const Index = () => {
     }
     
     fullResetVitalSigns();
+    resetHeartBeat();
+    
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setVitalSigns({ 
-      heartRate: 0,
-      rrIntervals: [],
       spo2: 0,
-      pressure: "--/--",
-      arrhythmiaStatus: "--",
       glucose: 0,
-      lipids: {
-        totalCholesterol: 0,
-        triglycerides: 0
-      },
-      hemoglobin: 0
+      hemoglobin: 0,
+      pressure: { systolic: 0, diastolic: 0 },
+      arrhythmiaCount: 0,
+      arrhythmiaStatus: "SIN ARRITMIAS|0",
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      isCalibrating: false,
+      calibrationProgress: 0,
+      lastArrhythmiaData: undefined
     });
-    setArrhythmiaCount("--");
     setSignalQuality(0);
+<<<<<<< HEAD
     setLastArrhythmiaData(null);
     setCalibrationProgress(undefined);
   };
@@ -465,6 +485,88 @@ const Index = () => {
   const arrhythmiaDetectedRef = useRef(false);
   
   // Nueva función para alternar medición
+=======
+    lastArrhythmiaData.current = null;
+    setCalibrationProgress(0);
+    arrhythmiaDetectedRef.current = false;
+    
+    systemState.current = 'IDLE';
+  };
+
+  // PROCESAMIENTO CORREGIDO PARA BPM REAL
+  useEffect(() => {
+    if (!lastSignal || !lastResult) return;
+
+    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 15) || lastResult.channels[0];
+    setSignalQuality(bestChannel?.quality || 0);
+    
+    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
+    
+    const MIN_SIGNAL_QUALITY = 10;
+    
+    if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
+      return;
+    }
+
+    const heartBeatResult = processHeartBeat(
+      lastSignal.filteredValue, 
+      lastSignal.fingerDetected, 
+      lastSignal.timestamp
+    );
+    
+    const finalBpm = lastResult.aggregatedBPM && lastResult.aggregatedBPM > 50 && lastResult.aggregatedBPM < 200 
+      ? lastResult.aggregatedBPM 
+      : (heartBeatResult.bpm && heartBeatResult.bpm > 50 && heartBeatResult.bpm < 200 ? heartBeatResult.bpm : 0);
+    
+    setHeartRate(finalBpm);
+    setHeartbeatSignal(lastSignal.filteredValue);
+    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
+    
+    if (heartBeatResult.rrData?.intervals) {
+      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
+    }
+    
+    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    if (vitals) {
+      setVitalSigns(vitals);
+      
+      if (vitals.lastArrhythmiaData) {
+        lastArrhythmiaData.current = vitals.lastArrhythmiaData;
+        const isArrhythmiaDetected = vitals.arrhythmiaStatus.includes("DETECTADA");
+        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+          setArrhythmiaState(isArrhythmiaDetected);
+          
+          if (isArrhythmiaDetected) {
+            toast({ 
+              title: "¡Arritmia detectada!", 
+              description: "Latido irregular identificado.", 
+              variant: "destructive", 
+              duration: 3000 
+            });
+          }
+        }
+      }
+    }
+  }, [lastSignal, lastResult, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+
+  useEffect(() => {
+    if (!isCalibrating) return;
+    
+    const interval = setInterval(() => {
+      const currentProgress = getCalibrationProgress();
+      setCalibrationProgress(currentProgress);
+
+      if (currentProgress >= 100) {
+        clearInterval(interval);
+        setIsCalibrating(false);
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [isCalibrating, getCalibrationProgress]);
+
+>>>>>>> ea85559876bf770fc2baa633a29716bb83d3b0b8
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
@@ -472,27 +574,6 @@ const Index = () => {
       startMonitoring();
     }
   };
-
-  // Observar el progreso real de la calibración desde el procesador de signos vitales
-  useEffect(() => {
-    if (isCalibrating) {
-      const interval = setInterval(() => {
-        const currentProgress = getCalibrationProgress();
-        setCalibrationProgress(currentProgress);
-
-        if (!currentProgress?.isCalibrating) {
-          clearInterval(interval);
-          console.log("Calibración finalizada según el procesador.");
-          setIsCalibrating(false);
-          if (navigator.vibrate) {
-            navigator.vibrate([100, 50, 100]);
-          }
-        }
-      }, 500); // Actualizar el progreso cada 500ms
-
-      return () => clearInterval(interval);
-    }
-  }, [isCalibrating, getCalibrationProgress]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
@@ -504,13 +585,6 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-      {/* Debug overlay de intervalos RR */}
-      {rrIntervals.length > 0 && (
-        <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded">
-          Últimos intervalos RR: {rrIntervals.map(i => i + ' ms').join(', ')}
-        </div>
-      )}
-      {/* Overlay button for re-entering fullscreen if user exits */}
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -520,7 +594,7 @@ const Index = () => {
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
             </svg>
-            <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
+            <p className="text-lg font-semibold">Toca para pantalla completa</p>
           </div>
         </button>
       )}
@@ -529,6 +603,7 @@ const Index = () => {
         <div className="absolute inset-0">
           {/* CameraView con el nuevo sistema multicanal */}
           <CameraView 
+<<<<<<< HEAD
             onStreamReady={handleStreamReady}
             onSample={handleSample}
             isMonitoring={isMonitoring}
@@ -536,10 +611,20 @@ const Index = () => {
             roiSize={200}
             enableTorch={true}
             coverageThresholdPixelBrightness={30}
+=======
+            onSample={handleSample}
+            isMonitoring={isCameraOn}
+            targetFps={30}
+            targetW={160}
+            enableTorch={true}
+            isFingerDetected={lastSignal?.fingerDetected || false}
+            signalQuality={signalQuality}
+>>>>>>> ea85559876bf770fc2baa633a29716bb83d3b0b8
           />
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
+<<<<<<< HEAD
           {/* Se agrega header para sensor de calidad y estado de huella digital */}
           <div className="px-4 py-2 flex justify-around items-center bg-black/20">
             <div className="text-white text-lg">
@@ -567,16 +652,21 @@ const Index = () => {
               value={lastResult?.aggregatedQuality || 0}
               quality={lastResult?.aggregatedQuality || 0}
               isFingerDetected={lastResult?.fingerDetected || false}
+=======
+          <div className="flex-1" style={{ marginTop: '6mm' }}>
+            <PPGSignalMeter 
+              value={beatMarker}
+              quality={signalQuality}
+              isFingerDetected={lastSignal?.fingerDetected || false}
+>>>>>>> ea85559876bf770fc2baa633a29716bb83d3b0b8
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
-              onPeakDetected={handlePeakDetected}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
-              rawArrhythmiaData={lastArrhythmiaData}
+              rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
             />
           </div>
 
-          {/* Contenedor de los displays ampliado y con mayor espaciamiento */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
@@ -593,7 +683,7 @@ const Index = () => {
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
-                value={vitalSigns.pressure}
+                value={vitalSigns.pressure ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` : "--/--"}
                 unit="mmHg"
                 highlighted={showResults}
               />
@@ -618,7 +708,6 @@ const Index = () => {
             </div>
           </div>
 
-          {/* Botonera inferior: botón de iniciar/detener y de reset en fila */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 

@@ -1,418 +1,159 @@
-import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
-import { KalmanFilter } from './KalmanFilter';
-import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
-import { SignalTrendAnalyzer, TrendResult } from './SignalTrendAnalyzer';
-import { BiophysicalValidator } from './BiophysicalValidator';
-import { FrameProcessor } from './FrameProcessor';
-import { CalibrationHandler } from './CalibrationHandler';
-import { SignalAnalyzer } from './SignalAnalyzer';
-import { SignalProcessorConfig } from './types';
 
-/**
- * Procesador de señal PPG con detección de dedo mejorada
- * e indicador de calidad con validaciones biofísicas humanas
- * PROHIBIDA LA SIMULACIÓN Y TODO TIPO DE MANIPULACIÓN FORZADA DE DATOS
- */
-export class PPGSignalProcessor implements SignalProcessorInterface {
-  public isProcessing: boolean = false;
-  public kalmanFilter: KalmanFilter;
-  public sgFilter: SavitzkyGolayFilter;
-  public trendAnalyzer: SignalTrendAnalyzer;
-  public biophysicalValidator: BiophysicalValidator;
-  public frameProcessor: FrameProcessor;
-  public calibrationHandler: CalibrationHandler;
-  public signalAnalyzer: SignalAnalyzer;
-  public lastValues: number[] = [];
-  public isCalibrating: boolean = false;
-  public frameProcessedCount = 0;
-  
-  // Configuration with enhanced human finger detection
-  public readonly CONFIG: SignalProcessorConfig = {
-    BUFFER_SIZE: 28,              // Aumentado sutilmente para mayor robustez
-    MIN_RED_THRESHOLD: 0,
-    MAX_RED_THRESHOLD: 240,
-    STABILITY_WINDOW: 28,         // Aumentado sutilmente para mayor robustez
-    MIN_STABILITY_COUNT: 8,       // Reducido sutilmente para mayor sensibilidad
-    HYSTERESIS: 3.0,              // Aumentado sutilmente para mayor estabilidad
-    MIN_CONSECUTIVE_DETECTIONS: 10, // Reducido sutilmente para mayor sensibilidad
-    MAX_CONSECUTIVE_NO_DETECTIONS: 10, // Aumentado para mayor estabilidad
-    QUALITY_LEVELS: 35,           // Aumentado sutilmente para mayor robustez
-    QUALITY_HISTORY_SIZE: 25,     // Aumentado sutilmente para mayor robustez
-    CALIBRATION_SAMPLES: 18,      // Aumentado sutilmente para mayor robustez
-    TEXTURE_GRID_SIZE: 8,
-    ROI_SIZE_FACTOR: 0.72         // Aumentado sutilmente para mayor cobertura
+import { savitzkyGolay } from './SavitzkyGolayFilter';
+import { computeSNR } from './SignalQualityAnalyzer';
+
+export interface PPGProcessingResult {
+  isFingerDetected: boolean;
+  signalQuality: number;   // 0–100
+  rawValue: number;        // último rMean
+  bpm: number | null;      // estimación por FFT/Goertzel
+  snr: number;            
+  metrics: {
+    snr: number;
+    isStable: boolean;
   };
-  
-  constructor(
-    public onSignalReady?: (signal: ProcessedSignal) => void,
-    public onError?: (error: ProcessingError) => void
-  ) {
-    console.log("[DIAG] PPGSignalProcessor: Constructor", {
-      hasSignalReadyCallback: !!onSignalReady,
-      hasErrorCallback: !!onError,
-      stack: new Error().stack
-    });
-    
-    this.kalmanFilter = new KalmanFilter();
-    this.sgFilter = new SavitzkyGolayFilter();
-    this.trendAnalyzer = new SignalTrendAnalyzer();
-    this.biophysicalValidator = new BiophysicalValidator();
-    this.frameProcessor = new FrameProcessor({
-      TEXTURE_GRID_SIZE: this.CONFIG.TEXTURE_GRID_SIZE,
-      ROI_SIZE_FACTOR: this.CONFIG.ROI_SIZE_FACTOR
-    });
-    this.calibrationHandler = new CalibrationHandler({
-      CALIBRATION_SAMPLES: this.CONFIG.CALIBRATION_SAMPLES,
-      MIN_RED_THRESHOLD: this.CONFIG.MIN_RED_THRESHOLD,
-      MAX_RED_THRESHOLD: this.CONFIG.MAX_RED_THRESHOLD
-    });
-    this.signalAnalyzer = new SignalAnalyzer({
-      QUALITY_LEVELS: this.CONFIG.QUALITY_LEVELS,
-      QUALITY_HISTORY_SIZE: this.CONFIG.QUALITY_HISTORY_SIZE,
-      MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_DETECTIONS,
-      MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS
-    });
-    
-    console.log("PPGSignalProcessor: Instance created with enhanced human detection:", this.CONFIG);
+}
+
+type Sample = { t: number; v: number };
+
+export default class PPGSignalProcessor {
+  private buffer: Sample[] = [];
+  private windowSec = 8; // ventana de análisis en segundos (balance: latencia vs resolución)
+
+  // parámetros
+  private minRMeanForFinger = 15; // reducido para mayor sensibilidad
+  private maxStdForFinger = 80;    // aumentado para tolerar más variación
+  private minACAmplitude = 0.2;   // reducido para detectar señales más débiles
+
+  constructor(windowSec = 8) {
+    this.windowSec = windowSec;
   }
 
-  async initialize(): Promise<void> {
-    console.log("[DIAG] PPGSignalProcessor: initialize() called", {
-      hasSignalReadyCallback: !!this.onSignalReady,
-      hasErrorCallback: !!this.onError
-    });
-    try {
-      // Reset all filters and analyzers
-      this.lastValues = [];
-      this.kalmanFilter.reset();
-      this.sgFilter.reset();
-      this.trendAnalyzer.reset();
-      this.biophysicalValidator.reset();
-      this.signalAnalyzer.reset();
-      this.frameProcessedCount = 0;
-      
-      console.log("PPGSignalProcessor: System initialized with callbacks:", {
-        hasSignalReadyCallback: !!this.onSignalReady,
-        hasErrorCallback: !!this.onError
-      });
-    } catch (error) {
-      console.error("PPGSignalProcessor: Initialization error", error);
-      this.handleError("INIT_ERROR", "Error initializing advanced processor");
-    }
-  }
+  processSample(rMean: number, rStd: number, frameDiff: number, timestampMs: number): PPGProcessingResult {
+    // push sample
+    this.buffer.push({ t: timestampMs / 1000, v: rMean });
+    // limpiar buffer viejo
+    const t0 = (timestampMs / 1000) - this.windowSec;
+    while (this.buffer.length && this.buffer[0].t < t0) this.buffer.shift();
 
-  start(): void {
-    console.log("[DIAG] PPGSignalProcessor: start() called", { isProcessing: this.isProcessing });
-    if (this.isProcessing) return;
-    this.isProcessing = true;
-    this.initialize();
-    console.log("PPGSignalProcessor: Advanced system started");
-  }
+    const rawValue = rMean;
 
-  stop(): void {
-    console.log("[DIAG] PPGSignalProcessor: stop() called", { isProcessing: this.isProcessing });
-    this.isProcessing = false;
-    this.lastValues = [];
-    this.kalmanFilter.reset();
-    this.sgFilter.reset();
-    this.trendAnalyzer.reset();
-    this.biophysicalValidator.reset();
-    this.signalAnalyzer.reset();
-    console.log("PPGSignalProcessor: Advanced system stopped");
-  }
+    // primera heurística de detección de dedo: promedio alto y desviación razonable
+    const recentMeans = this.buffer.map(s => s.v);
+    const meanAll = recentMeans.reduce((a,b)=>a+b,0)/Math.max(1,recentMeans.length);
+    const variance = recentMeans.reduce((a,b)=>a+(b-meanAll)*(b-meanAll),0)/Math.max(1,recentMeans.length);
+    const stdAll = Math.sqrt(variance);
 
-  async calibrate(): Promise<boolean> {
-    try {
-      console.log("PPGSignalProcessor: Starting adaptive calibration");
-      await this.initialize();
-      
-      // Mark calibration mode
-      this.isCalibrating = true;
-      
-      // After a period of calibration, automatically finish
-      setTimeout(() => {
-        this.isCalibrating = false;
-        console.log("PPGSignalProcessor: Adaptive calibration completed automatically");
-      }, 3000);
-      
-      console.log("PPGSignalProcessor: Adaptive calibration initiated");
-      return true;
-    } catch (error) {
-      console.error("PPGSignalProcessor: Calibration error", error);
-      this.handleError("CALIBRATION_ERROR", "Error during adaptive calibration");
-      this.isCalibrating = false;
-      return false;
-    }
-  }
+    // Si el promedio rojo es muy bajo o la desviación espacial muy alta -> no dedo
+    const fingerCandidates = (meanAll >= this.minRMeanForFinger) && (rStd <= this.maxStdForFinger);
 
-  processFrame(imageData: ImageData): void {
-    console.log("[DIAG] PPGSignalProcessor: processFrame() called", {
-      isProcessing: this.isProcessing,
-      hasOnSignalReadyCallback: !!this.onSignalReady,
-      imageSize: `${imageData.width}x${imageData.height}`,
-      timestamp: new Date().toISOString(),
-      config: this.CONFIG // Log de configuración para verificar mejoras
-    });
-    if (!this.isProcessing) {
-      console.log("PPGSignalProcessor: Not processing, ignoring frame");
-      return;
-    }
+    // si hay movimiento grande entre frames es probable que la toma no sea estable; penalizar
+    const movementPenalty = Math.min(1, frameDiff / 30); // menos estricto
 
-    try {
-      // Count processed frames
-      this.frameProcessedCount++;
-      const shouldLog = this.frameProcessedCount % 30 === 0;
-
-      // CRITICAL CHECK: Ensure callbacks are available
-      if (!this.onSignalReady) {
-        console.error("PPGSignalProcessor: onSignalReady callback not available, cannot continue");
-        this.handleError("CALLBACK_ERROR", "Callback onSignalReady not available");
-        return;
-      }
-
-      // 1. Extract frame features with enhanced validation
-      const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
-      const roi = this.frameProcessor.detectROI(redValue, imageData);
-
-      // ENHANCED HUMAN MORPHOLOGY VALIDATION (subtle but effective)
-      const humanMorphologyValid = this.validateHumanFingerMorphology(
-        redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, rToGRatio, rToBRatio
-      );
-
-      if (shouldLog) {
-        console.log("PPGSignalProcessor DEBUG - MEJORAS APLICADAS:", {
-          step: "FrameExtraction",
-          redValue: redValue,
-          humanMorphologyValid,
-          roiX: roi.x,
-          roiY: roi.y,
-          roiWidth: roi.width,
-          roiHeight: roi.height,
-          textureScore,
-          rToGRatio,
-          rToBRatio,
-          config: {
-            BUFFER_SIZE: this.CONFIG.BUFFER_SIZE,
-            MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_DETECTIONS,
-            MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_NO_DETECTIONS
-          }
-        });
-      }
-
-      // Early rejection if non-human morphology detected (MÁS PERMISIVO)
-      if (!humanMorphologyValid && !this.isCalibrating) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-human morphology detected, pero permitiendo procesamiento");
-        }
-        // NO rechazar la señal, solo reducir la calidad
-      }
-
-      // Early rejection of invalid frames - MÁS PERMISIVO
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.5) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal very weak, pero permitiendo procesamiento:", redValue);
-        }
-        // NO rechazar la señal, solo reducir la calidad
-      }
-
-      // 2. Apply multi-stage filtering to the signal with human-optimized parameters
-      let filteredValue = this.kalmanFilter.filter(redValue);
-      filteredValue = this.sgFilter.filter(filteredValue);
-      
-      // Enhanced adaptive gain based on human finger characteristics
-      const humanOptimizedGain = this.calculateHumanOptimizedGain(
-        extractionResult.textureScore, rToGRatio, humanMorphologyValid
-      );
-      filteredValue = filteredValue * humanOptimizedGain;
-
-      // Mantener un historial de valores filtrados para el cálculo de la pulsatilidad
-      this.lastValues.push(filteredValue);
-      if (this.lastValues.length > this.CONFIG.BUFFER_SIZE) {
-        this.lastValues.shift();
-      }
-
-      // 3. Perform signal trend analysis with strict physiological validation
-      const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
-
-      if (trendResult === "non_physiological" && !this.isCalibrating) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological signal detected, pero permitiendo procesamiento");
-        }
-        // NO rechazar la señal, solo reducir la calidad
-      }
-
-      // Enhanced color ratio validation for human fingers (MÁS PERMISIVO)
-      if ((rToGRatio < 0.5 || rToGRatio > 6.0) && !this.isCalibrating) {
-        if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological color ratio detected, pero permitiendo procesamiento:", {
-            rToGRatio,
-            rToBRatio
-          });
-        }
-        // NO rechazar la señal, solo reducir la calidad
-      }
-
-      // 4. Calculate comprehensive detector scores with enhanced human validation
-      const detectorScores = {
-        redValue,
-        redChannel: Math.min(1.0, Math.max(0, (redValue - this.CONFIG.MIN_RED_THRESHOLD) / 
-                                          (this.CONFIG.MAX_RED_THRESHOLD - this.CONFIG.MIN_RED_THRESHOLD))),
-        stability: this.trendAnalyzer.getStabilityScore(),
-        pulsatility: this.biophysicalValidator.getPulsatilityScore(this.lastValues),
-        biophysical: this.biophysicalValidator.getBiophysicalScore({
-          red: redValue,
-          green: avgGreen ?? 0,
-          blue: avgBlue ?? 0,
-        }) * (humanMorphologyValid ? 1.1 : 0.7), // Boost for human morphology
-        periodicity: this.trendAnalyzer.getPeriodicityScore()
+    // si no hay suficientes muestras -> no hay señal todavía
+    if (this.buffer.length < 15) { // reducido para respuesta más rápida
+      return { 
+        isFingerDetected: false, 
+        signalQuality: 0, 
+        rawValue, 
+        bpm: null, 
+        snr: 0,
+        metrics: { snr: 0, isStable: false }
       };
-
-      // Update analyzer with latest scores
-      this.signalAnalyzer.updateDetectorScores(detectorScores);
-
-      // 5. Perform multi-detector analysis for highly accurate finger detection
-      const detectionResult = this.signalAnalyzer.analyzeSignalMultiDetector(filteredValue, trendResult);
-      const { isFingerDetected, quality } = detectionResult;
-
-      // Calculate physiologically valid perfusion index only when finger is detected
-      const perfusionIndex = isFingerDetected && quality > 30 ? 
-                           (Math.log(redValue) * 0.55 - 1.2) : 0;
-
-      // Create processed signal object with strict validation
-      const processedSignal: ProcessedSignal = {
-        timestamp: Date.now(),
-        rawValue: redValue,
-        filteredValue: filteredValue,
-        quality: quality,
-        fingerDetected: isFingerDetected && humanMorphologyValid,
-        roi: roi,
-        perfusionIndex: Math.max(0, perfusionIndex)
-      };
-
-      if (shouldLog) {
-        console.log("PPGSignalProcessor: Sending validated signal:", {
-          fingerDetected: isFingerDetected && humanMorphologyValid,
-          quality,
-          redValue,
-          filteredValue,
-          humanMorphologyValid,
-          timestamp: new Date().toISOString()
-        });
-      }
-
-      // FINAL VALIDATION before sending
-      if (typeof this.onSignalReady === 'function') {
-        this.onSignalReady(processedSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Final):", processedSignal);
-        }
-      } else {
-        console.error("PPGSignalProcessor: onSignalReady is not a valid function");
-        this.handleError("CALLBACK_ERROR", "Callback onSignalReady is not a valid function");
-      }
-    } catch (error) {
-      console.error("PPGSignalProcessor: Error processing frame", error);
-      this.handleError("PROCESSING_ERROR", "Error processing frame");
     }
-  }
 
-  /**
-   * Enhanced validation of human finger morphology to prevent false positives
-   * Uses physiological characteristics typical of human fingers with improved stability
-   * STRICT validation to only detect human fingers
-   */
-  private validateHumanFingerMorphology(
-    red: number, 
-    green: number, 
-    blue: number, 
-    textureScore: number, 
-    rToGRatio: number, 
-    rToBRatio: number
-  ): boolean {
-    // Human finger characteristics (MÁS PERMISIVO para permitir procesamiento)
-    
-    // 1. Color temperature consistency (human skin has specific warmth)
-    const colorTemperature = (red + green) / (blue + 1);
-    const humanColorTempRange = colorTemperature >= 1.2 && colorTemperature <= 7.0; // Rango más permisivo
-    
-    // 2. Texture complexity (human skin has moderate texture)
-    const humanTextureRange = textureScore >= 0.15 && textureScore <= 0.95; // Rango más permisivo
-    
-    // 3. Vascular undertone (subtle red dominance in human fingers)
-    const vascularUndertone = red > green * 0.7 && red > blue * 1.0; // Umbrales más permisivos
-    
-    // 4. Physiological color ratios for human tissue (más permisivo)
-    const physiologicalRatios = rToGRatio >= 0.7 && rToGRatio <= 5.0 && 
-                               rToBRatio >= 0.8 && rToBRatio <= 4.5; // Rangos más permisivos
-    
-    // 5. Minimum signal strength for human capillary perfusion (más permisivo)
-    const minCapillaryPerfusion = red >= 15 && green >= 10 && blue >= 8; // Umbrales más permisivos
-    
-    // 6. Signal stability check (más permisivo)
-    const signalStability = red > 0 && green > 0 && blue > 0; // Señal válida
-    
-    // 7. Human-specific color balance (más permisivo)
-    const humanColorBalance = (red > green * 0.9) && (red > blue * 1.0) && 
-                             (green > blue * 0.6) && (green < red * 1.1);
-    
-    // 8. Texture consistency for human skin (más permisivo)
-    const humanTextureConsistency = textureScore > 0.2 && textureScore < 0.9;
-    
-    // Combine all indicators (at least 4 out of 8 must be true para mayor permisividad)
-    const validationCount = [
-      humanColorTempRange,
-      humanTextureRange, 
-      vascularUndertone,
-      physiologicalRatios,
-      minCapillaryPerfusion,
-      signalStability,
-      humanColorBalance,
-      humanTextureConsistency
-    ].filter(Boolean).length;
-    
-    return validationCount >= 4; // Umbral más permisivo para permitir procesamiento
-  }
+    // resample uniformemente a N puntos para análisis espectral
+    const sampled = this.resampleUniform(this.buffer, 256);
+    const detr = this.detrend(sampled);
+    const smooth = savitzkyGolay(detr, 11, 3);
 
-  /**
-   * Calculate human-optimized gain for signal enhancement
-   */
-  private calculateHumanOptimizedGain(
-    textureScore: number, 
-    rToGRatio: number, 
-    isHumanMorphology: boolean
-  ): number {
-    let baseGain = 1.0;
-    
-    // Boost gain for confirmed human morphology
-    if (isHumanMorphology) {
-      baseGain *= 1.05;
-    }
-    
-    // Adjust based on texture (human skin optimal range)
-    if (textureScore >= 0.3 && textureScore <= 0.7) {
-      baseGain *= 1.03;
-    }
-    
-    // Adjust based on color ratio (human skin optimal range)
-    if (rToGRatio >= 1.2 && rToGRatio <= 2.5) {
-      baseGain *= 1.02;
-    }
-    
-    return Math.min(2.2, Math.max(0.8, baseGain));
-  }
+    // análisis espectral via Goertzel en rango 0.8 - 3.0 Hz (48 - 180 BPM)
+    const fs = sampled.length / this.windowSec; // Hz
+    const freqs = this.linspace(0.8, 3.0, 112);
+    const powers = freqs.map(f => this.goertzelPower(smooth, fs, f));
 
-  private handleError(code: string, message: string): void {
-    console.error("PPGSignalProcessor: Error", code, message);
-    const error: ProcessingError = {
-      code,
-      message,
-      timestamp: Date.now()
+    const sorted = powers.slice().sort((a,b)=>b-a);
+    const peak = sorted[0] || 0;
+    const noiseMedian = this.median(powers.slice(Math.max(1, Math.floor(powers.length*0.25))));
+    const snr = peak / Math.max(1e-9, noiseMedian);
+    const quality = computeSNR(peak, noiseMedian);
+
+    // encontrar frecuencia de pico y convertir a BPM
+    const peakIndex = powers.indexOf(peak);
+    const peakFreq = freqs[peakIndex] || 0;
+    const bpm = Math.round(peakFreq * 60);
+
+    // criterios más permisivos para detección
+    const isFinger = fingerCandidates && (snr > 2) && (peak > 5e-4) && (movementPenalty < 0.9);
+
+    return {
+      isFingerDetected: !!isFinger,
+      signalQuality: Math.max(0, Math.min(100, Math.round(quality * (isFinger ? 1 : 0.4)))),
+      rawValue,
+      bpm: isFinger ? bpm : null,
+      snr,
+      metrics: { snr, isStable: movementPenalty < 0.7 }
     };
-    if (typeof this.onError === 'function') {
-      this.onError(error);
-    } else {
-      console.error("PPGSignalProcessor: onError callback not available, cannot report error:", error);
+  }
+
+  // Mantener métodos para compatibilidad
+  processFrame(imageData: ImageData): PPGProcessingResult {
+    // Convertir ImageData a valores promedio simples
+    const data = imageData.data;
+    let sum = 0, sum2 = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      sum += r;
+      sum2 += r * r;
     }
+    const len = data.length / 4;
+    const mean = sum / len;
+    const variance = Math.max(0, sum2 / len - mean * mean);
+    const std = Math.sqrt(variance);
+    
+    return this.processSample(mean, std, 0, Date.now());
+  }
+
+  // Helpers
+  private linspace(a:number,b:number,n:number){
+    const r:number[]=[]; for(let i=0;i<n;i++) r.push(a + (b-a)*(i/(n-1))); return r;
+  }
+
+  private median(arr:number[]){
+    const s=arr.slice().sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length? s[m]:0;
+  }
+
+  private resampleUniform(samples: Sample[], N:number){
+    if (samples.length === 0) return [];
+    const t0 = samples[0].t; const t1 = samples[samples.length-1].t;
+    const T = Math.max(0.001, t1 - t0);
+    const out:number[]=[];
+    for (let i=0;i<N;i++){
+      const tt = t0 + (i/(N-1))*T;
+      // linear interpolation
+      let j=0; while (j < samples.length-1 && samples[j+1].t < tt) j++;
+      const s0 = samples[j]; const s1 = samples[Math.min(samples.length-1,j+1)];
+      if (s1.t === s0.t) out.push(s0.v); else {
+        const alpha = (tt - s0.t)/(s1.t - s0.t);
+        out.push(s0.v*(1-alpha)+s1.v*alpha);
+      }
+    }
+    return out;
+  }
+
+  private detrend(arr:number[]){
+    const n = arr.length; const mean = arr.reduce((a,b)=>a+b,0)/n; return arr.map(v=>v-mean);
+  }
+
+  // Goertzel algorithm to compute power at frequency f (Hz)
+  private goertzelPower(signal:number[], fs:number, freq:number){
+    const N = signal.length;
+    const k = 2*Math.PI*freq/fs;
+    const coeff = 2*Math.cos(k);
+    let s0=0, s1=0, s2=0;
+    for (let i=0;i<N;i++){ s0 = signal[i] + coeff*s1 - s2; s2 = s1; s1 = s0; }
+    const real = s1 - s2*Math.cos(k);
+    const imag = s2*Math.sin(k);
+    return real*real + imag*imag;
   }
 }

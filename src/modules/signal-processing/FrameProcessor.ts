@@ -12,9 +12,9 @@ export class FrameProcessor {
   private readonly GREEN_SUPPRESSION = 0.92; // Ajustado sutilmente para estabilidad
   private readonly SIGNAL_GAIN = 0.99; // Ajustado sutilmente para estabilidad
   private readonly EDGE_ENHANCEMENT = 0.13;  // Reducido sutilmente para estabilidad
-  private readonly MIN_RED_THRESHOLD = 0.32;  // Reducido sutilmente para mayor sensibilidad
+  private readonly MIN_RED_THRESHOLD = 0.12;  // Reducido sutilmente para mayor sensibilidad
   private readonly RG_RATIO_RANGE = [0.95, 3.8];  // Rango ligeramente ampliado para robustez
-  private readonly EDGE_CONTRAST_THRESHOLD = 0.17;  // Reducido sutilmente para mayor sensibilidad
+  private readonly EDGE_CONTRAST_THRESHOLD = 0.12;  // Reducido sutilmente para mayor sensibilidad
   
   // Historial mejorado para estabilidad
   private lastFrames: Array<{red: number, green: number, blue: number}> = [];
@@ -29,7 +29,7 @@ export class FrameProcessor {
     // Aumentar tamaño de ROI para capturar más área
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
+      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.10) // Aumentar tamaño ROI sin exceder 0.8
     };
   }
   
@@ -290,16 +290,16 @@ export class FrameProcessor {
    * Calculate quality factor - OPTIMIZADO para estabilidad
    */
   private getLightLevelQualityFactor(lightLevel: number): number {
-      // Rango óptimo más amplio para permitir procesamiento
-  if (lightLevel >= 20 && lightLevel <= 90) { // Rango más amplio para permisividad
-    return 1.0; // Optimal lighting
-  } else if (lightLevel < 20) {
-    // Too dark - penalización mínima para permitir procesamiento
-    return Math.max(0.2, lightLevel / 20); // Mínimo más bajo para mayor permisividad
-  } else {
-    // Too bright - penalización mínima para permitir procesamiento
-    return Math.max(0.2, 1.0 - (lightLevel - 90) / 80); // Límites más permisivos
-  }
+    // Rango óptimo más amplio para estabilidad
+    if (lightLevel >= 30 && lightLevel <= 80) { // Rango más amplio
+      return 1.0; // Optimal lighting
+    } else if (lightLevel < 30) {
+      // Too dark - penalización moderada
+      return Math.max(0.3, lightLevel / 30); // Mínimo más alto para estabilidad
+    } else {
+      // Too bright - penalización moderada  
+      return Math.max(0.3, 1.0 - (lightLevel - 80) / 60); // Límites más permisivos
+    }
   }
   
   detectROI(redValue: number, imageData: ImageData): ProcessedSignal['roi'] {

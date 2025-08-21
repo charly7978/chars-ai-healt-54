@@ -18,36 +18,21 @@ export const useVitalMeasurement = (isMeasuring: boolean) => {
   const [elapsedTime, setElapsedTime] = useState(0);
 
   useEffect(() => {
-    console.log('useVitalMeasurement - Estado detallado:', {
+    console.log('🔍 useVitalMeasurement - Estado ÚNICO:', {
       isMeasuring,
       currentMeasurements: measurements,
       elapsedTime,
-      timestamp: new Date().toISOString(),
-      session: (() => {
-        // PROHIBIDO Math.random() en aplicaciones médicas - usar crypto
-        const randomBytes = new Uint32Array(1);
-        crypto.getRandomValues(randomBytes);
-        return randomBytes[0].toString(36);
-      })() // Identificador único para esta sesión
+      timestamp: new Date().toISOString()
     });
 
     if (!isMeasuring) {
-      console.log('useVitalMeasurement - Reiniciando mediciones por detención', {
-        prevValues: {...measurements},
-        timestamp: new Date().toISOString()
-      });
+      console.log('🔄 useVitalMeasurement - RESET completo por detención');
       
-      setMeasurements(prev => {
-        const newValues = {
-          ...prev,
-          heartRate: 0,
-          spo2: 0,
-          pressure: "--/--",
-          arrhythmiaCount: "--"
-        };
-        
-        console.log('useVitalMeasurement - Nuevos valores tras reinicio', newValues);
-        return newValues;
+      setMeasurements({
+        heartRate: 0,
+        spo2: 0,
+        pressure: "--/--",
+        arrhythmiaCount: 0
       });
       
       setElapsedTime(0);
@@ -55,95 +40,96 @@ export const useVitalMeasurement = (isMeasuring: boolean) => {
     }
 
     const startTime = Date.now();
-    console.log('useVitalMeasurement - Iniciando medición', {
-      startTime: new Date(startTime).toISOString(),
-      prevValues: {...measurements}
+    console.log('🚀 useVitalMeasurement - Iniciando medición ÚNICA', {
+      startTime: new Date(startTime).toISOString()
     });
     
     const MEASUREMENT_DURATION = 30000;
 
     const updateMeasurements = () => {
-      const processor = (window as any).heartBeatProcessor;
-      if (!processor) {
-        console.warn('VitalMeasurement: No se encontró el procesador', {
-          windowObject: Object.keys(window),
-          timestamp: new Date().toISOString()
-        });
+      // FUENTE ÚNICA DE DATOS - HeartBeatProcessor
+      const heartProcessor = (window as any).heartBeatProcessor;
+      
+      if (!heartProcessor) {
+        console.warn('⚠️ VitalMeasurement: HeartBeatProcessor no disponible');
         return;
       }
 
-      const bpm = processor.getFinalBPM() || 0;
-      console.log('useVitalMeasurement - Actualización detallada:', {
-        processor: !!processor,
-        processorType: processor ? typeof processor : 'undefined',
-        processorMethods: processor ? Object.getOwnPropertyNames(processor.__proto__) : [],
+      // OBTENER DATOS DIRECTAMENTE DEL PROCESADOR PRINCIPAL
+      const bpm = Math.round(heartProcessor.getFinalBPM() || 0);
+      const spo2 = Math.round(heartProcessor.getSpo2?.() || 0);
+      const systolic = Math.round(heartProcessor.getSystolicPressure?.() || 0);
+      const diastolic = Math.round(heartProcessor.getDiastolicPressure?.() || 0);
+      const arrhythmias = heartProcessor.getArrhythmiaCount?.() || 0;
+
+      console.log('📊 useVitalMeasurement - Datos del procesador ÚNICO:', {
         bpm,
-        rawBPM: processor.getFinalBPM(),
-        confidence: processor.getConfidence ? processor.getConfidence() : 'N/A',
+        spo2,
+        systolic,
+        diastolic,
+        arrhythmias,
         timestamp: new Date().toISOString()
       });
 
       setMeasurements(prev => {
-        if (prev.heartRate === bpm) {
-          console.log('useVitalMeasurement - BPM sin cambios, no se actualiza', {
-            currentBPM: prev.heartRate,
-            timestamp: new Date().toISOString()
-          });
-          return prev;
-        }
-        
-        const newValues = {
-          ...prev,
-          heartRate: bpm
+        const newMeasurements = {
+          heartRate: bpm,
+          spo2: Math.max(0, spo2), // Asegurar que SpO2 no sea negativo
+          pressure: (systolic > 0 && diastolic > 0) ? `${systolic}/${diastolic}` : "--/--",
+          arrhythmiaCount: arrhythmias
         };
-        
-        console.log('useVitalMeasurement - Actualizando BPM', {
-          prevBPM: prev.heartRate,
-          newBPM: bpm,
-          timestamp: new Date().toISOString()
-        });
-        
-        return newValues;
+
+        // Solo actualizar si hay cambios significativos
+        const hasChanges = 
+          prev.heartRate !== newMeasurements.heartRate ||
+          prev.spo2 !== newMeasurements.spo2 ||
+          prev.pressure !== newMeasurements.pressure ||
+          prev.arrhythmiaCount !== newMeasurements.arrhythmiaCount;
+
+        if (hasChanges) {
+          console.log('✅ useVitalMeasurement - Actualizando mediciones:', {
+            cambios: {
+              bpm: `${prev.heartRate} → ${newMeasurements.heartRate}`,
+              spo2: `${prev.spo2} → ${newMeasurements.spo2}`,
+              presión: `${prev.pressure} → ${newMeasurements.pressure}`,
+              arritmias: `${prev.arrhythmiaCount} → ${newMeasurements.arrhythmiaCount}`
+            }
+          });
+          return newMeasurements;
+        }
+
+        return prev;
       });
     };
 
+    // Actualización inicial
     updateMeasurements();
 
     const interval = setInterval(() => {
       const currentTime = Date.now();
       const elapsed = currentTime - startTime;
       
-      console.log('useVitalMeasurement - Progreso de medición', {
-        elapsed: elapsed / 1000,
-        porcentaje: (elapsed / MEASUREMENT_DURATION) * 100,
-        timestamp: new Date().toISOString()
+      console.log('⏱️ useVitalMeasurement - Progreso:', {
+        elapsed: (elapsed / 1000).toFixed(1),
+        porcentaje: ((elapsed / MEASUREMENT_DURATION) * 100).toFixed(1)
       });
       
       setElapsedTime(elapsed / 1000);
-
       updateMeasurements();
 
       if (elapsed >= MEASUREMENT_DURATION) {
-        console.log('useVitalMeasurement - Medición completada', {
-          duracionTotal: MEASUREMENT_DURATION / 1000,
-          resultadosFinal: {...measurements},
-          timestamp: new Date().toISOString()
-        });
-        
+        console.log('🏁 useVitalMeasurement - Medición COMPLETADA');
         clearInterval(interval);
         const event = new CustomEvent('measurementComplete');
         window.dispatchEvent(event);
       }
-    }, 200);
+    }, 100); // Actualización más frecuente para mejor responsividad
 
     return () => {
-      console.log('useVitalMeasurement - Limpiando intervalo', {
-        currentElapsed: elapsedTime,
-        timestamp: new Date().toISOString()
-      });
+      console.log('🧹 useVitalMeasurement - Limpiando intervalo');
       clearInterval(interval);
     };
-  }, [isMeasuring, measurements]);
+  }, [isMeasuring]);
 
   return {
     ...measurements,
