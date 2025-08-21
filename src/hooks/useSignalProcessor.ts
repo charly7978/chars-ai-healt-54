@@ -4,8 +4,8 @@ import { PPGSignalProcessor } from '../modules/signal-processing/PPGSignalProces
 import { ProcessedSignal, ProcessingError } from '../types/signal';
 
 /**
- * HOOK COMPLETAMENTE UNIFICADO DE PROCESAMIENTO PPG - ELIMINADAS TODAS LAS DUPLICIDADES
- * Sistema matemático avanzado con control de estado unificado y prevención de múltiples instancias
+ * HOOK ÚNICO Y DEFINITIVO - ELIMINADAS TODAS LAS DUPLICIDADES
+ * Sistema completamente unificado con prevención absoluta de múltiples instancias
  */
 export const useSignalProcessor = () => {
   const processorRef = useRef<PPGSignalProcessor | null>(null);
@@ -14,145 +14,120 @@ export const useSignalProcessor = () => {
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
   
-  // CONTROL UNIFICADO DE ESTADO PARA PREVENIR DUPLICIDADES
-  const processingStateRef = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING'>('IDLE');
+  // CONTROL ÚNICO DE INSTANCIA - PREVENIR DUPLICIDADES ABSOLUTAMENTE
+  const instanceLock = useRef<boolean>(false);
   const sessionIdRef = useRef<string>("");
-  const errorCountRef = useRef(0);
-  const lastErrorTimeRef = useRef(0);
-  const frameCounterRef = useRef(0);
-
-  // INICIALIZACIÓN UNIFICADA DEL PROCESADOR - UNA SOLA VEZ
+  const initializationState = useRef<'IDLE' | 'INITIALIZING' | 'READY' | 'ERROR'>('IDLE');
+  
+  // INICIALIZACIÓN ÚNICA Y DEFINITIVA
   useEffect(() => {
-    // GENERAR SESSION ID ÚNICO PARA PREVENIR CONFLICTOS
-    const randomBytes = new Uint32Array(2);
+    // BLOQUEO DE MÚLTIPLES INSTANCIAS
+    if (instanceLock.current || initializationState.current !== 'IDLE') {
+      return;
+    }
+    
+    instanceLock.current = true;
+    initializationState.current = 'INITIALIZING';
+    
+    // SESSION ID ÚNICO
+    const randomBytes = new Uint32Array(3);
     crypto.getRandomValues(randomBytes);
-    sessionIdRef.current = `processor_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}`;
+    sessionIdRef.current = `unified_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
 
-    console.log(`🔬 CREANDO PROCESADOR UNIFICADO - ${sessionIdRef.current}`);
+    console.log(`🔬 INICIALIZACIÓN ÚNICA Y DEFINITIVA - ${sessionIdRef.current}`);
 
-    // CALLBACKS OPTIMIZADOS SIN ACUMULACIONES DE MEMORIA
+    // CALLBACKS ÚNICOS SIN MEMORY LEAKS
     const onSignalReady = (signal: ProcessedSignal) => {
-      if (processingStateRef.current !== 'ACTIVE') return;
+      if (initializationState.current !== 'READY') return;
       
       setLastSignal(signal);
       setError(null);
-      
-      frameCounterRef.current++;
-      setFramesProcessed(prev => {
-        // RESETEAR CONTADOR CADA 1000 FRAMES PARA EVITAR OVERFLOW
-        return frameCounterRef.current >= 1000 ? 1 : frameCounterRef.current;
-      });
-      
-      if (frameCounterRef.current >= 1000) {
-        frameCounterRef.current = 0;
-      }
+      setFramesProcessed(prev => prev + 1);
     };
 
     const onError = (error: ProcessingError) => {
-      const currentTime = Date.now();
-      
-      // RATE LIMITING AVANZADO PARA PREVENIR SPAM DE ERRORES
-      if (currentTime - lastErrorTimeRef.current < 2000) {
-        errorCountRef.current++;
-        if (errorCountRef.current > 10) {
-          console.warn(`⚠️ Demasiados errores, pausando logging - ${sessionIdRef.current}`);
-          return;
-        }
-      } else {
-        errorCountRef.current = 1;
-      }
-      
-      lastErrorTimeRef.current = currentTime;
+      console.error(`❌ Error procesador único: ${error.code} - ${error.message} - ${sessionIdRef.current}`);
       setError(error);
-      console.error(`❌ Error en procesador: ${error.code} - ${error.message} - ${sessionIdRef.current}`);
     };
 
     // CREAR PROCESADOR ÚNICO
-    processorRef.current = new PPGSignalProcessor(onSignalReady, onError);
+    try {
+      processorRef.current = new PPGSignalProcessor(onSignalReady, onError);
+      initializationState.current = 'READY';
+      console.log(`✅ Procesador único inicializado - ${sessionIdRef.current}`);
+    } catch (err) {
+      console.error(`❌ Error creando procesador: ${err} - ${sessionIdRef.current}`);
+      initializationState.current = 'ERROR';
+      instanceLock.current = false;
+    }
     
     return () => {
-      console.log(`🔬 DESTRUYENDO PROCESADOR - ${sessionIdRef.current}`);
+      console.log(`🔬 DESTRUYENDO PROCESADOR ÚNICO - ${sessionIdRef.current}`);
       if (processorRef.current) {
         processorRef.current.stop();
         processorRef.current = null;
       }
-      processingStateRef.current = 'IDLE';
+      initializationState.current = 'IDLE';
+      instanceLock.current = false;
     };
   }, []);
 
-  // FUNCIÓN UNIFICADA DE INICIO - PREVIENE MÚLTIPLES INICIALIZACIONES
+  // INICIO ÚNICO SIN DUPLICIDADES
   const startProcessing = useCallback(() => {
-    if (!processorRef.current) {
-      console.error(`❌ Procesador no disponible - ${sessionIdRef.current}`);
+    if (!processorRef.current || initializationState.current !== 'READY') {
+      console.warn(`⚠️ Procesador no listo - Estado: ${initializationState.current} - ${sessionIdRef.current}`);
       return;
     }
 
-    if (processingStateRef.current !== 'IDLE') {
-      console.warn(`⚠️ Inicio bloqueado - Estado: ${processingStateRef.current} - ${sessionIdRef.current}`);
+    if (isProcessing) {
+      console.warn(`⚠️ Ya procesando - ${sessionIdRef.current}`);
       return;
     }
 
-    console.log(`🚀 INICIANDO PROCESAMIENTO UNIFICADO - ${sessionIdRef.current}`);
+    console.log(`🚀 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
-    processingStateRef.current = 'STARTING';
     setIsProcessing(true);
     setFramesProcessed(0);
-    frameCounterRef.current = 0;
-    errorCountRef.current = 0;
-    lastErrorTimeRef.current = 0;
+    setError(null);
     
     processorRef.current.start();
-    processingStateRef.current = 'ACTIVE';
     
-    console.log(`✅ Procesamiento iniciado - ${sessionIdRef.current}`);
-  }, []);
+    console.log(`✅ Procesamiento único iniciado - ${sessionIdRef.current}`);
+  }, [isProcessing]);
 
-  // FUNCIÓN UNIFICADA DE PARADA - LIMPIA COMPLETAMENTE EL ESTADO
+  // PARADA ÚNICA Y LIMPIA
   const stopProcessing = useCallback(() => {
-    if (!processorRef.current) return;
-
-    if (processingStateRef.current === 'STOPPING' || processingStateRef.current === 'IDLE') {
-      console.log(`⚠️ Ya detenido o deteniéndose - ${sessionIdRef.current}`);
+    if (!processorRef.current || !isProcessing) {
       return;
     }
 
-    console.log(`🛑 DETENIENDO PROCESAMIENTO UNIFICADO - ${sessionIdRef.current}`);
+    console.log(`🛑 PARADA ÚNICA - ${sessionIdRef.current}`);
     
-    processingStateRef.current = 'STOPPING';
     setIsProcessing(false);
     processorRef.current.stop();
-    processingStateRef.current = 'IDLE';
     
     console.log(`✅ Procesamiento detenido - ${sessionIdRef.current}`);
-  }, []);
+  }, [isProcessing]);
 
-  // CALIBRACIÓN UNIFICADA
+  // CALIBRACIÓN ÚNICA
   const calibrate = useCallback(async () => {
-    if (!processorRef.current) {
-      console.error(`❌ Procesador no disponible para calibración - ${sessionIdRef.current}`);
+    if (!processorRef.current || initializationState.current !== 'READY') {
       return false;
     }
 
     try {
-      console.log(`🎯 INICIANDO CALIBRACIÓN UNIFICADA - ${sessionIdRef.current}`);
+      console.log(`🎯 CALIBRACIÓN ÚNICA - ${sessionIdRef.current}`);
       const success = await processorRef.current.calibrate();
-      console.log(`${success ? '✅' : '❌'} Calibración ${success ? 'exitosa' : 'falló'} - ${sessionIdRef.current}`);
       return success;
     } catch (error) {
-      console.error(`❌ Error en calibración: ${error} - ${sessionIdRef.current}`);
+      console.error(`❌ Error calibración: ${error} - ${sessionIdRef.current}`);
       return false;
     }
   }, []);
 
-  // PROCESAMIENTO DE FRAME UNIFICADO CON VALIDACIONES
+  // PROCESAMIENTO DE FRAME ÚNICO
   const processFrame = useCallback((imageData: ImageData) => {
-    if (!processorRef.current) {
-      console.warn(`⚠️ Procesador no disponible para frame - ${sessionIdRef.current}`);
-      return;
-    }
-    
-    if (processingStateRef.current !== 'ACTIVE') {
-      console.warn(`⚠️ Procesamiento no activo para frame - Estado: ${processingStateRef.current} - ${sessionIdRef.current}`);
+    if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
       return;
     }
     
@@ -161,9 +136,8 @@ export const useSignalProcessor = () => {
     } catch (error) {
       console.error(`❌ Error procesando frame: ${error} - ${sessionIdRef.current}`);
     }
-  }, []);
+  }, [isProcessing]);
 
-  // RETORNO UNIFICADO DEL HOOK
   return {
     isProcessing,
     lastSignal,
@@ -173,11 +147,10 @@ export const useSignalProcessor = () => {
     stopProcessing,
     calibrate,
     processFrame,
-    // DEBUG INFO
     debugInfo: {
       sessionId: sessionIdRef.current,
-      processingState: processingStateRef.current,
-      errorCount: errorCountRef.current
+      initializationState: initializationState.current,
+      instanceLocked: instanceLock.current
     }
   };
 };

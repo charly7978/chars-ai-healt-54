@@ -11,7 +11,7 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
-  // ESTADO UNIFICADO - ELIMINADAS TODAS LAS DUPLICIDADES
+  // ESTADO ÚNICO Y DEFINITIVO - CERO DUPLICIDADES
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
@@ -32,29 +32,34 @@ const Index = () => {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState<VitalSignsResult['calibration']>();
   
-  // REFERENCIAS UNIFICADAS - SIN DUPLICIDADES
+  // REFERENCIAS ÚNICAS - CONTROL ABSOLUTO DE INSTANCIAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
-  const processingStateRef = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING'>('IDLE');
-  const sessionIdRef = useRef<string>("");
   
-  // HOOKS UNIFICADOS - UNA SOLA INSTANCIA DE CADA UNO
+  // CONTROL ÚNICO DE ESTADO - EVITA INICIALIZACIONES PARALELAS ABSOLUTAMENTE
+  const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
+  const sessionIdRef = useRef<string>("");
+  const initializationLock = useRef<boolean>(false);
+  
+  // HOOKS ÚNICOS - UNA SOLA INSTANCIA GARANTIZADA
   const { 
     startProcessing, 
     stopProcessing, 
     lastSignal, 
     processFrame, 
     isProcessing, 
-    framesProcessed 
+    framesProcessed,
+    debugInfo: signalDebugInfo
   } = useSignalProcessor();
   
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState,
-    reset: resetHeartBeat
+    reset: resetHeartBeat,
+    debugInfo: heartDebugInfo
   } = useHeartBeatProcessor();
   
   const { 
@@ -67,15 +72,25 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
-  // GENERADOR DE SESSION ID ÚNICO PARA PREVENIR DUPLICIDADES
+  // INICIALIZACIÓN ÚNICA CON BLOQUEO ABSOLUTO
   useEffect(() => {
-    const randomBytes = new Uint32Array(2);
+    if (initializationLock.current) return;
+    
+    initializationLock.current = true;
+    const randomBytes = new Uint32Array(3);
     crypto.getRandomValues(randomBytes);
-    sessionIdRef.current = `session_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}`;
-    console.log(`🚀 NUEVA SESIÓN UNIFICADA: ${sessionIdRef.current}`);
+    sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
+    
+    console.log(`🚀 INICIALIZACIÓN ÚNICA GARANTIZADA: ${sessionIdRef.current}`);
+    console.log(`📊 Debug Info - Signal: ${JSON.stringify(signalDebugInfo)}, Heart: ${JSON.stringify(heartDebugInfo)}`);
+    
+    return () => {
+      console.log(`🚀 DESTRUCCIÓN CONTROLADA: ${sessionIdRef.current}`);
+      initializationLock.current = false;
+    };
   }, []);
 
-  // PANTALLA COMPLETA UNIFICADA
+  // PANTALLA COMPLETA ÚNICA
   const enterFullScreen = async () => {
     if (isFullscreen) return;
     
@@ -92,7 +107,7 @@ const Index = () => {
       }
       
       setIsFullscreen(true);
-      console.log(`📱 Pantalla completa activada - ${sessionIdRef.current}`);
+      console.log(`📱 Pantalla completa activada ÚNICA - ${sessionIdRef.current}`);
     } catch (err) {
       console.log('Error pantalla completa:', err);
     }
@@ -115,7 +130,7 @@ const Index = () => {
     }
   };
 
-  // INICIALIZACIÓN AUTOMÁTICA DE PANTALLA COMPLETA
+  // INICIALIZACIÓN AUTOMÁTICA ÚNICA
   useEffect(() => {
     const timer = setTimeout(() => enterFullScreen(), 1000);
     
@@ -137,7 +152,7 @@ const Index = () => {
     };
   }, []);
 
-  // PREVENIR SCROLL UNIFICADO
+  // PREVENIR SCROLL
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
     const options = { passive: false };
@@ -151,29 +166,29 @@ const Index = () => {
     };
   }, []);
 
-  // SINCRONIZACIÓN DE RESULTADOS VÁLIDOS
+  // SINCRONIZACIÓN ÚNICA DE RESULTADOS
   useEffect(() => {
     if (lastValidResults && !isMonitoring) {
       setVitalSigns(lastValidResults);
       setShowResults(true);
-      console.log(`✅ Resultados válidos sincronizados - ${sessionIdRef.current}`, lastValidResults);
+      console.log(`✅ Resultados ÚNICOS sincronizados - ${sessionIdRef.current}`, lastValidResults);
     }
   }, [lastValidResults, isMonitoring]);
 
-  // FUNCIÓN UNIFICADA DE INICIO - ELIMINA DUPLICIDADES
+  // FUNCIÓN ÚNICA DE INICIO - BLOQUEO TOTAL DE DUPLICIDADES
   const startMonitoring = () => {
-    // PREVENIR MÚLTIPLES INICIALIZACIONES PARALELAS
-    if (processingStateRef.current !== 'IDLE') {
-      console.warn(`⚠️ Inicio bloqueado - Estado actual: ${processingStateRef.current} - ${sessionIdRef.current}`);
+    // BLOQUEO ABSOLUTO DE MÚLTIPLES INICIALIZACIONES
+    if (systemState.current !== 'IDLE') {
+      console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current} - ${sessionIdRef.current}`);
       return;
     }
     
-    processingStateRef.current = 'STARTING';
-    console.log(`🎬 INICIO UNIFICADO DE MEDICIÓN - ${sessionIdRef.current}`);
+    systemState.current = 'STARTING';
+    console.log(`🎬 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
-    // UN SOLO BEEP DE ARRANQUE
+    // UN SOLO BEEP - NUNCA MÁS
     if (navigator.vibrate) {
-      navigator.vibrate([200, 100, 200]);
+      navigator.vibrate([200]);
     }
     
     enterFullScreen();
@@ -181,18 +196,18 @@ const Index = () => {
     setIsCameraOn(true);
     setShowResults(false);
     
-    // INICIAR PROCESAMIENTO UNA SOLA VEZ
+    // PROCESAMIENTO ÚNICO
     startProcessing();
     
-    // RESETEAR VALORES UNA SOLA VEZ
+    // RESET ÚNICO
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // CALIBRACIÓN AUTOMÁTICA UNA SOLA VEZ
-    console.log(`🔧 Iniciando calibración unificada - ${sessionIdRef.current}`);
+    // CALIBRACIÓN ÚNICA
+    console.log(`🔧 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
     startAutoCalibration();
     
-    // TEMPORIZADOR UNIFICADO
+    // TEMPORIZADOR ÚNICO
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
     }
@@ -208,27 +223,35 @@ const Index = () => {
       });
     }, 1000);
     
-    processingStateRef.current = 'ACTIVE';
-    console.log(`✅ Medición iniciada exitosamente - ${sessionIdRef.current}`);
+    systemState.current = 'ACTIVE';
+    console.log(`✅ SISTEMA ÚNICO ACTIVO - ${sessionIdRef.current}`);
   };
 
-  // CALIBRACIÓN UNIFICADA SIN DUPLICIDADES
+  // CALIBRACIÓN ÚNICA
   const startAutoCalibration = () => {
-    if (isCalibrating) return; // PREVENIR DUPLICIDADES
+    if (isCalibrating || systemState.current === 'CALIBRATING') return;
     
-    console.log(`🎯 Calibración automática iniciada - ${sessionIdRef.current}`);
+    systemState.current = 'CALIBRATING';
+    console.log(`🎯 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
     setIsCalibrating(true);
     startCalibration();
+    
+    // Volver a ACTIVE después de calibración
+    setTimeout(() => {
+      if (systemState.current === 'CALIBRATING') {
+        systemState.current = 'ACTIVE';
+      }
+    }, 3000);
   };
 
-  // FINALIZACIÓN UNIFICADA
+  // FINALIZACIÓN ÚNICA
   const finalizeMeasurement = () => {
-    if (processingStateRef.current === 'STOPPING' || processingStateRef.current === 'IDLE') {
+    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') {
       return;
     }
     
-    processingStateRef.current = 'STOPPING';
-    console.log(`🏁 FINALIZANDO MEDICIÓN UNIFICADA - ${sessionIdRef.current}`);
+    systemState.current = 'STOPPING';
+    console.log(`🏁 FINALIZACIÓN ÚNICA - ${sessionIdRef.current}`);
     
     if (isCalibrating) {
       forceCalibrationCompletion();
@@ -254,14 +277,14 @@ const Index = () => {
     setSignalQuality(0);
     setCalibrationProgress(undefined);
     
-    processingStateRef.current = 'IDLE';
-    console.log(`✅ Medición finalizada - ${sessionIdRef.current}`);
+    systemState.current = 'IDLE';
+    console.log(`✅ FINALIZACIÓN COMPLETADA - ${sessionIdRef.current}`);
   };
 
-  // RESET COMPLETO UNIFICADO
+  // RESET ÚNICO TOTAL
   const handleReset = () => {
-    processingStateRef.current = 'STOPPING';
-    console.log(`🔄 RESET COMPLETO UNIFICADO - ${sessionIdRef.current}`);
+    systemState.current = 'STOPPING';
+    console.log(`🔄 RESET ÚNICO TOTAL - ${sessionIdRef.current}`);
     
     setIsMonitoring(false);
     setIsCameraOn(false);
@@ -277,7 +300,7 @@ const Index = () => {
     fullResetVitalSigns();
     resetHeartBeat();
     
-    // RESETEAR TODOS LOS ESTADOS
+    // RESET TOTAL DE ESTADOS
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -296,38 +319,38 @@ const Index = () => {
     setCalibrationProgress(undefined);
     arrhythmiaDetectedRef.current = false;
     
-    processingStateRef.current = 'IDLE';
-    console.log(`✅ Reset completado - ${sessionIdRef.current}`);
+    systemState.current = 'IDLE';
+    console.log(`✅ RESET TOTAL COMPLETADO - ${sessionIdRef.current}`);
   };
 
-  // MANEJO UNIFICADO DEL STREAM DE CÁMARA
+  // MANEJO ÚNICO DEL STREAM
   const handleStreamReady = (stream: MediaStream) => {
-    if (!isMonitoring || processingStateRef.current !== 'ACTIVE') return;
+    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    console.log(`📹 Stream de cámara listo - ${sessionIdRef.current}`);
+    console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
     
     const videoTrack = stream.getVideoTracks()[0];
     
-    // ACTIVAR LINTERNA UNA SOLA VEZ
+    // LINTERNA ÚNICA
     if (videoTrack.getCapabilities()?.torch) {
       videoTrack.applyConstraints({
         advanced: [{ torch: true }]
       }).catch(err => console.error("Error linterna:", err));
     }
     
-    // PROCESAMIENTO UNIFICADO DE FRAMES
+    // PROCESAMIENTO ÚNICO DE FRAMES
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d', {willReadFrequently: true});
     if (!tempCtx) return;
     
     let lastProcessTime = 0;
-    const targetFrameInterval = 1000/30; // 30 FPS PRECISOS
+    const targetFrameInterval = 1000/30; // 30 FPS EXACTOS
     
     const videoElement = document.querySelector('video') as HTMLVideoElement;
     if (!videoElement) return;
     
     const processImage = async () => {
-      if (!isMonitoring || processingStateRef.current !== 'ACTIVE' || !videoElement) return;
+      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) return;
       
       const now = Date.now();
       const timeSinceLastProcess = now - lastProcessTime;
@@ -357,7 +380,7 @@ const Index = () => {
         }
       }
       
-      if (isMonitoring && processingStateRef.current === 'ACTIVE') {
+      if (isMonitoring && systemState.current === 'ACTIVE') {
         requestAnimationFrame(processImage);
       }
     };
@@ -365,19 +388,16 @@ const Index = () => {
     processImage();
   };
 
-  // PROCESAMIENTO UNIFICADO DE SEÑALES - ELIMINA DUPLICIDADES
+  // PROCESAMIENTO ÚNICO DE SEÑALES
   useEffect(() => {
     if (!lastSignal) return;
 
-    // ACTUALIZAR CALIDAD SIEMPRE
     setSignalQuality(lastSignal.quality);
     
-    // SOLO PROCESAR SI ESTÁ MONITOREANDO Y EN ESTADO ACTIVO
-    if (!isMonitoring || processingStateRef.current !== 'ACTIVE') return;
+    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 40;
+    const MIN_SIGNAL_QUALITY = 35; // Más permisivo
     
-    // VALIDACIÓN UNIFICADA
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
       setHeartRate(0);
       setHeartbeatSignal(0);
@@ -385,7 +405,7 @@ const Index = () => {
       return;
     }
 
-    // PROCESAMIENTO UNIFICADO DE LATIDOS
+    // PROCESAMIENTO ÚNICO DE LATIDOS
     const heartBeatResult = processHeartBeat(
       lastSignal.filteredValue, 
       lastSignal.fingerDetected, 
@@ -400,7 +420,7 @@ const Index = () => {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // PROCESAMIENTO UNIFICADO DE SIGNOS VITALES
+    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES
     const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
@@ -428,7 +448,7 @@ const Index = () => {
     }
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
-  // CONTROL DE CALIBRACIÓN UNIFICADO
+  // CONTROL DE CALIBRACIÓN ÚNICO
   useEffect(() => {
     if (!isCalibrating) return;
     
@@ -439,10 +459,10 @@ const Index = () => {
       if (!currentProgress?.isCalibrating) {
         clearInterval(interval);
         setIsCalibrating(false);
-        console.log(`✅ Calibración finalizada - ${sessionIdRef.current}`);
+        console.log(`✅ Calibración ÚNICA finalizada - ${sessionIdRef.current}`);
         
         if (navigator.vibrate) {
-          navigator.vibrate([100, 50, 100]);
+          navigator.vibrate([100]);
         }
       }
     }, 500);
@@ -450,7 +470,7 @@ const Index = () => {
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
-  // FUNCIÓN TOGGLE UNIFICADA
+  // TOGGLE ÚNICO
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
@@ -469,14 +489,14 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-      {/* DEBUG DE INTERVALOS RR */}
+      {/* DEBUG ÚNICO */}
       {rrIntervals.length > 0 && (
-        <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded">
+        <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded text-xs">
           RR: {rrIntervals.map(i => i + 'ms').join(', ')}
         </div>
       )}
 
-      {/* OVERLAY DE PANTALLA COMPLETA */}
+      {/* OVERLAY PANTALLA COMPLETA */}
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -502,7 +522,7 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER DE ESTADO UNIFICADO */}
+          {/* HEADER DE ESTADO ÚNICO */}
           <div className="px-4 py-2 flex justify-around items-center bg-black/20">
             <div className="text-white text-lg">
               Calidad: {signalQuality}
@@ -511,30 +531,17 @@ const Index = () => {
               {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
             </div>
             <div className="text-white text-lg">
-              Estado: {processingStateRef.current}
+              Estado: {systemState.current}
             </div>
           </div>
 
-          {/* PANEL DE INFORMACIÓN UNIFICADO */}
+          {/* PANEL DE DEBUG ÚNICO */}
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
             <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
             <div>Sesión: {sessionIdRef.current.slice(-8)}</div>
           </div>
-
-          {/* DEBUG PANEL UNIFICADO */}
-          <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
-            <summary className="cursor-pointer">Debug Signal Info</summary>
-            <pre className="whitespace-pre-wrap text-xs">
-              Calidad Señal: {lastSignal?.quality || 0}
-              {'\n'}Dedo Detectado: {lastSignal?.fingerDetected ? 'Sí' : 'No'}
-              {'\n'}Valor Crudo: {lastSignal?.rawValue || 0}
-              {'\n'}Valor Filtrado: {lastSignal?.filteredValue || 0}
-              {'\n'}Estado Procesamiento: {processingStateRef.current}
-              {'\n'}Sesión ID: {sessionIdRef.current}
-            </pre>
-          </details>
 
           <div className="flex-1">
             <PPGSignalMeter 
@@ -591,7 +598,7 @@ const Index = () => {
             </div>
           </div>
 
-          {/* BOTONERA UNIFICADA */}
+          {/* BOTONERA ÚNICA */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 
