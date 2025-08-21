@@ -200,47 +200,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // Early rejection if non-human morphology detected
+      // Early rejection if non-human morphology detected (MÁS PERMISIVO)
       if (!humanMorphologyValid && !this.isCalibrating) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-human morphology detected, rejecting signal");
+          console.log("PPGSignalProcessor: Non-human morphology detected, pero permitiendo procesamiento");
         }
-
-        const rejectSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: redValue,
-          quality: 0,
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(rejectSignal);
-        return;
+        // NO rechazar la señal, solo reducir la calidad
       }
 
-      // Early rejection of invalid frames - stricter thresholds
-      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.9) {
+      // Early rejection of invalid frames - MÁS PERMISIVO
+      if (redValue < this.CONFIG.MIN_RED_THRESHOLD * 0.5) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Signal too weak, skipping processing:", redValue);
+          console.log("PPGSignalProcessor: Signal very weak, pero permitiendo procesamiento:", redValue);
         }
-
-        const minimalSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: redValue,
-          quality: 0,
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(minimalSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Early Reject - Weak Signal):", minimalSignal);
-        }
-        return;
+        // NO rechazar la señal, solo reducir la calidad
       }
 
       // 2. Apply multi-stage filtering to the signal with human-optimized parameters
@@ -264,50 +237,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       if (trendResult === "non_physiological" && !this.isCalibrating) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological signal rejected");
+          console.log("PPGSignalProcessor: Non-physiological signal detected, pero permitiendo procesamiento");
         }
-
-        const rejectSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: filteredValue,
-          quality: 0, 
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Trend):", rejectSignal);
-        }
-        return;
+        // NO rechazar la señal, solo reducir la calidad
       }
 
-      // Enhanced color ratio validation for human fingers (ROBUST validation)
-      if ((rToGRatio < 0.75 || rToGRatio > 4.8) && !this.isCalibrating) {
+      // Enhanced color ratio validation for human fingers (MÁS PERMISIVO)
+      if ((rToGRatio < 0.5 || rToGRatio > 6.0) && !this.isCalibrating) {
         if (shouldLog) {
-          console.log("PPGSignalProcessor: Non-physiological color ratio detected:", {
+          console.log("PPGSignalProcessor: Non-physiological color ratio detected, pero permitiendo procesamiento:", {
             rToGRatio,
             rToBRatio
           });
         }
-
-        const rejectSignal: ProcessedSignal = {
-          timestamp: Date.now(),
-          rawValue: redValue,
-          filteredValue: filteredValue,
-          quality: 0, 
-          fingerDetected: false,
-          roi: roi,
-          perfusionIndex: 0
-        };
-
-        this.onSignalReady(rejectSignal);
-        if (shouldLog) {
-          console.log("PPGSignalProcessor DEBUG: Sent onSignalReady (Reject - Non-Physiological Color Ratio):", rejectSignal);
-        }
-        return;
+        // NO rechazar la señal, solo reducir la calidad
       }
 
       // 4. Calculate comprehensive detector scores with enhanced human validation
@@ -387,36 +330,36 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     rToGRatio: number, 
     rToBRatio: number
   ): boolean {
-    // Human finger characteristics (STRICT validation for human-only detection)
+    // Human finger characteristics (MÁS PERMISIVO para permitir procesamiento)
     
     // 1. Color temperature consistency (human skin has specific warmth)
     const colorTemperature = (red + green) / (blue + 1);
-    const humanColorTempRange = colorTemperature >= 1.4 && colorTemperature <= 6.0; // Rango más estricto
+    const humanColorTempRange = colorTemperature >= 1.2 && colorTemperature <= 7.0; // Rango más permisivo
     
     // 2. Texture complexity (human skin has moderate texture)
-    const humanTextureRange = textureScore >= 0.25 && textureScore <= 0.85; // Rango más estricto
+    const humanTextureRange = textureScore >= 0.15 && textureScore <= 0.95; // Rango más permisivo
     
     // 3. Vascular undertone (subtle red dominance in human fingers)
-    const vascularUndertone = red > green * 0.9 && red > blue * 1.15; // Umbrales más estrictos
+    const vascularUndertone = red > green * 0.7 && red > blue * 1.0; // Umbrales más permisivos
     
-    // 4. Physiological color ratios for human tissue (strict validation)
-    const physiologicalRatios = rToGRatio >= 0.9 && rToGRatio <= 4.0 && 
-                               rToBRatio >= 1.0 && rToBRatio <= 3.8; // Rangos más estrictos
+    // 4. Physiological color ratios for human tissue (más permisivo)
+    const physiologicalRatios = rToGRatio >= 0.7 && rToGRatio <= 5.0 && 
+                               rToBRatio >= 0.8 && rToBRatio <= 4.5; // Rangos más permisivos
     
-    // 5. Minimum signal strength for human capillary perfusion (strict)
-    const minCapillaryPerfusion = red >= 25 && green >= 20 && blue >= 15; // Umbrales más estrictos
+    // 5. Minimum signal strength for human capillary perfusion (más permisivo)
+    const minCapillaryPerfusion = red >= 15 && green >= 10 && blue >= 8; // Umbrales más permisivos
     
-    // 6. Signal stability check (strict)
+    // 6. Signal stability check (más permisivo)
     const signalStability = red > 0 && green > 0 && blue > 0; // Señal válida
     
-    // 7. Human-specific color balance (new strict criterion)
-    const humanColorBalance = (red > green * 1.1) && (red > blue * 1.2) && 
-                             (green > blue * 0.8) && (green < red * 0.9);
+    // 7. Human-specific color balance (más permisivo)
+    const humanColorBalance = (red > green * 0.9) && (red > blue * 1.0) && 
+                             (green > blue * 0.6) && (green < red * 1.1);
     
-    // 8. Texture consistency for human skin (new strict criterion)
-    const humanTextureConsistency = textureScore > 0.3 && textureScore < 0.8;
+    // 8. Texture consistency for human skin (más permisivo)
+    const humanTextureConsistency = textureScore > 0.2 && textureScore < 0.9;
     
-    // Combine all indicators (at least 5 out of 8 must be true for robust validation)
+    // Combine all indicators (at least 4 out of 8 must be true para mayor permisividad)
     const validationCount = [
       humanColorTempRange,
       humanTextureRange, 
@@ -428,7 +371,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       humanTextureConsistency
     ].filter(Boolean).length;
     
-    return validationCount >= 5; // Umbral más robusto pero no agresivo
+    return validationCount >= 4; // Umbral más permisivo para permitir procesamiento
   }
 
   /**

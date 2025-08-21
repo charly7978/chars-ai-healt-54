@@ -87,9 +87,9 @@ export class SignalAnalyzer {
     
     const smoothedQuality = recentAvg * recentWeight + olderAvg * historyWeight;
 
-    // Umbrales optimizados para estabilidad - CALIBRACIÓN SUTIL A FAVOR DE LA ESTABILIDAD
-    const DETECTION_THRESHOLD = 28; // Reducido sutilmente para mayor robustez
-    const RELEASE_THRESHOLD = 18;   // Reducido sutilmente para mayor estabilidad
+    // Umbrales optimizados para estabilidad - MÁS PERMISIVOS para permitir procesamiento
+    const DETECTION_THRESHOLD = 20; // Reducido para mayor permisividad
+    const RELEASE_THRESHOLD = 12;   // Reducido para mayor permisividad
 
     // Hysteresis logic using consecutive detections - OPTIMIZADO para estabilidad
     let isFingerDetected = false;

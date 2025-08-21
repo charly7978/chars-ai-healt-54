@@ -290,16 +290,16 @@ export class FrameProcessor {
    * Calculate quality factor - OPTIMIZADO para estabilidad
    */
   private getLightLevelQualityFactor(lightLevel: number): number {
-    // Rango óptimo más amplio para estabilidad
-    if (lightLevel >= 30 && lightLevel <= 80) { // Rango más amplio
-      return 1.0; // Optimal lighting
-    } else if (lightLevel < 30) {
-      // Too dark - penalización moderada
-      return Math.max(0.3, lightLevel / 30); // Mínimo más alto para estabilidad
-    } else {
-      // Too bright - penalización moderada  
-      return Math.max(0.3, 1.0 - (lightLevel - 80) / 60); // Límites más permisivos
-    }
+      // Rango óptimo más amplio para permitir procesamiento
+  if (lightLevel >= 20 && lightLevel <= 90) { // Rango más amplio para permisividad
+    return 1.0; // Optimal lighting
+  } else if (lightLevel < 20) {
+    // Too dark - penalización mínima para permitir procesamiento
+    return Math.max(0.2, lightLevel / 20); // Mínimo más bajo para mayor permisividad
+  } else {
+    // Too bright - penalización mínima para permitir procesamiento
+    return Math.max(0.2, 1.0 - (lightLevel - 90) / 80); // Límites más permisivos
+  }
   }
   
   detectROI(redValue: number, imageData: ImageData): ProcessedSignal['roi'] {
