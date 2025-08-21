@@ -40,7 +40,7 @@ const Index = () => {
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
   const { 
-    processSignal: processVitalSigns, 
+    processSignal, 
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
     lastValidResults,
@@ -478,7 +478,7 @@ const Index = () => {
             isMonitoring={isCameraOn}
             isFingerDetected={lastValidResults?.fingerDetected || false}
             signalQuality={signalQuality}
-            processVitalSigns={processVitalSigns}
+            processVitalSigns={processSignal}
             onFingerDetected={(detected, quality) => {
               setSignalQuality(quality);
               // No necesitamos setFingerDetected aquí porque viene de lastValidResults
