@@ -30,7 +30,7 @@ export const useHeartBeatProcessor = () => {
   const lastDetectionTime = useRef<number>(Date.now());
   
   // Umbral de calidad mínima para procesar - muy reducido para mejorar detección inicial
-  const MIN_QUALITY_THRESHOLD = 10; // Valor muy bajo para permitir detección inicial
+  const MIN_QUALITY_THRESHOLD = 18; // Valor muy bajo para permitir detección inicial
 
   useEffect(() => {
     console.log('useHeartBeatProcessor: Creando nueva instancia de HeartBeatProcessor', {
