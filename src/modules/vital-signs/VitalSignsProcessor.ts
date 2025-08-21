@@ -108,10 +108,10 @@ export class VitalSignsProcessor {
   private readonly SAMPLING_RATE = 30; // Hz - frecuencia de muestreo
   
   // PARÁMETROS ADAPTATIVOS DINÁMICOS (AJUSTADOS PARA MAYOR SENSIBILIDAD)
-  private adaptiveThreshold: number = 0.01; // Umbral MUCHO más bajo para detectar más picos
-  private adaptiveWindowSize: number = 5; // Ventana más pequeña para mayor sensibilidad
-  private adaptiveMinDistance: number = 100; // Distancia mínima más corta
-  private adaptiveMaxDistance: number = 5000; // Distancia máxima más larga
+  private adaptiveThreshold: number = 0.005; // Umbral MUCHO más bajo para detectar más picos
+  private adaptiveWindowSize: number = 3; // Ventana más pequeña para mayor sensibilidad
+  private adaptiveMinDistance: number = 50; // Distancia mínima más corta
+  private adaptiveMaxDistance: number = 8000; // Distancia máxima más larga
   
   // SISTEMA DE APRENDIZAJE ADAPTATIVO
   private signalQualityHistory: number[] = []; // Historial de calidad
@@ -148,10 +148,7 @@ export class VitalSignsProcessor {
   private falsePositiveRate: number = 0.2;
   private adaptationConfidence: number = 0.7;
   
-  // SISTEMA DE NOTIFICACIONES AUDIO/VIBRACIÓN
-  private audioContext: AudioContext | null = null;
-  private lastBeatTime: number = 0;
-  private beatCooldown: number = 300; // ms entre notificaciones
+  // SISTEMA DE NOTIFICACIONES ELIMINADO - SE MANEJA DESDE Index.tsx
 
   constructor() {
     console.log('🚀 Inicializando VitalSignsProcessor con procesadores originales (compatibilidad)');
@@ -169,13 +166,7 @@ export class VitalSignsProcessor {
     this.rrIntervals = [];
     this.heartRateBuffer = [];
     
-    // INICIALIZAR AUDIO CONTEXT
-    try {
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      console.log('🚀 VitalSignsProcessor: Audio context inicializado correctamente');
-    } catch (error) {
-      console.warn('🚀 VitalSignsProcessor: No se pudo inicializar audio context', error);
-    }
+    // AUDIO CONTEXT ELIMINADO - SE MANEJA DESDE Index.tsx
     
     console.log('🚀 VitalSignsProcessor: Buffers adaptativos inicializados correctamente');
   }
@@ -689,9 +680,9 @@ export class VitalSignsProcessor {
     
     if (!baseValid) return false;
     
-    // Validación adicional basada en perfil del usuario (MÁS PERMISIVA)
+    // Validación adicional basada en perfil del usuario (MUCHO MÁS PERMISIVA)
     const expectedRR = 60000 / this.userHeartRateProfile.baseline;
-    const tolerance = expectedRR * 0.5; // Tolerancia mucho mayor
+    const tolerance = expectedRR * 1.0; // Tolerancia máxima
     
     return Math.abs(rrInterval - expectedRR) <= tolerance;
   }
@@ -792,9 +783,9 @@ export class VitalSignsProcessor {
     const [minBPM, maxBPM] = [40, 200]; // Rango mucho más amplio
     const bpmValid = bpm >= minBPM && bpm <= maxBPM;
     
-    // Validar que el RR esté en rango esperado (MÁS PERMISIVO)
+    // Validar que el RR esté en rango esperado (MUCHO MÁS PERMISIVO)
     const expectedRR = 60000 / this.userHeartRateProfile.baseline;
-    const rrValid = Math.abs(rrInterval - expectedRR) <= expectedRR * 0.8; // Tolerancia mucho mayor
+    const rrValid = Math.abs(rrInterval - expectedRR) <= expectedRR * 1.5; // Tolerancia máxima
     
     return bpmValid && rrValid;
   }
@@ -943,13 +934,23 @@ export class VitalSignsProcessor {
       const variance = recentValues.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recentValues.length;
       
       // Si hay suficiente variabilidad, estimar BPM basado en eso
-      if (variance > 0.001) {
-        // Estimar entre 60-90 BPM basado en la variabilidad
-        const estimatedBPM = Math.round(60 + (variance * 10000) % 30);
-        return Math.max(60, Math.min(90, estimatedBPM));
+      if (variance > 0.0001) { // Umbral más bajo
+        // Estimar BPM basado en la frecuencia de cambios
+        let changeCount = 0;
+        for (let i = 1; i < recentValues.length; i++) {
+          if (Math.abs(recentValues[i] - recentValues[i-1]) > 0.005) {
+            changeCount++;
+          }
+        }
+        
+        if (changeCount > 0) {
+          // Estimar BPM basado en la frecuencia de cambios
+          const estimatedBPM = Math.round(60 + (changeCount * 2) % 40);
+          return Math.max(50, Math.min(100, estimatedBPM));
+        }
       }
       
-      return 0; // No retornar 72 por defecto
+      return 0; // No retornar valor por defecto
       
     } catch (error) {
       console.error('VitalSignsProcessor: Error estimando BPM desde señal', error);
@@ -957,70 +958,5 @@ export class VitalSignsProcessor {
     }
   }
 
-  /**
-   * Notifica un latido detectado con beep sonoro y vibración
-   */
-  private notifyHeartbeat(): void {
-    const currentTime = Date.now();
-    
-    // Evitar notificaciones muy frecuentes
-    if (currentTime - this.lastBeatTime < this.beatCooldown) {
-      return;
-    }
-    
-    this.lastBeatTime = currentTime;
-    
-    // BEEP SONORO
-    this.playHeartbeatBeep();
-    
-    // VIBRACIÓN
-    this.vibrateHeartbeat();
-  }
-
-  /**
-   * Reproduce un beep sonoro para el latido
-   */
-  private playHeartbeatBeep(): void {
-    if (!this.audioContext) return;
-    
-    try {
-      // Crear oscilador para el beep
-      const oscillator = this.audioContext.createOscillator();
-      const gainNode = this.audioContext.createGain();
-      
-      // Configurar frecuencia y forma de onda
-      oscillator.frequency.setValueAtTime(800, this.audioContext.currentTime); // 800Hz
-      oscillator.type = 'sine';
-      
-      // Configurar envolvente de volumen
-      gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, this.audioContext.currentTime + 0.01);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, this.audioContext.currentTime + 0.1);
-      
-      // Conectar nodos
-      oscillator.connect(gainNode);
-      gainNode.connect(this.audioContext.destination);
-      
-      // Reproducir beep
-      oscillator.start(this.audioContext.currentTime);
-      oscillator.stop(this.audioContext.currentTime + 0.1);
-      
-    } catch (error) {
-      console.warn('VitalSignsProcessor: Error reproduciendo beep', error);
-    }
-  }
-
-  /**
-   * Activa la vibración para el latido
-   */
-  private vibrateHeartbeat(): void {
-    if ('vibrate' in navigator) {
-      try {
-        // Patrón de vibración: vibración corta
-        navigator.vibrate([50, 25, 50]);
-      } catch (error) {
-        console.warn('VitalSignsProcessor: Error en vibración', error);
-      }
-    }
-  }
+    // SISTEMA DE NOTIFICACIONES ELIMINADO - SE MANEJA DESDE Index.tsx
 }
