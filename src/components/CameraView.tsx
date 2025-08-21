@@ -19,7 +19,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   targetFps = 30,
   roiSize = 200,
   enableTorch = true,
-  coverageThresholdPixelBrightness = 15
+  coverageThresholdPixelBrightness = 25
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -29,97 +29,122 @@ const CameraView: React.FC<CameraViewProps> = ({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [torchEnabled, setTorchEnabled] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
     const startCam = async () => {
       try {
-        console.log('🎥 Iniciando cámara con linterna...');
+        console.log('🎥 INICIANDO SISTEMA CÁMARA COMPLETO...');
         
+        // CRÍTICO: Constraints optimizadas para PPG
         const constraints: MediaStreamConstraints = {
           video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280, min: 640 },
-            height: { ideal: 720, min: 480 },
-            frameRate: { ideal: targetFps, min: 15 }
+            facingMode: 'environment', // Cámara trasera SIEMPRE
+            width: { ideal: 1920, min: 1280 },
+            height: { ideal: 1080, min: 720 },
+            frameRate: { ideal: targetFps, min: 20 },
+            // Configuración PPG específica
+            exposureMode: 'manual',
+            whiteBalanceMode: 'manual',
+            focusMode: 'manual'
           },
           audio: false
         };
 
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
         if (!mounted) {
           stream.getTracks().forEach(t => t.stop());
           return;
         }
 
         streamRef.current = stream;
-        onStreamReady?.(stream);
+        console.log('✅ Stream obtenido correctamente');
 
-        // Crear y configurar video elemento
-        if (!videoRef.current) {
-          const video = document.createElement('video');
-          video.autoplay = true;
-          video.playsInline = true;
-          video.muted = true;
-          video.style.width = '100%';
-          video.style.height = '100%';
-          video.style.objectFit = 'cover';
-          videoRef.current = video;
+        // CREAR VIDEO ELEMENT - CRÍTICO
+        const video = document.createElement('video');
+        video.autoplay = true;
+        video.playsInline = true;
+        video.muted = true;
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'cover';
+        video.style.transform = 'scaleX(-1)'; // Mirror para mejor UX
+        
+        videoRef.current = video;
+
+        // CRÍTICO: AGREGAR AL DOM INMEDIATAMENTE
+        if (containerRef.current) {
+          // Limpiar contenedor primero
+          containerRef.current.innerHTML = '';
+          containerRef.current.appendChild(video);
+          console.log('✅ Video agregado al DOM exitosamente');
         }
 
-        // CRÍTICO: Agregar video al DOM inmediatamente
-        if (containerRef.current && videoRef.current && !containerRef.current.contains(videoRef.current)) {
-          containerRef.current.appendChild(videoRef.current);
-        }
+        // Asignar stream
+        video.srcObject = stream;
 
-        videoRef.current.srcObject = stream;
+        // CREAR CANVAS PARA PROCESAMIENTO
+        const canvas = document.createElement('canvas');
+        canvas.style.display = 'none';
+        canvasRef.current = canvas;
 
-        // Configurar canvas para procesamiento
-        if (!canvasRef.current) {
-          const canvas = document.createElement('canvas');
-          canvas.style.display = 'none';
-          document.body.appendChild(canvas);
-          canvasRef.current = canvas;
-        }
-
-        // Activar linterna INMEDIATAMENTE si está disponible
+        // CONFIGURAR LINTERNA INMEDIATAMENTE
         if (enableTorch) {
           try {
             const [videoTrack] = stream.getVideoTracks();
             const capabilities = (videoTrack as any).getCapabilities?.();
             
-            console.log('📱 Capacidades de cámara:', capabilities);
+            console.log('📱 Capacidades:', capabilities);
             
             if (capabilities?.torch) {
               await (videoTrack as any).applyConstraints({
-                advanced: [{ torch: true }]
+                advanced: [{ 
+                  torch: true,
+                  exposureMode: 'manual',
+                  exposureTime: 33000, // Optimizado para PPG
+                  whiteBalanceMode: 'manual'
+                }]
               });
               setTorchEnabled(true);
-              console.log('🔦 ✅ Linterna ACTIVADA correctamente');
+              console.log('🔦 ✅ LINTERNA ACTIVADA - PPG OPTIMIZADA');
             } else {
-              console.log('🔦 ❌ Linterna NO disponible en este dispositivo');
+              console.log('🔦 ❌ Sin soporte de linterna');
             }
           } catch (torchError) {
-            console.error('🔦 ⚠️ Error activando linterna:', torchError);
+            console.error('🔦 Error linterna:', torchError);
           }
         }
 
-        // Esperar video listo y comenzar captura
+        // ESPERAR VIDEO READY
         const waitForVideo = () => {
-          if (videoRef.current && videoRef.current.readyState >= 2) {
-            console.log('✅ Video listo, iniciando captura');
+          if (video.readyState >= 2 && video.videoWidth > 0) {
+            console.log('✅ Video COMPLETAMENTE listo:', {
+              width: video.videoWidth,
+              height: video.videoHeight,
+              readyState: video.readyState
+            });
             setIsStreamActive(true);
-            startFrameCapture();
+            setError(null);
+            onStreamReady?.(stream);
+            
+            // INICIAR CAPTURA INMEDIATAMENTE
+            if (isMonitoring) {
+              startFrameCapture();
+            }
           } else {
-            setTimeout(waitForVideo, 100);
+            setTimeout(waitForVideo, 50);
           }
         };
 
+        video.addEventListener('loadedmetadata', waitForVideo);
         waitForVideo();
 
-      } catch (err) {
-        console.error('❌ Error crítico abriendo cámara:', err);
+      } catch (err: any) {
+        console.error('❌ ERROR CRÍTICO CÁMARA:', err);
+        setError(err.message || 'Error desconocido');
         setIsStreamActive(false);
       }
     };
@@ -127,49 +152,67 @@ const CameraView: React.FC<CameraViewProps> = ({
     const startFrameCapture = () => {
       if (!mounted || !isMonitoring) return;
       
-      const loop = () => {
-        if (!mounted || !isMonitoring) return;
+      console.log('🎬 INICIANDO CAPTURA DE FRAMES PPG...');
+      
+      const captureLoop = () => {
+        if (!mounted || !isMonitoring || !videoRef.current || !canvasRef.current) {
+          return;
+        }
         
-        captureFrameAndEmit();
+        try {
+          const sample = captureOptimizedFrame();
+          if (sample && onSample) {
+            onSample(sample);
+          }
+        } catch (captureError) {
+          console.error('Error en captura:', captureError);
+        }
+        
+        // Programar siguiente frame
         rafRef.current = requestAnimationFrame(() => {
-          setTimeout(loop, 1000 / targetFps);
+          setTimeout(captureLoop, 1000 / targetFps);
         });
       };
       
-      rafRef.current = requestAnimationFrame(loop);
+      rafRef.current = requestAnimationFrame(captureLoop);
     };
 
-    const captureFrameAndEmit = () => {
+    const captureOptimizedFrame = (): CameraSample | null => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
       if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
-        return;
+        return null;
       }
 
-      // ROI optimizado para dedo
-      const roiW = Math.min(roiSize, video.videoWidth);
-      const roiH = Math.min(roiSize, video.videoHeight);
-      const sx = Math.max(0, (video.videoWidth - roiW) / 2);
-      const sy = Math.max(0, (video.videoHeight - roiH) / 2);
+      // ROI CENTRADA Y OPTIMIZADA
+      const centerX = video.videoWidth / 2;
+      const centerY = video.videoHeight / 2;
+      const roiW = Math.min(roiSize, video.videoWidth * 0.3);
+      const roiH = Math.min(roiSize, video.videoHeight * 0.3);
+      const sx = centerX - roiW / 2;
+      const sy = centerY - roiH / 2;
 
       canvas.width = roiW;
       canvas.height = roiH;
       
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) return null;
       
+      // CAPTURAR ROI ESPECÍFICA
       ctx.drawImage(video, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
       const imageData = ctx.getImageData(0, 0, roiW, roiH);
       const data = imageData.data;
 
+      // PROCESAMIENTO PPG OPTIMIZADO
       let rSum = 0, gSum = 0, bSum = 0;
       let rSum2 = 0, gSum2 = 0, bSum2 = 0;
       let brightSum = 0;
       let brightPixels = 0;
       const threshold = coverageThresholdPixelBrightness;
 
-      // Procesar píxeles
+      const totalPixels = data.length / 4;
+
       for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1]; 
@@ -187,13 +230,12 @@ const CameraView: React.FC<CameraViewProps> = ({
         if (brightness >= threshold) brightPixels++;
       }
       
-      const totalPixels = data.length / 4;
       const rMean = rSum / totalPixels;
       const gMean = gSum / totalPixels;
       const bMean = bSum / totalPixels;
       const brightnessMean = brightSum / totalPixels;
       
-      // Calcular desviaciones
+      // VARIANZAS CORRECTAS
       const rVar = Math.max(0, rSum2/totalPixels - rMean*rMean);
       const gVar = Math.max(0, gSum2/totalPixels - gMean*gMean);
       const bVar = Math.max(0, bSum2/totalPixels - bMean*bMean);
@@ -202,15 +244,14 @@ const CameraView: React.FC<CameraViewProps> = ({
       const gStd = Math.sqrt(gVar);
       const bStd = Math.sqrt(bVar);
       
-      // Frame diff para detectar movimiento
+      // FRAME DIFF PARA MOVIMIENTO
       const prevBrightness = prevBrightnessRef.current;
       const frameDiff = prevBrightness !== null ? Math.abs(brightnessMean - prevBrightness) : 0;
       prevBrightnessRef.current = brightnessMean;
       
       const coverageRatio = brightPixels / totalPixels;
 
-      // CRÍTICO: Emitir muestra con valores correctos
-      onSample?.({
+      return {
         timestamp: Date.now(),
         rMean,
         gMean,
@@ -221,13 +262,14 @@ const CameraView: React.FC<CameraViewProps> = ({
         bStd,
         frameDiff,
         coverageRatio
-      });
+      };
     };
 
     if (isMonitoring) {
       startCam();
     }
 
+    // CLEANUP EFFECT
     return () => {
       mounted = false;
       
@@ -242,37 +284,158 @@ const CameraView: React.FC<CameraViewProps> = ({
         streamRef.current = null;
       }
       
-      if (videoRef.current && containerRef.current && containerRef.current.contains(videoRef.current)) {
-        containerRef.current.removeChild(videoRef.current);
+      if (videoRef.current) {
         videoRef.current = null;
       }
       
-      if (canvasRef.current && document.body.contains(canvasRef.current)) {
-        document.body.removeChild(canvasRef.current);
+      if (canvasRef.current) {
         canvasRef.current = null;
       }
       
       setIsStreamActive(false);
       setTorchEnabled(false);
+      setError(null);
     };
-  }, [isMonitoring, onSample, onStreamReady, targetFps, roiSize, enableTorch, coverageThresholdPixelBrightness]);
+  }, [isMonitoring, targetFps, roiSize, enableTorch, coverageThresholdPixelBrightness]);
+
+  // EFECTO PARA INICIAR CAPTURA CUANDO CAMBIA isMonitoring
+  useEffect(() => {
+    if (isMonitoring && isStreamActive && videoRef.current) {
+      const startFrameCapture = () => {
+        if (!isMonitoring) return;
+        
+        const captureLoop = () => {
+          if (!isMonitoring || !videoRef.current || !canvasRef.current) {
+            return;
+          }
+          
+          try {
+            const sample = captureOptimizedFrame();
+            if (sample && onSample) {
+              onSample(sample);
+            }
+          } catch (captureError) {
+            console.error('Error en captura:', captureError);
+          }
+          
+          rafRef.current = requestAnimationFrame(() => {
+            setTimeout(captureLoop, 1000 / targetFps);
+          });
+        };
+        
+        const captureOptimizedFrame = (): CameraSample | null => {
+          const video = videoRef.current;
+          const canvas = canvasRef.current;
+          
+          if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
+            return null;
+          }
+
+          const centerX = video.videoWidth / 2;
+          const centerY = video.videoHeight / 2;
+          const roiW = Math.min(roiSize, video.videoWidth * 0.3);
+          const roiH = Math.min(roiSize, video.videoHeight * 0.3);
+          const sx = centerX - roiW / 2;
+          const sy = centerY - roiH / 2;
+
+          canvas.width = roiW;
+          canvas.height = roiH;
+          
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return null;
+          
+          ctx.drawImage(video, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
+          const imageData = ctx.getImageData(0, 0, roiW, roiH);
+          const data = imageData.data;
+
+          let rSum = 0, gSum = 0, bSum = 0;
+          let rSum2 = 0, gSum2 = 0, bSum2 = 0;
+          let brightSum = 0;
+          let brightPixels = 0;
+          const threshold = coverageThresholdPixelBrightness;
+
+          const totalPixels = data.length / 4;
+
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1]; 
+            const b = data[i + 2];
+            const brightness = (r + g + b) / 3;
+            
+            rSum += r;
+            gSum += g;
+            bSum += b;
+            rSum2 += r * r;
+            gSum2 += g * g;
+            bSum2 += b * b;
+            brightSum += brightness;
+            
+            if (brightness >= threshold) brightPixels++;
+          }
+          
+          const rMean = rSum / totalPixels;
+          const gMean = gSum / totalPixels;
+          const bMean = bSum / totalPixels;
+          const brightnessMean = brightSum / totalPixels;
+          
+          const rVar = Math.max(0, rSum2/totalPixels - rMean*rMean);
+          const gVar = Math.max(0, gSum2/totalPixels - gMean*gMean);
+          const bVar = Math.max(0, bSum2/totalPixels - bMean*bMean);
+          
+          const rStd = Math.sqrt(rVar);
+          const gStd = Math.sqrt(gVar);
+          const bStd = Math.sqrt(bVar);
+          
+          const prevBrightness = prevBrightnessRef.current;
+          const frameDiff = prevBrightness !== null ? Math.abs(brightnessMean - prevBrightness) : 0;
+          prevBrightnessRef.current = brightnessMean;
+          
+          const coverageRatio = brightPixels / totalPixels;
+
+          return {
+            timestamp: Date.now(),
+            rMean,
+            gMean,
+            bMean,
+            brightnessMean,
+            rStd,
+            gStd,
+            bStd,
+            frameDiff,
+            coverageRatio
+          };
+        };
+        
+        rafRef.current = requestAnimationFrame(captureLoop);
+      };
+      
+      startFrameCapture();
+    } else if (!isMonitoring && rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, [isMonitoring, isStreamActive, targetFps, roiSize, coverageThresholdPixelBrightness, onSample]);
 
   return (
     <div className="absolute inset-0 bg-black">
-      {/* Contenedor para video */}
+      {/* CONTENEDOR PRINCIPAL PARA VIDEO */}
       <div 
         ref={containerRef}
         className="w-full h-full"
+        style={{ overflow: 'hidden' }}
       />
       
-      {/* Estados de la cámara */}
+      {/* OVERLAY DE ESTADOS */}
       {!isStreamActive && isMonitoring && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/90">
           <div className="text-white text-center p-6">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p className="text-lg">Iniciando cámara...</p>
+            <p className="text-lg font-medium">Iniciando cámara PPG...</p>
             {enableTorch && (
-              <p className="text-sm text-white/70 mt-2">Activando linterna...</p>
+              <p className="text-sm text-white/70 mt-2">Configurando linterna...</p>
+            )}
+            {error && (
+              <p className="text-sm text-red-400 mt-2">Error: {error}</p>
             )}
           </div>
         </div>
@@ -284,15 +447,25 @@ const CameraView: React.FC<CameraViewProps> = ({
             <div className="h-12 w-12 bg-gray-600 rounded-full mx-auto mb-4 flex items-center justify-center text-2xl">
               📷
             </div>
-            <p className="text-lg">Cámara desactivada</p>
+            <p className="text-lg">Sistema PPG Desactivado</p>
+            <p className="text-sm text-white/60 mt-2">Presiona iniciar para comenzar</p>
           </div>
         </div>
       )}
       
-      {/* Indicador de linterna */}
+      {/* INDICADORES DE ESTADO */}
       {torchEnabled && (
-        <div className="absolute top-4 left-4 bg-black/50 rounded-full p-2">
-          <div className="text-yellow-400 text-xl">🔦</div>
+        <div className="absolute top-4 left-4 bg-black/70 rounded-full p-2">
+          <div className="text-yellow-400 text-xl animate-pulse">🔦</div>
+        </div>
+      )}
+      
+      {isStreamActive && isMonitoring && (
+        <div className="absolute bottom-4 left-4 bg-black/70 rounded-full px-3 py-1">
+          <div className="text-green-400 text-sm flex items-center">
+            <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></div>
+            CAPTURANDO PPG
+          </div>
         </div>
       )}
     </div>
