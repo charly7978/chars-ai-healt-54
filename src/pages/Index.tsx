@@ -22,7 +22,9 @@ const Index = () => {
       totalCholesterol: 0,
       triglycerides: 0
     },
-    hemoglobin: 0
+    hemoglobin: 0,
+    heartRate: 0,
+    rrIntervals: []
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
@@ -268,6 +270,8 @@ const Index = () => {
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setVitalSigns({ 
+      heartRate: 0,
+      rrIntervals: [],
       spo2: 0,
       pressure: "--/--",
       arrhythmiaStatus: "--",
@@ -422,6 +426,14 @@ const Index = () => {
     const vitals = processVitalSigns(lastSignal.filteredValue, null);
     if (vitals) {
       setVitalSigns(vitals);
+      // Actualizar BPM desde el procesador de signos vitales
+      if (vitals.heartRate > 0) {
+        setHeartRate(vitals.heartRate);
+      }
+      // Actualizar intervalos RR para debug
+      if (vitals.rrIntervals && vitals.rrIntervals.length > 0) {
+        setRRIntervals(vitals.rrIntervals.slice(-5));
+      }
       if (vitals.lastArrhythmiaData) {
         setLastArrhythmiaData(vitals.lastArrhythmiaData);
         const [status, count] = vitals.arrhythmiaStatus.split('|');
