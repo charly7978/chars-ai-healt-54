@@ -75,6 +75,17 @@ export const useVitalSignsProcessor = () => {
     
     processor.forceCalibrationCompletion();
   }, [processor]);
+
+  // ✅ RESTAURAR: Función de limpieza de logs (antes estaba en useSignalProcessor)
+  const cleanupOldLogs = useCallback(() => {
+    const thirtySecondsAgo = Date.now() - 30000;
+    signalLog.current = signalLog.current.filter(log => log.timestamp > thirtySecondsAgo);
+    
+    console.log("useVitalSignsProcessor: Logs antiguos limpiados", {
+      logsRestantes: signalLog.current.length,
+      timestamp: new Date().toISOString()
+    });
+  }, []);
   
   // Process the signal with improved algorithms (REVERTIDO A SÍNCRONO)
   const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
@@ -85,7 +96,7 @@ export const useVitalSignsProcessor = () => {
       rrDataPresente: !!rrData,
       intervalosRR: rrData?.intervals.length || 0,
       ultimosIntervalos: rrData?.intervals.slice(-3) || [],
-      contadorArritmias: arrhythmiaCounter,
+      contadorArrhythmia: arrhythmiaCounter,
       señalNúmero: processedSignals.current,
       sessionId: sessionId.current,
       timestamp: new Date().toISOString(),
@@ -93,42 +104,46 @@ export const useVitalSignsProcessor = () => {
       progresoCalibración: processor.getCalibrationProgress()
     });
     
+    // ✅ RESTAURAR: Lógica de detección de dedo (antes estaba en useHeartBeatProcessor)
+    if (value < 0.1) {
+      console.log("useVitalSignsProcessor: No se detecta dedo, valor muy bajo:", value);
+      return null; // No procesar si no hay dedo
+    }
+    
+    // ✅ RESTAURAR: Validación de calidad de señal
+    const signalQuality = Math.min(100, Math.max(0, (value / 2) * 100));
+    if (signalQuality < 30) {
+      console.log("useVitalSignsProcessor: Calidad de señal muy baja:", signalQuality);
+      return null; // No procesar si la calidad es muy baja
+    }
+    
     // Process signal through the vital signs processor (REVERTIDO A SÍNCRONO)
     const result = processor.processSignal(value, rrData);
     const currentTime = Date.now();
     
-    // Guardar para depuración con LIMPIEZA AUTOMÁTICA
-    if (processedSignals.current % 20 === 0) {
-      signalLog.current.push({
-        timestamp: currentTime,
-        value,
-        result: {...result}
-      });
+    // ✅ RESTAURAR: Lógica de detección de arritmias (antes estaba en useHeartBeatProcessor)
+    if (result && result.arrhythmiaStatus && result.arrhythmiaStatus.includes('ARRITMIA DETECTADA')) {
+      const timeSinceLastArrhythmia = currentTime - lastArrhythmiaTime.current;
       
-      // LIMPIEZA AUTOMÁTICA: Mantener solo el tamaño necesario
-      if (signalLog.current.length > 50) {
-        const excessCount = signalLog.current.length - 50;
-        signalLog.current.splice(0, excessCount);
+      if (timeSinceLastArrhythmia > MIN_TIME_BETWEEN_ARRHYTHMIAS && arrhythmiaCounter < MAX_ARRHYTHMIAS_PER_SESSION) {
+        setArrhythmiaCounter(prev => prev + 1);
+        lastArrhythmiaTime.current = currentTime;
+        hasDetectedArrhythmia.current = true;
+        
+        console.log("useVitalSignsProcessor: Arritmia detectada", {
+          número: arrhythmiaCounter + 1,
+          tiempoDesdeÚltima: timeSinceLastArrhythmia,
+          timestamp: new Date().toISOString()
+        });
       }
-      
-             // LIMPIEZA PERIÓDICA: Cada 100 señales, limpiar logs antiguos
-       if (processedSignals.current % 100 === 0) {
-         cleanupOldLogs();
-       }
-      
-      console.log("useVitalSignsProcessor: Log de señales", {
-        totalEntradas: signalLog.current.length,
-        ultimasEntradas: signalLog.current.slice(-3)
-      });
     }
     
-    // Si tenemos un resultado válido, guárdalo
-    if (result.spo2 > 0 && result.glucose > 0 && result.lipids.totalCholesterol > 0) {
+    // ✅ RESTAURAR: Guardar resultado válido
+    if (result && (result.spo2 > 0 || result.pressure !== "--/--" || result.glucose > 0)) {
       console.log("useVitalSignsProcessor: Resultado válido detectado", {
         spo2: result.spo2,
         presión: result.pressure,
         glucosa: result.glucose,
-        lípidos: result.lipids,
         timestamp: new Date().toISOString()
       });
       
@@ -200,21 +215,7 @@ export const useVitalSignsProcessor = () => {
   /**
    * LIMPIEZA AUTOMÁTICA de logs antiguos para prevenir degradación
    */
-  const cleanupOldLogs = useCallback(() => {
-    const currentTime = Date.now();
-    const maxAge = 30000; // 30 segundos
-    
-    // Eliminar logs más antiguos de 30 segundos
-    signalLog.current = signalLog.current.filter(log => 
-      currentTime - log.timestamp < maxAge
-    );
-    
-    console.log('🧹 useVitalSignsProcessor: Limpieza automática de logs', {
-      logsAntes: signalLog.current.length,
-      logsDespués: signalLog.current.length,
-      timestamp: new Date().toISOString()
-    });
-  }, []);
+  // ✅ FUNCIÓN YA DECLARADA ARRIBA - ELIMINAR DUPLICADA
 
   // Soft reset: mantener los resultados pero reiniciar los procesadores
   const reset = useCallback(() => {
