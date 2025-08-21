@@ -126,12 +126,12 @@ export class BloodPressureProcessor {
     
     // 11. CÁLCULO DE PRESIÓN DE PULSO
     const pulsePressure = systolicPressure - diastolicPressure;
-    
+
     // 12. CÁLCULO DE RESISTENCIA PERIFÉRICA USANDO LEY DE OHM HEMODINÁMICA
-    const peripheralResistance = this.calculatePeripheralResistance(
-      meanArterialPressure, arterialStiffness, compliance
+    const peripheralResistance = this.calculatePeripheralResistanceFromPWV(
+      meanArterialPressure
     );
-    
+
     // 13. CÁLCULO DEL ÍNDICE DE AUGMENTACIÓN
     const augmentationIndex = this.calculateAugmentationIndex(
       waveformAnalysis, arterialStiffness, pulseWaveVelocity
