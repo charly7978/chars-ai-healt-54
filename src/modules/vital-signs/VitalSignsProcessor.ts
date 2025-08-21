@@ -604,15 +604,18 @@ export class VitalSignsProcessor {
     }
 
     const currentIndex = this.ppgBuffer.length - 1;
-    const centerIndex = Math.floor(this.adaptiveWindowSize / 2);
-    const startIndex = currentIndex - centerIndex;
-    const endIndex = currentIndex + centerIndex;
+    const halfWindow = Math.floor(this.adaptiveWindowSize / 2);
+    const startIndex = Math.max(0, currentIndex - halfWindow);
+    const endIndex = Math.min(this.ppgBuffer.length - 1, currentIndex + halfWindow);
 
-    if (startIndex < 0 || endIndex >= this.ppgBuffer.length) {
-      console.log('VitalSignsProcessor: Índices fuera de rango', {
+    // Verificación corregida de índices
+    if (startIndex >= endIndex || currentIndex < halfWindow) {
+      console.log('VitalSignsProcessor: Ventana insuficiente para análisis', {
         startIndex,
         endIndex,
-        bufferLength: this.ppgBuffer.length
+        currentIndex,
+        bufferLength: this.ppgBuffer.length,
+        halfWindow
       });
       return false;
     }
@@ -678,13 +681,30 @@ export class VitalSignsProcessor {
     // Rango base fisiológico
     const baseValid = rrInterval >= this.adaptiveMinDistance && rrInterval <= this.adaptiveMaxDistance;
     
-    if (!baseValid) return false;
+    if (!baseValid) {
+      console.log('VitalSignsProcessor: RR interval fuera de rango base', {
+        rrInterval,
+        minDistance: this.adaptiveMinDistance,
+        maxDistance: this.adaptiveMaxDistance
+      });
+      return false;
+    }
     
     // Validación adicional basada en perfil del usuario (MUCHO MÁS PERMISIVA)
     const expectedRR = 60000 / this.userHeartRateProfile.baseline;
     const tolerance = expectedRR * 1.0; // Tolerancia máxima
+    const isValid = Math.abs(rrInterval - expectedRR) <= tolerance;
     
-    return Math.abs(rrInterval - expectedRR) <= tolerance;
+    if (!isValid) {
+      console.log('VitalSignsProcessor: RR interval fuera de tolerancia esperada', {
+        rrInterval,
+        expectedRR,
+        tolerance,
+        difference: Math.abs(rrInterval - expectedRR)
+      });
+    }
+    
+    return isValid;
   }
   
   /**
@@ -692,7 +712,11 @@ export class VitalSignsProcessor {
    */
   private calculateAdaptiveBPM(): number {
     if (this.rrIntervals.length < 2) {
-      return this.lastHeartRate; // No usar baseline automáticamente
+      console.log('VitalSignsProcessor: Insuficientes intervalos RR para calcular BPM', {
+        rrIntervalsLength: this.rrIntervals.length,
+        requiredMinimum: 2
+      });
+      return this.lastHeartRate; // Mantener el último valor conocido
     }
 
     // Usar filtro adaptativo para cálculo
@@ -702,10 +726,23 @@ export class VitalSignsProcessor {
     // Aplicar filtro Kalman adaptativo si está disponible
     let bpm = Math.round(60000 / avgRR);
     
+    console.log('VitalSignsProcessor: BPM calculado desde RR intervals', {
+      recentIntervals,
+      avgRR,
+      calculatedBPM: bpm,
+      rrIntervalsCount: this.rrIntervals.length
+    });
+    
     // Validar rango fisiológico adaptativo (MÁS PERMISIVO)
     const [minBPM, maxBPM] = [40, 200]; // Rango mucho más amplio
     if (bpm < minBPM || bpm > maxBPM) {
-      bpm = this.lastHeartRate; // No forzar baseline
+      console.log('VitalSignsProcessor: BPM fuera de rango fisiológico', {
+        calculatedBPM: bpm,
+        minBPM,
+        maxBPM,
+        fallbackTo: this.lastHeartRate
+      });
+      bpm = this.lastHeartRate > 0 ? this.lastHeartRate : Math.max(minBPM, Math.min(maxBPM, bpm));
     }
 
     return bpm;
