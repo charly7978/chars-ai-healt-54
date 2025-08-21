@@ -13,7 +13,7 @@ export class GlucoseProcessor {
   private readonly CALIBRATION_FACTOR = 1.15; // optimización actualizada
   private readonly CONFIDENCE_THRESHOLD = 0.65; // Minimum confidence for reporting
   private readonly MIN_GLUCOSE = 70; // Physiological minimum (mg/dL)
-  private readonly MAX_GLUCOSE = 180; // Upper limit for reporting (mg/dL)
+  private readonly MAX_GLUCOSE = 220; // Upper limit for reporting (mg/dL)
   
   private confidenceScore: number = 0;
   private lastEstimate: number = 0;
@@ -29,13 +29,13 @@ export class GlucoseProcessor {
    * Using adaptive multi-parameter model based on waveform characteristics
    */
   public calculateGlucose(ppgValues: number[]): number {
-    if (ppgValues.length < 180) {
+    if (ppgValues.length < 220) {
       this.confidenceScore = 0;
       return 0; // Not enough data
     }
     
     // Use real-time PPG data for glucose estimation
-    const recentPPG = ppgValues.slice(-180);
+    const recentPPG = ppgValues.slice(-220);
     
     // Extract waveform features for glucose correlation
     const features = this.extractWaveformFeatures(recentPPG);
@@ -222,7 +222,7 @@ export class GlucoseProcessor {
    * Reset processor state
    */
   public reset(): void {
-    this.lastEstimate = 100;
+    this.lastEstimate = 90;
     this.confidenceScore = 0;
     this.calibrationOffset = 0;
   }
