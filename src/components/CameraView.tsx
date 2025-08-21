@@ -1,184 +1,250 @@
-import React, { useEffect, useRef } from 'react';
+
+import React, { useRef, useEffect, useState } from 'react';
 import { CameraSample } from '@/types';
 
-/**
- * CameraView mejorado:
- * - captura video trasero
- * - intenta activar torch si está disponible
- * - ROI reducido para rendimiento
- * - calcula medias por canal (R,G,B), desviaciones, coverageRatio,
- *   frameDiff y expone un CameraSample por frame.
- *
- * Recomendación: Pegar tal cual. En dispositivos Android la linterna
- * suele activarse si la cámara lo permite; en iOS requiere user gesture.
- */
-
 interface CameraViewProps {
-  onStreamReady?: (s: MediaStream) => void;
-  onSample?: (s: CameraSample) => void;
+  onSample: (sample: CameraSample) => void;
   isMonitoring: boolean;
   targetFps?: number;
-  roiSize?: number; // px ancho del ROI (se escala manteniendo aspect)
+  targetW?: number;
   enableTorch?: boolean;
-  coverageThresholdPixelBrightness?: number; // 0-255
+  isFingerDetected: boolean;
+  signalQuality: number;
 }
 
-const CameraView: React.FC<CameraViewProps> = ({
-  onStreamReady,
-  onSample,
-  isMonitoring,
+const CameraView = ({ 
+  onSample, 
+  isMonitoring, 
   targetFps = 30,
-  roiSize = 200,
+  targetW = 160,
   enableTorch = true,
-  coverageThresholdPixelBrightness = 30
-}) => {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  isFingerDetected,
+  signalQuality
+}: CameraViewProps) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const prevBrightnessRef = useRef<number | null>(null);
+  const processingRef = useRef<boolean>(false);
+  const frameCountRef = useRef<number>(0);
+  const lastProcessTimeRef = useRef<number>(0);
+  
+  const [cameraError, setCameraError] = useState<string>("");
+  const [hasPermission, setHasPermission] = useState<boolean>(false);
 
   useEffect(() => {
-    let mounted = true;
+    if (isMonitoring) {
+      startCamera();
+    } else {
+      stopCamera();
+    }
 
-    const startCam = async () => {
-      try {
-        const constraints: any = {
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: targetFps }
-          },
-          audio: false
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        if (!mounted) return;
-        streamRef.current = stream;
-        onStreamReady?.(stream);
+    return () => stopCamera();
+  }, [isMonitoring]);
 
-        // crear video oculto
-        if (!videoRef.current) {
-          const v = document.createElement('video');
-          v.autoplay = true;
-          v.playsInline = true;
-          v.muted = true;
-          v.style.display = 'none';
-          document.body.appendChild(v);
-          videoRef.current = v;
-        }
+  const startCamera = async () => {
+    try {
+      setCameraError("");
+      
+      // VERIFICAR PERMISOS
+      const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
+      console.log(`📷 Estado permisos: ${permission.state}`);
+      
+      if (permission.state === 'denied') {
+        throw new Error('Permisos de cámara denegados');
+      }
+
+      // CONFIGURACIÓN OPTIMIZADA
+      const constraints: MediaStreamConstraints = {
+        video: {
+          facingMode: 'environment',
+          width: { ideal: targetW * 2 },
+          height: { ideal: Math.round(targetW * 1.5) },
+          frameRate: { ideal: targetFps, max: targetFps }
+        },
+        audio: false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+
+      if (videoRef.current) {
         videoRef.current.srcObject = stream;
-
-        // canvas
-        if (!canvasRef.current) {
-          const c = document.createElement('canvas');
-          c.style.display = 'none';
-          document.body.appendChild(c);
-          canvasRef.current = c;
-        }
-
-        // intentar encender torch si permite
-        try {
-          const [track] = stream.getVideoTracks();
-          const caps = (track as any).getCapabilities?.();
-          if (enableTorch && caps && caps.torch) {
-            try { await (track as any).applyConstraints({ advanced: [{ torch: true }] }); } catch (e) { /* ignore */ }
+        videoRef.current.play();
+        setHasPermission(true);
+        
+        // APLICAR TORCH SI ESTÁ DISPONIBLE
+        if (enableTorch) {
+          const track = stream.getVideoTracks()[0];
+          if ('applyConstraints' in track) {
+            try {
+              await (track as any).applyConstraints({
+                advanced: [{ torch: true }]
+              });
+              console.log("🔦 Flash activado");
+            } catch (err) {
+              console.log("⚠️ Flash no disponible:", err);
+            }
           }
-        } catch (e) {}
-
-        // esperar metadata
-        await new Promise<void>((resolve) => {
-          const v = videoRef.current!;
-          if (v.readyState >= 1) return resolve();
-          const h = () => { v.removeEventListener('loadedmetadata', h); resolve(); };
-          v.addEventListener('loadedmetadata', h);
-        });
-
-        const loop = () => {
-          captureFrameAndEmit();
-          rafRef.current = requestAnimationFrame(() => {
-            // limitar fps manualmente
-            setTimeout(loop, 1000 / targetFps);
-          });
-        };
-        rafRef.current = requestAnimationFrame(loop);
-      } catch (err) {
-        console.error('CameraView: no se pudo abrir cámara', err);
+        }
       }
-    };
 
-    const captureFrameAndEmit = () => {
-      const v = videoRef.current;
-      const c = canvasRef.current;
-      if (!v || !c || !v.videoWidth || !v.videoHeight) return;
+      // INICIAR PROCESAMIENTO
+      processingRef.current = true;
+      processFrame();
 
-      // definimos ROI central cuadrado (más rápido y evita bordes)
-      const roiW = roiSize;
-      const roiH = Math.round(roiW * (v.videoHeight / v.videoWidth));
-      const sx = Math.max(0, Math.round((v.videoWidth - roiW) / 2));
-      const sy = Math.max(0, Math.round((v.videoHeight - roiH) / 2));
+    } catch (error) {
+      console.error('Error cámara:', error);
+      setCameraError(error instanceof Error ? error.message : 'Error desconocido');
+      setHasPermission(false);
+    }
+  };
 
-      c.width = roiW;
-      c.height = roiH;
-      const ctx = c.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(v, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
-      const img = ctx.getImageData(0, 0, roiW, roiH);
-      const d = img.data;
+  const stopCamera = () => {
+    processingRef.current = false;
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    frameCountRef.current = 0;
+    setHasPermission(false);
+  };
 
-      let rSum = 0, gSum = 0, bSum = 0;
-      let rSum2 = 0, gSum2 = 0, bSum2 = 0;
-      let brightSum = 0;
-      let cntBrightPixels = 0;
-      const thr = coverageThresholdPixelBrightness;
+  const processFrame = () => {
+    if (!processingRef.current || !videoRef.current || !canvasRef.current) {
+      return;
+    }
 
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i], g = d[i+1], b = d[i+2];
-        const bright = (r + g + b) / 3;
-        rSum += r; gSum += g; bSum += b;
-        rSum2 += r*r; gSum2 += g*g; bSum2 += b*b;
-        brightSum += bright;
-        if (bright >= thr) cntBrightPixels++;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx || video.videoWidth === 0 || video.videoHeight === 0) {
+      requestAnimationFrame(processFrame);
+      return;
+    }
+
+    // CONTROL DE FPS
+    const now = performance.now();
+    const frameInterval = 1000 / targetFps;
+    
+    if (now - lastProcessTimeRef.current < frameInterval) {
+      requestAnimationFrame(processFrame);
+      return;
+    }
+    
+    lastProcessTimeRef.current = now;
+    frameCountRef.current++;
+
+    // AJUSTAR CANVAS AL TAMAÑO DEL VIDEO
+    canvas.width = targetW;
+    canvas.height = Math.round(targetW * (video.videoHeight / video.videoWidth));
+
+    // DIBUJAR FRAME
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // EXTRAER DATOS DE PÍXELES
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    // CALCULAR VALORES PROMEDIO
+    let rSum = 0, gSum = 0, bSum = 0;
+    let rSumSq = 0;
+    let validPixels = 0;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+
+      // FILTRAR PÍXELES MUY OSCUROS O MUY CLAROS
+      if (r > 20 && r < 240 && g > 20 && g < 240 && b > 20 && b < 240) {
+        rSum += r;
+        gSum += g;
+        bSum += b;
+        rSumSq += r * r;
+        validPixels++;
       }
-      const npix = d.length / 4;
-      const rMean = rSum / npix;
-      const gMean = gSum / npix;
-      const bMean = bSum / npix;
-      const rVar = Math.max(0, rSum2/npix - rMean*rMean);
-      const gVar = Math.max(0, gSum2/npix - gMean*gMean);
-      const bVar = Math.max(0, bSum2/npix - bMean*bMean);
-      const rStd = Math.sqrt(rVar);
-      const gStd = Math.sqrt(gVar);
-      const bStd = Math.sqrt(bVar);
-      const brightnessMean = brightSum / npix;
-      const framePrev = prevBrightnessRef.current;
-      const frameDiff = framePrev == null ? 0 : Math.abs(brightnessMean - framePrev);
-      prevBrightnessRef.current = brightnessMean;
-      const coverageRatio = cntBrightPixels / npix;
+    }
 
-      // Emite muestra
-      onSample?.({
-        timestamp: Date.now(),
-        rMean, gMean, bMean,
-        brightnessMean,
-        rStd, gStd, bStd,
-        frameDiff,
-        coverageRatio
-      });
+    if (validPixels === 0) {
+      requestAnimationFrame(processFrame);
+      return;
+    }
+
+    const rMean = rSum / validPixels;
+    const gMean = gSum / validPixels;
+    const bMean = bSum / validPixels;
+    const rStd = Math.sqrt((rSumSq / validPixels) - (rMean * rMean));
+
+    // CREAR SAMPLE OPTIMIZADA
+    const sample: CameraSample = {
+      timestamp: now,
+      rMean: rMean / 255, // Normalizar 0-1
+      rStd: rStd / 255,
+      frameDiff: frameCountRef.current > 1 ? Math.abs(rMean - (window as any).lastRMean || rMean) : 0
     };
 
-    if (isMonitoring) startCam();
+    (window as any).lastRMean = rMean;
 
-    return () => {
-      mounted = false;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      const s = streamRef.current; if (s) s.getTracks().forEach(t => t.stop());
-      if (videoRef.current) { try { document.body.removeChild(videoRef.current); } catch (e) {} videoRef.current = null; }
-      if (canvasRef.current) { try { document.body.removeChild(canvasRef.current); } catch (e) {} canvasRef.current = null; }
-    };
-  }, [isMonitoring, onSample, onStreamReady, targetFps, roiSize, enableTorch, coverageThresholdPixelBrightness]);
+    // ENVIAR SAMPLE
+    onSample(sample);
 
-  return null;
+    // CONTINUAR PROCESAMIENTO
+    requestAnimationFrame(processFrame);
+  };
+
+  return (
+    <div className="relative w-full h-full bg-black overflow-hidden">
+      {/* VIDEO PREVIEW */}
+      <video
+        ref={videoRef}
+        className="absolute inset-0 w-full h-full object-cover"
+        autoPlay
+        playsInline
+        muted
+      />
+
+      {/* CANVAS OCULTO PARA PROCESAMIENTO */}
+      <canvas
+        ref={canvasRef}
+        className="hidden"
+      />
+
+      {/* OVERLAY DE ESTADO LIMPIO */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        {!hasPermission && (
+          <div className="bg-black/70 text-white p-4 rounded-lg text-center">
+            <div className="text-lg font-semibold mb-2">
+              {cameraError ? '❌ Error de Cámara' : '📷 Iniciando Cámara...'}
+            </div>
+            {cameraError && (
+              <div className="text-sm text-red-300">{cameraError}</div>
+            )}
+          </div>
+        )}
+        
+        {hasPermission && (
+          <div className="absolute bottom-4 left-4 right-4">
+            <div className="bg-black/50 text-white p-3 rounded-lg text-center">
+              <div className="text-sm">
+                Coloque su dedo sobre la cámara trasera con flash
+              </div>
+              <div className="text-xs mt-1 text-gray-300">
+                Estado: {isFingerDetected ? '✅ Dedo detectado' : '⏳ Buscando dedo'} 
+                | Calidad: {signalQuality}%
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 };
 
 export default CameraView;

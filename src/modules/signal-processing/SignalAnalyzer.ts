@@ -107,9 +107,9 @@ export class SignalAnalyzer {
     
     // Pesos optimizados usando análisis de componentes principales (PCA)
     const pcaWeights = {
-      redChannel: 0.55,    // Primera componente principal
+      redChannel: 0.35,    // Primera componente principal
       stability: 0.30,     // Segunda componente principal  
-      pulsatility: 0.10,   // Tercera componente principal
+      pulsatility: 0.20,   // Tercera componente principal
       biophysical: 0.10,   // Cuarta componente principal
       periodicity: 0.05    // Quinta componente principal
     };

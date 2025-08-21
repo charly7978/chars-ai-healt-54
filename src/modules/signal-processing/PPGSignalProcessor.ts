@@ -21,9 +21,9 @@ export default class PPGSignalProcessor {
   private windowSec = 8; // ventana de análisis en segundos (balance: latencia vs resolución)
 
   // parámetros
-  private minRMeanForFinger = 15; // reducido para mayor sensibilidad
+  private minRMeanForFinger = 25; // reducido para mayor sensibilidad
   private maxStdForFinger = 80;    // aumentado para tolerar más variación
-  private minACAmplitude = 0.2;   // reducido para detectar señales más débiles
+  private minACAmplitude = 0.3;   // reducido para detectar señales más débiles
 
   constructor(windowSec = 8) {
     this.windowSec = windowSec;
