@@ -336,7 +336,7 @@ const Index = () => {
           // Verificar que el video esté listo
           if (videoElement.readyState >= 2) {
             // Configurar tamaño del canvas basado en el video
-            const targetWidth = Math.min(320, videoElement.videoWidth || 320);
+            const targetWidth = Math.min(720, videoElement.videoWidth || 720);
             const targetHeight = Math.min(240, videoElement.videoHeight || 240);
             
             tempCanvas.width = targetWidth;
@@ -405,7 +405,7 @@ const Index = () => {
       }
       
     // Umbral MÁS ALTO de calidad para procesar
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 40; // Aumentado de 30 a 40
+    const MIN_SIGNAL_QUALITY_TO_MEASURE = 50; // Aumentado de 30 a 40
       // Si no hay dedo válido o calidad insuficiente, resetear indicadores
       if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
         console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
