@@ -46,10 +46,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // CONFIGURACIÓN ULTRA-ESTRICTA PARA EVITAR FALSOS POSITIVOS
   private readonly CONFIG = {
     // UMBRALES MUY ESTRICTOS PARA DEDO REAL
-    MIN_RED_THRESHOLD: 80,  // Aumentado para exigir más señal
+    MIN_RED_THRESHOLD: 70,  // Aumentado para exigir más señal
     MAX_RED_THRESHOLD: 220, // Reducido para evitar saturación
-    MIN_DETECTION_SCORE: 0.85, // MUY ESTRICTO - Solo señal perfecta
-    MIN_CONSECUTIVE_FOR_DETECTION: 8, // Más frames requeridos
+    MIN_DETECTION_SCORE: 0.65, // MUY ESTRICTO - Solo señal perfecta
+    MIN_CONSECUTIVE_FOR_DETECTION: 5, // Más frames requeridos
     MAX_CONSECUTIVE_FOR_LOSS: 5,
     
     // VALIDACIÓN ULTRA-ESTRICTA
@@ -63,7 +63,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     MIN_VARIANCE_RATIO: 0.15, // Varianza mínima para señal pulsátil
     MAX_UNIFORMITY: 0.1, // Máxima uniformidad permitida
     MIN_DYNAMIC_RANGE: 25, // Rango dinámico mínimo
-    PERFUSION_THRESHOLD: 0.5, // Umbral de perfusión alto
+    PERFUSION_THRESHOLD: 0.3, // Umbral de perfusión alto
     
     NOISE_THRESHOLD: 0.8, // Más estricto
     PEAK_PROMINENCE: 0.3, // Mayor prominencia requerida
