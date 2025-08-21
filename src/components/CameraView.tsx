@@ -121,10 +121,9 @@ const CameraView = ({
             }
           }
           
-          // 2. ISO/Ganancia optimizada para señales de baja amplitud
-          if (capabilities.iso) {
-            const optimalISO = Math.min(capabilities.iso.max || 400, 200);
-            advancedConstraints.push({ iso: optimalISO });
+          // 2. Configuración de ganancia automática (reemplaza ISO no estándar)
+          if (capabilities.autoGainControl !== undefined) {
+            advancedConstraints.push({ autoGainControl: false });
           }
           
           // 3. Enfoque continuo para mantener nitidez constante
@@ -267,7 +266,7 @@ const CameraView = ({
         willChange: 'transform',
         transform: 'translateZ(0)',
         backfaceVisibility: 'hidden',
-        imageRendering: 'optimizeQuality'
+        imageRendering: 'auto'
       }}
       onLoadedMetadata={() => {
         console.log(`📹 Metadatos de video cargados - ${sessionIdRef.current}`);
