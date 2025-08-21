@@ -42,6 +42,8 @@ const CameraView: React.FC<CameraViewProps> = ({
 
     const start = async () => {
       try {
+        console.log(`🎥 Iniciando cámara - Monitoreo: ${isMonitoring}`);
+        
         const constraints: any = {
           video: {
             facingMode: { ideal: 'environment' },
@@ -56,6 +58,8 @@ const CameraView: React.FC<CameraViewProps> = ({
         if (!mounted) return;
         streamRef.current = stream;
         onStreamReady?.(stream);
+
+        console.log(`✅ Stream obtenido correctamente`);
 
         // crear video oculto
         if (!videoRef.current) {
@@ -82,13 +86,17 @@ const CameraView: React.FC<CameraViewProps> = ({
           const [track] = stream.getVideoTracks();
           const capabilities = (track as any).getCapabilities?.();
           if (enableTorch && capabilities && capabilities.torch) {
+            console.log(`💡 Intentando activar linterna...`);
             try {
               await (track as any).applyConstraints({ advanced: [{ torch: true }] });
+              console.log(`✅ Linterna activada`);
             } catch (e) {
-              // algunos navegadores / dispositivos requieren interacción previa; ignorar
+              console.log(`⚠️ No se pudo activar linterna automáticamente`);
             }
           }
-        } catch (e) {}
+        } catch (e) {
+          console.log(`⚠️ Error con linterna:`, e);
+        }
 
         // esperar video metadata
         await new Promise<void>((resolve) => {
@@ -97,6 +105,8 @@ const CameraView: React.FC<CameraViewProps> = ({
           const onLoaded = () => { v.removeEventListener('loadedmetadata', onLoaded); resolve(); };
           v.addEventListener('loadedmetadata', onLoaded);
         });
+
+        console.log(`🎬 Iniciando loop de procesamiento...`);
 
         const loop = (ts: number) => {
           const now = performance.now();
@@ -146,12 +156,15 @@ const CameraView: React.FC<CameraViewProps> = ({
       const frameDiff = prev == null ? 0 : Math.abs(mean - prev);
       prevRRef.current = mean;
 
-      onSample?.({
+      const sample: CameraSample = {
         timestamp: Date.now(),
         rMean: mean,
         rStd: std,
         frameDiff
-      });
+      };
+
+      console.log(`📊 Sample: rMean=${mean.toFixed(1)}, rStd=${std.toFixed(1)}, frameDiff=${frameDiff.toFixed(1)}`);
+      onSample?.(sample);
     };
 
     if (isMonitoring) start();

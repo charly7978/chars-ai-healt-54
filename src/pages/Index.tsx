@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
@@ -10,7 +11,7 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
-  // ESTADO ÚNICO Y DEFINITIVO - CERO DUPLICIDADES
+  // ESTADO ÚNICO Y DEFINITIVO
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
@@ -35,27 +36,28 @@ const Index = () => {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   
-  // REFERENCIAS ÚNICAS - CONTROL ABSOLUTO DE INSTANCIAS
+  // REFERENCIAS ÚNICAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  // CONTROL ÚNICO DE ESTADO - EVITA INICIALIZACIONES PARALELAS ABSOLUTAMENTE
+  // CONTROL ÚNICO DE ESTADO
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
-  // HOOKS ÚNICOS - UNA SOLA INSTANCIA GARANTIZADA
+  // HOOKS ÚNICOS - USANDO EL NUEVO SISTEMA MULTICANAL
   const { 
     startProcessing, 
     stopProcessing, 
     lastSignal, 
-    processFrame, 
+    handleSample,
     isProcessing, 
     framesProcessed,
-    debugInfo: signalDebugInfo
+    debugInfo: signalDebugInfo,
+    lastResult
   } = useSignalProcessor();
   
   const { 
@@ -75,7 +77,7 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
-  // INICIALIZACIÓN ÚNICA CON BLOQUEO ABSOLUTO
+  // INICIALIZACIÓN ÚNICA
   useEffect(() => {
     if (initializationLock.current) return;
     
@@ -93,7 +95,7 @@ const Index = () => {
     };
   }, []);
 
-  // PANTALLA COMPLETA ÚNICA
+  // PANTALLA COMPLETA
   const enterFullScreen = async () => {
     if (isFullscreen) return;
     
@@ -133,7 +135,7 @@ const Index = () => {
     }
   };
 
-  // INICIALIZACIÓN AUTOMÁTICA ÚNICA
+  // INICIALIZACIÓN AUTOMÁTICA
   useEffect(() => {
     const timer = setTimeout(() => enterFullScreen(), 1000);
     
@@ -178,9 +180,8 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  // FUNCIÓN ÚNICA DE INICIO - BLOQUEO TOTAL DE DUPLICIDADES
+  // FUNCIÓN ÚNICA DE INICIO
   const startMonitoring = () => {
-    // BLOQUEO ABSOLUTO DE MÚLTIPLES INICIALIZACIONES
     if (systemState.current !== 'IDLE') {
       console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current} - ${sessionIdRef.current}`);
       return;
@@ -189,7 +190,6 @@ const Index = () => {
     systemState.current = 'STARTING';
     console.log(`🎬 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
-    // UN SOLO BEEP - NUNCA MÁS
     if (navigator.vibrate) {
       navigator.vibrate([200]);
     }
@@ -239,7 +239,6 @@ const Index = () => {
     setIsCalibrating(true);
     startCalibration();
     
-    // Volver a ACTIVE después de calibración
     setTimeout(() => {
       if (systemState.current === 'CALIBRATING') {
         systemState.current = 'ACTIVE';
@@ -302,7 +301,6 @@ const Index = () => {
     fullResetVitalSigns();
     resetHeartBeat();
     
-    // RESET TOTAL DE ESTADOS
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -329,82 +327,19 @@ const Index = () => {
     console.log(`✅ RESET TOTAL COMPLETADO - ${sessionIdRef.current}`);
   };
 
-  // MANEJO ÚNICO DEL STREAM
-  const handleStreamReady = (stream: MediaStream) => {
-    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
-    
-    console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
-    
-    const videoTrack = stream.getVideoTracks()[0];
-    
-    // LINTERNA ÚNICA
-    if (videoTrack.getCapabilities()?.torch) {
-      videoTrack.applyConstraints({
-        advanced: [{ torch: true }]
-      }).catch(err => console.error("Error linterna:", err));
-    }
-    
-    // PROCESAMIENTO ÚNICO DE FRAMES
-    const tempCanvas = document.createElement('canvas');
-    const tempCtx = tempCanvas.getContext('2d', {willReadFrequently: true});
-    if (!tempCtx) return;
-    
-    let lastProcessTime = 0;
-    const targetFrameInterval = 1000/30; // 30 FPS EXACTOS
-    
-    const videoElement = document.querySelector('video') as HTMLVideoElement;
-    if (!videoElement) return;
-    
-    const processImage = async () => {
-      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) return;
-      
-      const now = Date.now();
-      const timeSinceLastProcess = now - lastProcessTime;
-      
-      if (timeSinceLastProcess >= targetFrameInterval) {
-        try {
-          if (videoElement.readyState >= 2) {
-            const targetWidth = Math.min(320, videoElement.videoWidth || 320);
-            const targetHeight = Math.min(240, videoElement.videoHeight || 240);
-            
-            tempCanvas.width = targetWidth;
-            tempCanvas.height = targetHeight;
-            
-            tempCtx.drawImage(
-              videoElement, 
-              0, 0, videoElement.videoWidth, videoElement.videoHeight,
-              0, 0, targetWidth, targetHeight
-            );
-            
-            const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
-            processFrame(imageData);
-            
-            lastProcessTime = now;
-          }
-        } catch (error) {
-          console.error("Error procesando frame:", error);
-        }
-      }
-      
-      if (isMonitoring && systemState.current === 'ACTIVE') {
-        requestAnimationFrame(processImage);
-      }
-    };
-
-    processImage();
-  };
-
-  // PROCESAMIENTO ÚNICO DE SEÑALES
+  // PROCESAMIENTO ÚNICO DE SEÑALES - USANDO EL NUEVO SISTEMA MULTICANAL
   useEffect(() => {
-    if (!lastSignal) return;
+    if (!lastSignal || !lastResult) return;
 
-    setSignalQuality(lastSignal.quality);
+    // Usar la calidad del mejor canal
+    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 30) || lastResult.channels[0];
+    setSignalQuality(bestChannel?.quality || 0);
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 35; // Más permisivo
+    const MIN_SIGNAL_QUALITY = 25; // Más permisivo para el nuevo sistema
     
-    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
+    if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
       setHeartRate(0);
       setHeartbeatSignal(0);
       setBeatMarker(0);
@@ -418,7 +353,9 @@ const Index = () => {
       lastSignal.timestamp
     );
     
-    setHeartRate(heartBeatResult.bpm);
+    // Usar el BPM agregado del sistema multicanal si está disponible
+    const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
+    setHeartRate(finalBpm);
     setHeartbeatSignal(lastSignal.filteredValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
@@ -452,7 +389,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, lastResult, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   // CONTROL DE CALIBRACIÓN ÚNICO
   useEffect(() => {
@@ -520,10 +457,11 @@ const Index = () => {
       <div className="flex-1 relative">
         <div className="absolute inset-0">
           <CameraView 
-            onStreamReady={handleStreamReady}
+            onSample={handleSample}
             isMonitoring={isCameraOn}
-            isFingerDetected={lastSignal?.fingerDetected}
-            signalQuality={signalQuality}
+            targetFps={30}
+            targetW={160}
+            enableTorch={true}
           />
         </div>
 
@@ -545,14 +483,14 @@ const Index = () => {
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
-            <div>Sesión: {sessionIdRef.current.slice(-8)}</div>
+            <div>Canales: {lastResult?.channels.length || 0}</div>
+            <div>BPM Agregado: {lastResult?.aggregatedBPM || '--'}</div>
           </div>
 
           <div className="flex-1">
             <PPGSignalMeter 
               value={beatMarker}
-              quality={lastSignal?.quality || 0}
+              quality={signalQuality}
               isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
