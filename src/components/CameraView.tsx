@@ -58,6 +58,7 @@ const CameraView = ({
   };
 
   const startCamera = async () => {
+    alert("🎬 INICIANDO CÁMARA"); // LOG VISIBLE
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         if (process.env.NODE_ENV !== 'production') {
@@ -304,6 +305,11 @@ const CameraView = ({
       fingerDetected
     });
     
+    // LOG VISIBLE si detecta dedo
+    if (fingerDetected) {
+      alert(`✅ DEDO DETECTADO! Calidad: ${signalQuality}`);
+    }
+    
     // ✅ RESTAURAR CALLBACK: Notificar detección de dedo
     if (onFingerDetected) {
       onFingerDetected(fingerDetected, signalQuality);
@@ -438,6 +444,7 @@ const CameraView = ({
     
     // Iniciar procesamiento después de un delay para estabilizar la cámara
     setTimeout(() => {
+      alert("🚀 INICIANDO PROCESAMIENTO DE FRAMES");
       processNextFrame();
     }, 2000);
   };
@@ -466,6 +473,7 @@ const CameraView = ({
   useEffect(() => {
     if (stream && isMonitoring) {
       console.log("🎥 CameraView: Cámara lista, iniciando procesamiento en tiempo real");
+      alert("🎥 CÁMARA LISTA - INICIANDO PROCESAMIENTO"); // LOG VISIBLE
       startRealTimeProcessing();
     }
   }, [stream, isMonitoring]);
