@@ -287,8 +287,6 @@ export const useVitalSignsProcessor = () => {
     arrhythmiaCounter,
     lastValidResults,
     getCalibrationProgress: useCallback(() => processor.getCalibrationProgress(), [processor]),
-    getSignalStats: useCallback(() => processor.getSignalStats(), [processor]),
-    getProcessingStatus: useCallback(() => processor.getProcessingStatus(), [processor]),
     debugInfo: {
       processedSignals: processedSignals.current,
       signalLog: signalLog.current.slice(-10)
