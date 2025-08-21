@@ -19,8 +19,8 @@ export default class MultiChannelManager {
   private fingerState = false;
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
-  private fingerEnableFramesToConfirm = 3; // REDUCIDO: frames consecutivos con dedo para confirmar
-  private fingerDisableFramesToConfirm = 3; // REDUCIDO: frames consecutivos sin dedo para desconfirmar
+  private fingerEnableFramesToConfirm = 2; // ULTRA REDUCIDO: frames consecutivos con dedo para confirmar
+  private fingerDisableFramesToConfirm = 2; // ULTRA REDUCIDO: frames consecutivos sin dedo para desconfirmar
 
   constructor(n = 6, windowSec = 8) {
     this.n = n;
@@ -72,7 +72,7 @@ export default class MultiChannelManager {
 
     // consenso: requerir que >= mitad de canales detecten dedo y coverageRatio alto y bajo movimiento
     const majority = Math.ceil(this.n / 2);
-    const coverageOk = globalCoverageRatio > 0.05; // MUY REDUCIDO: al menos ~5% pix cubiertos (más permisivo)
+    const coverageOk = globalCoverageRatio > 0.02; // ULTRA REDUCIDO: al menos ~2% pix cubiertos (muy permisivo)
     const motionOk = globalFrameDiff < 25; // MUY AUMENTADO: brillo muy tolerante entre frames
     const channelConsensus = nFinger >= majority;
 

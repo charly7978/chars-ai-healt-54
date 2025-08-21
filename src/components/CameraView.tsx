@@ -111,7 +111,15 @@ const CameraView: React.FC<CameraViewProps> = ({
     const captureFrameAndEmit = () => {
       const v = videoRef.current;
       const c = canvasRef.current;
-      if (!v || !c || !v.videoWidth || !v.videoHeight) return;
+      if (!v || !c || !v.videoWidth || !v.videoHeight) {
+        console.log('⚠️ CameraView: Video o canvas no listo:', { 
+          video: !!v, 
+          canvas: !!c, 
+          width: v?.videoWidth, 
+          height: v?.videoHeight 
+        });
+        return;
+      }
 
       // definimos ROI central cuadrado (más rápido y evita bordes)
       const roiW = roiSize;
@@ -156,6 +164,18 @@ const CameraView: React.FC<CameraViewProps> = ({
       const frameDiff = framePrev == null ? 0 : Math.abs(brightnessMean - framePrev);
       prevBrightnessRef.current = brightnessMean;
       const coverageRatio = cntBrightPixels / npix;
+
+      // DEBUG: Log de cada frame
+      console.log('📸 CameraView Frame:', {
+        rMean: rMean.toFixed(1),
+        gMean: gMean.toFixed(1),
+        bMean: bMean.toFixed(1),
+        brightnessMean: brightnessMean.toFixed(1),
+        coverageRatio: (coverageRatio * 100).toFixed(1) + '%',
+        frameDiff: frameDiff.toFixed(1),
+        roiSize: `${roiW}x${roiH}`,
+        timestamp: new Date().toLocaleTimeString()
+      });
 
       // Emite muestra
       onSample?.({

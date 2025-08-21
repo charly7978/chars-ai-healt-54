@@ -393,7 +393,7 @@ const Index = () => {
             onSample={handleSample}
             isMonitoring={isCameraOn}
             targetFps={30}
-            roiSize={160}
+            roiSize={320} // AUMENTADO: ROI más grande para capturar mejor el dedo
             enableTorch={true}
             coverageThresholdPixelBrightness={8} // MUY REDUCIDO: más permisivo para detectar dedos
           />
