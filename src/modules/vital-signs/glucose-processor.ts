@@ -10,10 +10,10 @@
 export class GlucoseProcessor {
   // Optimización: ajustar el modelo de estimación para glucosa
   // Se aumenta el factor de calibración de 1.12 a 1.15 (por ejemplo)
-  private readonly CALIBRATION_FACTOR = 1.0; // optimización actualizada
+  private readonly CALIBRATION_FACTOR = 1.15; // optimización actualizada
   private readonly CONFIDENCE_THRESHOLD = 0.65; // Minimum confidence for reporting
-  private readonly MIN_GLUCOSE = 60; // Physiological minimum (mg/dL)
-  private readonly MAX_GLUCOSE = 190; // Upper limit for reporting (mg/dL)
+  private readonly MIN_GLUCOSE = 70; // Physiological minimum (mg/dL)
+  private readonly MAX_GLUCOSE = 180; // Upper limit for reporting (mg/dL)
   
   private confidenceScore: number = 0;
   private lastEstimate: number = 0;
@@ -21,7 +21,7 @@ export class GlucoseProcessor {
   
   constructor() {
     // Initialize with conservative baseline
-    this.lastEstimate = 90; // Start with normal baseline (100 mg/dL)
+    this.lastEstimate = 100; // Start with normal baseline (100 mg/dL)
   }
   
   /**
@@ -29,31 +29,31 @@ export class GlucoseProcessor {
    * Using adaptive multi-parameter model based on waveform characteristics
    */
   public calculateGlucose(ppgValues: number[]): number {
-    if (ppgValues.length < 190) {
+    if (ppgValues.length < 180) {
       this.confidenceScore = 0;
       return 0; // Not enough data
     }
     
     // Use real-time PPG data for glucose estimation
-    const recentPPG = ppgValues.slice(-190);
+    const recentPPG = ppgValues.slice(-180);
     
     // Extract waveform features for glucose correlation
     const features = this.extractWaveformFeatures(recentPPG);
     
     // Calculate glucose using validated model
-    const baseGlucose = 83; // Baseline en estudios
+    const baseGlucose = 93; // Baseline en estudios
     const glucoseEstimate = baseGlucose +
-      (features.derivativeRatio * 8.2) +     // antes: 7.2
+      (features.derivativeRatio * 7.5) +     // antes: 7.2
       (features.riseFallRatio * 8.5) -         // antes: 8.1 (se invierte el signo para ajustar la correlación)
-      (features.variabilityIndex * 7.0) +      // antes: -5.3, se invierte y ajusta el multiplicador
-      (features.peakWidth * 7.0) +             // antes: 4.7
+      (features.variabilityIndex * 5.0) +      // antes: -5.3, se invierte y ajusta el multiplicador
+      (features.peakWidth * 5.0) +             // antes: 4.7
       this.calibrationOffset;
     
     // Calculate confidence based on signal quality
     this.confidenceScore = this.calculateConfidence(features, recentPPG);
     
     // Apply physiological constraints
-    const maxAllowedChange = 10; // Maximum mg/dL change in short period
+    const maxAllowedChange = 15; // Maximum mg/dL change in short period
     let constrainedEstimate = this.lastEstimate;
     
     if (this.confidenceScore > this.CONFIDENCE_THRESHOLD) {
@@ -222,7 +222,7 @@ export class GlucoseProcessor {
    * Reset processor state
    */
   public reset(): void {
-    this.lastEstimate = 90;
+    this.lastEstimate = 100;
     this.confidenceScore = 0;
     this.calibrationOffset = 0;
   }

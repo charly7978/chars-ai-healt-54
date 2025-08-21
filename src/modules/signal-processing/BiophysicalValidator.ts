@@ -16,18 +16,18 @@ export interface ColorRatios {
  * Evalúa la calidad de la señal PPG basándose en criterios fisiológicos.
  */
 export class BiophysicalValidator {
-  // Umbrales para la pulsatilidad - MÁS PERMISIVOS para permitir procesamiento
-  private readonly MIN_PULSATILITY_THRESHOLD = 0.06; // Reducido para mayor permisividad
-  private readonly PULSATILITY_NORMALIZATION_FACTOR = 35.0; // Reducido para mayor permisividad
+  // Umbrales para la pulsatilidad - OPTIMIZADOS para robustez
+  private readonly MIN_PULSATILITY_THRESHOLD = 0.09; // Reducido sutilmente para mayor robustez
+  private readonly PULSATILITY_NORMALIZATION_FACTOR = 38.0; // Aumentado sutilmente para mejor normalización
 
-  // Rangos fisiológicos MÁS PERMISIVOS para permitir procesamiento
+  // Rangos fisiológicos OPTIMIZADOS para robustez
   private readonly PHYSIOLOGICAL_RANGES = {
-    // Ratio Rojo/Verde: más permisivo para permitir procesamiento
-    redToGreen: { min: 0.7, max: 5.0 }, // Rango ampliado para mayor permisividad
-    // Ratio Rojo/Azul: más permisivo para permitir procesamiento
-    redToBlue: { min: 0.8, max: 5.5 }, // Rango ampliado para mayor permisividad
-    // Intensidad del canal rojo: umbrales más permisivos
-    redValue: { min: 15, max: 250 }, // Mínimo reducido, máximo aumentado para mayor permisividad
+    // Ratio Rojo/Verde: más permisivo para robustez
+    redToGreen: { min: 0.95, max: 3.8 }, // Rango ligeramente ampliado para robustez
+    // Ratio Rojo/Azul: más permisivo para robustez
+    redToBlue: { min: 0.92, max: 4.2 }, // Rango ligeramente ampliado para robustez
+    // Intensidad del canal rojo: umbrales optimizados para robustez
+    redValue: { min: 26, max: 238 }, // Mínimo reducido sutilmente, máximo aumentado sutilmente
   };
 
   /**

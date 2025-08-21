@@ -4,31 +4,12 @@ import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
 
-// INTERFACES PARA ALGORITMO ADAPTATIVO AVANZADO IEEE 2024
-interface PeakDetection {
-  timestamp: number;
-  amplitude: number;
-  confidence: number;
-  wasCorrect: boolean;
-  signalQuality: number;
-  userFeedback?: boolean;
-}
-
-interface HeartRateProfile {
-  baseline: number;
-  variability: number;
-  expectedRange: [number, number];
-  adaptationRate: number;
-  lastUpdate: number;
-}
-
 interface PPGSignalMeterProps {
   value: number;
   quality: number;
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
-  onPeakDetected?: (peak: {time: number, value: number, isArrhythmia: boolean, bpm: number}) => void;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
     timestamp: number;
@@ -44,7 +25,6 @@ const PPGSignalMeter = ({
   isFingerDetected,
   onStartMeasurement,
   onReset,
-  onPeakDetected,
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false
@@ -60,47 +40,22 @@ const PPGSignalMeter = ({
   const peaksRef = useRef<{time: number, value: number, isArrhythmia: boolean}[]>([]);
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  
-  // ALGORITMO AVANZADO - BUFFERS Y ESTADOS
-  const ppgBufferRef = useRef<number[]>([]);
-  const lastPeakTimeRef = useRef<number>(0);
-  const rrIntervalsRef = useRef<number[]>([]);
-  const heartRateBufferRef = useRef<number[]>([]);
-  const lastHeartRateRef = useRef<number>(0);
 
-  const WINDOW_WIDTH_MS = 3700;
+  const WINDOW_WIDTH_MS = 2300;
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 45.0;
-  const SMOOTHING_FACTOR = 1.8;
+  const verticalScale = 95.0;
+  const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
-  // ALGORITMO AVANZADO IEEE 2024 - PARÁMETROS ADAPTATIVOS DINÁMICOS
-  const PEAK_DETECTION_WINDOW = 3; // Ventana más pequeña para mayor sensibilidad
-  const PEAK_THRESHOLD_REF = useRef(0.005); // Umbral MUCHO más bajo para detectar más picos
-  const MIN_PEAK_DISTANCE_MS_REF = useRef(50); // Distancia mínima más corta
-  const MAX_PEAK_DISTANCE_MS_REF = useRef(8000); // Distancia máxima más larga
+  const PEAK_DETECTION_WINDOW = 8;
+  const PEAK_THRESHOLD = 3;
+  const MIN_PEAK_DISTANCE_MS = 400;
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
-  
-  // SISTEMA DE APRENDIZAJE ADAPTATIVO
-  const signalQualityHistory: number[] = [];
-  const peakDetectionHistory: PeakDetection[] = [];
-  const userHeartRateProfile: HeartRateProfile = {
-    baseline: 72,
-    variability: 0.15,
-    expectedRange: [60, 100],
-    adaptationRate: 0.1,
-    lastUpdate: Date.now()
-  };
-  
-  // MÉTRICAS DE RENDIMIENTO
-  let detectionAccuracy = 0.8;
-  let falsePositiveRate = 0.2;
-  let adaptationConfidence = 0.7;
 
   useEffect(() => {
     if (!dataBufferRef.current) {
@@ -172,96 +127,16 @@ const PPGSignalMeter = ({
     }
   }, [arrhythmiaStatus]);
 
-  // ALGORITMO AVANZADO IEEE 2024 - DETECCIÓN ADAPTATIVA DE PICOS
   const detectPeaks = useCallback((points: PPGDataPoint[], now: number) => {
     if (points.length < PEAK_DETECTION_WINDOW) return;
     
-    // AGREGAR VALOR AL BUFFER ADAPTATIVO
-    const currentValue = points[points.length - 1].value;
-    ppgBufferRef.current.push(currentValue);
-    if (ppgBufferRef.current.length > 120) {
-      ppgBufferRef.current.shift();
-    }
-    
-    // ACTUALIZAR CALIDAD DE SEÑAL Y ADAPTAR PARÁMETROS
-    updateSignalQuality(currentValue);
-    adaptDetectionParameters(now);
-    
-    // DETECCIÓN ADAPTATIVA DE PICOS CON ALGORITMO IEEE 2024
-    const peakDetected = adaptivePeakDetection(currentValue, now);
-    
-    if (peakDetected) {
-      // CALCULAR INTERVALO RR CON VALIDACIÓN ADAPTATIVA
-      if (lastPeakTimeRef.current > 0) {
-        const rrInterval = now - lastPeakTimeRef.current;
-        
-        // VALIDACIÓN ADAPTATIVA DEL INTERVALO RR
-        if (isValidRRInterval(rrInterval)) {
-          rrIntervalsRef.current.push(rrInterval);
-          
-          // MANTENER HISTORIAL OPTIMIZADO
-          if (rrIntervalsRef.current.length > 20) {
-            rrIntervalsRef.current.shift();
-          }
-          
-          // CALCULAR BPM CON FILTROS ADAPTATIVOS
-          const bpm = calculateAdaptiveBPM();
-          
-          // APRENDIZAJE CONTINUO DEL ALGORITMO
-          learnFromDetection(peakDetected, rrInterval, bpm);
-          
-          // SUAVIZADO ADAPTATIVO DEL BPM
-          lastHeartRateRef.current = adaptiveSmoothing(bpm);
-          lastPeakTimeRef.current = now;
-          
-          // AGREGAR PICO VISUAL AL MONITOR CARDIACO
-          peaksRef.current.push({
-            time: now,
-            value: currentValue,
-            isArrhythmia: points[points.length - 1].isArrhythmia
-          });
-          
-          // LIMPIAR PICOS ANTIGUOS
-          peaksRef.current = peaksRef.current
-            .filter(peak => now - peak.time < WINDOW_WIDTH_MS)
-            .slice(-MAX_PEAKS_TO_DISPLAY);
-          
-          // NOTIFICAR AL PADRE QUE SE DETECTÓ UN PICO (LATIDO)
-          if (onPeakDetected) {
-            onPeakDetected({
-              time: now,
-              value: currentValue,
-              isArrhythmia: points[points.length - 1].isArrhythmia,
-              bpm: lastHeartRateRef.current
-            });
-          }
-          
-          console.log('PPGSignalMeter: Latido detectado (ALGORITMO AVANZADO IEEE 2024)', {
-            bpm: lastHeartRateRef.current,
-            rrInterval: rrInterval.toFixed(0) + 'ms',
-            confidence: adaptationConfidence.toFixed(3),
-            threshold: PEAK_THRESHOLD_REF.current.toFixed(3),
-            timestamp: new Date().toISOString()
-          });
-        }
-      } else {
-        lastPeakTimeRef.current = now;
-      }
-    }
-    
-    // PICOS VISUALES MANEJADOS POR EL ALGORITMO AVANZADO (NO DUPLICAR)
-    // updateVisualPeaks(points, now); // DESACTIVADO PARA EVITAR DUPLICACIÓN
-  }, [onPeakDetected]);
-  
-  // FUNCIÓN PARA ACTUALIZAR PICOS VISUALES (MONITOR CARDIACO)
-  const updateVisualPeaks = useCallback((points: PPGDataPoint[], now: number) => {
     const potentialPeaks: {index: number, value: number, time: number, isArrhythmia: boolean}[] = [];
     
     for (let i = PEAK_DETECTION_WINDOW; i < points.length - PEAK_DETECTION_WINDOW; i++) {
       const currentPoint = points[i];
       
       const recentlyProcessed = peaksRef.current.some(
-        peak => Math.abs(peak.time - currentPoint.time) < MIN_PEAK_DISTANCE_MS_REF.current
+        peak => Math.abs(peak.time - currentPoint.time) < MIN_PEAK_DISTANCE_MS
       );
       
       if (recentlyProcessed) continue;
@@ -284,7 +159,7 @@ const PPGSignalMeter = ({
         }
       }
       
-      if (isPeak && Math.abs(currentPoint.value) > PEAK_THRESHOLD_REF.current) {
+      if (isPeak && Math.abs(currentPoint.value) > PEAK_THRESHOLD) {
         potentialPeaks.push({
           index: i,
           value: currentPoint.value,
@@ -296,7 +171,7 @@ const PPGSignalMeter = ({
     
     for (const peak of potentialPeaks) {
       const tooClose = peaksRef.current.some(
-        existingPeak => Math.abs(existingPeak.time - peak.time) < MIN_PEAK_DISTANCE_MS_REF.current
+        existingPeak => Math.abs(existingPeak.time - peak.time) < MIN_PEAK_DISTANCE_MS
       );
       
       if (!tooClose) {
@@ -313,155 +188,6 @@ const PPGSignalMeter = ({
     peaksRef.current = peaksRef.current
       .filter(peak => now - peak.time < WINDOW_WIDTH_MS)
       .slice(-MAX_PEAKS_TO_DISPLAY);
-  }, []);
-  
-  // ALGORITMO AVANZADO IEEE 2024 - FUNCIONES ADAPTATIVAS
-  
-  // ACTUALIZAR CALIDAD DE SEÑAL
-  const updateSignalQuality = useCallback((value: number) => {
-    const quality = Math.abs(value);
-    signalQualityHistory.push(quality);
-    if (signalQualityHistory.length > 100) signalQualityHistory.shift();
-    
-    // Calcular estabilidad de la señal
-    const stability = calculateStability(signalQualityHistory);
-    
-          // Adaptar umbral basado en estabilidad
-      if (stability > 0.8) {
-        // Señal estable, reducir umbral para mayor sensibilidad
-        PEAK_THRESHOLD_REF.current = Math.max(0.001, PEAK_THRESHOLD_REF.current * 0.95);
-      } else if (stability < 0.3) {
-        // Señal inestable, aumentar umbral para reducir falsos positivos
-        PEAK_THRESHOLD_REF.current = Math.min(0.1, PEAK_THRESHOLD_REF.current * 1.05);
-      }
-  }, []);
-  
-  // CALCULAR ESTABILIDAD DE LA SEÑAL
-  const calculateStability = useCallback((values: number[]): number => {
-    if (values.length < 10) return 0.5;
-    
-    const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
-    const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-    const stdDev = Math.sqrt(variance);
-    
-    return Math.max(0, 1 - (stdDev / mean));
-  }, []);
-  
-  // ADAPTAR PARÁMETROS DE DETECCIÓN
-  const adaptDetectionParameters = useCallback((currentTime: number) => {
-    const timeSinceUpdate = currentTime - userHeartRateProfile.lastUpdate;
-    
-    if (timeSinceUpdate > 5000) { // Actualizar cada 5 segundos
-      // Adaptar parámetros basados en rendimiento
-      if (detectionAccuracy > 0.9 && falsePositiveRate < 0.1) {
-        // Rendimiento excelente, aumentar sensibilidad
-        PEAK_THRESHOLD_REF.current = Math.max(0.001, PEAK_THRESHOLD_REF.current * 0.9);
-        MIN_PEAK_DISTANCE_MS_REF.current = Math.max(30, MIN_PEAK_DISTANCE_MS_REF.current * 0.95);
-      } else if (detectionAccuracy < 0.6 || falsePositiveRate > 0.3) {
-        // Rendimiento pobre, reducir sensibilidad
-        PEAK_THRESHOLD_REF.current = Math.min(0.1, PEAK_THRESHOLD_REF.current * 1.1);
-        MIN_PEAK_DISTANCE_MS_REF.current = Math.min(200, MIN_PEAK_DISTANCE_MS_REF.current * 1.05);
-      }
-      
-      userHeartRateProfile.lastUpdate = currentTime;
-    }
-  }, []);
-  
-  // DETECCIÓN ADAPTATIVA DE PICOS
-  const adaptivePeakDetection = useCallback((ppgValue: number, currentTime: number): boolean => {
-    if (ppgBufferRef.current.length < PEAK_DETECTION_WINDOW) return false;
-    
-    const currentIndex = ppgBufferRef.current.length - 1;
-    const halfWindow = Math.floor(PEAK_DETECTION_WINDOW / 2);
-    const startIndex = Math.max(0, currentIndex - halfWindow);
-    const endIndex = Math.min(ppgBufferRef.current.length - 1, currentIndex + halfWindow);
-    
-    if (startIndex >= endIndex || currentIndex < halfWindow) return false;
-    
-    const currentAmplitude = Math.abs(ppgValue);
-    
-    // CONDICIÓN 1: Máximo en ventana adaptativa
-    let isPeak = true;
-    for (let i = startIndex; i <= endIndex; i++) {
-      if (i !== currentIndex && Math.abs(ppgBufferRef.current[i]) >= currentAmplitude) {
-        isPeak = false;
-        break;
-      }
-    }
-    
-    // CONDICIÓN 2: Umbral adaptativo
-    if (!isPeak || currentAmplitude < PEAK_THRESHOLD_REF.current) return false;
-    
-    // CONDICIÓN 3: Distancia mínima desde último pico
-    if (lastPeakTimeRef.current > 0) {
-      const timeSinceLastPeak = currentTime - lastPeakTimeRef.current;
-      if (timeSinceLastPeak < MIN_PEAK_DISTANCE_MS_REF.current) return false;
-    }
-    
-    return true;
-  }, []);
-  
-  // VALIDACIÓN ADAPTATIVA DEL INTERVALO RR
-  const isValidRRInterval = useCallback((rrInterval: number): boolean => {
-    // Rango base fisiológico
-    const baseValid = rrInterval >= MIN_PEAK_DISTANCE_MS_REF.current && rrInterval <= MAX_PEAK_DISTANCE_MS_REF.current;
-    
-    if (!baseValid) return false;
-    
-    // Validación adicional basada en perfil del usuario
-    const expectedRR = 60000 / userHeartRateProfile.baseline;
-    const tolerance = expectedRR * 1.0; // Tolerancia máxima
-    
-    return Math.abs(rrInterval - expectedRR) <= tolerance;
-  }, []);
-  
-  // CÁLCULO DE BPM CON FILTROS ADAPTATIVOS
-  const calculateAdaptiveBPM = useCallback((): number => {
-    if (rrIntervalsRef.current.length < 2) return lastHeartRateRef.current;
-    
-    const recentIntervals = rrIntervalsRef.current.slice(-Math.min(5, rrIntervalsRef.current.length));
-    const avgRR = recentIntervals.reduce((sum, interval) => sum + interval, 0) / recentIntervals.length;
-    
-    let bpm = Math.round(60000 / avgRR);
-    
-    // Validar rango fisiológico
-    const [minBPM, maxBPM] = [40, 200];
-    if (bpm < minBPM || bpm > maxBPM) {
-      bpm = lastHeartRateRef.current > 0 ? lastHeartRateRef.current : Math.max(minBPM, Math.min(maxBPM, bpm));
-    }
-    
-    return bpm;
-  }, []);
-  
-  // APRENDIZAJE CONTINUO DEL ALGORITMO
-  const learnFromDetection = useCallback((peak: boolean, rrInterval: number, bpm: number): void => {
-    if (!peak) return;
-    
-    // Actualizar métricas de rendimiento
-    const expectedRR = 60000 / userHeartRateProfile.baseline;
-    const error = Math.abs(rrInterval - expectedRR) / expectedRR;
-    
-    if (error < 0.2) {
-      // Detección correcta
-      detectionAccuracy = Math.min(1.0, detectionAccuracy + 0.01);
-      adaptationConfidence = Math.min(1.0, adaptationConfidence + 0.02);
-    } else {
-      // Detección incorrecta
-      falsePositiveRate = Math.min(1.0, falsePositiveRate + 0.01);
-      adaptationConfidence = Math.max(0.1, adaptationConfidence - 0.01);
-    }
-    
-    // Adaptar perfil del usuario
-    userHeartRateProfile.baseline = userHeartRateProfile.baseline * 0.9 + bpm * 0.1;
-  }, []);
-  
-  // SUAVIZADO ADAPTATIVO DEL BPM
-  const adaptiveSmoothing = useCallback((bpm: number): number => {
-    if (lastHeartRateRef.current === 0) return bpm;
-    
-    // Filtro adaptativo basado en confianza
-    const alpha = adaptationConfidence * 0.3 + 0.1; // 0.1 a 0.4
-    return lastHeartRateRef.current * (1 - alpha) + bpm * alpha;
   }, []);
 
   const renderSignal = useCallback(() => {

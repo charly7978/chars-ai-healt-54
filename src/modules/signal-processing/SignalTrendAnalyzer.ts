@@ -12,9 +12,9 @@ export class SignalTrendAnalyzer {
   private readonly STABILITY_WINDOW = 20; // Aumentado para mayor estabilidad
   private readonly PERIODICITY_WINDOW = 40; // Aumentado para mayor estabilidad
 
-  // Umbrales optimizados para estabilidad - MÁS PERMISIVOS para permitir procesamiento
-  private readonly MAX_VALUE_JUMP = 45; // Aumentado para mayor permisividad
-  private readonly MAX_STD_DEV = 25;    // Aumentado para mayor permisividad
+  // Umbrales optimizados para estabilidad
+  private readonly MAX_VALUE_JUMP = 30; // Aumentado para mayor estabilidad
+  private readonly MAX_STD_DEV = 18;    // Aumentado para mayor estabilidad
 
   reset(): void {
     this.valueHistory = [];

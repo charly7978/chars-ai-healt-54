@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-
+import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
@@ -22,9 +22,7 @@ const Index = () => {
       totalCholesterol: 0,
       triglycerides: 0
     },
-    hemoglobin: 0,
-    heartRate: 0,
-    rrIntervals: []
+    hemoglobin: 0
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
@@ -44,7 +42,10 @@ const Index = () => {
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
   const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
-
+  const { 
+    processSignal: processHeartBeat, 
+    setArrhythmiaState 
+  } = useHeartBeatProcessor();
   const { 
     processSignal: processVitalSigns, 
     reset: resetVitalSigns,
@@ -270,8 +271,6 @@ const Index = () => {
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setVitalSigns({ 
-      heartRate: 0,
-      rrIntervals: [],
       spo2: 0,
       pressure: "--/--",
       arrhythmiaStatus: "--",
@@ -287,50 +286,6 @@ const Index = () => {
     setLastArrhythmiaData(null);
     setCalibrationProgress(undefined);
   };
-
-  // MANEJAR PICO DETECTADO DESDE EL MONITOR CARDIACO (PPGSignalMeter)
-  const handlePeakDetected = useCallback((peak: {time: number, value: number, isArrhythmia: boolean, bpm: number}) => {
-    console.log('Index.tsx: Pico detectado por PPGSignalMeter', peak);
-    
-    // ACTUALIZAR BPM EN TIEMPO REAL
-    if (peak.bpm > 0) {
-      setHeartRate(peak.bpm);
-      setVitalSigns(prev => ({
-        ...prev,
-        heartRate: peak.bpm
-      }));
-    }
-    
-    // NOTIFICAR LATIDO DETECTADO (BEEP + VIBRACIÓN)
-    try {
-      // BEEP SONORO
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-      oscillator.type = 'sine';
-      
-      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.1);
-      
-      // VIBRACIÓN
-      if (navigator.vibrate) {
-        navigator.vibrate([50, 25, 50]);
-      }
-      
-      console.log('Index.tsx: Beep, vibración y BPM actualizados por pico detectado', { bpm: peak.bpm });
-    } catch (error) {
-      console.warn('Error en notificación de latido:', error);
-    }
-  }, []);
 
   const handleStreamReady = (stream: MediaStream) => {
     if (!isMonitoring) return;
@@ -381,7 +336,7 @@ const Index = () => {
           // Verificar que el video esté listo
           if (videoElement.readyState >= 2) {
             // Configurar tamaño del canvas basado en el video
-            const targetWidth = Math.min(720, videoElement.videoWidth || 720);
+            const targetWidth = Math.min(320, videoElement.videoWidth || 320);
             const targetHeight = Math.min(240, videoElement.videoHeight || 240);
             
             tempCanvas.width = targetWidth;
@@ -449,8 +404,8 @@ const Index = () => {
         return;
       }
       
-    // Umbral de calidad para procesar (reducido para permitir procesamiento)
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 10; // Reducido para permitir más señales
+    // Umbral MÁS ALTO de calidad para procesar
+    const MIN_SIGNAL_QUALITY_TO_MEASURE = 40; // Aumentado de 30 a 40
       // Si no hay dedo válido o calidad insuficiente, resetear indicadores
       if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
         console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
@@ -464,29 +419,18 @@ const Index = () => {
         return;
       }
 
-    // Señal válida, procesar signos vitales únicamente
-    setHeartbeatSignal(lastSignal.filteredValue);
-    // Procesar signos vitales directamente
-    const vitals = processVitalSigns(lastSignal.filteredValue, null);
+    // Señal válida, procesar latidos y signos vitales
+    const heartBeatResult = processHeartBeat(lastSignal.filteredValue, lastSignal.fingerDetected, lastSignal.timestamp);
+    setHeartRate(heartBeatResult.bpm);
+    setHeartbeatSignal(heartBeatResult.filteredValue);
+    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
+    // Actualizar últimos intervalos RR para debug
+    if (heartBeatResult.rrData?.intervals) {
+      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
+    }
+    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
-      // Actualizar BPM desde el procesador de signos vitales
-      if (vitals.heartRate > 0) {
-        setHeartRate(vitals.heartRate);
-      }
-      
-      // NOTIFICAR LATIDO DETECTADO (BEEP + VIBRACIÓN) - Basado en nuevos intervalos RR
-      if (vitals.rrIntervals && vitals.rrIntervals.length > rrIntervals.length) {
-        // Se detectó un nuevo latido (nuevo intervalo RR)
-        console.log('Index.tsx: Nuevo intervalo RR detectado', {
-          newRRCount: vitals.rrIntervals.length,
-          previousRRCount: rrIntervals.length
-        });
-      }
-      // Actualizar intervalos RR para debug
-      if (vitals.rrIntervals && vitals.rrIntervals.length > 0) {
-        setRRIntervals(vitals.rrIntervals.slice(-5));
-      }
       if (vitals.lastArrhythmiaData) {
         setLastArrhythmiaData(vitals.lastArrhythmiaData);
         const [status, count] = vitals.arrhythmiaStatus.split('|');
@@ -494,13 +438,14 @@ const Index = () => {
         const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
         if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
           arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+          setArrhythmiaState(isArrhythmiaDetected);
           if (isArrhythmiaDetected) {
-            toast({ title: "¡Arritmia detectada!", description: "Se detectó una arritmia cardíaca.", variant: "destructive", duration: 3000 });
+            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
           }
         }
       }
     }
-  }, [lastSignal, isMonitoring, processVitalSigns]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   // Referencia para activar o desactivar el sonido de arritmia
   const arrhythmiaDetectedRef = useRef(false);
@@ -602,12 +547,11 @@ const Index = () => {
           </details>
           <div className="flex-1">
             <PPGSignalMeter 
-              value={heartbeatSignal}
+              value={beatMarker}
               quality={lastSignal?.quality || 0}
               isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
-              onPeakDetected={handlePeakDetected}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData}
               preserveResults={showResults}
