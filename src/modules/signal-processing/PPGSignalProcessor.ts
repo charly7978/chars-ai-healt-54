@@ -1,182 +1,159 @@
+
+import { savitzkyGolay } from './SavitzkyGolayFilter';
+import { computeSNR } from './SignalQualityAnalyzer';
+
 export interface PPGProcessingResult {
   isFingerDetected: boolean;
   signalQuality: number;   // 0–100
-  rawValue: number;        // valor rojo promedio
+  rawValue: number;        // último rMean
+  bpm: number | null;      // estimación por FFT/Goertzel
+  snr: number;            
   metrics: {
     snr: number;
     isStable: boolean;
   };
 }
 
-/**
- * Procesador de señal PPG desde frames de cámara.
- * Incluye filtros de:
- *  1. Validación de color de piel
- *  2. Detección de pulsatilidad fisiológica (48–180 BPM)
- *  3. Rechazo de señal "rojo plano constante" (linternas, LEDs)
- *  4. Calidad mínima por SNR
- */
+type Sample = { t: number; v: number };
+
 export default class PPGSignalProcessor {
-  private readonly BUFFER_SIZE = 128;
-  private signalHistory: number[] = [];
+  private buffer: Sample[] = [];
+  private windowSec = 8; // ventana de análisis en segundos (balance: latencia vs resolución)
 
-  constructor() {}
+  // parámetros
+  private minRMeanForFinger = 25; // reducido para mayor sensibilidad
+  private maxStdForFinger = 80;    // aumentado para tolerar más variación
+  private minACAmplitude = 0.3;   // reducido para detectar señales más débiles
 
-  /**
-   * Procesa un frame y devuelve resultado de análisis PPG
-   */
-  public processFrame(frame: ImageData): PPGProcessingResult {
-    const avg = this.calculateFrameAverage(frame);
-    const { r, g, b } = avg;
+  constructor(windowSec = 8) {
+    this.windowSec = windowSec;
+  }
 
-    // --- FILTRO 1: Color de piel ---
-    if (!this.isSkinLike(r, g, b)) {
-      return this.emptyResult(r);
-    }
+  processSample(rMean: number, rStd: number, frameDiff: number, timestampMs: number): PPGProcessingResult {
+    // push sample
+    this.buffer.push({ t: timestampMs / 1000, v: rMean });
+    // limpiar buffer viejo
+    const t0 = (timestampMs / 1000) - this.windowSec;
+    while (this.buffer.length && this.buffer[0].t < t0) this.buffer.shift();
 
-    // Guardamos señal
-    this.signalHistory.push(r);
-    if (this.signalHistory.length > this.BUFFER_SIZE) {
-      this.signalHistory.shift();
-    }
+    const rawValue = rMean;
 
-    // --- FILTRO extra: descartar "rojo plano constante" ---
-    if (this.isFlatRed(this.signalHistory)) {
-      return this.emptyResult(r);
-    }
+    // primera heurística de detección de dedo: promedio alto y desviación razonable
+    const recentMeans = this.buffer.map(s => s.v);
+    const meanAll = recentMeans.reduce((a,b)=>a+b,0)/Math.max(1,recentMeans.length);
+    const variance = recentMeans.reduce((a,b)=>a+(b-meanAll)*(b-meanAll),0)/Math.max(1,recentMeans.length);
+    const stdAll = Math.sqrt(variance);
 
-    // --- FILTRO 2: Pulsatilidad real ---
-    if (!this.isPulsatile(this.signalHistory)) {
-      return this.emptyResult(r);
-    }
+    // Si el promedio rojo es muy bajo o la desviación espacial muy alta -> no dedo
+    const fingerCandidates = (meanAll >= this.minRMeanForFinger) && (rStd <= this.maxStdForFinger);
 
-    // --- FILTRO 3: Calidad mínima SNR ---
-    const snr = this.calculateSignalQuality(this.signalHistory);
-    if (snr < 8) {
-      return {
-        isFingerDetected: false,
-        signalQuality: Math.min(100, snr * 10),
-        rawValue: r,
-        metrics: { snr, isStable: false }
+    // si hay movimiento grande entre frames es probable que la toma no sea estable; penalizar
+    const movementPenalty = Math.min(1, frameDiff / 30); // menos estricto
+
+    // si no hay suficientes muestras -> no hay señal todavía
+    if (this.buffer.length < 15) { // reducido para respuesta más rápida
+      return { 
+        isFingerDetected: false, 
+        signalQuality: 0, 
+        rawValue, 
+        bpm: null, 
+        snr: 0,
+        metrics: { snr: 0, isStable: false }
       };
     }
 
-    // ✅ Si pasa todos los filtros → detección válida
+    // resample uniformemente a N puntos para análisis espectral
+    const sampled = this.resampleUniform(this.buffer, 256);
+    const detr = this.detrend(sampled);
+    const smooth = savitzkyGolay(detr, 11, 3);
+
+    // análisis espectral via Goertzel en rango 0.8 - 3.0 Hz (48 - 180 BPM)
+    const fs = sampled.length / this.windowSec; // Hz
+    const freqs = this.linspace(0.8, 3.0, 112);
+    const powers = freqs.map(f => this.goertzelPower(smooth, fs, f));
+
+    const sorted = powers.slice().sort((a,b)=>b-a);
+    const peak = sorted[0] || 0;
+    const noiseMedian = this.median(powers.slice(Math.max(1, Math.floor(powers.length*0.25))));
+    const snr = peak / Math.max(1e-9, noiseMedian);
+    const quality = computeSNR(peak, noiseMedian);
+
+    // encontrar frecuencia de pico y convertir a BPM
+    const peakIndex = powers.indexOf(peak);
+    const peakFreq = freqs[peakIndex] || 0;
+    const bpm = Math.round(peakFreq * 60);
+
+    // criterios más permisivos para detección
+    const isFinger = fingerCandidates && (snr > 2) && (peak > 5e-4) && (movementPenalty < 0.9);
+
     return {
-      isFingerDetected: true,
-      signalQuality: Math.min(100, snr * 12),
-      rawValue: r,
-      metrics: { snr, isStable: true }
+      isFingerDetected: !!isFinger,
+      signalQuality: Math.max(0, Math.min(100, Math.round(quality * (isFinger ? 1 : 0.4)))),
+      rawValue,
+      bpm: isFinger ? bpm : null,
+      snr,
+      metrics: { snr, isStable: movementPenalty < 0.7 }
     };
   }
 
-  // =============================
-  // HELPERS PRIVADOS
-  // =============================
-
-  private emptyResult(raw: number): PPGProcessingResult {
-    return {
-      isFingerDetected: false,
-      signalQuality: 0,
-      rawValue: raw,
-      metrics: { snr: 0, isStable: false }
-    };
-  }
-
-  /** Validación color piel */
-  private isSkinLike(r: number, g: number, b: number): boolean {
-    const total = r + g + b + 1e-10;
-    const redRatio = r / total;
-    const greenRatio = g / total;
-    const blueRatio = b / total;
-
-    // Rango típico de piel humana
-    return (
-      redRatio >= 0.35 && redRatio <= 0.65 &&
-      greenRatio >= 0.2 && greenRatio <= 0.45 &&
-      blueRatio >= 0.05 && blueRatio <= 0.25
-    );
-  }
-
-  /** Rechazo de rojo plano (LED o linterna roja fija) */
-  private isFlatRed(signal: number[]): boolean {
-    if (signal.length < 20) return false;
-
-    const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
-    const variance = signal.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / signal.length;
-    const stdDev = Math.sqrt(variance);
-
-    // Si la variación es casi nula → no hay latido real
-    return stdDev < 1.5; // ajustable según cámara
-  }
-
-  /** Validación de pulsatilidad fisiológica */
-  private isPulsatile(signal: number[]): boolean {
-    if (signal.length < 40) return false;
-
-    const peaks = this.detectRealPeaks(signal);
-    if (peaks.length < 2) return false;
-
-    const intervals: number[] = [];
-    for (let i = 1; i < peaks.length; i++) {
-      intervals.push(peaks[i] - peaks[i - 1]);
+  // Mantener métodos para compatibilidad
+  processFrame(imageData: ImageData): PPGProcessingResult {
+    // Convertir ImageData a valores promedio simples
+    const data = imageData.data;
+    let sum = 0, sum2 = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      sum += r;
+      sum2 += r * r;
     }
-    if (intervals.length < 2) return false;
-
-    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const bpm = 60000 / avgInterval;
-
-    return bpm >= 48 && bpm <= 180;
+    const len = data.length / 4;
+    const mean = sum / len;
+    const variance = Math.max(0, sum2 / len - mean * mean);
+    const std = Math.sqrt(variance);
+    
+    return this.processSample(mean, std, 0, Date.now());
   }
 
-  /** Detector de picos */
-  private detectRealPeaks(signal: number[]): number[] {
-    const peaks: number[] = [];
-    for (let i = 1; i < signal.length - 1; i++) {
-      if (signal[i] > signal[i - 1] && signal[i] > signal[i + 1]) {
-        peaks.push(i);
+  // Helpers
+  private linspace(a:number,b:number,n:number){
+    const r:number[]=[]; for(let i=0;i<n;i++) r.push(a + (b-a)*(i/(n-1))); return r;
+  }
+
+  private median(arr:number[]){
+    const s=arr.slice().sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length? s[m]:0;
+  }
+
+  private resampleUniform(samples: Sample[], N:number){
+    if (samples.length === 0) return [];
+    const t0 = samples[0].t; const t1 = samples[samples.length-1].t;
+    const T = Math.max(0.001, t1 - t0);
+    const out:number[]=[];
+    for (let i=0;i<N;i++){
+      const tt = t0 + (i/(N-1))*T;
+      // linear interpolation
+      let j=0; while (j < samples.length-1 && samples[j+1].t < tt) j++;
+      const s0 = samples[j]; const s1 = samples[Math.min(samples.length-1,j+1)];
+      if (s1.t === s0.t) out.push(s0.v); else {
+        const alpha = (tt - s0.t)/(s1.t - s0.t);
+        out.push(s0.v*(1-alpha)+s1.v*alpha);
       }
     }
-    return peaks;
+    return out;
   }
 
-  /** Cálculo de SNR */
-  private calculateSignalQuality(signal: number[]): number {
-    if (signal.length < 20) return 0;
-
-    const mean = signal.reduce((a, b) => a + b, 0) / signal.length;
-    const variance = signal.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / signal.length;
-    const stdDev = Math.sqrt(variance);
-
-    if (stdDev === 0) return 0;
-
-    const normalized = signal.map(v => (v - mean) / stdDev);
-
-    const peaks = this.detectRealPeaks(normalized);
-    if (peaks.length < 2) return 0;
-
-    const signalPower = peaks.length / normalized.length;
-    const noisePower = 1 - signalPower;
-
-    return noisePower <= 0 ? 0 : signalPower / noisePower;
+  private detrend(arr:number[]){
+    const n = arr.length; const mean = arr.reduce((a,b)=>a+b,0)/n; return arr.map(v=>v-mean);
   }
 
-  /** Promedio de colores en frame */
-  private calculateFrameAverage(frame: ImageData): { r: number; g: number; b: number } {
-    let r = 0, g = 0, b = 0;
-    const data = frame.data;
-    const len = data.length / 4;
-
-    for (let i = 0; i < data.length; i += 4) {
-      r += data[i];
-      g += data[i + 1];
-      b += data[i + 2];
-    }
-
-    return {
-      r: r / len,
-      g: g / len,
-      b: b / len
-    };
+  // Goertzel algorithm to compute power at frequency f (Hz)
+  private goertzelPower(signal:number[], fs:number, freq:number){
+    const N = signal.length;
+    const k = 2*Math.PI*freq/fs;
+    const coeff = 2*Math.cos(k);
+    let s0=0, s1=0, s2=0;
+    for (let i=0;i<N;i++){ s0 = signal[i] + coeff*s1 - s2; s2 = s1; s1 = s0; }
+    const real = s1 - s2*Math.cos(k);
+    const imag = s2*Math.sin(k);
+    return real*real + imag*imag;
   }
 }

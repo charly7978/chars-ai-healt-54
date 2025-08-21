@@ -1,5 +1,13 @@
+export function computeSNR(psdPeak: number, psdNoiseMedian: number) {
+  if (!psdNoiseMedian || !isFinite(psdNoiseMedian)) return 0;
+  const snr = psdPeak / psdNoiseMedian;
+  const db = 10 * Math.log10(Math.max(snr, 1e-9));
+  // Escala práctica: -20dB -> 0, +20dB -> ~100
+  const scaled = (db + 20) * 2.5;
+  return Math.max(0, Math.min(100, Math.round(scaled)));
+}
 
-// Define the SignalQualityMetrics interface locally since pipeline was removed
+// Mantener clase existente para compatibilidad
 export interface SignalQualityMetrics {
   signalStrength: number;
   noiseLevel: number;
@@ -9,7 +17,7 @@ export interface SignalQualityMetrics {
 }
 
 export class SignalQualityAnalyzer {
-  private readonly WINDOW_SIZE = 30; // Number of samples for quality analysis
+  private readonly WINDOW_SIZE = 30;
   private signalBuffer: number[] = [];
   private qualityHistory: number[] = [];
   private frameTimestamps: number[] = [];
@@ -25,33 +33,26 @@ export class SignalQualityAnalyzer {
   public calculateMetrics(signalValue: number): SignalQualityMetrics {
     const now = Date.now();
     
-    // Update signal buffer
     this.signalBuffer.push(signalValue);
     if (this.signalBuffer.length > this.WINDOW_SIZE) {
       this.signalBuffer.shift();
     }
     
-    // Update frame timestamps for FPS calculation
     this.frameTimestamps.push(now);
-    this.frameTimestamps = this.frameTimestamps.filter(t => now - t < 1000); // Keep last second
+    this.frameTimestamps = this.frameTimestamps.filter(t => now - t < 1000);
     
-    // Calculate signal statistics
     const signalMean = this.calculateMean(this.signalBuffer);
     const signalStd = this.calculateStd(this.signalBuffer, signalMean);
     const signalRange = this.calculateRange(this.signalBuffer);
     
-    // Calculate quality metrics
-    const signalStrength = signalMean / 255; // Normalize to 0-1
-    const noiseLevel = signalStd / (signalRange || 1); // Normalized noise level
+    const signalStrength = signalMean / 255;
+    const noiseLevel = signalStd / (signalRange || 1);
     const perfusionIndex = this.calculatePerfusionIndex();
-    const frameRate = this.frameTimestamps.length; // FPS
     
-    // Calculate overall quality score (0-1)
-    const stabilityScore = Math.max(0, 1 - (noiseLevel * 2)); // Lower noise = higher stability
-    const strengthScore = Math.min(1, signalStrength * 1.5); // Boost weaker signals
+    const stabilityScore = Math.max(0, 1 - (noiseLevel * 2));
+    const strengthScore = Math.min(1, signalStrength * 1.5);
     const overallQuality = (stabilityScore * 0.6) + (strengthScore * 0.4);
     
-    // Update quality history
     this.qualityHistory.push(overallQuality);
     if (this.qualityHistory.length > this.WINDOW_SIZE) {
       this.qualityHistory.shift();
@@ -85,24 +86,9 @@ export class SignalQualityAnalyzer {
   private calculatePerfusionIndex(): number {
     if (this.signalBuffer.length < 2) return 0;
     
-    // Simple AC/DC ratio calculation for perfusion index
     const ac = this.calculateStd(this.signalBuffer, this.calculateMean(this.signalBuffer));
     const dc = this.calculateMean(this.signalBuffer);
     
-    // Normalize to 0-1 range
     return Math.min(1, Math.max(0, (ac / (dc || 1)) * 10));
-  }
-  
-  private calculateConfidence(): number {
-    if (this.qualityHistory.length === 0) return 0;
-    
-    // Calculate confidence based on recent quality stability
-    const recentQuality = this.qualityHistory.slice(-5); // Last 5 samples
-    const avgQuality = this.calculateMean(recentQuality);
-    const qualityVariance = this.calculateStd(recentQuality, avgQuality);
-    
-    // Higher confidence for stable, high-quality signals
-    const stabilityScore = 1 - Math.min(1, qualityVariance * 2);
-    return Math.min(1, avgQuality * stabilityScore);
   }
 }
