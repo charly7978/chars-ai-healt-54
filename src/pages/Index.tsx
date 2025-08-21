@@ -342,7 +342,41 @@ const Index = () => {
             // Obtener datos de la imagen
             const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
             
-            // Procesar el frame
+            // ✅ RESTAURAR CONEXIÓN: Procesar frame con el procesador de signos vitales
+            if (processSignal) {
+              // Extraer valor PPG del canal rojo (promedio del ROI central)
+              const data = imageData.data;
+              let redSum = 0;
+              let validPixels = 0;
+              
+              // ROI centrado para mayor estabilidad
+              const centerX = Math.floor(targetWidth / 2);
+              const centerY = Math.floor(targetHeight / 2);
+              const roiSize = Math.min(targetWidth, targetHeight) * 0.5;
+              
+              for (let y = Math.max(0, centerY - roiSize/2); y < Math.min(targetHeight, centerY + roiSize/2); y++) {
+                for (let x = Math.max(0, centerX - roiSize/2); x < Math.min(targetWidth, centerX + roiSize/2); x++) {
+                  const i = (y * targetWidth + x) * 4;
+                  const r = data[i];
+                  if (r > 0 && r < 255) {
+                    redSum += r;
+                    validPixels++;
+                  }
+                }
+              }
+              
+              if (validPixels > 0) {
+                const avgRed = redSum / validPixels;
+                const normalizedPPG = avgRed / 255; // Normalizar 0-255 a 0-1
+                
+                console.log("📊 Procesando frame PPG:", { avgRed, normalizedPPG, validPixels });
+                const result = processSignal(normalizedPPG);
+                
+                if (result) {
+                  console.log("✅ Resultado de signos vitales:", result);
+                }
+              }
+            }
             
             // Actualizar contadores para monitoreo de rendimiento
             frameCount++;
