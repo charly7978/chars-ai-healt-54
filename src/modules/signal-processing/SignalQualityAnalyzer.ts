@@ -1,4 +1,12 @@
-import { SignalQualityMetrics } from './SignalProcessingPipeline';
+
+// Define the SignalQualityMetrics interface locally since pipeline was removed
+export interface SignalQualityMetrics {
+  signalStrength: number;
+  noiseLevel: number;
+  perfusionIndex: number;
+  overallQuality: number;
+  timestamp: number;
+}
 
 export class SignalQualityAnalyzer {
   private readonly WINDOW_SIZE = 30; // Number of samples for quality analysis
