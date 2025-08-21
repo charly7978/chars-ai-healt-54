@@ -247,6 +247,26 @@ export class VitalSignsProcessor {
     };
   }
 
+  public getSignalStats(): any {
+    return {
+      spo2Samples: this.spo2Samples.length,
+      pressureSamples: this.pressureSamples.length,
+      heartRateSamples: this.heartRateSamples.length,
+      glucoseSamples: this.glucoseSamples.length,
+      lipidSamples: this.lipidSamples.length,
+      calibrationSamples: this.calibrationSamples,
+      isCalibrating: this.isCalibrating
+    };
+  }
+
+  public getProcessingStatus(): any {
+    return {
+      isProcessing: this.isCalibrating || this.calibrationSamples > 0,
+      framesProcessed: this.calibrationSamples,
+      isCalibrating: this.isCalibrating
+    };
+  }
+
   public reset(): VitalSignsResult | null {
     console.log("VitalSignsProcessor: Reseteo solicitado");
     

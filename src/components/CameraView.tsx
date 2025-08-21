@@ -7,6 +7,7 @@ interface CameraViewProps {
   isMonitoring: boolean;
   isFingerDetected?: boolean;
   signalQuality?: number;
+  onFingerDetected?: (detected: boolean, quality: number) => void;
 }
 
 const CameraView = ({ 
@@ -14,6 +15,7 @@ const CameraView = ({
   isMonitoring, 
   isFingerDetected = false, 
   signalQuality = 0,
+  onFingerDetected,
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -297,7 +299,30 @@ const CameraView = ({
     
     if (results) {
       handleResults(results);
+      
+      // Notificar detección de dedo basado en la calidad de la señal
+      const signalQuality = calculateSignalQuality(red[0], ir[0], green[0]);
+      const fingerDetected = signalQuality > 30; // Umbral para detección de dedo
+      
+      if (onFingerDetected) {
+        onFingerDetected(fingerDetected, signalQuality);
+      }
     }
+  };
+
+  const calculateSignalQuality = (red: number, ir: number, green: number): number => {
+    // Calcular calidad basada en la relación entre canales y valores absolutos
+    if (red === 0 || green === 0 || ir === 0) return 0;
+    
+    const rToG = red / green;
+    const rToIR = red / ir;
+    
+    // Calidad alta si las relaciones están en rango fisiológico
+    if (rToG >= 0.8 && rToG <= 4.5 && rToIR >= 0.6 && rToIR <= 3.0) {
+      return Math.min(100, Math.max(0, (red / 255) * 100));
+    }
+    
+    return Math.max(0, Math.min(100, (red / 255) * 50));
   };
 
   const extractPPGSignals = (frameData: ImageData) => {
