@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
+
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
@@ -42,10 +42,7 @@ const Index = () => {
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
   const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
-  const { 
-    processSignal: processHeartBeat, 
-    setArrhythmiaState 
-  } = useHeartBeatProcessor();
+
   const { 
     processSignal: processVitalSigns, 
     reset: resetVitalSigns,
@@ -419,16 +416,10 @@ const Index = () => {
         return;
       }
 
-    // Señal válida, procesar latidos y signos vitales
-    const heartBeatResult = processHeartBeat(lastSignal.filteredValue, lastSignal.fingerDetected, lastSignal.timestamp);
-    setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(heartBeatResult.filteredValue);
-    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
-    // Actualizar últimos intervalos RR para debug
-    if (heartBeatResult.rrData?.intervals) {
-      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
-    }
-    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    // Señal válida, procesar signos vitales únicamente
+    setHeartbeatSignal(lastSignal.filteredValue);
+    // Procesar signos vitales directamente
+    const vitals = processVitalSigns(lastSignal.filteredValue, null);
     if (vitals) {
       setVitalSigns(vitals);
       if (vitals.lastArrhythmiaData) {
@@ -438,14 +429,13 @@ const Index = () => {
         const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
         if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
           arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-          setArrhythmiaState(isArrhythmiaDetected);
           if (isArrhythmiaDetected) {
-            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
+            toast({ title: "¡Arritmia detectada!", description: "Se detectó una arritmia cardíaca.", variant: "destructive", duration: 3000 });
           }
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processVitalSigns]);
 
   // Referencia para activar o desactivar el sonido de arritmia
   const arrhythmiaDetectedRef = useRef(false);

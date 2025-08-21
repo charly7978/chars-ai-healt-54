@@ -1,7 +1,6 @@
 import { SpO2Processor } from './spo2-processor';
 import { BloodPressureProcessor } from './blood-pressure-processor';
 import { ArrhythmiaProcessor } from './arrhythmia-processor';
-import { SignalProcessor } from './signal-processor';
 import { GlucoseProcessor } from './glucose-processor';
 import { LipidProcessor } from './lipid-processor';
 
@@ -39,7 +38,6 @@ export class VitalSignsProcessor {
   private spo2Processor: SpO2Processor;
   private bpProcessor: BloodPressureProcessor;
   private arrhythmiaProcessor: ArrhythmiaProcessor;
-  private signalProcessor: SignalProcessor;
   private glucoseProcessor: GlucoseProcessor;
   private lipidProcessor: LipidProcessor;
   
@@ -68,13 +66,13 @@ export class VitalSignsProcessor {
   
   private forceCompleteCalibration: boolean = false;
   private calibrationTimer: any = null;
+  private ppgBuffer: number[] = [];
 
   constructor() {
     console.log('🚀 Inicializando VitalSignsProcessor con procesadores originales (compatibilidad)');
     this.spo2Processor = new SpO2Processor();
     this.bpProcessor = new BloodPressureProcessor();
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
-    this.signalProcessor = new SignalProcessor();
     this.glucoseProcessor = new GlucoseProcessor();
     this.lipidProcessor = new LipidProcessor();
   }
@@ -169,12 +167,16 @@ export class VitalSignsProcessor {
       this.calibrationSamples++;
     }
     
-    const filtered = this.signalProcessor.applySMAFilter(ppgValue);
+    // Procesar directamente sin filtrado duplicado
+    const filtered = ppgValue;
     
     const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
     
-    // Obtener los últimos valores de PPG para procesamiento
-    const ppgValues = this.signalProcessor.getPPGValues();
+    // Usar valores de PPG históricos o crear buffer simple
+    if (!this.ppgBuffer) this.ppgBuffer = [];
+    this.ppgBuffer.push(ppgValue);
+    if (this.ppgBuffer.length > 60) this.ppgBuffer.shift();
+    const ppgValues = this.ppgBuffer;
     
     // Calcular SpO2 usando datos reales de la señal
     const spo2 = this.spo2Processor.calculateSpO2(ppgValues.slice(-60));
@@ -257,9 +259,9 @@ export class VitalSignsProcessor {
     this.spo2Processor.reset();
     this.bpProcessor.reset();
     this.arrhythmiaProcessor.reset();
-    this.signalProcessor.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
+    this.ppgBuffer = [];
     
     // Resetear estado de calibración
     this.isCalibrating = false;
