@@ -107,11 +107,11 @@ export class VitalSignsProcessor {
   private readonly BASE_MAX_PEAK_DISTANCE = 2000; // Distancia máxima base (ms)
   private readonly SAMPLING_RATE = 30; // Hz - frecuencia de muestreo
   
-  // PARÁMETROS ADAPTATIVOS DINÁMICOS
-  private adaptiveThreshold: number = 0.15;
-  private adaptiveWindowSize: number = 15;
-  private adaptiveMinDistance: number = 300;
-  private adaptiveMaxDistance: number = 2000;
+  // PARÁMETROS ADAPTATIVOS DINÁMICOS (AJUSTADOS PARA MAYOR SENSIBILIDAD)
+  private adaptiveThreshold: number = 0.05; // Umbral más bajo para detectar más picos
+  private adaptiveWindowSize: number = 10; // Ventana más pequeña para mayor sensibilidad
+  private adaptiveMinDistance: number = 200; // Distancia mínima más corta
+  private adaptiveMaxDistance: number = 3000; // Distancia máxima más larga
   
   // SISTEMA DE APRENDIZAJE ADAPTATIVO
   private signalQualityHistory: number[] = []; // Historial de calidad
@@ -131,9 +131,17 @@ export class VitalSignsProcessor {
   private heartRateBuffer: number[] = []; // Buffer para suavizar BPM
   private lastHeartRate: number = 0; // Último BPM calculado
   
-  // FILTROS ADAPTATIVOS
-  private kalmanFilter: AdaptiveKalmanFilter;
-  private adaptiveBandpassFilter: AdaptiveBandpassFilter;
+  // FILTROS ADAPTATIVOS (implementaciones básicas por ahora)
+  private kalmanFilter: AdaptiveKalmanFilter = {
+    predict: () => this.lastHeartRate || 72,
+    update: (measurement: number) => measurement,
+    adaptParameters: () => {}
+  };
+  private adaptiveBandpassFilter: AdaptiveBandpassFilter = {
+    filter: (signal: number) => signal,
+    adaptCutoffFrequencies: () => {},
+    optimizeForUser: () => {}
+  };
   
   // MÉTRICAS DE RENDIMIENTO
   private detectionAccuracy: number = 0.8;
@@ -147,6 +155,16 @@ export class VitalSignsProcessor {
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
     this.glucoseProcessor = new GlucoseProcessor();
     this.lipidProcessor = new LipidProcessor();
+    
+    // INICIALIZAR BUFFERS ADAPTATIVOS
+    this.ppgBuffer = [];
+    this.signalQualityHistory = [];
+    this.peakDetectionHistory = [];
+    this.peakTimes = [];
+    this.rrIntervals = [];
+    this.heartRateBuffer = [];
+    
+    console.log('🚀 VitalSignsProcessor: Buffers adaptativos inicializados correctamente');
   }
 
   /**
@@ -415,12 +433,33 @@ export class VitalSignsProcessor {
       this.ppgBuffer.shift();
     }
 
+    // DEBUG: Mostrar estado del buffer
+    if (this.ppgBuffer.length % 30 === 0) { // Cada segundo (30Hz)
+      console.log('VitalSignsProcessor: Estado del buffer PPG', {
+        bufferLength: this.ppgBuffer.length,
+        lastValue: ppgValue.toFixed(3),
+        adaptiveThreshold: this.adaptiveThreshold.toFixed(3),
+        adaptiveWindowSize: this.adaptiveWindowSize
+      });
+    }
+
     // ACTUALIZAR CALIDAD DE SEÑAL Y ADAPTAR PARÁMETROS
     this.updateSignalQuality(ppgValue);
     this.adaptDetectionParameters(currentTime);
 
     // DETECCIÓN ADAPTATIVA DE PICOS
     const peakDetected = this.adaptivePeakDetection(ppgValue, currentTime);
+    
+    // DEBUG: Mostrar resultado de detección
+    if (this.ppgBuffer.length > 20) { // Solo después de tener suficientes muestras
+      console.log('VitalSignsProcessor: Detección de picos', {
+        ppgValue: ppgValue.toFixed(3),
+        peakDetected,
+        bufferLength: this.ppgBuffer.length,
+        lastPeakTime: this.lastPeakTime,
+        timeSinceLastPeak: this.lastPeakTime > 0 ? currentTime - this.lastPeakTime : 0
+      });
+    }
     
     if (peakDetected) {
       // CALCULAR INTERVALO RR CON VALIDACIÓN ADAPTATIVA
@@ -453,9 +492,16 @@ export class VitalSignsProcessor {
             adaptiveThreshold: this.adaptiveThreshold.toFixed(3),
             timestamp: new Date().toISOString()
           });
+        } else {
+          console.log('VitalSignsProcessor: Intervalo RR inválido', {
+            rrInterval: rrInterval.toFixed(0) + 'ms',
+            minDistance: this.adaptiveMinDistance,
+            maxDistance: this.adaptiveMaxDistance
+          });
         }
       } else {
         this.lastPeakTime = currentTime;
+        console.log('VitalSignsProcessor: Primer pico detectado, estableciendo tiempo base');
       }
     }
 
@@ -519,6 +565,12 @@ export class VitalSignsProcessor {
    */
   private adaptivePeakDetection(ppgValue: number, currentTime: number): boolean {
     if (this.ppgBuffer.length < this.adaptiveWindowSize) {
+      if (this.ppgBuffer.length % 10 === 0) { // Debug cada 10 muestras
+        console.log('VitalSignsProcessor: Buffer insuficiente para detección', {
+          bufferLength: this.ppgBuffer.length,
+          requiredLength: this.adaptiveWindowSize
+        });
+      }
       return false;
     }
 
@@ -528,6 +580,11 @@ export class VitalSignsProcessor {
     const endIndex = currentIndex + centerIndex;
 
     if (startIndex < 0 || endIndex >= this.ppgBuffer.length) {
+      console.log('VitalSignsProcessor: Índices fuera de rango', {
+        startIndex,
+        endIndex,
+        bufferLength: this.ppgBuffer.length
+      });
       return false;
     }
 
@@ -535,8 +592,13 @@ export class VitalSignsProcessor {
     
     // CONDICIÓN 1: Máximo en ventana adaptativa
     let isPeak = true;
+    let maxInWindow = 0;
     for (let i = startIndex; i <= endIndex; i++) {
-      if (i !== currentIndex && Math.abs(this.ppgBuffer[i]) >= currentAmplitude) {
+      const windowValue = Math.abs(this.ppgBuffer[i]);
+      if (windowValue > maxInWindow) {
+        maxInWindow = windowValue;
+      }
+      if (i !== currentIndex && windowValue >= currentAmplitude) {
         isPeak = false;
         break;
       }
@@ -544,12 +606,37 @@ export class VitalSignsProcessor {
 
     // CONDICIÓN 2: Umbral adaptativo
     if (currentAmplitude < this.adaptiveThreshold) {
+      if (this.ppgBuffer.length % 15 === 0) { // Debug cada 15 muestras
+        console.log('VitalSignsProcessor: Amplitud insuficiente', {
+          currentAmplitude: currentAmplitude.toFixed(3),
+          threshold: this.adaptiveThreshold.toFixed(3),
+          maxInWindow: maxInWindow.toFixed(3)
+        });
+      }
       isPeak = false;
     }
 
     // CONDICIÓN 3: Distancia adaptativa
     if (currentTime - this.lastPeakTime < this.adaptiveMinDistance) {
+      if (this.ppgBuffer.length % 20 === 0) { // Debug cada 20 muestras
+        console.log('VitalSignsProcessor: Distancia insuficiente', {
+          timeSinceLastPeak: currentTime - this.lastPeakTime,
+          minDistance: this.adaptiveMinDistance
+        });
+      }
       isPeak = false;
+    }
+
+    // DEBUG: Mostrar resultado final de detección
+    if (this.ppgBuffer.length % 25 === 0) { // Debug cada 25 muestras
+      console.log('VitalSignsProcessor: Resultado detección de picos', {
+        ppgValue: ppgValue.toFixed(3),
+        currentAmplitude: currentAmplitude.toFixed(3),
+        threshold: this.adaptiveThreshold.toFixed(3),
+        isPeak,
+        bufferLength: this.ppgBuffer.length,
+        windowSize: this.adaptiveWindowSize
+      });
     }
 
     return isPeak;
