@@ -1,10 +1,17 @@
 /**
- * PPGChannel: VERSIÓN CORREGIDA con umbrales más permisivos
+ * Canal PPG avanzado:
+ * - mantiene buffer temporal (timestamps + valores)
+ * - aplica normalización adaptativa (z-score con ventana)
+ * - aplica biquad pasabanda + Savitzky para suavizar
+ * - calcula SNR con Goertzel y detecta picos (TimeDomainPeak)
+ * - devuelve métricas y mantiene gain ajustable (feedback)
  */
 
 import { savitzkyGolay } from './SavitzkyGolayFilter';
+import { Biquad } from './Biquad';
 import { goertzelPower } from './Goertzel';
 import { computeSNR } from './SignalQualityAnalyzer';
+import { detectPeaks } from './TimeDomainPeak';
 
 type Sample = { t: number; v: number };
 
@@ -13,10 +20,7 @@ export default class PPGChannel {
   private buffer: Sample[] = [];
   private windowSec: number;
   private gain: number;
-  private lastBpm: number | null = null;
-  private lastSnr = 0;
-  private lastQuality = 0;
-  private minRMeanForFinger = 15; // REDUCIDO DE 25 A 15 - MÁS PERMISIVO
+  private minRMeanForFinger = 20; // configurable
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -32,83 +36,84 @@ export default class PPGChannel {
     while (this.buffer.length && this.buffer[0].t < t0) this.buffer.shift();
   }
 
-  adjustGain(delta: number) {
-    this.gain = Math.max(0.1, Math.min(10, this.gain * (1 + delta)));
+  adjustGainRel(rel: number) {
+    this.gain = Math.max(0.1, Math.min(10, this.gain * (1 + rel)));
   }
+  setGain(g: number) { this.gain = Math.max(0.1, Math.min(10, g)); }
+  getGain() { return this.gain; }
 
-  getGain() {
-    return this.gain;
-  }
-
-  analyze(): {
-    calibratedSignal: number[];
-    bpm: number | null;
-    snr: number;
-    quality: number;
-    isFingerDetected: boolean;
-  } {
-    if (this.buffer.length < 5) { // REDUCIDO DE 10 A 5 - MÁS PERMISIVO
-      return { calibratedSignal: [], bpm: null, snr: 0, quality: 0, isFingerDetected: false };
+  analyze() {
+    if (this.buffer.length < 10) {
+      return { calibratedSignal: [], bpm: null, rrIntervals: [], snr: 0, quality: 0, isFingerDetected: false, gain: this.gain };
     }
 
-    const N = Math.min(128, this.buffer.length); // REDUCIDO DE 256 A 128 - MÁS RÁPIDO
+    // remuestreo uniforme a N
+    const N = 256;
     const sampled = this.resampleUniform(this.buffer, N);
-    const detr = this.detrend(sampled);
-    const smooth = savitzkyGolay(detr, Math.min(7, N-2), 2); // PARÁMETROS MÁS PERMISIVOS
-    const fs = N / this.windowSec;
+    // normalizar (z-score) para quitar offset lento
+    const mean = sampled.reduce((a, b) => a + b, 0) / sampled.length;
+    const std = Math.sqrt(sampled.reduce((a, b) => a + (b - mean)*(b - mean), 0) / sampled.length) || 1;
+    const norm = sampled.map(x => (x - mean) / std);
 
-    // evaluar energía en banda más amplia: 0.5-4.0 Hz (antes 0.8-3.0)
-    const freqs = this.linspace(0.5, 4.0, 50); // MENOS PUNTOS, MÁS RÁPIDO
+    // filtrar pasabanda
+    const fs = N / this.windowSec;
+    const bi = new Biquad();
+    bi.setBandpass(1.3, 0.6, fs); // centro ~1.3Hz (78 bpm), Q moderada -> amplio 0.7-3.5 Hz
+    const filtered = bi.processArray(norm);
+
+    // suavizar
+    const smooth = savitzkyGolay(filtered, 11);
+
+    // espectro con Goertzel en 0.7..3.5 Hz
+    const freqs = this.linspace(0.7, 3.5, 120);
     const powers = freqs.map(f => goertzelPower(smooth, fs, f));
     const sorted = powers.slice().sort((a,b)=>b-a);
     const peak = sorted[0] || 0;
-    const noiseMedian = this.median(powers.slice(Math.floor(powers.length*0.3))); // MÁS PERMISIVO
-    const snr = peak / Math.max(1e-12, noiseMedian); // DENOMINADOR MÁS PEQUEÑO
+    const noiseMedian = this.median(powers.slice(Math.max(1, Math.floor(powers.length*0.25))));
+    const snr = peak / Math.max(1e-9, noiseMedian);
     const quality = computeSNR(peak, noiseMedian);
 
-    const peakIndex = powers.indexOf(peak);
-    const peakFreq = freqs[peakIndex] || 0;
-    const bpm = peak > 1e-9 ? Math.round(peakFreq * 60) : null; // UMBRAL MÁS BAJO
+    // BPM por pico espectral
+    const peakIdx = powers.indexOf(peak);
+    const fPeak = freqs[peakIdx] || 0;
+    const bpmSpectral = peak > 1e-6 ? Math.round(fPeak * 60) : null;
 
-    // DETECCIÓN DE DEDO MÁS PERMISIVA
-    const meanLast = sampled.reduce((a,b)=>a+b,0)/sampled.length;
-    const isFinger = meanLast >= this.minRMeanForFinger && snr > 1.5 && peak > 1e-9; // UMBRALES REDUCIDOS
+    // detección picos en tiempo (para RR)
+    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 300, 0.2);
+    const bpmTime = rr.length ? Math.round(60000 / (rr.reduce((a,b)=>a+b,0)/rr.length)) : null;
 
-    console.log(`📊 Canal ${this.channelId}: mean=${meanLast.toFixed(1)}, snr=${snr.toFixed(2)}, peak=${peak.toExponential(2)}, dedo=${isFinger}`);
-
-    this.lastBpm = bpm;
-    this.lastSnr = snr;
-    this.lastQuality = quality;
+    // decisión dedo: mean raw (antes normalización) y coverage es responsabilidad del CameraView + manager;
+    const meanRaw = sampled.reduce((a,b)=>a+b,0)/sampled.length;
+    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 3 && (bpmSpectral || bpmTime);
 
     return {
       calibratedSignal: smooth,
-      bpm,
+      bpm: isFinger ? (bpmTime || bpmSpectral) : null,
+      rrIntervals: rr,
       snr,
       quality,
-      isFingerDetected: isFinger
+      isFingerDetected: isFinger,
+      gain: this.gain
     };
   }
 
-  // Helpers
-  private linspace(a:number,b:number,n:number){ const r:number[]=[]; for(let i=0;i<n;i++) r.push(a + (b-a)*(i/(n-1))); return r; }
-  private median(arr:number[]){ const s=arr.slice().sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length? s[m]:0; }
-
-  private resampleUniform(samples: Sample[], N:number){
+  // helpers
+  private resampleUniform(samples: Sample[], N:number) {
     if (samples.length === 0) return [];
     const t0 = samples[0].t; const t1 = samples[samples.length-1].t;
     const T = Math.max(0.001, t1 - t0);
-    const out:number[]=[];
+    const out:number[] = [];
     for (let i=0;i<N;i++){
       const tt = t0 + (i/(N-1))*T;
       let j=0; while (j < samples.length-1 && samples[j+1].t < tt) j++;
       const s0 = samples[j]; const s1 = samples[Math.min(samples.length-1,j+1)];
       if (s1.t === s0.t) out.push(s0.v); else {
-        const alpha = (tt - s0.t)/(s1.t - s0.t);
-        out.push(s0.v*(1-alpha)+s1.v*alpha);
+        const a = (tt - s0.t)/(s1.t - s0.t);
+        out.push(s0.v*(1-a) + s1.v*a);
       }
     }
     return out;
   }
-
-  private detrend(arr:number[]){ const n=arr.length; const mean = arr.reduce((a,b)=>a+b,0)/n; return arr.map(v=>v-mean); }
+  private linspace(a:number,b:number,n:number){ const r:number[]=[]; for(let i=0;i<n;i++) r.push(a + (b-a)*(i/(n-1))); return r; }
+  private median(arr:number[]){ const s=arr.slice().sort((a,b)=>a-b); const m=Math.floor(s.length/2); return s.length ? s[m]:0; }
 }

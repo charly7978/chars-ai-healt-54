@@ -1,16 +1,27 @@
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { CameraSample } from '@/types';
 
+/**
+ * CameraView mejorado:
+ * - captura video trasero
+ * - intenta activar torch si está disponible
+ * - ROI reducido para rendimiento
+ * - calcula medias por canal (R,G,B), desviaciones, coverageRatio,
+ *   frameDiff y expone un CameraSample por frame.
+ *
+ * Recomendación: Pegar tal cual. En dispositivos Android la linterna
+ * suele activarse si la cámara lo permite; en iOS requiere user gesture.
+ */
+
 interface CameraViewProps {
-  onStreamReady?: (stream: MediaStream) => void;
+  onStreamReady?: (s: MediaStream) => void;
   onSample?: (s: CameraSample) => void;
   isMonitoring: boolean;
   targetFps?: number;
-  targetW?: number;
+  roiSize?: number; // px ancho del ROI (se escala manteniendo aspect)
   enableTorch?: boolean;
-  isFingerDetected?: boolean;
-  signalQuality?: number;
+  coverageThresholdPixelBrightness?: number; // 0-255
 }
 
 const CameraView: React.FC<CameraViewProps> = ({
@@ -18,73 +29,48 @@ const CameraView: React.FC<CameraViewProps> = ({
   onSample,
   isMonitoring,
   targetFps = 30,
-  targetW = 160,
+  roiSize = 200,
   enableTorch = true,
-  isFingerDetected = false,
-  signalQuality = 0
+  coverageThresholdPixelBrightness = 30
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
-  const prevRRef = useRef<number | null>(null);
-  const lastFrameTimeRef = useRef<number>(0);
-  const [cameraError, setCameraError] = useState<string>("");
-  const [isStreaming, setIsStreaming] = useState(false);
+  const prevBrightnessRef = useRef<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
-    const start = async () => {
+    const startCam = async () => {
       try {
-        console.log(`🎥 Iniciando cámara - Monitoreo: ${isMonitoring}`);
-        setCameraError("");
-        
-        // Solicitar permisos explícitamente primero
-        const permissions = await navigator.permissions.query({name: 'camera' as PermissionName});
-        if (permissions.state === 'denied') {
-          throw new Error('Permisos de cámara denegados');
-        }
-
-        const constraints: MediaStreamConstraints = {
+        const constraints: any = {
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 640, min: 320 },
-            height: { ideal: 480, min: 240 },
-            frameRate: { ideal: targetFps, min: 15 }
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: targetFps }
           },
           audio: false
         };
-
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         if (!mounted) return;
-        
         streamRef.current = stream;
         onStreamReady?.(stream);
-        setIsStreaming(true);
 
-        console.log(`✅ Stream obtenido correctamente`);
-
-        // crear video visible para debug
+        // crear video oculto
         if (!videoRef.current) {
           const v = document.createElement('video');
           v.autoplay = true;
           v.playsInline = true;
           v.muted = true;
-          v.style.position = 'absolute';
-          v.style.top = '10px';
-          v.style.right = '10px';
-          v.style.width = '120px';
-          v.style.height = '90px';
-          v.style.zIndex = '50';
-          v.style.border = '2px solid #00ff00';
-          v.style.borderRadius = '8px';
+          v.style.display = 'none';
           document.body.appendChild(v);
           videoRef.current = v;
         }
         videoRef.current.srcObject = stream;
 
-        // canvas para procesamiento
+        // canvas
         if (!canvasRef.current) {
           const c = document.createElement('canvas');
           c.style.display = 'none';
@@ -92,156 +78,108 @@ const CameraView: React.FC<CameraViewProps> = ({
           canvasRef.current = c;
         }
 
-        // intentar linterna
+        // intentar encender torch si permite
         try {
           const [track] = stream.getVideoTracks();
-          const capabilities = (track as any).getCapabilities?.();
-          if (enableTorch && capabilities?.torch) {
-            console.log(`💡 Activando linterna...`);
-            await (track as any).applyConstraints({ advanced: [{ torch: true }] });
-            console.log(`✅ Linterna activada`);
+          const caps = (track as any).getCapabilities?.();
+          if (enableTorch && caps && caps.torch) {
+            try { await (track as any).applyConstraints({ advanced: [{ torch: true }] }); } catch (e) { /* ignore */ }
           }
-        } catch (e) {
-          console.log(`⚠️ Linterna no disponible`);
-        }
+        } catch (e) {}
 
-        // esperar video cargado
+        // esperar metadata
         await new Promise<void>((resolve) => {
           const v = videoRef.current!;
           if (v.readyState >= 1) return resolve();
-          const onLoaded = () => { v.removeEventListener('loadedmetadata', onLoaded); resolve(); };
-          v.addEventListener('loadedmetadata', onLoaded);
+          const h = () => { v.removeEventListener('loadedmetadata', h); resolve(); };
+          v.addEventListener('loadedmetadata', h);
         });
 
-        console.log(`🎬 Iniciando procesamiento de frames...`);
-        
-        const loop = (ts: number) => {
-          if (!mounted || !isMonitoring) return;
-          
-          const now = performance.now();
-          const dt = now - lastFrameTimeRef.current;
-          const minDt = 1000 / targetFps;
-          
-          if (!lastFrameTimeRef.current || dt >= minDt) {
-            lastFrameTimeRef.current = now;
-            captureAndEmit();
-          }
-          
-          rafRef.current = requestAnimationFrame(loop);
+        const loop = () => {
+          captureFrameAndEmit();
+          rafRef.current = requestAnimationFrame(() => {
+            // limitar fps manualmente
+            setTimeout(loop, 1000 / targetFps);
+          });
         };
-
         rafRef.current = requestAnimationFrame(loop);
-        
-      } catch (err: any) {
-        console.error('❌ Error cámara:', err);
-        setCameraError(err.message || 'Error desconocido de cámara');
-        setIsStreaming(false);
+      } catch (err) {
+        console.error('CameraView: no se pudo abrir cámara', err);
       }
     };
 
-    const captureAndEmit = () => {
+    const captureFrameAndEmit = () => {
       const v = videoRef.current;
       const c = canvasRef.current;
       if (!v || !c || !v.videoWidth || !v.videoHeight) return;
 
-      const aspect = v.videoHeight / v.videoWidth;
-      const targetH = Math.round(targetW * aspect);
-      
-      if (c.width !== targetW || c.height !== targetH) {
-        c.width = targetW;
-        c.height = targetH;
-      }
-      
+      // definimos ROI central cuadrado (más rápido y evita bordes)
+      const roiW = roiSize;
+      const roiH = Math.round(roiW * (v.videoHeight / v.videoWidth));
+      const sx = Math.max(0, Math.round((v.videoWidth - roiW) / 2));
+      const sy = Math.max(0, Math.round((v.videoHeight - roiH) / 2));
+
+      c.width = roiW;
+      c.height = roiH;
       const ctx = c.getContext('2d');
       if (!ctx) return;
-      
-      ctx.drawImage(v, 0, 0, c.width, c.height);
-      const img = ctx.getImageData(0, 0, c.width, c.height);
+      ctx.drawImage(v, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
+      const img = ctx.getImageData(0, 0, roiW, roiH);
       const d = img.data;
 
-      let sum = 0, sum2 = 0;
+      let rSum = 0, gSum = 0, bSum = 0;
+      let rSum2 = 0, gSum2 = 0, bSum2 = 0;
+      let brightSum = 0;
+      let cntBrightPixels = 0;
+      const thr = coverageThresholdPixelBrightness;
+
       for (let i = 0; i < d.length; i += 4) {
-        const r = d[i];
-        sum += r;
-        sum2 += r * r;
+        const r = d[i], g = d[i+1], b = d[i+2];
+        const bright = (r + g + b) / 3;
+        rSum += r; gSum += g; bSum += b;
+        rSum2 += r*r; gSum2 += g*g; bSum2 += b*b;
+        brightSum += bright;
+        if (bright >= thr) cntBrightPixels++;
       }
-      
-      const len = d.length / 4;
-      const mean = sum / len;
-      const variance = Math.max(0, sum2 / len - mean * mean);
-      const std = Math.sqrt(variance);
-      const prev = prevRRef.current;
-      const frameDiff = prev == null ? 0 : Math.abs(mean - prev);
-      prevRRef.current = mean;
+      const npix = d.length / 4;
+      const rMean = rSum / npix;
+      const gMean = gSum / npix;
+      const bMean = bSum / npix;
+      const rVar = Math.max(0, rSum2/npix - rMean*rMean);
+      const gVar = Math.max(0, gSum2/npix - gMean*gMean);
+      const bVar = Math.max(0, bSum2/npix - bMean*bMean);
+      const rStd = Math.sqrt(rVar);
+      const gStd = Math.sqrt(gVar);
+      const bStd = Math.sqrt(bVar);
+      const brightnessMean = brightSum / npix;
+      const framePrev = prevBrightnessRef.current;
+      const frameDiff = framePrev == null ? 0 : Math.abs(brightnessMean - framePrev);
+      prevBrightnessRef.current = brightnessMean;
+      const coverageRatio = cntBrightPixels / npix;
 
-      const sample: CameraSample = {
+      // Emite muestra
+      onSample?.({
         timestamp: Date.now(),
-        rMean: mean,
-        rStd: std,
-        frameDiff
-      };
-
-      console.log(`📊 Sample: rMean=${mean.toFixed(1)}, std=${std.toFixed(1)}, diff=${frameDiff.toFixed(1)}`);
-      onSample?.(sample);
+        rMean, gMean, bMean,
+        brightnessMean,
+        rStd, gStd, bStd,
+        frameDiff,
+        coverageRatio
+      });
     };
 
-    if (isMonitoring) start();
+    if (isMonitoring) startCam();
 
     return () => {
       mounted = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      const s = streamRef.current; 
-      if (s) s.getTracks().forEach(t => t.stop());
-      if (videoRef.current) { 
-        try { document.body.removeChild(videoRef.current); } catch (e) {} 
-        videoRef.current = null; 
-      }
-      if (canvasRef.current) { 
-        try { document.body.removeChild(canvasRef.current); } catch (e) {} 
-        canvasRef.current = null; 
-      }
-      setIsStreaming(false);
+      const s = streamRef.current; if (s) s.getTracks().forEach(t => t.stop());
+      if (videoRef.current) { try { document.body.removeChild(videoRef.current); } catch (e) {} videoRef.current = null; }
+      if (canvasRef.current) { try { document.body.removeChild(canvasRef.current); } catch (e) {} canvasRef.current = null; }
     };
-  }, [isMonitoring, onSample, onStreamReady, targetFps, targetW, enableTorch]);
+  }, [isMonitoring, onSample, onStreamReady, targetFps, roiSize, enableTorch, coverageThresholdPixelBrightness]);
 
-  // Renderizar estado de la cámara
-  return (
-    <div className="absolute inset-0 bg-black flex items-center justify-center">
-      {!isMonitoring && (
-        <div className="text-white text-center">
-          <div className="text-xl mb-2">📷</div>
-          <div>Cámara desactivada</div>
-        </div>
-      )}
-      
-      {isMonitoring && !isStreaming && !cameraError && (
-        <div className="text-white text-center">
-          <div className="text-xl mb-2 animate-pulse">🔄</div>
-          <div>Iniciando cámara...</div>
-        </div>
-      )}
-      
-      {cameraError && (
-        <div className="text-red-500 text-center p-4">
-          <div className="text-xl mb-2">❌</div>
-          <div className="font-bold">Error de Cámara</div>
-          <div className="text-sm mt-2">{cameraError}</div>
-          <div className="text-xs mt-2">Asegúrate de permitir el acceso a la cámara</div>
-        </div>
-      )}
-      
-      {isStreaming && (
-        <div className="text-white text-center">
-          <div className="text-xl mb-2">📹</div>
-          <div>Cámara activa</div>
-          <div className="text-sm mt-2">
-            Dedo: {isFingerDetected ? '✅' : '❌'} | 
-            Calidad: {signalQuality}%
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return null;
 };
 
 export default CameraView;

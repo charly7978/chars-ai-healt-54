@@ -46,13 +46,7 @@ const Index = () => {
   
   // HOOKS ÚNICOS
   const { 
-    startProcessing, 
-    stopProcessing, 
-    lastSignal, 
     handleSample,
-    isProcessing, 
-    framesProcessed,
-    debugInfo: signalDebugInfo,
     lastResult
   } = useSignalProcessor();
   
@@ -167,8 +161,6 @@ const Index = () => {
     setIsCameraOn(true);
     setShowResults(false);
     
-    startProcessing();
-    
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
@@ -214,7 +206,6 @@ const Index = () => {
     setIsMonitoring(false);
     setIsCameraOn(false);
     setIsCalibrating(false);
-    stopProcessing();
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -241,7 +232,6 @@ const Index = () => {
     setIsCameraOn(false);
     setShowResults(false);
     setIsCalibrating(false);
-    stopProcessing();
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);

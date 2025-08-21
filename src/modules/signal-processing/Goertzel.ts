@@ -1,9 +1,9 @@
 
-// Goertzel para potencia en frecuencia dada. Rápido y eficiente para rangos reducidos.
+// Goertzel para potencia en frecuencia (eficiente para pocas frecuencias)
 export function goertzelPower(signal: number[], fs: number, freq: number): number {
   const N = signal.length;
   if (N === 0) return 0;
-  const k = (freq / fs) * N;
+  const k = Math.round((freq / fs) * N);
   const omega = (2 * Math.PI * k) / N;
   const coeff = 2 * Math.cos(omega);
   let s0 = 0, s1 = 0, s2 = 0;
