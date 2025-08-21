@@ -268,7 +268,7 @@ const Index = () => {
 
   // PROCESAMIENTO CON UMBRALES MÁS PERMISIVOS
   useEffect(() => {
-    if (!lastSignal || !lastResult) return;
+    if (!lastResult) return;
 
     const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 20) || lastResult.channels[0]; // REDUCIDO DE 30 A 20
     setSignalQuality(bestChannel?.quality || 0);
@@ -284,21 +284,21 @@ const Index = () => {
     }
 
     const heartBeatResult = processHeartBeat(
-      lastSignal.filteredValue, 
-      lastSignal.fingerDetected, 
-      lastSignal.timestamp
+      bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
+      bestChannel.isFingerDetected, 
+      lastResult.timestamp
     );
     
     const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
-    setHeartbeatSignal(lastSignal.filteredValue);
+    setHeartbeatSignal(bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    const vitals = processVitalSigns(bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
       
@@ -323,7 +323,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, lastResult, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastResult, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   useEffect(() => {
     if (!isCalibrating) return;
@@ -364,7 +364,7 @@ const Index = () => {
         <div>Canales: {lastResult?.channels.length || 0}</div>
         <div>BPM: {lastResult?.aggregatedBPM || '--'}</div>
         <div>Calidad: {signalQuality}%</div>
-        <div>Frames: {framesProcessed}</div>
+        <div>Dedo: {lastResult?.fingerDetected ? 'SÍ' : 'NO'}</div>
         <div>Estado: {systemState.current}</div>
         {rrIntervals.length > 0 && (
           <div>RR: {rrIntervals.map(i => i + 'ms').join(', ')}</div>
@@ -391,10 +391,9 @@ const Index = () => {
             onSample={handleSample}
             isMonitoring={isCameraOn}
             targetFps={30}
-            targetW={160}
+            roiSize={160}
             enableTorch={true}
-            isFingerDetected={lastSignal?.fingerDetected || false}
-            signalQuality={signalQuality}
+            coverageThresholdPixelBrightness={30}
           />
         </div>
 
@@ -403,7 +402,7 @@ const Index = () => {
             <PPGSignalMeter 
               value={beatMarker}
               quality={signalQuality}
-              isFingerDetected={lastSignal?.fingerDetected || false}
+              isFingerDetected={lastResult?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
