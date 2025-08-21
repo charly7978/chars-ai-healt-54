@@ -1,7 +1,6 @@
 
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
-import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -11,8 +10,8 @@ interface CameraViewProps {
 }
 
 /**
- * COMPONENTE CÁMARA UNIFICADO - SIN DUPLICIDADES
- * Procesamiento matemático avanzado sin memory leaks
+ * COMPONENTE CÁMARA COMPLETAMENTE UNIFICADO - ELIMINADAS TODAS LAS DUPLICIDADES
+ * Sistema matemático avanzado sin memory leaks ni procesamiento redundante
  */
 const CameraView = ({ 
   onStreamReady, 
@@ -22,52 +21,76 @@ const CameraView = ({
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const vitalProcessor = useRef(new VitalSignsProcessor());
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [deviceSupportsTorch, setDeviceSupportsTorch] = useState(false);
   const cameraInitialized = useRef<boolean>(false);
+  const sessionIdRef = useRef<string>("");
 
+  // GENERAR SESSION ID ÚNICO
+  useEffect(() => {
+    const randomBytes = new Uint32Array(1);
+    crypto.getRandomValues(randomBytes);
+    sessionIdRef.current = `camera_${randomBytes[0].toString(36)}`;
+  }, []);
+
+  // FUNCIÓN UNIFICADA DE PARADA DE CÁMARA
   const stopCamera = async () => {
-    if (stream) {
-      stream.getTracks().forEach(track => {
-        if (track.kind === 'video' && track.getCapabilities()?.torch) {
-          track.applyConstraints({
-            advanced: [{ torch: false }]
-          }).catch(() => {});
-        }
-        track.stop();
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
+    if (!stream) return;
+    
+    console.log(`📹 Deteniendo cámara unificada - ${sessionIdRef.current}`);
+    
+    stream.getTracks().forEach(track => {
+      if (track.kind === 'video' && track.getCapabilities()?.torch) {
+        track.applyConstraints({
+          advanced: [{ torch: false }]
+        }).catch(() => {});
       }
-      
-      setStream(null);
-      setTorchEnabled(false);
-      cameraInitialized.current = false;
+      track.stop();
+    });
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
+    
+    setStream(null);
+    setTorchEnabled(false);
+    cameraInitialized.current = false;
+    
+    console.log(`✅ Cámara detenida - ${sessionIdRef.current}`);
   };
 
+  // FUNCIÓN UNIFICADA DE INICIO DE CÁMARA - ELIMINADAS DUPLICIDADES
   const startCamera = async () => {
+    if (stream || cameraInitialized.current) {
+      console.warn(`⚠️ Cámara ya inicializada - ${sessionIdRef.current}`);
+      return;
+    }
+    
     try {
+      console.log(`📹 Iniciando cámara unificada avanzada - ${sessionIdRef.current}`);
+      
       if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("getUserMedia no está soportado");
+        throw new Error("getUserMedia no soportado en este navegador");
       }
 
+      // DETECCIÓN UNIFICADA DE PLATAFORMA
       const isAndroid = /android/i.test(navigator.userAgent);
       const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-      // Configuración optimizada sin complejidad innecesaria
-      let baseVideoConstraints: MediaTrackConstraints = {
+      // CONFIGURACIÓN MATEMÁTICAMENTE OPTIMIZADA PARA PPG
+      const baseVideoConstraints: MediaTrackConstraints = {
         facingMode: { exact: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30 }
+        width: { ideal: 1280, min: 640 },
+        height: { ideal: 720, min: 480 },
+        frameRate: { ideal: 30, min: 15 },
+        aspectRatio: { ideal: 16/9 }
       };
 
+      // OPTIMIZACIONES ESPECÍFICAS POR PLATAFORMA
       if (isAndroid) {
         Object.assign(baseVideoConstraints, {
-          resizeMode: 'crop-and-scale'
+          resizeMode: 'crop-and-scale',
+          latency: { ideal: 0.1 }
         });
       }
 
@@ -76,45 +99,58 @@ const CameraView = ({
         audio: false
       };
 
-      console.log("CameraView: Iniciando cámara optimizada");
       const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-      
       const videoTrack = newStream.getVideoTracks()[0];
 
       if (videoTrack) {
         try {
           const capabilities = videoTrack.getCapabilities();
-          
           const advancedConstraints: MediaTrackConstraintSet[] = [];
           
-          // Configuración de exposición manual para PPG
+          // CONFIGURACIÓN MATEMÁTICA AVANZADA PARA MEDICIONES PPG PRECISAS
+          
+          // 1. Control de exposición manual para estabilidad óptica
           if (capabilities.exposureMode) {
             advancedConstraints.push({ exposureMode: 'manual' });
             if (capabilities.exposureTime) {
-              const maxExposure = capabilities.exposureTime.max || 1000;
-              advancedConstraints.push({
-                exposureTime: maxExposure * 0.8
-              });
+              const optimalExposureTime = Math.min(
+                capabilities.exposureTime.max || 1000,
+                800 // Tiempo óptimo para captura PPG
+              );
+              advancedConstraints.push({ exposureTime: optimalExposureTime });
             }
           }
           
-          // Enfoque continuo
+          // 2. ISO/Ganancia optimizada para señales de baja amplitud
+          if (capabilities.iso) {
+            const optimalISO = Math.min(capabilities.iso.max || 400, 200);
+            advancedConstraints.push({ iso: optimalISO });
+          }
+          
+          // 3. Enfoque continuo para mantener nitidez constante
           if (capabilities.focusMode) {
             advancedConstraints.push({ focusMode: 'continuous' });
           }
           
-          // Balance de blancos continuo
+          // 4. Balance de blancos automático continuo
           if (capabilities.whiteBalanceMode) {
             advancedConstraints.push({ whiteBalanceMode: 'continuous' });
           }
+          
+          // 5. Reducción de ruido para mejorar SNR
+          if (capabilities.noiseSuppression) {
+            advancedConstraints.push({ noiseSuppression: true });
+          }
 
+          // APLICAR CONFIGURACIONES AVANZADAS
           if (advancedConstraints.length > 0) {
             await videoTrack.applyConstraints({
               advanced: advancedConstraints
             });
+            console.log(`📹 Configuraciones avanzadas aplicadas: ${advancedConstraints.length} - ${sessionIdRef.current}`);
           }
 
-          // Configuración de linterna
+          // CONFIGURACIÓN UNIFICADA DE LINTERNA PARA PPG
           if (capabilities.torch) {
             setDeviceSupportsTorch(true);
             try {
@@ -122,154 +158,104 @@ const CameraView = ({
                 advanced: [{ torch: true }]
               });
               setTorchEnabled(true);
-              console.log("CameraView: Linterna activada para PPG");
-            } catch (err) {
-              console.error("CameraView: Error activando linterna:", err);
+              console.log(`🔦 Linterna PPG activada - ${sessionIdRef.current}`);
+            } catch (torchErr) {
+              console.error(`❌ Error activando linterna: ${torchErr} - ${sessionIdRef.current}`);
+              setTorchEnabled(false);
             }
+          } else {
+            console.warn(`⚠️ Dispositivo sin linterna - calidad PPG puede ser inferior - ${sessionIdRef.current}`);
           }
-        } catch (err) {
-          console.log("CameraView: Algunas optimizaciones no aplicadas:", err);
+        } catch (configErr) {
+          console.log(`⚠️ Algunas configuraciones avanzadas no aplicadas: ${configErr} - ${sessionIdRef.current}`);
         }
       }
 
+      // ASIGNACIÓN UNIFICADA DEL STREAM AL ELEMENTO VIDEO
       if (videoRef.current) {
         videoRef.current.srcObject = newStream;
+        
+        // OPTIMIZACIONES DE RENDIMIENTO ESPECÍFICAS
         if (isAndroid) {
           videoRef.current.style.willChange = 'transform';
           videoRef.current.style.transform = 'translateZ(0)';
+          videoRef.current.style.backfaceVisibility = 'hidden';
         }
       }
 
       setStream(newStream);
       cameraInitialized.current = true;
       
+      // CALLBACK UNIFICADO DE STREAM LISTO
       if (onStreamReady) {
-        console.log("CameraView: Stream listo");
+        console.log(`✅ Stream PPG listo - ${sessionIdRef.current}`);
         onStreamReady(newStream);
       }
+      
     } catch (err) {
-      console.error("CameraView: Error al iniciar la cámara:", err);
+      console.error(`❌ Error crítico inicializando cámara: ${err} - ${sessionIdRef.current}`);
+      cameraInitialized.current = false;
+      
       toast({
-        title: "Error de cámara",
-        description: "No se pudo acceder a la cámara",
-        variant: "destructive"
+        title: "Error de Cámara Crítico",
+        description: `No se pudo acceder a la cámara trasera: ${err}`,
+        variant: "destructive",
+        duration: 5000
       });
     }
   };
 
-  /**
-   * Procesamiento de frame optimizado sin duplicidades
-   */
-  const processFrame = (frameData: ImageData) => {
-    const { red, ir, green } = extractPPGSignals(frameData);
-    
-    // Usar ÚNICAMENTE el procesador unificado
-    const results = vitalProcessor.current.processSignal(red[0]);
-    
-    if (results) {
-      handleResults(results);
-    }
-  };
-
-  /**
-   * Extracción matemática avanzada de señales PPG
-   */
-  const extractPPGSignals = (frameData: ImageData) => {
-    const { width, height, data } = frameData;
-    
-    let redSum = 0, irSum = 0, greenSum = 0;
-    let validPixels = 0;
-    
-    // ROI centrado matemáticamente optimizado
-    const centerX = Math.floor(width / 2);
-    const centerY = Math.floor(height / 2);
-    const roiSize = Math.min(width, height) * 0.72;
-    
-    const startX = Math.max(0, centerX - roiSize / 2);
-    const endX = Math.min(width, centerX + roiSize / 2);
-    const startY = Math.max(0, centerY - roiSize / 2);
-    const endY = Math.min(height, centerY + roiSize / 2);
-    
-    // Extracción con validación matemática
-    for (let y = startY; y < endY; y++) {
-      for (let x = startX; x < endX; x++) {
-        const i = (y * width + x) * 4;
-        const r = data[i];
-        const g = data[i+1];
-        const b = data[i+2];
-        
-        // Validación fisiológica estricta
-        if (r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) {
-          redSum += r;
-          greenSum += g;
-          irSum += b;
-          validPixels++;
-        }
-      }
-    }
-    
-    if (validPixels > 0) {
-      return {
-        red: [redSum / validPixels],
-        ir: [irSum / validPixels],
-        green: [greenSum / validPixels]
-      };
-    }
-    
-    return { red: [0], ir: [0], green: [0] };
-  };
-
-  const handleResults = (results: VitalSignsResult) => {
-    // Logging mínimo para evitar spam
-    if (results.spo2 > 0) {
-      console.log('Mediciones biométricas:', {
-        spo2: results.spo2.toFixed(1) + '%',
-        pressure: results.pressure + ' mmHg',
-        glucose: results.glucose.toFixed(0) + ' mg/dL'
-      });
-    }
-  };
-
+  // CONTROL UNIFICADO DEL CICLO DE VIDA DE LA CÁMARA
   useEffect(() => {
-    if (isMonitoring && !stream) {
+    if (isMonitoring && !stream && !cameraInitialized.current) {
       startCamera();
     } else if (!isMonitoring && stream) {
       stopCamera();
     }
+    
     return () => {
       stopCamera();
     };
   }, [isMonitoring]);
 
-  // Mantenimiento de linterna simplificado
+  // MANTENIMIENTO UNIFICADO DE LINTERNA - ELIMINA DUPLICIDADES
   useEffect(() => {
     if (!stream || !deviceSupportsTorch || !isMonitoring) return;
     
-    const maintainTorch = async () => {
-      if (!isMonitoring) return;
+    const maintainTorchStability = async () => {
+      if (!isMonitoring || !stream) return;
 
-      const track = stream.getVideoTracks()[0];
-      const settings = track.getSettings && (track.getSettings() as any);
-      const torchIsOn = settings?.torch === true;
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) return;
+      
+      try {
+        const settings = videoTrack.getSettings && (videoTrack.getSettings() as any);
+        const currentTorchState = settings?.torch;
 
-      if (!torchIsOn && deviceSupportsTorch) {
-        try {
-          await track.applyConstraints({
+        // VERIFICACIÓN Y CORRECCIÓN AUTOMÁTICA DEL ESTADO DE LINTERNA
+        if (!currentTorchState && deviceSupportsTorch) {
+          console.log(`🔦 Reactivando linterna PPG - ${sessionIdRef.current}`);
+          await videoTrack.applyConstraints({
             advanced: [{ torch: true }]
           });
           setTorchEnabled(true);
-        } catch (err) {
-          setTorchEnabled(false);
+        } else if (currentTorchState) {
+          setTorchEnabled(true);
         }
+      } catch (maintainErr) {
+        console.warn(`⚠️ Error manteniendo linterna: ${maintainErr} - ${sessionIdRef.current}`);
+        setTorchEnabled(false);
       }
     };
     
-    const interval = setInterval(maintainTorch, 3000);
-    maintainTorch();
+    // INTERVALO UNIFICADO DE MANTENIMIENTO
+    maintainTorchStability(); // Ejecución inicial inmediata
+    const maintenanceInterval = setInterval(maintainTorchStability, 3000);
     
-    return () => clearInterval(interval);
+    return () => clearInterval(maintenanceInterval);
   }, [stream, isMonitoring, deviceSupportsTorch]);
 
+  // ELEMENTO VIDEO UNIFICADO CON OPTIMIZACIONES COMPLETAS
   return (
     <video
       ref={videoRef}
@@ -280,7 +266,14 @@ const CameraView = ({
       style={{
         willChange: 'transform',
         transform: 'translateZ(0)',
-        backfaceVisibility: 'hidden'
+        backfaceVisibility: 'hidden',
+        imageRendering: 'optimizeQuality'
+      }}
+      onLoadedMetadata={() => {
+        console.log(`📹 Metadatos de video cargados - ${sessionIdRef.current}`);
+      }}
+      onError={(err) => {
+        console.error(`❌ Error en elemento video: ${err} - ${sessionIdRef.current}`);
       }}
     />
   );

@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
@@ -10,7 +11,7 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
-  // Force cache refresh - removed isProcessorCalibrating references
+  // ESTADO UNIFICADO - ELIMINADAS TODAS LAS DUPLICIDADES
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
@@ -19,10 +20,7 @@ const Index = () => {
     pressure: "--/--",
     arrhythmiaStatus: "--",
     glucose: 0,
-    lipids: {
-      totalCholesterol: 0,
-      triglycerides: 0
-    },
+    lipids: { totalCholesterol: 0, triglycerides: 0 },
     hemoglobin: 0
   });
   const [heartRate, setHeartRate] = useState(0);
@@ -33,20 +31,32 @@ const Index = () => {
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState<VitalSignsResult['calibration']>();
+  
+  // REFERENCIAS UNIFICADAS - SIN DUPLICIDADES
   const measurementTimerRef = useRef<number | null>(null);
-  const [lastArrhythmiaData, setLastArrhythmiaData] = useState<{
-    timestamp: number;
-    rmssd: number;
-    rrVariation: number;
-  } | null>(null);
+  const arrhythmiaDetectedRef = useRef(false);
+  const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
+  const processingStateRef = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING'>('IDLE');
+  const sessionIdRef = useRef<string>("");
   
-  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed } = useSignalProcessor();
+  // HOOKS UNIFICADOS - UNA SOLA INSTANCIA DE CADA UNO
+  const { 
+    startProcessing, 
+    stopProcessing, 
+    lastSignal, 
+    processFrame, 
+    isProcessing, 
+    framesProcessed 
+  } = useSignalProcessor();
+  
   const { 
     processSignal: processHeartBeat, 
-    setArrhythmiaState 
+    setArrhythmiaState,
+    reset: resetHeartBeat
   } = useHeartBeatProcessor();
+  
   const { 
     processSignal: processVitalSigns, 
     reset: resetVitalSigns,
@@ -57,101 +67,83 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
+  // GENERADOR DE SESSION ID ÚNICO PARA PREVENIR DUPLICIDADES
+  useEffect(() => {
+    const randomBytes = new Uint32Array(2);
+    crypto.getRandomValues(randomBytes);
+    sessionIdRef.current = `session_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}`;
+    console.log(`🚀 NUEVA SESIÓN UNIFICADA: ${sessionIdRef.current}`);
+  }, []);
+
+  // PANTALLA COMPLETA UNIFICADA
   const enterFullScreen = async () => {
+    if (isFullscreen) return;
+    
     try {
-      if (!isFullscreen) {
-        const docEl = document.documentElement;
-        
-        if (docEl.requestFullscreen) {
-          await docEl.requestFullscreen();
-        } else if ((docEl as any).webkitRequestFullscreen) {
-          await (docEl as any).webkitRequestFullscreen();
-        } else if ((docEl as any).msRequestFullscreen) {
-          await (docEl as any).msRequestFullscreen();
-        } else if ((docEl as any).mozRequestFullScreen) {
-          await (docEl as any).mozRequestFullScreen();
-        }
-        
-        // Bloquear orientación si es dispositivo móvil
-        if (screen.orientation && screen.orientation.lock) {
-          try {
-            await screen.orientation.lock('portrait');
-            console.log('Orientación portrait bloqueada');
-          } catch (err) {
-            console.log('Error al bloquear la orientación:', err);
-          }
-        }
-        
-        setIsFullscreen(true);
-        console.log("Pantalla completa activada");
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        await docEl.requestFullscreen();
+      } else if ((docEl as any).webkitRequestFullscreen) {
+        await (docEl as any).webkitRequestFullscreen();
       }
+      
+      if (screen.orientation?.lock) {
+        await screen.orientation.lock('portrait').catch(() => {});
+      }
+      
+      setIsFullscreen(true);
+      console.log(`📱 Pantalla completa activada - ${sessionIdRef.current}`);
     } catch (err) {
-      console.log('Error al entrar en pantalla completa:', err);
+      console.log('Error pantalla completa:', err);
     }
   };
   
   const exitFullScreen = () => {
+    if (!isFullscreen) return;
+    
     try {
-      if (isFullscreen) {
-        if (document.exitFullscreen) {
-          document.exitFullscreen();
-        } else if ((document as any).webkitExitFullscreen) {
-          (document as any).webkitExitFullscreen();
-        } else if ((document as any).msExitFullscreen) {
-          (document as any).msExitFullscreen();
-        } else if ((document as any).mozCancelFullScreen) {
-          (document as any).mozCancelFullScreen();
-        }
-        
-        // Desbloquear orientación si es necesario
-        if (screen.orientation && screen.orientation.unlock) {
-          screen.orientation.unlock();
-          console.log('Orientación desbloqueada');
-        }
-        
-        setIsFullscreen(false);
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
       }
+      
+      screen.orientation?.unlock();
+      setIsFullscreen(false);
     } catch (err) {
-      console.log('Error al salir de pantalla completa:', err);
+      console.log('Error saliendo de pantalla completa:', err);
     }
   };
-  
-  // Activar pantalla completa automáticamente al cargar la página
+
+  // INICIALIZACIÓN AUTOMÁTICA DE PANTALLA COMPLETA
   useEffect(() => {
-    setTimeout(() => {
-      enterFullScreen();
-    }, 1000); // Pequeño retraso para asegurar que todo está cargado
+    const timer = setTimeout(() => enterFullScreen(), 1000);
     
-    // Detectar cambios en el estado de pantalla completa
     const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(
         document.fullscreenElement || 
-        (document as any).webkitFullscreenElement || 
-        (document as any).msFullscreenElement || 
-        (document as any).mozFullScreenElement
+        (document as any).webkitFullscreenElement
       ));
     };
     
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
-    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
     
     return () => {
+      clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
-      
-      // Asegurarse de salir del modo pantalla completa al desmontar
       exitFullScreen();
     };
   }, []);
 
+  // PREVENIR SCROLL UNIFICADO
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
-    document.body.addEventListener('touchmove', preventScroll, { passive: false });
-    document.body.addEventListener('scroll', preventScroll, { passive: false });
+    const options = { passive: false };
+    
+    document.body.addEventListener('touchmove', preventScroll, options);
+    document.body.addEventListener('scroll', preventScroll, options);
 
     return () => {
       document.body.removeEventListener('touchmove', preventScroll);
@@ -159,76 +151,86 @@ const Index = () => {
     };
   }, []);
 
+  // SINCRONIZACIÓN DE RESULTADOS VÁLIDOS
   useEffect(() => {
     if (lastValidResults && !isMonitoring) {
       setVitalSigns(lastValidResults);
       setShowResults(true);
+      console.log(`✅ Resultados válidos sincronizados - ${sessionIdRef.current}`, lastValidResults);
     }
   }, [lastValidResults, isMonitoring]);
 
+  // FUNCIÓN UNIFICADA DE INICIO - ELIMINA DUPLICIDADES
   const startMonitoring = () => {
-    if (isMonitoring) {
-      finalizeMeasurement();
-    } else {
-      enterFullScreen();
-      setIsMonitoring(true);
-      setIsCameraOn(true);
-      setShowResults(false);
-      
-      // Iniciar procesamiento de señal
-      startProcessing();
-      
-      // Resetear valores
-      setElapsedTime(0);
-      setVitalSigns(prev => ({
-        ...prev,
-        arrhythmiaStatus: "SIN ARRITMIAS|0"
-      }));
-      
-      // Iniciar calibración automática
-      console.log("Iniciando fase de calibración automática");
-      startAutoCalibration();
-      
-      // Iniciar temporizador para medición
-      if (measurementTimerRef.current) {
-        clearInterval(measurementTimerRef.current);
-      }
-      
-      measurementTimerRef.current = window.setInterval(() => {
-        setElapsedTime(prev => {
-          const newTime = prev + 1;
-          console.log(`Tiempo transcurrido: ${newTime}s`);
-          
-          // Finalizar medición después de 30 segundos
-          if (newTime >= 30) {
-            finalizeMeasurement();
-            return 30;
-          }
-          return newTime;
-        });
-      }, 1000);
+    // PREVENIR MÚLTIPLES INICIALIZACIONES PARALELAS
+    if (processingStateRef.current !== 'IDLE') {
+      console.warn(`⚠️ Inicio bloqueado - Estado actual: ${processingStateRef.current} - ${sessionIdRef.current}`);
+      return;
     }
+    
+    processingStateRef.current = 'STARTING';
+    console.log(`🎬 INICIO UNIFICADO DE MEDICIÓN - ${sessionIdRef.current}`);
+    
+    // UN SOLO BEEP DE ARRANQUE
+    if (navigator.vibrate) {
+      navigator.vibrate([200, 100, 200]);
+    }
+    
+    enterFullScreen();
+    setIsMonitoring(true);
+    setIsCameraOn(true);
+    setShowResults(false);
+    
+    // INICIAR PROCESAMIENTO UNA SOLA VEZ
+    startProcessing();
+    
+    // RESETEAR VALORES UNA SOLA VEZ
+    setElapsedTime(0);
+    setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
+    
+    // CALIBRACIÓN AUTOMÁTICA UNA SOLA VEZ
+    console.log(`🔧 Iniciando calibración unificada - ${sessionIdRef.current}`);
+    startAutoCalibration();
+    
+    // TEMPORIZADOR UNIFICADO
+    if (measurementTimerRef.current) {
+      clearInterval(measurementTimerRef.current);
+    }
+    
+    measurementTimerRef.current = window.setInterval(() => {
+      setElapsedTime(prev => {
+        const newTime = prev + 1;
+        if (newTime >= 30) {
+          finalizeMeasurement();
+          return 30;
+        }
+        return newTime;
+      });
+    }, 1000);
+    
+    processingStateRef.current = 'ACTIVE';
+    console.log(`✅ Medición iniciada exitosamente - ${sessionIdRef.current}`);
   };
 
+  // CALIBRACIÓN UNIFICADA SIN DUPLICIDADES
   const startAutoCalibration = () => {
-    console.log("Iniciando auto-calibración real con indicadores visuales");
+    if (isCalibrating) return; // PREVENIR DUPLICIDADES
+    
+    console.log(`🎯 Calibración automática iniciada - ${sessionIdRef.current}`);
     setIsCalibrating(true);
-    
-    // Iniciar la calibración en el procesador
     startCalibration();
-    
-    // El progreso de la calibración será actualizado por el hook useVitalSignsProcessor
-    // y reflejado a través del estado calibrationProgress.
-    
-    // Eliminar la simulación visual con setInterval y setTimeout
-    // La lógica de calibración es ahora completamente manejada por el procesador
   };
 
+  // FINALIZACIÓN UNIFICADA
   const finalizeMeasurement = () => {
-    console.log("Finalizando medición: manteniendo resultados");
+    if (processingStateRef.current === 'STOPPING' || processingStateRef.current === 'IDLE') {
+      return;
+    }
+    
+    processingStateRef.current = 'STOPPING';
+    console.log(`🏁 FINALIZANDO MEDICIÓN UNIFICADA - ${sessionIdRef.current}`);
     
     if (isCalibrating) {
-      console.log("Calibración en progreso al finalizar, forzando finalización");
       forceCalibrationCompletion();
     }
     
@@ -251,10 +253,16 @@ const Index = () => {
     setElapsedTime(0);
     setSignalQuality(0);
     setCalibrationProgress(undefined);
+    
+    processingStateRef.current = 'IDLE';
+    console.log(`✅ Medición finalizada - ${sessionIdRef.current}`);
   };
 
+  // RESET COMPLETO UNIFICADO
   const handleReset = () => {
-    console.log("Reseteando completamente la aplicación");
+    processingStateRef.current = 'STOPPING';
+    console.log(`🔄 RESET COMPLETO UNIFICADO - ${sessionIdRef.current}`);
+    
     setIsMonitoring(false);
     setIsCameraOn(false);
     setShowResults(false);
@@ -267,6 +275,9 @@ const Index = () => {
     }
     
     fullResetVitalSigns();
+    resetHeartBeat();
+    
+    // RESETEAR TODOS LOS ESTADOS
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -276,105 +287,77 @@ const Index = () => {
       pressure: "--/--",
       arrhythmiaStatus: "--",
       glucose: 0,
-      lipids: {
-        totalCholesterol: 0,
-        triglycerides: 0
-      },
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
       hemoglobin: 0
     });
     setArrhythmiaCount("--");
     setSignalQuality(0);
-    setLastArrhythmiaData(null);
+    lastArrhythmiaData.current = null;
     setCalibrationProgress(undefined);
+    arrhythmiaDetectedRef.current = false;
+    
+    processingStateRef.current = 'IDLE';
+    console.log(`✅ Reset completado - ${sessionIdRef.current}`);
   };
 
+  // MANEJO UNIFICADO DEL STREAM DE CÁMARA
   const handleStreamReady = (stream: MediaStream) => {
-    if (!isMonitoring) return;
+    if (!isMonitoring || processingStateRef.current !== 'ACTIVE') return;
+    
+    console.log(`📹 Stream de cámara listo - ${sessionIdRef.current}`);
     
     const videoTrack = stream.getVideoTracks()[0];
     
-    // Asegurar que la linterna esté encendida para mediciones de PPG
+    // ACTIVAR LINTERNA UNA SOLA VEZ
     if (videoTrack.getCapabilities()?.torch) {
-      console.log("Activando linterna para mejorar la señal PPG");
       videoTrack.applyConstraints({
         advanced: [{ torch: true }]
-      }).catch(err => console.error("Error activando linterna:", err));
-    } else {
-      console.warn("Esta cámara no tiene linterna disponible, la medición puede ser menos precisa");
+      }).catch(err => console.error("Error linterna:", err));
     }
     
-    // Crear un canvas de tamaño óptimo para el procesamiento
+    // PROCESAMIENTO UNIFICADO DE FRAMES
     const tempCanvas = document.createElement('canvas');
     const tempCtx = tempCanvas.getContext('2d', {willReadFrequently: true});
-    if (!tempCtx) {
-      console.error("No se pudo obtener el contexto 2D");
-      return;
-    }
+    if (!tempCtx) return;
     
-    // Variables para controlar el rendimiento y la tasa de frames
     let lastProcessTime = 0;
-    const targetFrameInterval = 1000/30; // Apuntar a 30 FPS para precisión
-    let frameCount = 0;
-    let lastFpsUpdateTime = Date.now();
-    let processingFps = 0;
+    const targetFrameInterval = 1000/30; // 30 FPS PRECISOS
     
-    // Obtener el elemento video para capturar frames
     const videoElement = document.querySelector('video') as HTMLVideoElement;
-    if (!videoElement) {
-      console.error("No se encontró el elemento video");
-      return;
-    }
+    if (!videoElement) return;
     
     const processImage = async () => {
-      if (!isMonitoring || !videoElement) return;
+      if (!isMonitoring || processingStateRef.current !== 'ACTIVE' || !videoElement) return;
       
       const now = Date.now();
       const timeSinceLastProcess = now - lastProcessTime;
       
-      // Control de tasa de frames para no sobrecargar el dispositivo
       if (timeSinceLastProcess >= targetFrameInterval) {
         try {
-          // Verificar que el video esté listo
           if (videoElement.readyState >= 2) {
-            // Configurar tamaño del canvas basado en el video
             const targetWidth = Math.min(320, videoElement.videoWidth || 320);
             const targetHeight = Math.min(240, videoElement.videoHeight || 240);
             
             tempCanvas.width = targetWidth;
             tempCanvas.height = targetHeight;
             
-            // Capturar frame del video
             tempCtx.drawImage(
               videoElement, 
               0, 0, videoElement.videoWidth, videoElement.videoHeight,
               0, 0, targetWidth, targetHeight
             );
             
-            // Obtener datos de la imagen
             const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
-            
-            // Procesar el frame
             processFrame(imageData);
             
-            // Actualizar contadores para monitoreo de rendimiento
-            frameCount++;
             lastProcessTime = now;
-            
-            // Calcular FPS cada segundo
-            if (now - lastFpsUpdateTime > 1000) {
-              processingFps = frameCount;
-              frameCount = 0;
-              lastFpsUpdateTime = now;
-              console.log(`Rendimiento de procesamiento: ${processingFps} FPS`);
-            }
           }
         } catch (error) {
-          console.error("Error capturando frame:", error);
+          console.error("Error procesando frame:", error);
         }
       }
       
-      // Programar el siguiente frame
-      if (isMonitoring) {
+      if (isMonitoring && processingStateRef.current === 'ACTIVE') {
         requestAnimationFrame(processImage);
       }
     };
@@ -382,76 +365,92 @@ const Index = () => {
     processImage();
   };
 
+  // PROCESAMIENTO UNIFICADO DE SEÑALES - ELIMINA DUPLICIDADES
   useEffect(() => {
-      if (!lastSignal) {
-        console.log("[DIAG] Index.tsx: lastSignal es nulo o indefinido.");
-        return;
-      }
+    if (!lastSignal) return;
 
-      console.log("[DIAG] Index.tsx: Procesando lastSignal", {
-        timestamp: new Date(lastSignal.timestamp).toISOString(),
-        fingerDetected: lastSignal.fingerDetected,
-        quality: lastSignal.quality,
-        rawValue: lastSignal.rawValue,
-        filteredValue: lastSignal.filteredValue,
-        isMonitoring: isMonitoring
-      });
+    // ACTUALIZAR CALIDAD SIEMPRE
+    setSignalQuality(lastSignal.quality);
+    
+    // SOLO PROCESAR SI ESTÁ MONITOREANDO Y EN ESTADO ACTIVO
+    if (!isMonitoring || processingStateRef.current !== 'ACTIVE') return;
+    
+    const MIN_SIGNAL_QUALITY = 40;
+    
+    // VALIDACIÓN UNIFICADA
+    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
+      setHeartRate(0);
+      setHeartbeatSignal(0);
+      setBeatMarker(0);
+      return;
+    }
 
-      // Actualizar calidad siempre
-      setSignalQuality(lastSignal.quality);
-      // Si no está monitoreando, no procesar
-      if (!isMonitoring) {
-        console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
-        return;
-      }
-      
-    // Umbral MÁS ALTO de calidad para procesar
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 40; // Aumentado de 30 a 40
-      // Si no hay dedo válido o calidad insuficiente, resetear indicadores
-      if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
-        console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
-          fingerDetected: lastSignal.fingerDetected,
-          quality: lastSignal.quality,
-          minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
-        });
-        setHeartRate(0);
-        setHeartbeatSignal(0);
-        setBeatMarker(0);
-        return;
-      }
-
-    // Señal válida, procesar latidos y signos vitales
-    const heartBeatResult = processHeartBeat(lastSignal.filteredValue, lastSignal.fingerDetected, lastSignal.timestamp);
+    // PROCESAMIENTO UNIFICADO DE LATIDOS
+    const heartBeatResult = processHeartBeat(
+      lastSignal.filteredValue, 
+      lastSignal.fingerDetected, 
+      lastSignal.timestamp
+    );
+    
     setHeartRate(heartBeatResult.bpm);
     setHeartbeatSignal(lastSignal.filteredValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
-    // Actualizar últimos intervalos RR para debug
+    
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
+    
+    // PROCESAMIENTO UNIFICADO DE SIGNOS VITALES
     const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
+      
       if (vitals.lastArrhythmiaData) {
-        setLastArrhythmiaData(vitals.lastArrhythmiaData);
+        lastArrhythmiaData.current = vitals.lastArrhythmiaData;
         const [status, count] = vitals.arrhythmiaStatus.split('|');
         setArrhythmiaCount(count || "0");
+        
         const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
         if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
           arrhythmiaDetectedRef.current = isArrhythmiaDetected;
           setArrhythmiaState(isArrhythmiaDetected);
+          
           if (isArrhythmiaDetected) {
-            toast({ title: "¡Arritmia detectada!", description: "Se activará un sonido distintivo con los latidos.", variant: "destructive", duration: 3000 });
+            toast({ 
+              title: "¡Arritmia detectada!", 
+              description: "Latido irregular identificado.", 
+              variant: "destructive", 
+              duration: 3000 
+            });
           }
         }
       }
     }
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
-  // Referencia para activar o desactivar el sonido de arritmia
-  const arrhythmiaDetectedRef = useRef(false);
-  
-  // Nueva función para alternar medición
+  // CONTROL DE CALIBRACIÓN UNIFICADO
+  useEffect(() => {
+    if (!isCalibrating) return;
+    
+    const interval = setInterval(() => {
+      const currentProgress = getCalibrationProgress();
+      setCalibrationProgress(currentProgress);
+
+      if (!currentProgress?.isCalibrating) {
+        clearInterval(interval);
+        setIsCalibrating(false);
+        console.log(`✅ Calibración finalizada - ${sessionIdRef.current}`);
+        
+        if (navigator.vibrate) {
+          navigator.vibrate([100, 50, 100]);
+        }
+      }
+    }, 500);
+
+    return () => clearInterval(interval);
+  }, [isCalibrating, getCalibrationProgress]);
+
+  // FUNCIÓN TOGGLE UNIFICADA
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
@@ -459,27 +458,6 @@ const Index = () => {
       startMonitoring();
     }
   };
-
-  // Observar el progreso real de la calibración desde el procesador de signos vitales
-  useEffect(() => {
-    if (isCalibrating) {
-      const interval = setInterval(() => {
-        const currentProgress = getCalibrationProgress();
-        setCalibrationProgress(currentProgress);
-
-        if (!currentProgress?.isCalibrating) {
-          clearInterval(interval);
-          console.log("Calibración finalizada según el procesador.");
-          setIsCalibrating(false);
-          if (navigator.vibrate) {
-            navigator.vibrate([100, 50, 100]);
-          }
-        }
-      }, 500); // Actualizar el progreso cada 500ms
-
-      return () => clearInterval(interval);
-    }
-  }, [isCalibrating, getCalibrationProgress]);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
@@ -491,13 +469,14 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-      {/* Debug overlay de intervalos RR */}
+      {/* DEBUG DE INTERVALOS RR */}
       {rrIntervals.length > 0 && (
         <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded">
-          Últimos intervalos RR: {rrIntervals.map(i => i + ' ms').join(', ')}
+          RR: {rrIntervals.map(i => i + 'ms').join(', ')}
         </div>
       )}
-      {/* Overlay button for re-entering fullscreen if user exits */}
+
+      {/* OVERLAY DE PANTALLA COMPLETA */}
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -523,7 +502,7 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* Se agrega header para sensor de calidad y estado de huella digital */}
+          {/* HEADER DE ESTADO UNIFICADO */}
           <div className="px-4 py-2 flex justify-around items-center bg-black/20">
             <div className="text-white text-lg">
               Calidad: {signalQuality}
@@ -531,23 +510,32 @@ const Index = () => {
             <div className="text-white text-lg">
               {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
             </div>
+            <div className="text-white text-lg">
+              Estado: {processingStateRef.current}
+            </div>
           </div>
-          {/* Panel de estado */}
+
+          {/* PANEL DE INFORMACIÓN UNIFICADO */}
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
             <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
+            <div>Sesión: {sessionIdRef.current.slice(-8)}</div>
           </div>
-          {/* Panel de debug */}
+
+          {/* DEBUG PANEL UNIFICADO */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
             <summary className="cursor-pointer">Debug Signal Info</summary>
             <pre className="whitespace-pre-wrap text-xs">
-              Signal Quality: {lastSignal?.quality || 0}
-              {'\n'}Finger Detected: {lastSignal?.fingerDetected ? 'Yes' : 'No'}
-              {'\n'}Raw Value: {lastSignal?.rawValue || 0}
-              {'\n'}Filtered Value: {lastSignal?.filteredValue || 0}
+              Calidad Señal: {lastSignal?.quality || 0}
+              {'\n'}Dedo Detectado: {lastSignal?.fingerDetected ? 'Sí' : 'No'}
+              {'\n'}Valor Crudo: {lastSignal?.rawValue || 0}
+              {'\n'}Valor Filtrado: {lastSignal?.filteredValue || 0}
+              {'\n'}Estado Procesamiento: {processingStateRef.current}
+              {'\n'}Sesión ID: {sessionIdRef.current}
             </pre>
           </details>
+
           <div className="flex-1">
             <PPGSignalMeter 
               value={beatMarker}
@@ -556,12 +544,12 @@ const Index = () => {
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
-              rawArrhythmiaData={lastArrhythmiaData}
+              rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
             />
           </div>
 
-          {/* Contenedor de los displays ampliado y con mayor espaciamiento */}
+          {/* DISPLAYS DE SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
@@ -603,7 +591,7 @@ const Index = () => {
             </div>
           </div>
 
-          {/* Botonera inferior: botón de iniciar/detener y de reset en fila */}
+          {/* BOTONERA UNIFICADA */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 
