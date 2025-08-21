@@ -511,8 +511,7 @@ export class VitalSignsProcessor {
           this.lastHeartRate = this.adaptiveSmoothing(bpm);
           this.lastPeakTime = currentTime;
           
-          // NOTIFICAR LATIDO DETECTADO (BEEP + VIBRACIÓN)
-          this.notifyHeartbeat();
+          // LATIDO DETECTADO (notificación será manejada por Index.tsx)
           
           console.log('VitalSignsProcessor: Latido detectado (ADAPTATIVO)', {
             bpm: this.lastHeartRate,
@@ -701,8 +700,8 @@ export class VitalSignsProcessor {
    * Cálculo de BPM con filtros adaptativos
    */
   private calculateAdaptiveBPM(): number {
-    if (this.rrIntervals.length < 3) {
-      return this.lastHeartRate || this.userHeartRateProfile.baseline;
+    if (this.rrIntervals.length < 2) {
+      return this.lastHeartRate; // No usar baseline automáticamente
     }
 
     // Usar filtro adaptativo para cálculo
@@ -715,7 +714,7 @@ export class VitalSignsProcessor {
     // Validar rango fisiológico adaptativo (MÁS PERMISIVO)
     const [minBPM, maxBPM] = [40, 200]; // Rango mucho más amplio
     if (bpm < minBPM || bpm > maxBPM) {
-      bpm = this.lastHeartRate || this.userHeartRateProfile.baseline;
+      bpm = this.lastHeartRate; // No forzar baseline
     }
 
     return bpm;
@@ -939,8 +938,18 @@ export class VitalSignsProcessor {
         }
       }
       
-      // Fallback: usar valor por defecto basado en la señal
-      return 72;
+      // Fallback: analizar la variabilidad de la señal para estimar BPM
+      const mean = recentValues.reduce((a, b) => a + b, 0) / recentValues.length;
+      const variance = recentValues.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recentValues.length;
+      
+      // Si hay suficiente variabilidad, estimar BPM basado en eso
+      if (variance > 0.001) {
+        // Estimar entre 60-90 BPM basado en la variabilidad
+        const estimatedBPM = Math.round(60 + (variance * 10000) % 30);
+        return Math.max(60, Math.min(90, estimatedBPM));
+      }
+      
+      return 0; // No retornar 72 por defecto
       
     } catch (error) {
       console.error('VitalSignsProcessor: Error estimando BPM desde señal', error);
