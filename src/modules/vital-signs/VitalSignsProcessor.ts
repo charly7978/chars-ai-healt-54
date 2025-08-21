@@ -1,4 +1,3 @@
-
 import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
 
 export interface VitalSignsResult {
@@ -140,8 +139,8 @@ export class VitalSignsProcessor {
       rrIntervalos: rrData?.intervals?.length || 0
     });
 
-    // 1. SpO2 - Usando algoritmo matemático avanzado
-    const newSpo2 = this.mathProcessor.calculateAdvancedSpO2?.(this.signalHistory) || 
+    // 1. SpO2 - Usando algoritmo matemático avanzado con parámetros correctos
+    const newSpo2 = this.mathProcessor.calculateAdvancedSpO2?.(this.signalHistory, 30, 0.8) || 
                     this.calculateSpO2Real(this.signalHistory);
     this.measurements.spo2 = Math.max(0, Math.min(100, newSpo2));
 
