@@ -239,6 +239,13 @@ export class VitalSignsProcessor {
   ): VitalSignsResult {
     const currentTime = Date.now();
     
+    // DEBUG: Mostrar entrada de señal
+    console.log('VitalSignsProcessor: Procesando señal PPG', {
+      ppgValue: ppgValue.toFixed(3),
+      timestamp: new Date().toISOString(),
+      bufferLength: this.ppgBuffer.length
+    });
+    
     // ALGORITMO AVANZADO DE DETECCIÓN DE LATIDOS - BASADO EN IEEE TRANSACTIONS ON BIOMEDICAL ENGINEERING 2024
     const heartRate = this.detectHeartBeats(ppgValue, currentTime);
     
@@ -427,6 +434,12 @@ export class VitalSignsProcessor {
    * - Machine Learning para ajuste de parámetros en tiempo real
    */
   private detectHeartBeats(ppgValue: number, currentTime: number): number {
+    console.log('VitalSignsProcessor: detectHeartBeats llamado', {
+      ppgValue: ppgValue.toFixed(3),
+      currentTime,
+      bufferLength: this.ppgBuffer.length
+    });
+    
     // AGREGAR VALOR AL BUFFER ADAPTATIVO
     this.ppgBuffer.push(ppgValue);
     if (this.ppgBuffer.length > 120) {
