@@ -269,26 +269,21 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 10; // MUY PERMISIVO PARA DEBUG
+    const MIN_SIGNAL_QUALITY = 10;
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
-      console.log(`⚠️ Señal baja: dedo=${bestChannel?.isFingerDetected}, calidad=${bestChannel?.quality}`);
       return;
     }
 
-    // PROCESAR SEÑAL CARDÍACA CON VALORES REALES
     const heartBeatResult = processHeartBeat(
       lastSignal.filteredValue, 
       lastSignal.fingerDetected, 
       lastSignal.timestamp
     );
     
-    // USAR BPM AGREGADO SI ESTÁ DISPONIBLE, SINO EL DEL HEARTBEAT
     const finalBpm = lastResult.aggregatedBPM && lastResult.aggregatedBPM > 50 && lastResult.aggregatedBPM < 200 
       ? lastResult.aggregatedBPM 
       : (heartBeatResult.bpm && heartBeatResult.bpm > 50 && heartBeatResult.bpm < 200 ? heartBeatResult.bpm : 0);
-    
-    console.log(`💓 BPM DEBUG: agregado=${lastResult.aggregatedBPM}, heartbeat=${heartBeatResult.bpm}, final=${finalBpm}`);
     
     setHeartRate(finalBpm);
     setHeartbeatSignal(lastSignal.filteredValue);
@@ -356,25 +351,6 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-      {/* INDICADORES LIMPIOS */}
-      <div className="absolute top-4 left-4 text-white z-50 bg-black/50 p-3 rounded-lg text-sm">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${lastSignal?.fingerDetected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          <span>Dedo: {lastSignal?.fingerDetected ? 'OK' : 'NO'}</span>
-        </div>
-        <div className="flex items-center gap-2 mt-1">
-          <div className={`w-3 h-3 rounded-full ${signalQuality > 30 ? 'bg-green-500' : signalQuality > 15 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
-          <span>Calidad: {signalQuality}%</span>
-        </div>
-        <div className="flex items-center gap-2 mt-1">
-          <div className={`w-3 h-3 rounded-full ${heartRate > 0 ? 'bg-green-500' : 'bg-gray-500'}`}></div>
-          <span>BPM: {heartRate || '--'}</span>
-        </div>
-        <div className="text-xs text-gray-300 mt-1">
-          Canales: {lastResult?.channels.length || 0} | Frames: {framesProcessed}
-        </div>
-      </div>
-
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -403,7 +379,7 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          <div className="flex-1">
+          <div className="flex-1" style={{ marginTop: '6mm' }}>
             <PPGSignalMeter 
               value={beatMarker}
               quality={signalQuality}

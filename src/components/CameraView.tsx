@@ -45,7 +45,6 @@ const CameraView = ({
     try {
       setCameraError("");
       
-      // VERIFICAR PERMISOS
       const permission = await navigator.permissions.query({ name: 'camera' as PermissionName });
       console.log(`📷 Estado permisos: ${permission.state}`);
       
@@ -53,7 +52,6 @@ const CameraView = ({
         throw new Error('Permisos de cámara denegados');
       }
 
-      // CONFIGURACIÓN OPTIMIZADA
       const constraints: MediaStreamConstraints = {
         video: {
           facingMode: 'environment',
@@ -72,7 +70,6 @@ const CameraView = ({
         videoRef.current.play();
         setHasPermission(true);
         
-        // APLICAR TORCH SI ESTÁ DISPONIBLE
         if (enableTorch) {
           const track = stream.getVideoTracks()[0];
           if ('applyConstraints' in track) {
@@ -88,7 +85,6 @@ const CameraView = ({
         }
       }
 
-      // INICIAR PROCESAMIENTO
       processingRef.current = true;
       processFrame();
 
@@ -129,7 +125,6 @@ const CameraView = ({
       return;
     }
 
-    // CONTROL DE FPS
     const now = performance.now();
     const frameInterval = 1000 / targetFps;
     
@@ -141,18 +136,14 @@ const CameraView = ({
     lastProcessTimeRef.current = now;
     frameCountRef.current++;
 
-    // AJUSTAR CANVAS AL TAMAÑO DEL VIDEO
     canvas.width = targetW;
     canvas.height = Math.round(targetW * (video.videoHeight / video.videoWidth));
 
-    // DIBUJAR FRAME
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // EXTRAER DATOS DE PÍXELES
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
 
-    // CALCULAR VALORES PROMEDIO
     let rSum = 0, gSum = 0, bSum = 0;
     let rSumSq = 0;
     let validPixels = 0;
@@ -162,8 +153,8 @@ const CameraView = ({
       const g = data[i + 1];
       const b = data[i + 2];
 
-      // FILTRAR PÍXELES MUY OSCUROS O MUY CLAROS
-      if (r > 20 && r < 240 && g > 20 && g < 240 && b > 20 && b < 240) {
+      // RESTAURAR UMBRALES QUE FUNCIONABAN ANTES
+      if (r > 15 && r < 240 && g > 15 && g < 240 && b > 15 && b < 240) {
         rSum += r;
         gSum += g;
         bSum += b;
@@ -182,67 +173,90 @@ const CameraView = ({
     const bMean = bSum / validPixels;
     const rStd = Math.sqrt((rSumSq / validPixels) - (rMean * rMean));
 
-    // CREAR SAMPLE OPTIMIZADA
     const sample: CameraSample = {
       timestamp: now,
-      rMean: rMean / 255, // Normalizar 0-1
+      rMean: rMean / 255,
       rStd: rStd / 255,
       frameDiff: frameCountRef.current > 1 ? Math.abs(rMean - (window as any).lastRMean || rMean) : 0
     };
 
     (window as any).lastRMean = rMean;
 
-    // ENVIAR SAMPLE
     onSample(sample);
-
-    // CONTINUAR PROCESAMIENTO
     requestAnimationFrame(processFrame);
+  };
+
+  // Función para obtener el texto del estado de calidad
+  const getQualityStatus = () => {
+    if (!hasPermission) return "Iniciando cámara...";
+    if (!isFingerDetected) return "Coloque su dedo sobre la cámara";
+    if (signalQuality < 30) return "Mejore la posición del dedo";
+    if (signalQuality < 70) return "Señal aceptable";
+    return "Señal excelente";
+  };
+
+  const getQualityColor = () => {
+    if (!isFingerDetected) return "text-red-400";
+    if (signalQuality < 30) return "text-orange-400";
+    if (signalQuality < 70) return "text-yellow-400";
+    return "text-green-400";
   };
 
   return (
     <div className="relative w-full h-full bg-black overflow-hidden">
-      {/* VIDEO PREVIEW */}
       <video
         ref={videoRef}
-        className="absolute inset-0 w-full h-full object-cover"
+        className="absolute inset-0 w-full h-full object-cover opacity-90"
         autoPlay
         playsInline
         muted
       />
 
-      {/* CANVAS OCULTO PARA PROCESAMIENTO */}
       <canvas
         ref={canvasRef}
         className="hidden"
       />
 
-      {/* OVERLAY DE ESTADO LIMPIO */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        {!hasPermission && (
-          <div className="bg-black/70 text-white p-4 rounded-lg text-center">
-            <div className="text-lg font-semibold mb-2">
-              {cameraError ? '❌ Error de Cámara' : '📷 Iniciando Cámara...'}
+      {/* INDICADOR DE CALIDAD LIMPIO PARA USUARIO FINAL */}
+      <div className="absolute top-4 left-4 right-4">
+        <div className="bg-black/60 backdrop-blur-sm rounded-lg p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${isFingerDetected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+              <span className={`text-sm font-medium ${getQualityColor()}`}>
+                {getQualityStatus()}
+              </span>
             </div>
-            {cameraError && (
-              <div className="text-sm text-red-300">{cameraError}</div>
-            )}
-          </div>
-        )}
-        
-        {hasPermission && (
-          <div className="absolute bottom-4 left-4 right-4">
-            <div className="bg-black/50 text-white p-3 rounded-lg text-center">
-              <div className="text-sm">
-                Coloque su dedo sobre la cámara trasera con flash
-              </div>
-              <div className="text-xs mt-1 text-gray-300">
-                Estado: {isFingerDetected ? '✅ Dedo detectado' : '⏳ Buscando dedo'} 
-                | Calidad: {signalQuality}%
+            <div className="text-right">
+              <div className="text-xs text-gray-300">Calidad</div>
+              <div className={`text-sm font-bold ${getQualityColor()}`}>
+                {signalQuality}%
               </div>
             </div>
           </div>
-        )}
+          
+          {/* Barra de progreso de calidad */}
+          <div className="mt-2 w-full bg-gray-700 rounded-full h-2">
+            <div 
+              className={`h-2 rounded-full transition-all duration-300 ${
+                signalQuality < 30 ? 'bg-red-500' : 
+                signalQuality < 70 ? 'bg-yellow-500' : 'bg-green-500'
+              }`}
+              style={{ width: `${Math.min(signalQuality, 100)}%` }}
+            ></div>
+          </div>
+        </div>
       </div>
+
+      {/* MENSAJE DE ERROR SI HAY */}
+      {cameraError && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="bg-red-900/80 backdrop-blur-sm text-white p-4 rounded-lg text-center max-w-xs">
+            <div className="text-lg font-semibold mb-2">❌ Error de Cámara</div>
+            <div className="text-sm">{cameraError}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

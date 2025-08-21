@@ -1,6 +1,5 @@
-
 /**
- * PPGChannel CORREGIDO: BPM preciso con algoritmos mejorados
+ * PPGChannel OPTIMIZADO: BPM preciso con ondas más finas
  */
 
 import { savitzkyGolay } from './SavitzkyGolayFilter';
@@ -17,7 +16,7 @@ export default class PPGChannel {
   private lastBpm: number | null = null;
   private lastSnr = 0;
   private lastQuality = 0;
-  private minRMeanForFinger = 12; // MUY PERMISIVO PARA DEBUG
+  private minRMeanForFinger = 25; // RESTAURAR VALOR QUE FUNCIONABA
   private peakHistory: number[] = [];
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
@@ -56,23 +55,22 @@ export default class PPGChannel {
     const N = Math.min(256, this.buffer.length);
     const sampled = this.resampleUniform(this.buffer, N);
     const detr = this.detrend(sampled);
-    const smooth = savitzkyGolay(detr, Math.min(15, N-2), 3);
+    // SUAVIZADO MÁS SUTIL PARA ONDAS MÁS FINAS
+    const smooth = savitzkyGolay(detr, Math.min(9, N-2), 2); // Reducido de 15 a 9, grado 2
     
-    // DETECTAR PICOS REALES PARA BPM PRECISO
     const peaks = this.findRealPeaks(smooth);
-    this.peakHistory = [...this.peakHistory, ...peaks].slice(-20); // Mantener historial
+    this.peakHistory = [...this.peakHistory, ...peaks].slice(-20);
     
     const fs = N / this.windowSec;
 
-    // CÁLCULO BPM MEJORADO - MÚLTIPLES MÉTODOS
     let bpm = null;
     
-    // Método 1: Intervalos entre picos
+    // Método 1: Intervalos entre picos - MÁS PRECISO
     if (peaks.length >= 3) {
       const intervals = [];
       for (let i = 1; i < peaks.length; i++) {
-        const interval = (peaks[i] - peaks[i-1]) / fs * 1000; // ms
-        if (interval > 300 && interval < 2000) { // 30-200 BPM válido
+        const interval = (peaks[i] - peaks[i-1]) / fs * 1000;
+        if (interval > 300 && interval < 2000) {
           intervals.push(interval);
         }
       }
@@ -80,7 +78,6 @@ export default class PPGChannel {
       if (intervals.length >= 2) {
         const avgInterval = intervals.reduce((a,b) => a+b, 0) / intervals.length;
         const bpmFromPeaks = Math.round(60000 / avgInterval);
-        console.log(`📈 Canal ${this.channelId}: BPM por picos=${bpmFromPeaks}, intervalos=${intervals.map(i => i.toFixed(0)).join(',')}`);
         
         if (bpmFromPeaks >= 50 && bpmFromPeaks <= 200) {
           bpm = bpmFromPeaks;
@@ -88,13 +85,11 @@ export default class PPGChannel {
       }
     }
     
-    // Método 2: Análisis de frecuencia (fallback)
+    // Método 2: Análisis de frecuencia mejorado
     if (!bpm) {
-      // Rango cardíaco: 0.8-3.5 Hz (48-210 BPM)
-      const freqs = this.linspace(0.8, 3.5, 80);
+      const freqs = this.linspace(0.8, 3.5, 100); // Mayor resolución
       const powers = freqs.map(f => goertzelPower(smooth, fs, f));
       
-      // Encontrar pico dominante
       let maxPower = 0;
       let maxFreq = 0;
       for (let i = 0; i < powers.length; i++) {
@@ -104,9 +99,8 @@ export default class PPGChannel {
         }
       }
       
-      if (maxPower > 1e-6) { // Umbral mínimo
+      if (maxPower > 1e-6) {
         const bpmFromFreq = Math.round(maxFreq * 60);
-        console.log(`🎵 Canal ${this.channelId}: BPM por frecuencia=${bpmFromFreq}, power=${maxPower.toExponential(2)}`);
         
         if (bpmFromFreq >= 50 && bpmFromFreq <= 200) {
           bpm = bpmFromFreq;
@@ -114,29 +108,26 @@ export default class PPGChannel {
       }
     }
 
-    // Método 3: Historial (suavizado)
+    // Suavizado inteligente
     if (bpm && this.lastBpm) {
       const diff = Math.abs(bpm - this.lastBpm);
-      if (diff > 20) { // Cambio muy brusco
-        bpm = Math.round((bpm + this.lastBpm) / 2); // Promedio
-        console.log(`🔄 Canal ${this.channelId}: BPM suavizado=${bpm}`);
+      if (diff > 15) { // Menos agresivo
+        bpm = Math.round((bpm * 0.7) + (this.lastBpm * 0.3));
       }
     }
 
-    // Calidad y SNR
+    // Calidad y SNR optimizados
     const meanLast = sampled.reduce((a,b)=>a+b,0)/sampled.length;
     const variance = this.calculateVariance(sampled);
     const snr = variance > 0 ? (Math.max(...sampled) - Math.min(...sampled)) / variance : 0;
     const quality = computeSNR(variance, Math.min(...sampled));
 
-    // DETECCIÓN DE DEDO MEJORADA
-    const hasVariation = variance > 0.1;
+    // DETECCIÓN DE DEDO RESTAURADA A VALORES QUE FUNCIONABAN
+    const hasVariation = variance > 0.05; // Más sensible
     const hasGoodMean = meanLast >= this.minRMeanForFinger;
-    const hasReasonableRange = (Math.max(...sampled) - Math.min(...sampled)) > 2;
+    const hasReasonableRange = (Math.max(...sampled) - Math.min(...sampled)) > 1.5;
     
     const isFinger = hasGoodMean && hasVariation && hasReasonableRange;
-
-    console.log(`📊 Canal ${this.channelId}: BPM=${bpm}, mean=${meanLast.toFixed(1)}, var=${variance.toFixed(3)}, dedo=${isFinger}, picos=${peaks.length}`);
 
     this.lastBpm = bpm;
     this.lastSnr = snr;
@@ -151,7 +142,7 @@ export default class PPGChannel {
     };
   }
 
-  // DETECTOR DE PICOS MEJORADO
+  // DETECTOR DE PICOS OPTIMIZADO PARA ONDAS MÁS FINAS
   private findRealPeaks(signal: number[]): number[] {
     if (signal.length < 5) return [];
     
@@ -164,8 +155,7 @@ export default class PPGChannel {
                         current > signal[i-2] && current > signal[i+2];
       
       if (isLocalMax && current > threshold) {
-        // Verificar que no hay otro pico muy cerca
-        const tooClose = peaks.some(p => Math.abs(i - p) < 8); // Mín 8 muestras entre picos
+        const tooClose = peaks.some(p => Math.abs(i - p) < 6); // Menos restrictivo
         if (!tooClose) {
           peaks.push(i);
         }
@@ -178,7 +168,7 @@ export default class PPGChannel {
   private calculateAdaptiveThreshold(signal: number[]): number {
     const mean = signal.reduce((a,b) => a+b, 0) / signal.length;
     const variance = this.calculateVariance(signal);
-    return mean + variance * 0.5; // Threshold adaptativo
+    return mean + variance * 0.4; // Menos restrictivo
   }
 
   private calculateVariance(arr: number[]): number {
