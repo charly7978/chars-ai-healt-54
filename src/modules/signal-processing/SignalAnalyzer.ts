@@ -58,10 +58,10 @@ export class SignalAnalyzer {
 
     // Weighted sum – weights optimized for stability - CALIBRACIÓN SUTIL PARA ROBUSTEZ
     const weighted =
-      redChannel * 0.38 +      // Ligeramente reducido para mayor equilibrio
-      stability * 0.38 +       // Aumentado para mayor estabilidad
+      redChannel * 0.50 +      // Ligeramente reducido para mayor equilibrio
+      stability * 0.50 +       // Aumentado para mayor estabilidad
       pulsatility * 0.16 +     // Mantenido para estabilidad
-      biophysical * 0.06 +     // Reducido para menor sensibilidad a cambios
+      biophysical * 0.05 +     // Reducido para menor sensibilidad a cambios
       periodicity * 0.02;      // Mantenido mínimo
 
     // Map 0-1 range to 0-100 and clamp.
@@ -97,8 +97,8 @@ export class SignalAnalyzer {
       detectorScores: this.detectorScores, 
       smoothedQuality: smoothedQuality,
       weights: {
-        redChannel: 0.35,
-        stability: 0.30,
+        redChannel: 0.50,
+        stability: 0.50,
         pulsatility: 0.20,
         biophysical: 0.12,
         periodicity: 0.03
