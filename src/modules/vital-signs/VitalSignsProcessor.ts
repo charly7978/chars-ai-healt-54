@@ -250,8 +250,8 @@ export class VitalSignsProcessor {
       bufferLength: this.ppgBuffer.length
     });
     
-    // ALGORITMO AVANZADO DE DETECCIÓN DE LATIDOS - BASADO EN IEEE TRANSACTIONS ON BIOMEDICAL ENGINEERING 2024
-    const heartRate = this.detectHeartBeats(ppgValue, currentTime);
+      // DETECCIÓN DE LATIDOS MANEJADA POR PPGSignalMeter (ALGORITMO AVANZADO IEEE 2024)
+  const heartRate = this.lastHeartRate; // Usar último valor conocido
     
     // Actualizar intervalos RR para análisis de arritmias
     if (rrData?.intervals) {
@@ -437,104 +437,12 @@ export class VitalSignsProcessor {
    * - Análisis espectral adaptativo con optimización automática
    * - Machine Learning para ajuste de parámetros en tiempo real
    */
+  // DETECCIÓN DE LATIDOS MANEJADA POR PPGSignalMeter (ALGORITMO AVANZADO IEEE 2024)
+  // Este método fue eliminado para evitar duplicación con el algoritmo unificado
   private detectHeartBeats(ppgValue: number, currentTime: number): number {
-    console.log('VitalSignsProcessor: detectHeartBeats llamado', {
-      ppgValue: ppgValue.toFixed(3),
-      currentTime,
-      bufferLength: this.ppgBuffer.length
-    });
-    
-    // AGREGAR VALOR AL BUFFER ADAPTATIVO
-    this.ppgBuffer.push(ppgValue);
-    if (this.ppgBuffer.length > 120) {
-      this.ppgBuffer.shift();
-    }
-
-    // DEBUG: Mostrar estado del buffer
-    if (this.ppgBuffer.length % 30 === 0) { // Cada segundo (30Hz)
-      console.log('VitalSignsProcessor: Estado del buffer PPG', {
-        bufferLength: this.ppgBuffer.length,
-        lastValue: ppgValue.toFixed(3),
-        adaptiveThreshold: this.adaptiveThreshold.toFixed(3),
-        adaptiveWindowSize: this.adaptiveWindowSize
-      });
-    }
-
-    // ACTUALIZAR CALIDAD DE SEÑAL Y ADAPTAR PARÁMETROS
-    this.updateSignalQuality(ppgValue);
-    this.adaptDetectionParameters(currentTime);
-
-    // DETECCIÓN ADAPTATIVA DE PICOS
-    const peakDetected = this.adaptivePeakDetection(ppgValue, currentTime);
-    
-    // DEBUG: Mostrar resultado de detección
-    if (this.ppgBuffer.length > 20) { // Solo después de tener suficientes muestras
-      console.log('VitalSignsProcessor: Detección de picos', {
-        ppgValue: ppgValue.toFixed(3),
-        peakDetected,
-        bufferLength: this.ppgBuffer.length,
-        lastPeakTime: this.lastPeakTime,
-        timeSinceLastPeak: this.lastPeakTime > 0 ? currentTime - this.lastPeakTime : 0
-      });
-    }
-    
-    if (peakDetected) {
-      // CALCULAR INTERVALO RR CON VALIDACIÓN ADAPTATIVA
-      if (this.lastPeakTime > 0) {
-        const rrInterval = currentTime - this.lastPeakTime;
-        
-        // VALIDACIÓN ADAPTATIVA DEL INTERVALO RR
-        if (this.isValidRRInterval(rrInterval)) {
-          this.rrIntervals.push(rrInterval);
-          
-          // MANTENER HISTORIAL OPTIMIZADO
-          if (this.rrIntervals.length > 20) {
-            this.rrIntervals.shift();
-          }
-          
-          // CALCULAR BPM CON FILTROS ADAPTATIVOS
-          const bpm = this.calculateAdaptiveBPM();
-          
-          // APRENDIZAJE CONTINUO DEL ALGORITMO
-          this.learnFromDetection(peakDetected, rrInterval, bpm);
-          
-          // SUAVIZADO ADAPTATIVO DEL BPM
-          this.lastHeartRate = this.adaptiveSmoothing(bpm);
-          this.lastPeakTime = currentTime;
-          
-          // LATIDO DETECTADO (notificación será manejada por Index.tsx)
-          
-          console.log('VitalSignsProcessor: Latido detectado (ADAPTATIVO)', {
-            bpm: this.lastHeartRate,
-            rrInterval: rrInterval.toFixed(0) + 'ms',
-            confidence: this.adaptationConfidence.toFixed(3),
-            adaptiveThreshold: this.adaptiveThreshold.toFixed(3),
-            timestamp: new Date().toISOString()
-          });
-        } else {
-          console.log('VitalSignsProcessor: Intervalo RR inválido', {
-            rrInterval: rrInterval.toFixed(0) + 'ms',
-            minDistance: this.adaptiveMinDistance,
-            maxDistance: this.adaptiveMaxDistance
-          });
-        }
-      } else {
-        this.lastPeakTime = currentTime;
-        console.log('VitalSignsProcessor: Primer pico detectado, estableciendo tiempo base');
-      }
-    }
-
-    // Si no se ha detectado ningún pico, estimar BPM basado en la señal
-    if (this.lastHeartRate === 0 && this.ppgBuffer.length > 30) {
-      // Estimar BPM basado en la frecuencia dominante de la señal
-      const estimatedBPM = this.estimateBPMFromSignal();
-      if (estimatedBPM > 0) {
-        this.lastHeartRate = estimatedBPM;
-        console.log('VitalSignsProcessor: Estimando BPM desde señal', { estimatedBPM });
-      }
-    }
-    
-    return this.lastHeartRate;
+    // DETECCIÓN DE LATIDOS MANEJADA POR PPGSignalMeter (ALGORITMO AVANZADO IEEE 2024)
+    // Este método fue eliminado para evitar duplicación con el algoritmo unificado
+    return this.lastHeartRate; // Retornar último valor conocido
   }
 
   // ===== MÉTODOS ADAPTATIVOS AVANZADOS =====
