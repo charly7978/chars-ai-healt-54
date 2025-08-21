@@ -294,7 +294,7 @@ const CameraView = ({
     
     // ✅ RESTAURAR DETECCIÓN DE DEDO: Calcular calidad de señal
     const signalQuality = calculateSignalQuality(red[0], ir[0], green[0]);
-    const fingerDetected = signalQuality > 30; // Umbral de detección
+    const fingerDetected = signalQuality > 15; // ✅ AJUSTAR: Umbral más permisivo (antes era 30)
     
     console.log("📊 Frame procesado:", { 
       red: red[0], 
@@ -325,17 +325,17 @@ const CameraView = ({
 
   // ✅ RESTAURAR FUNCIÓN: Calcular calidad de señal para detección de dedo
   const calculateSignalQuality = (red: number, ir: number, green: number): number => {
-    // ✅ CORREGIR: Los valores ya están en 0-255, no necesitan normalización aquí
-    // Validar que los valores estén en rango fisiológico
-    if (red < 10 || green < 10 || ir < 10) return 0;
+    // ✅ AJUSTAR: Umbrales más realistas para cámara
+    // Validar que los valores estén en rango fisiológico (más permisivo)
+    if (red < 5 || green < 5 || ir < 5) return 0; // Reducido de 10 a 5
     
-    // Calcular ratios fisiológicos
+    // Calcular ratios fisiológicos (más permisivos)
     const rToGRatio = red / green;
     const rToIRRatio = red / ir;
     
-    // Validar ratios fisiológicos (dedo humano)
-    if (rToGRatio < 0.8 || rToGRatio > 2.5) return 0;
-    if (rToIRRatio < 0.6 || rToIRRatio > 3.0) return 0;
+    // ✅ AJUSTAR: Ratios más permisivos para cámara
+    if (rToGRatio < 0.5 || rToGRatio > 4.0) return 0; // Ampliado de 0.8-2.5 a 0.5-4.0
+    if (rToIRRatio < 0.3 || rToIRRatio > 5.0) return 0; // Ampliado de 0.6-3.0 a 0.3-5.0
     
     // Calcular calidad basada en intensidad y estabilidad
     const intensity = (red + green + ir) / 3;
