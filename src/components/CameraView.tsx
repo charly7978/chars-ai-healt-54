@@ -1,458 +1,184 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { toast } from "@/components/ui/use-toast";
-import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
+import React, { useEffect, useRef } from 'react';
+import { CameraSample } from '@/types';
+
+/**
+ * CameraView mejorado:
+ * - captura video trasero
+ * - intenta activar torch si está disponible
+ * - ROI reducido para rendimiento
+ * - calcula medias por canal (R,G,B), desviaciones, coverageRatio,
+ *   frameDiff y expone un CameraSample por frame.
+ *
+ * Recomendación: Pegar tal cual. En dispositivos Android la linterna
+ * suele activarse si la cámara lo permite; en iOS requiere user gesture.
+ */
 
 interface CameraViewProps {
-  onStreamReady?: (stream: MediaStream) => void;
+  onStreamReady?: (s: MediaStream) => void;
+  onSample?: (s: CameraSample) => void;
   isMonitoring: boolean;
-  isFingerDetected?: boolean;
-  signalQuality?: number;
+  targetFps?: number;
+  roiSize?: number; // px ancho del ROI (se escala manteniendo aspect)
+  enableTorch?: boolean;
+  coverageThresholdPixelBrightness?: number; // 0-255
 }
 
-const CameraView = ({ 
-  onStreamReady, 
-  isMonitoring, 
-  isFingerDetected = false, 
-  signalQuality = 0,
-}: CameraViewProps) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const vitalProcessor = useRef(new VitalSignsProcessor());
-  const [torchEnabled, setTorchEnabled] = useState(false);
-  const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
-  const lastFrameTimeRef = useRef<number>(0);
-  const [deviceSupportsAutoFocus, setDeviceSupportsAutoFocus] = useState(false);
-  const [deviceSupportsTorch, setDeviceSupportsTorch] = useState(false);
-  const torchAttempts = useRef<number>(0);
-  const cameraInitialized = useRef<boolean>(false);
-  const requestedTorch = useRef<boolean>(false);
+const CameraView: React.FC<CameraViewProps> = ({
+  onStreamReady,
+  onSample,
+  isMonitoring,
+  targetFps = 30,
+  roiSize = 200,
+  enableTorch = true,
+  coverageThresholdPixelBrightness = 30
+}) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const prevBrightnessRef = useRef<number | null>(null);
 
-  const stopCamera = async () => {
-    if (stream) {
-      stream.getTracks().forEach(track => {
-        if (track.kind === 'video' && track.getCapabilities()?.torch) {
-          track.applyConstraints({
-            advanced: [{ torch: false }]
-          }).catch(err => {
-            if (process.env.NODE_ENV !== 'production') {
-              console.error("Error desactivando linterna:", err);
-            }
-          });
+  useEffect(() => {
+    let mounted = true;
+
+    const startCam = async () => {
+      try {
+        const constraints: any = {
+          video: {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: targetFps }
+          },
+          audio: false
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        if (!mounted) return;
+        streamRef.current = stream;
+        onStreamReady?.(stream);
+
+        // crear video oculto
+        if (!videoRef.current) {
+          const v = document.createElement('video');
+          v.autoplay = true;
+          v.playsInline = true;
+          v.muted = true;
+          v.style.display = 'none';
+          document.body.appendChild(v);
+          videoRef.current = v;
         }
-        
-        track.stop();
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-      
-      setStream(null);
-      setTorchEnabled(false);
-      cameraInitialized.current = false;
-      requestedTorch.current = false;
-    }
-  };
+        videoRef.current.srcObject = stream;
 
-  const startCamera = async () => {
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.error("Su dispositivo no soporta acceso a la cámara");
+        // canvas
+        if (!canvasRef.current) {
+          const c = document.createElement('canvas');
+          c.style.display = 'none';
+          document.body.appendChild(c);
+          canvasRef.current = c;
         }
-        throw new Error("getUserMedia no está soportado");
-      }
 
-      const isAndroid = /android/i.test(navigator.userAgent);
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
-      let baseVideoConstraints: MediaTrackConstraints = {
-        facingMode: { exact: 'environment' },
-        width: { ideal: 1280 },
-        height: { ideal: 720 }
-      };
-
-      if (process.env.NODE_ENV !== 'production') {
-        console.log("CameraView: Configurando cámara para detección de dedo");
-      }
-
-      if (isAndroid) {
-        Object.assign(baseVideoConstraints, {
-          frameRate: { ideal: 30, max: 30 },
-          resizeMode: 'crop-and-scale'
-        });
-      } else if (isIOS) {
-        Object.assign(baseVideoConstraints, {
-          frameRate: { ideal: 30, min: 30 },
-        });
-      } else {
-        Object.assign(baseVideoConstraints, {
-          frameRate: { ideal: 30 }
-        });
-      }
-
-      const constraints: MediaStreamConstraints = {
-        video: baseVideoConstraints,
-        audio: false
-      };
-
-      if (process.env.NODE_ENV !== 'production') {
-        console.log("CameraView: Intentando obtener acceso a la cámara con constraints:", constraints);
-      }
-      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-      if (process.env.NODE_ENV !== 'production') {
-        console.log("CameraView: Acceso a la cámara obtenido exitosamente");
-      }
-      
-      if (!onStreamReady) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.error("CameraView: onStreamReady callback no disponible");
-        }
-        toast({
-          title: "Error de cámara",
-          description: "No hay callback para procesar el video",
-          variant: "destructive"
-        });
-      }
-      
-      const videoTrack = newStream.getVideoTracks()[0];
-
-      if (videoTrack) {
+        // intentar encender torch si permite
         try {
-          const capabilities = videoTrack.getCapabilities();
-          if (process.env.NODE_ENV !== 'production') {
-            console.log("CameraView: Capacidades de la cámara:", capabilities);
+          const [track] = stream.getVideoTracks();
+          const caps = (track as any).getCapabilities?.();
+          if (enableTorch && caps && caps.torch) {
+            try { await (track as any).applyConstraints({ advanced: [{ torch: true }] }); } catch (e) { /* ignore */ }
           }
-          
-          torchAttempts.current = 0;
-          requestedTorch.current = false;
-          
-          const advancedConstraints: MediaTrackConstraintSet[] = [];
-          
-          if (capabilities.exposureMode) {
-            advancedConstraints.push({ 
-              exposureMode: 'manual'
-            });
-            if (process.env.NODE_ENV !== 'production') {
-              console.log("CameraView: Modo de exposición manual aplicado");
-            }
+        } catch (e) {}
 
-            if (capabilities.exposureTime) {
-              const minExposure = capabilities.exposureTime.min || 0;
-              const maxExposure = capabilities.exposureTime.max || 1000;
-              const targetExposure = maxExposure * 0.8;
-              
-              advancedConstraints.push({
-                exposureTime: targetExposure
-              });
-              if (process.env.NODE_ENV !== 'production') {
-                console.log(`CameraView: Tiempo de exposición ajustado a ${targetExposure}`);
-              }
-            }
-          }
-          
-          if (capabilities.focusMode) {
-            advancedConstraints.push({ focusMode: 'continuous' });
-            setDeviceSupportsAutoFocus(true);
-            if (process.env.NODE_ENV !== 'production') {
-              console.log("CameraView: Modo de enfoque continuo aplicado");
-            }
-          }
-          
-          if (capabilities.whiteBalanceMode) {
-            advancedConstraints.push({ whiteBalanceMode: 'continuous' });
-            if (process.env.NODE_ENV !== 'production') {
-              console.log("CameraView: Modo de balance de blancos continuo aplicado");
-            }
-          }
+        // esperar metadata
+        await new Promise<void>((resolve) => {
+          const v = videoRef.current!;
+          if (v.readyState >= 1) return resolve();
+          const h = () => { v.removeEventListener('loadedmetadata', h); resolve(); };
+          v.addEventListener('loadedmetadata', h);
+        });
 
-          if (advancedConstraints.length > 0) {
-            try {
-              await videoTrack.applyConstraints({
-                advanced: advancedConstraints
-              });
-              if (process.env.NODE_ENV !== 'production') {
-                console.log("CameraView: Constraints avanzados aplicados exitosamente");
-              }
-            } catch (err) {
-              if (process.env.NODE_ENV !== 'production') {
-                console.error("CameraView: Error aplicando constraints avanzados:", err);
-              }
-            }
-          }
-
-          if (videoRef.current) {
-            videoRef.current.style.transform = 'translateZ(0)';
-            videoRef.current.style.backfaceVisibility = 'hidden';
-          }
-          
-          if (capabilities.torch) {
-            if (process.env.NODE_ENV !== 'production') {
-              console.log("CameraView: Este dispositivo tiene linterna disponible");
-            }
-            setDeviceSupportsTorch(true);
-            
-            try {
-              await handleTorch(true);
-              if (process.env.NODE_ENV !== 'production') {
-                console.log("CameraView: Linterna activada para medición PPG");
-              }
-            } catch (err) {
-              if (process.env.NODE_ENV !== 'production') {
-                console.error("CameraView: Error activando linterna:", err);
-              }
-              torchAttempts.current++;
-              
-              setTimeout(async () => {
-                try {
-                  await handleTorch(true);
-                  if (process.env.NODE_ENV !== 'production') {
-                    console.log("CameraView: Linterna activada en segundo intento");
-                  }
-                } catch (err) {
-                  if (process.env.NODE_ENV !== 'production') {
-                    console.error("CameraView: Error en segundo intento de linterna:", err);
-                  }
-                }
-              }, 1000);
-            }
-          } else {
-            if (process.env.NODE_ENV !== 'production') {
-              console.log("CameraView: Este dispositivo no tiene linterna disponible");
-            }
-            setDeviceSupportsTorch(false);
-          }
-        } catch (err) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.log("CameraView: No se pudieron aplicar algunas optimizaciones:", err);
-          }
-        }
-      }
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = newStream;
-        if (isAndroid) {
-          videoRef.current.style.willChange = 'transform';
-          videoRef.current.style.transform = 'translateZ(0)';
-        }
-      }
-
-      setStream(newStream);
-      cameraInitialized.current = true;
-      
-      if (onStreamReady) {
-        if (process.env.NODE_ENV !== 'production') {
-          console.log("CameraView: Llamando onStreamReady con stream:", {
-            hasVideoTracks: newStream.getVideoTracks().length > 0,
-            streamActive: newStream.active,
-            timestamp: new Date().toISOString()
+        const loop = () => {
+          captureFrameAndEmit();
+          rafRef.current = requestAnimationFrame(() => {
+            // limitar fps manualmente
+            setTimeout(loop, 1000 / targetFps);
           });
-        }
-        onStreamReady(newStream);
+        };
+        rafRef.current = requestAnimationFrame(loop);
+      } catch (err) {
+        console.error('CameraView: no se pudo abrir cámara', err);
       }
-    } catch (err) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error("CameraView: Error al iniciar la cámara:", err);
-      }
-    }
-  };
+    };
 
-  const handleTorch = async (enable: boolean) => {
-    if (!deviceSupportsTorch) return;
-    
-    try {
-      await stream?.getVideoTracks()[0].applyConstraints({
-        advanced: [{ torch: enable }]
+    const captureFrameAndEmit = () => {
+      const v = videoRef.current;
+      const c = canvasRef.current;
+      if (!v || !c || !v.videoWidth || !v.videoHeight) return;
+
+      // definimos ROI central cuadrado (más rápido y evita bordes)
+      const roiW = roiSize;
+      const roiH = Math.round(roiW * (v.videoHeight / v.videoWidth));
+      const sx = Math.max(0, Math.round((v.videoWidth - roiW) / 2));
+      const sy = Math.max(0, Math.round((v.videoHeight - roiH) / 2));
+
+      c.width = roiW;
+      c.height = roiH;
+      const ctx = c.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(v, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
+      const img = ctx.getImageData(0, 0, roiW, roiH);
+      const d = img.data;
+
+      let rSum = 0, gSum = 0, bSum = 0;
+      let rSum2 = 0, gSum2 = 0, bSum2 = 0;
+      let brightSum = 0;
+      let cntBrightPixels = 0;
+      const thr = coverageThresholdPixelBrightness;
+
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i+1], b = d[i+2];
+        const bright = (r + g + b) / 3;
+        rSum += r; gSum += g; bSum += b;
+        rSum2 += r*r; gSum2 += g*g; bSum2 += b*b;
+        brightSum += bright;
+        if (bright >= thr) cntBrightPixels++;
+      }
+      const npix = d.length / 4;
+      const rMean = rSum / npix;
+      const gMean = gSum / npix;
+      const bMean = bSum / npix;
+      const rVar = Math.max(0, rSum2/npix - rMean*rMean);
+      const gVar = Math.max(0, gSum2/npix - gMean*gMean);
+      const bVar = Math.max(0, bSum2/npix - bMean*bMean);
+      const rStd = Math.sqrt(rVar);
+      const gStd = Math.sqrt(gVar);
+      const bStd = Math.sqrt(bVar);
+      const brightnessMean = brightSum / npix;
+      const framePrev = prevBrightnessRef.current;
+      const frameDiff = framePrev == null ? 0 : Math.abs(brightnessMean - framePrev);
+      prevBrightnessRef.current = brightnessMean;
+      const coverageRatio = cntBrightPixels / npix;
+
+      // Emite muestra
+      onSample?.({
+        timestamp: Date.now(),
+        rMean, gMean, bMean,
+        brightnessMean,
+        rStd, gStd, bStd,
+        frameDiff,
+        coverageRatio
       });
-      setTorchEnabled(enable);
-    } catch (err) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error("Error al manejar linterna:", err);
-      }
-    }
-  };
-
-  const handleAutoFocus = async () => {
-    if (!deviceSupportsAutoFocus) return;
-    
-    try {
-      await stream?.getVideoTracks()[0].applyConstraints({
-        advanced: [{ focusMode: 'continuous' }]
-      });
-    } catch (err) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.warn("Error al ajustar enfoque:", err);
-      }
-    }
-  };
-
-  const processFrame = (frameData: ImageData) => {
-    const { red, ir, green } = extractPPGSignals(frameData);
-    
-    // ✅ UNIFICADO: Usar solo el procesador principal
-    const results = vitalProcessor.current.processSignal(
-      red[0], // Usar solo el valor principal
-      undefined // Sin datos RR por ahora
-    );
-    
-    if (results) {
-      handleResults(results);
-    }
-  };
-
-  const extractPPGSignals = (frameData: ImageData) => {
-    const { width, height, data } = frameData;
-    const pixelCount = width * height;
-    
-    // Promedios de canales con ROI centrado para mayor estabilidad
-    let redSum = 0, irSum = 0, greenSum = 0;
-    let validPixels = 0;
-    
-    // ROI centrado para evitar bordes y ruido - CALIBRACIÓN SUTIL PARA ROBUSTEZ
-    const centerX = Math.floor(width / 2);
-    const centerY = Math.floor(height / 2);
-    const roiSize = Math.min(width, height) * 0.72; // ROI ligeramente ampliado para mayor robustez
-    
-    const startX = Math.max(0, centerX - roiSize / 2);
-    const endX = Math.min(width, centerX + roiSize / 2);
-    const startY = Math.max(0, centerY - roiSize / 2);
-    const endY = Math.min(height, centerY + roiSize / 2);
-    
-    // Extraer señales solo del ROI para mayor estabilidad
-    for (let y = startY; y < endY; y++) {
-      for (let x = startX; x < endX; x++) {
-        const i = (y * width + x) * 4;
-        const r = data[i];     // Canal Rojo
-        const g = data[i+1];   // Canal Verde
-        const b = data[i+2];   // Canal Azul (IR)
-        
-        // Validar que los valores estén en rango fisiológico
-        if (r > 0 && g > 0 && b > 0 && r < 255 && g < 255 && b < 255) {
-          redSum += r;
-          greenSum += g;
-          irSum += b;
-          validPixels++;
-        }
-      }
-    }
-    
-    // Calcular promedios solo de píxeles válidos
-    if (validPixels > 0) {
-      return {
-        red: [redSum / validPixels],
-        ir: [irSum / validPixels],
-        green: [greenSum / validPixels]
-      };
-    }
-    
-    // Fallback si no hay píxeles válidos
-    return {
-      red: [0],
-      ir: [0],
-      green: [0]
     };
-  };
 
-  const handleResults = (results: VitalSignsResult) => {
-    console.log('Mediciones biométricas:', {
-      spo2: results.spo2.toFixed(1) + '%',
-      pressure: results.pressure + ' mmHg',
-      glucose: results.glucose.toFixed(0) + ' mg/dL',
-      arrhythmiaStatus: results.arrhythmiaStatus
-    });
-  };
+    if (isMonitoring) startCam();
 
-  useEffect(() => {
-    if (isMonitoring && !stream) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log("[DIAG] CameraView: Iniciando cámara porque isMonitoring=true");
-      }
-      startCamera();
-    } else if (!isMonitoring && stream) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log("[DIAG] CameraView: Deteniendo cámara porque isMonitoring=false");
-      }
-      stopCamera();
-    }
     return () => {
-      if (process.env.NODE_ENV !== 'production') {
-        console.log("[DIAG] CameraView: Desmontando componente, deteniendo cámara");
-      }
-      stopCamera();
+      mounted = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      const s = streamRef.current; if (s) s.getTracks().forEach(t => t.stop());
+      if (videoRef.current) { try { document.body.removeChild(videoRef.current); } catch (e) {} videoRef.current = null; }
+      if (canvasRef.current) { try { document.body.removeChild(canvasRef.current); } catch (e) {} canvasRef.current = null; }
     };
-  }, [isMonitoring]);
+  }, [isMonitoring, onSample, onStreamReady, targetFps, roiSize, enableTorch, coverageThresholdPixelBrightness]);
 
-  useEffect(() => {
-    if (!stream || !deviceSupportsTorch || !isMonitoring) return;
-    
-    const keepTorchOn = async () => {
-      if (!isMonitoring || !deviceSupportsTorch) return;
-
-      const torchIsReallyOn = stream.getVideoTracks()[0].getSettings && (stream.getVideoTracks()[0].getSettings() as any).torch === true;
-
-      if (!torchIsReallyOn) {
-        try {
-          await handleTorch(true);
-          if (process.env.NODE_ENV !== 'production') {
-            console.log("CameraView: Re-activando linterna (torch)");
-          }
-        } catch (err) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.error("CameraView: Error re-encendiendo linterna:", err);
-          }
-          torchAttempts.current++;
-          setTorchEnabled(false);
-        }
-      } else {
-        if (!torchEnabled) {
-          setTorchEnabled(true);
-        }
-      }
-    };
-    
-    const torchCheckInterval = setInterval(keepTorchOn, 2000);
-    
-    keepTorchOn();
-    
-    return () => {
-      clearInterval(torchCheckInterval);
-    };
-  }, [stream, isMonitoring, deviceSupportsTorch, torchEnabled]);
-
-  useEffect(() => {
-    if (!stream || !isMonitoring || !deviceSupportsAutoFocus) return;
-    
-    let focusInterval: number;
-    
-    const focusIntervalTime = isFingerDetected ? 4000 : 1500;
-    
-    const attemptRefocus = async () => {
-      await handleAutoFocus();
-    };
-    
-    attemptRefocus();
-    
-    focusInterval = window.setInterval(attemptRefocus, focusIntervalTime);
-    
-    return () => {
-      clearInterval(focusInterval);
-    };
-  }, [stream, isMonitoring, isFingerDetected, deviceSupportsAutoFocus]);
-
-  return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted
-      className="absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover"
-      style={{
-        willChange: 'transform',
-        transform: 'translateZ(0)',
-        backfaceVisibility: 'hidden'
-      }}
-    />
-  );
+  return null;
 };
 
 export default CameraView;

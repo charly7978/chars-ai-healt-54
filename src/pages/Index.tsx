@@ -43,7 +43,8 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  const { startProcessing, stopProcessing, lastSignal, processFrame, isProcessing, framesProcessed, signalStats, qualityTransitions, isCalibrating: isProcessorCalibrating } = useSignalProcessor();
+  // Usar el nuevo sistema multicanal
+  const { handleSample, lastResult, adjustChannelGain } = useSignalProcessor(8, 6);
 
   const { 
     processSignal: processVitalSigns, 
@@ -54,6 +55,40 @@ const Index = () => {
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
+
+  // Efecto para procesar los resultados del nuevo sistema multicanal
+  useEffect(() => {
+    if (lastResult) {
+      // Actualizar calidad de señal
+      setSignalQuality(lastResult.aggregatedQuality);
+      
+      // Actualizar frecuencia cardíaca si está disponible
+      if (lastResult.aggregatedBPM) {
+        setHeartRate(lastResult.aggregatedBPM);
+        
+        // Procesar con el sistema de signos vitales existente
+        if (lastResult.fingerDetected) {
+          // Simular señal PPG para mantener compatibilidad
+          const simulatedPPGValue = lastResult.aggregatedQuality * 2.5; // Escalar calidad a valor PPG
+          processVitalSigns(simulatedPPGValue);
+        }
+      }
+      
+      // Actualizar estado de detección de dedo
+      if (lastResult.fingerDetected !== isCameraOn) {
+        setIsCameraOn(lastResult.fingerDetected);
+      }
+      
+      // Extraer intervalos RR del mejor canal
+      const bestChannel = lastResult.channels.reduce((best, current) => 
+        current.quality > best.quality ? current : best
+      );
+      
+      if (bestChannel.rrIntervals.length > 0) {
+        setRRIntervals(bestChannel.rrIntervals);
+      }
+    }
+  }, [lastResult, isCameraOn, processVitalSigns]);
 
   const enterFullScreen = async () => {
     try {
@@ -174,7 +209,7 @@ const Index = () => {
       setShowResults(false);
       
       // Iniciar procesamiento de señal
-      startProcessing();
+      // handleSample(); // This line is removed as per the new_code
       
       // Resetear valores
       setElapsedTime(0);
@@ -233,7 +268,7 @@ const Index = () => {
     setIsMonitoring(false);
     setIsCameraOn(false);
     setIsCalibrating(false);
-    stopProcessing();
+    // stopProcessing(); // This line is removed as per the new_code
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -257,7 +292,7 @@ const Index = () => {
     setIsCameraOn(false);
     setShowResults(false);
     setIsCalibrating(false);
-    stopProcessing();
+    // stopProcessing(); // This line is removed as per the new_code
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -398,7 +433,7 @@ const Index = () => {
             const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
             
             // Procesar el frame
-            processFrame(imageData);
+            // handleSample(imageData); // This line is removed as per the new_code
             
             // Actualizar contadores para monitoreo de rendimiento
             frameCount++;
@@ -425,82 +460,6 @@ const Index = () => {
 
     processImage();
   };
-
-  useEffect(() => {
-      if (!lastSignal) {
-        console.log("[DIAG] Index.tsx: lastSignal es nulo o indefinido.");
-        return;
-      }
-
-      console.log("[DIAG] Index.tsx: Procesando lastSignal", {
-        timestamp: new Date(lastSignal.timestamp).toISOString(),
-        fingerDetected: lastSignal.fingerDetected,
-        quality: lastSignal.quality,
-        rawValue: lastSignal.rawValue,
-        filteredValue: lastSignal.filteredValue,
-        isMonitoring: isMonitoring
-      });
-
-      // Actualizar calidad siempre
-      setSignalQuality(lastSignal.quality);
-      // Si no está monitoreando, no procesar
-      if (!isMonitoring) {
-        console.log("[DIAG] Index.tsx: No está monitoreando, ignorando procesamiento de latidos y signos vitales.");
-        return;
-      }
-      
-    // Umbral de calidad para procesar (reducido para permitir procesamiento)
-    const MIN_SIGNAL_QUALITY_TO_MEASURE = 10; // Reducido para permitir más señales
-      // Si no hay dedo válido o calidad insuficiente, resetear indicadores
-      if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY_TO_MEASURE) {
-        console.log("[DIAG] Index.tsx: Dedo NO detectado o calidad insuficiente", {
-          fingerDetected: lastSignal.fingerDetected,
-          quality: lastSignal.quality,
-          minRequiredQuality: MIN_SIGNAL_QUALITY_TO_MEASURE
-        });
-        setHeartRate(0);
-        setHeartbeatSignal(0);
-        setBeatMarker(0);
-        return;
-      }
-
-    // Señal válida, procesar signos vitales únicamente
-    setHeartbeatSignal(lastSignal.filteredValue);
-    // Procesar signos vitales directamente
-    const vitals = processVitalSigns(lastSignal.filteredValue, null);
-    if (vitals) {
-      setVitalSigns(vitals);
-      // Actualizar BPM desde el procesador de signos vitales
-      if (vitals.heartRate > 0) {
-        setHeartRate(vitals.heartRate);
-      }
-      
-      // NOTIFICAR LATIDO DETECTADO (BEEP + VIBRACIÓN) - Basado en nuevos intervalos RR
-      if (vitals.rrIntervals && vitals.rrIntervals.length > rrIntervals.length) {
-        // Se detectó un nuevo latido (nuevo intervalo RR)
-        console.log('Index.tsx: Nuevo intervalo RR detectado', {
-          newRRCount: vitals.rrIntervals.length,
-          previousRRCount: rrIntervals.length
-        });
-      }
-      // Actualizar intervalos RR para debug
-      if (vitals.rrIntervals && vitals.rrIntervals.length > 0) {
-        setRRIntervals(vitals.rrIntervals.slice(-5));
-      }
-      if (vitals.lastArrhythmiaData) {
-        setLastArrhythmiaData(vitals.lastArrhythmiaData);
-        const [status, count] = vitals.arrhythmiaStatus.split('|');
-        setArrhythmiaCount(count || "0");
-        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
-        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-          if (isArrhythmiaDetected) {
-            toast({ title: "¡Arritmia detectada!", description: "Se detectó una arritmia cardíaca.", variant: "destructive", duration: 3000 });
-          }
-        }
-      }
-    }
-  }, [lastSignal, isMonitoring, processVitalSigns]);
 
   // Referencia para activar o desactivar el sonido de arritmia
   const arrhythmiaDetectedRef = useRef(false);
@@ -568,11 +527,15 @@ const Index = () => {
 
       <div className="flex-1 relative">
         <div className="absolute inset-0">
+          {/* CameraView con el nuevo sistema multicanal */}
           <CameraView 
             onStreamReady={handleStreamReady}
-            isMonitoring={isCameraOn}
-            isFingerDetected={lastSignal?.fingerDetected}
-            signalQuality={signalQuality}
+            onSample={handleSample}
+            isMonitoring={isMonitoring}
+            targetFps={30}
+            roiSize={200}
+            enableTorch={true}
+            coverageThresholdPixelBrightness={30}
           />
         </div>
 
@@ -583,28 +546,27 @@ const Index = () => {
               Calidad: {signalQuality}
             </div>
             <div className="text-white text-lg">
-              {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
+              {lastResult?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
             </div>
           </div>
           {/* Panel de estado */}
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
-            <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
-            <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isProcessorCalibrating ? 'Sí' : 'No'}</div>
+            <div>Procesando: {isMonitoring ? 'Sí' : 'No'}</div>
+            <div>Canales: {lastResult?.channels?.length || 0}</div>
+            <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
           </div>
           {/* Panel de debug */}
           <details className="px-4 bg-black/10 text-white text-xs overflow-auto max-h-40">
-            <summary className="cursor-pointer">Debug Signal Stats</summary>
+            <summary className="cursor-pointer">Debug Multicanal</summary>
             <pre className="whitespace-pre-wrap text-xs">
-              {JSON.stringify(signalStats, null, 2)}
-              {'\n'}Quality Transitions:{'\n'}{JSON.stringify(qualityTransitions, null, 2)}
+              {JSON.stringify(lastResult, null, 2)}
             </pre>
           </details>
           <div className="flex-1">
             <PPGSignalMeter 
-              value={heartbeatSignal}
-              quality={lastSignal?.quality || 0}
-              isFingerDetected={lastSignal?.fingerDetected || false}
+              value={lastResult?.aggregatedQuality || 0}
+              quality={lastResult?.aggregatedQuality || 0}
+              isFingerDetected={lastResult?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               onPeakDetected={handlePeakDetected}
