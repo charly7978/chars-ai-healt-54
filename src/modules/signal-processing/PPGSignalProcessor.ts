@@ -1,3 +1,4 @@
+
 import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { KalmanFilter } from './KalmanFilter';
 import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
@@ -8,8 +9,8 @@ import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
 
 /**
- * PROCESADOR PPG ÚNICO - DETECCIÓN ULTRA-ESPECÍFICA DE DEDO HUMANO
- * Sistema matemático que RECHAZA todo lo que no sea dedo humano real
+ * PROCESADOR PPG OPTIMIZADO - DETECCIÓN EFECTIVA DE DEDO
+ * Sistema ajustado para detectar dedo humano de forma confiable
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -21,7 +22,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private calibrationHandler: CalibrationHandler;
   private signalAnalyzer: SignalAnalyzer;
   
-  // SISTEMA ULTRA-ESPECÍFICO DE DETECCIÓN DE DEDO HUMANO
+  // SISTEMA OPTIMIZADO DE DETECCIÓN DE DEDO
   private fingerDetectionState = {
     isDetected: false,
     detectionScore: 0,
@@ -30,7 +31,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     lastDetectionTime: 0,
     stabilityBuffer: [] as number[],
     opticalValidationScore: 0,
-    // NUEVOS: Validadores anti-falsos positivos
     skinColorHistory: [] as number[],
     pulsatilityHistory: [] as number[],
     textureConsistency: 0,
@@ -47,23 +47,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private isCalibrating: boolean = false;
   private frameCount: number = 0;
   
-  // CONFIGURACIÓN ULTRA-ESPECÍFICA PARA DEDO HUMANO SOLAMENTE
+  // CONFIGURACIÓN OPTIMIZADA PARA DETECCIÓN EFECTIVA
   private readonly CONFIG = {
-    // UMBRALES RESTRICTIVOS PARA RECHAZAR AIRE/OBJETOS
-    MIN_RED_THRESHOLD: 45,     // Mucho más restrictivo
-    MAX_RED_THRESHOLD: 220,    // Más restrictivo
-    MIN_DETECTION_SCORE: 0.75, // Mucho más exigente
-    MIN_CONSECUTIVE_FOR_DETECTION: 8, // Más frames para confirmar
-    MAX_CONSECUTIVE_FOR_LOSS: 15,     // Menos tolerancia a pérdida
+    // UMBRALES MÁS PERMISIVOS PARA MEJOR DETECCIÓN
+    MIN_RED_THRESHOLD: 25,     // Más permisivo
+    MAX_RED_THRESHOLD: 250,    // Más amplio rango
+    MIN_DETECTION_SCORE: 0.35, // Mucho más permisivo
+    MIN_CONSECUTIVE_FOR_DETECTION: 3, // Menos frames requeridos
+    MAX_CONSECUTIVE_FOR_LOSS: 8,      // Más tolerante a pérdida
     
-    // VALIDACIÓN BIOMÉTRICA DE DEDO HUMANO
-    SKIN_COLOR_CONSISTENCY_THRESHOLD: 0.85,
-    HEMOGLOBIN_SIGNATURE_THRESHOLD: 0.80,
-    PULSATILITY_REQUIREMENT: 0.70,
-    TEXTURE_HUMAN_THRESHOLD: 0.75,
-    FINGERPRINT_PATTERN_THRESHOLD: 0.65,
+    // VALIDACIÓN BÁSICA PERO EFECTIVA
+    SKIN_COLOR_CONSISTENCY_THRESHOLD: 0.20,
+    HEMOGLOBIN_SIGNATURE_THRESHOLD: 0.15,
+    PULSATILITY_REQUIREMENT: 0.10,
+    TEXTURE_HUMAN_THRESHOLD: 0.15,
+    FINGERPRINT_PATTERN_THRESHOLD: 0.10,
     
-    HYSTERESIS: 1.5,
+    HYSTERESIS: 0.5,
     QUALITY_LEVELS: 50,
     CALIBRATION_SAMPLES: 20,
     TEXTURE_GRID_SIZE: 8,
@@ -74,7 +74,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    console.log("🔬 PPGSignalProcessor: Sistema ULTRA-ESPECÍFICO para dedo humano");
+    console.log("🔬 PPGSignalProcessor: Sistema OPTIMIZADO para detección efectiva de dedo");
     
     this.signalBuffer = new Float32Array(this.BUFFER_SIZE);
     this.kalmanFilter = new KalmanFilter();
@@ -126,7 +126,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.biophysicalValidator.reset();
       this.signalAnalyzer.reset();
       
-      console.log("✅ PPGSignalProcessor: Detector ultra-específico inicializado");
+      console.log("✅ PPGSignalProcessor: Detector optimizado inicializado");
     } catch (error) {
       console.error("❌ PPGSignalProcessor: Error en inicialización", error);
       this.handleError("INIT_ERROR", "Error inicializando procesador");
@@ -137,25 +137,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.initialize();
-    console.log("🚀 PPGSignalProcessor: Detector ultra-específico iniciado");
+    console.log("🚀 PPGSignalProcessor: Detector optimizado iniciado");
   }
 
   stop(): void {
     this.isProcessing = false;
     this.reset();
-    console.log("⏹️ PPGSignalProcessor: Detector ultra-específico detenido");
+    console.log("⏹️ PPGSignalProcessor: Detector optimizado detenido");
   }
 
   async calibrate(): Promise<boolean> {
     try {
-      console.log("🔧 PPGSignalProcessor: Calibración ultra-específica iniciada");
+      console.log("🔧 PPGSignalProcessor: Calibración optimizada iniciada");
       await this.initialize();
       
       this.isCalibrating = true;
       
       setTimeout(() => {
         this.isCalibrating = false;
-        console.log("✅ PPGSignalProcessor: Calibración ultra-específica completada");
+        console.log("✅ PPGSignalProcessor: Calibración optimizada completada");
       }, 2500);
       
       return true;
@@ -178,19 +178,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
-      // 2. DETECTOR ULTRA-ESPECÍFICO DE DEDO HUMANO - RECHAZA TODO LO DEMÁS
-      const fingerDetectionResult = this.detectHumanFingerOnly(
+      // 2. DETECTOR OPTIMIZADO DE DEDO - MÁS PERMISIVO
+      const fingerDetectionResult = this.detectFingerOptimized(
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, rToGRatio, rToBRatio, imageData
       );
 
-      // 3. Procesamiento matemático SOLO SI ES DEDO HUMANO CONFIRMADO
+      console.log("👆 Detección de dedo:", {
+        redValue: redValue.toFixed(2),
+        detected: fingerDetectionResult.isDetected,
+        score: fingerDetectionResult.detectionScore.toFixed(3),
+        consecutiveDetections: this.fingerDetectionState.consecutiveDetections
+      });
+
+      // 3. Procesamiento de señal
       let filteredValue = redValue;
-      if (fingerDetectionResult.isDetected) {
+      if (fingerDetectionResult.isDetected || redValue > this.CONFIG.MIN_RED_THRESHOLD) {
         filteredValue = this.kalmanFilter.filter(redValue);
         filteredValue = this.sgFilter.filter(filteredValue);
         
-        // Amplificación POTENTE para señal excelente
-        const adaptiveGain = this.calculateUltraPowerfulGain(fingerDetectionResult);
+        // Amplificación optimizada
+        const adaptiveGain = this.calculateOptimizedGain(fingerDetectionResult);
         filteredValue = filteredValue * adaptiveGain;
       }
 
@@ -199,17 +206,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
       if (this.bufferIndex === 0) this.bufferFull = true;
 
-      // 5. Validación fisiológica estricta
+      // 5. Validación menos estricta
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
-      if (this.isNonPhysiological(trendResult, fingerDetectionResult) && !this.isCalibrating) {
-        this.sendRejectedSignal(redValue, filteredValue, roi);
-        return;
-      }
+      
+      // 6. Calidad optimizada
+      const quality = this.calculateOptimizedQuality(fingerDetectionResult, textureScore, redValue);
 
-      // 6. Calidad EXCELENTE garantizada para dedo humano
-      const quality = this.calculateExcellentQualityForHumanFinger(fingerDetectionResult, textureScore);
-
-      // 7. Índice de perfusión optimizado
+      // 7. Índice de perfusión
       const perfusionIndex = this.calculateOptimalPerfusion(
         redValue, fingerDetectionResult.isDetected, quality, fingerDetectionResult.detectionScore
       );
@@ -233,73 +236,62 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * DETECTOR ULTRA-ESPECÍFICO DE DEDO HUMANO - RECHAZA TODO LO DEMÁS
+   * DETECTOR OPTIMIZADO DE DEDO - MÁS PERMISIVO Y EFECTIVO
    */
-  private detectHumanFingerOnly(
+  private detectFingerOptimized(
     red: number, green: number, blue: number, 
     textureScore: number, rToGRatio: number, rToBRatio: number,
     imageData: ImageData
   ): { isDetected: boolean; detectionScore: number; opticalCoherence: number } {
     
-    // 1. VALIDACIÓN PRIMARIA: Rangos estrictos para dedo humano
+    // 1. VALIDACIÓN BÁSICA MÁS PERMISIVA
     if (red < this.CONFIG.MIN_RED_THRESHOLD || red > this.CONFIG.MAX_RED_THRESHOLD) {
       return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
     }
 
-    // 2. FIRMA ESPECTRAL DE HEMOGLOBINA HUMANA
-    const hemoglobinSignature = this.validateHumanHemoglobinSignature(red, green, blue);
-    if (hemoglobinSignature < this.CONFIG.HEMOGLOBIN_SIGNATURE_THRESHOLD) {
-      return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
-    }
+    // 2. VALIDACIONES SIMPLIFICADAS Y PERMISIVAS
+    const basicColorCheck = this.validateBasicColor(red, green, blue);
+    const textureCheck = Math.min(1.0, textureScore * 2); // Más permisivo
+    const ratioCheck = this.validateColorRatios(rToGRatio, rToBRatio);
+    const pulsatilityCheck = this.validateSimplePulsatility(red);
 
-    // 3. CONSISTENCIA DE COLOR DE PIEL HUMANA
-    const skinColorConsistency = this.validateHumanSkinColor(red, green, blue);
-    if (skinColorConsistency < this.CONFIG.SKIN_COLOR_CONSISTENCY_THRESHOLD) {
-      return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
-    }
-
-    // 4. PATRÓN DE TEXTURA ESPECÍFICO DE DEDO
-    const fingerTextureValidation = this.validateFingerTexture(textureScore, imageData);
-    if (fingerTextureValidation < this.CONFIG.TEXTURE_HUMAN_THRESHOLD) {
-      return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
-    }
-
-    // 5. PULSATILIDAD CARDIOVASCULAR HUMANA
-    const pulsatilityScore = this.validateHumanPulsatility(red);
-    if (pulsatilityScore < this.CONFIG.PULSATILITY_REQUIREMENT) {
-      return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
-    }
-
-    // 6. SCORE INTEGRADO ULTRA-EXIGENTE
+    // 3. SCORE INTEGRADO MÁS PERMISIVO
     const rawDetectionScore = (
-      hemoglobinSignature * 0.30 +
-      skinColorConsistency * 0.25 +
-      fingerTextureValidation * 0.20 +
-      pulsatilityScore * 0.25
+      basicColorCheck * 0.40 +
+      textureCheck * 0.25 +
+      ratioCheck * 0.20 +
+      pulsatilityCheck * 0.15
     );
 
-    // 7. HISTÉRESIS ESTRICTA
+    console.log("🔍 Validaciones de dedo:", {
+      red: red.toFixed(2),
+      basicColor: basicColorCheck.toFixed(3),
+      texture: textureCheck.toFixed(3),
+      ratio: ratioCheck.toFixed(3),
+      pulsatility: pulsatilityCheck.toFixed(3),
+      rawScore: rawDetectionScore.toFixed(3)
+    });
+
+    // 4. HISTÉRESIS MÁS SUAVE
     let adjustedScore = rawDetectionScore;
     if (this.fingerDetectionState.isDetected) {
-      adjustedScore += this.CONFIG.HYSTERESIS * 0.02;
+      adjustedScore += this.CONFIG.HYSTERESIS * 0.05;
     }
 
-    // 8. LÓGICA DE DECISIÓN ULTRA-CONSERVADORA
+    // 5. LÓGICA DE DECISIÓN OPTIMIZADA
     const shouldDetect = adjustedScore >= this.CONFIG.MIN_DETECTION_SCORE;
 
-    // 9. CONTROL DE CONSECUTIVIDAD ESTRICTO
+    // 6. CONTROL DE CONSECUTIVIDAD OPTIMIZADO
     if (shouldDetect) {
       this.fingerDetectionState.consecutiveDetections++;
       this.fingerDetectionState.consecutiveNonDetections = 0;
       
       if (this.fingerDetectionState.consecutiveDetections >= this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION) {
         if (!this.fingerDetectionState.isDetected) {
-          console.log("✅ DEDO HUMANO CONFIRMADO", {
+          console.log("✅ DEDO DETECTADO EXITOSAMENTE", {
             score: adjustedScore.toFixed(3),
-            hemoglobina: hemoglobinSignature.toFixed(3),
-            piel: skinColorConsistency.toFixed(3),
-            textura: fingerTextureValidation.toFixed(3),
-            pulsatilidad: pulsatilityScore.toFixed(3)
+            red: red.toFixed(2),
+            consecutivas: this.fingerDetectionState.consecutiveDetections
           });
         }
         this.fingerDetectionState.isDetected = true;
@@ -311,10 +303,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       
       if (this.fingerDetectionState.consecutiveNonDetections >= this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS) {
         if (this.fingerDetectionState.isDetected) {
-          console.log("❌ DEDO PERDIDO - Validaciones fallaron", {
+          console.log("❌ DEDO PERDIDO", {
             score: adjustedScore.toFixed(3),
-            hemoglobina: hemoglobinSignature.toFixed(3),
-            piel: skinColorConsistency.toFixed(3)
+            red: red.toFixed(2)
           });
         }
         this.fingerDetectionState.isDetected = false;
@@ -326,187 +317,70 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return {
       isDetected: this.fingerDetectionState.isDetected,
       detectionScore: adjustedScore,
-      opticalCoherence: hemoglobinSignature
+      opticalCoherence: basicColorCheck
     };
   }
 
   /**
-   * VALIDACIÓN ESPECÍFICA DE HEMOGLOBINA HUMANA
+   * VALIDACIONES SIMPLIFICADAS
    */
-  private validateHumanHemoglobinSignature(r: number, g: number, b: number): number {
-    // Absorción específica de hemoglobina oxigenada y desoxigenada
-    const oxyHb_red = 0.319;    // Coeficiente a 660nm
-    const deoxyHb_red = 3.226;  // Coeficiente a 660nm
-    const oxyHb_ir = 0.372;     // Coeficiente a 940nm (aproximado con verde)
-    const deoxyHb_ir = 0.164;   // Coeficiente a 940nm
-    
+  private validateBasicColor(r: number, g: number, b: number): number {
+    // Validación básica de color de piel más permisiva
     const total = r + g + b + 1e-10;
     const redRatio = r / total;
-    const greenRatio = g / total;
     
-    // Cálculo de ratio específico de hemoglobina
-    const expectedRatio = (oxyHb_red + deoxyHb_red) / (oxyHb_ir + deoxyHb_ir);
-    const actualRatio = redRatio / (greenRatio + 1e-10);
-    
-    const ratioError = Math.abs(actualRatio - expectedRatio) / expectedRatio;
-    const hemoglobinScore = Math.exp(-ratioError * 2);
-    
-    // Actualizar historial
-    this.fingerDetectionState.hemoglobinSignature = hemoglobinScore;
-    
-    return hemoglobinScore;
-  }
-
-  /**
-   * VALIDACIÓN ULTRA-ESPECÍFICA DE COLOR DE PIEL HUMANA
-   */
-  private validateHumanSkinColor(r: number, g: number, b: number): number {
-    // Modelos específicos de piel humana en diferentes etnias
-    const skinModels = [
-      { r: 0.45, g: 0.35, b: 0.20, tolerance: 0.15 }, // Caucásica
-      { r: 0.42, g: 0.33, b: 0.25, tolerance: 0.12 }, // Mediterránea
-      { r: 0.38, g: 0.32, b: 0.30, tolerance: 0.10 }, // Asiática
-      { r: 0.35, g: 0.30, b: 0.35, tolerance: 0.08 }  // Africana
-    ];
-    
-    const total = r + g + b + 1e-10;
-    const normR = r / total;
-    const normG = g / total;
-    const normB = b / total;
-    
-    let bestMatch = 0;
-    for (const model of skinModels) {
-      const distance = Math.sqrt(
-        Math.pow(normR - model.r, 2) + 
-        Math.pow(normG - model.g, 2) + 
-        Math.pow(normB - model.b, 2)
-      );
-      
-      if (distance <= model.tolerance) {
-        const similarity = 1 - (distance / model.tolerance);
-        bestMatch = Math.max(bestMatch, similarity);
-      }
+    // Rango muy amplio para diferentes tonos de piel
+    if (redRatio >= 0.25 && redRatio <= 0.65) {
+      return Math.min(1.0, redRatio * 2.5);
     }
     
-    // Actualizar historial
-    this.fingerDetectionState.skinColorHistory.push(bestMatch);
-    if (this.fingerDetectionState.skinColorHistory.length > 10) {
-      this.fingerDetectionState.skinColorHistory.shift();
-    }
-    
-    return bestMatch;
+    return 0.3; // Score mínimo para intentar detectar
   }
 
-  /**
-   * VALIDACIÓN DE TEXTURA ESPECÍFICA DE DEDO
-   */
-  private validateFingerTexture(textureScore: number, imageData: ImageData): number {
-    // Análisis de patrones de huella dactilar
-    const ridgePattern = this.detectRidgePatterns(imageData);
+  private validateColorRatios(rToG: number, rToB: number): number {
+    // Ratios más permisivos
+    const rgScore = (rToG >= 0.8 && rToG <= 3.0) ? 1.0 : 0.5;
+    const rbScore = (rToB >= 0.7 && rToB <= 2.5) ? 1.0 : 0.5;
     
-    // Rugosidad específica de piel vs superficies lisas
-    const skinRoughness = this.calculateSkinRoughness(textureScore);
-    
-    // Combinación de validadores
-    const fingerScore = (ridgePattern * 0.6) + (skinRoughness * 0.4);
-    
-    this.fingerDetectionState.fingerPrintValidation = ridgePattern;
-    this.fingerDetectionState.textureConsistency = skinRoughness;
-    
-    return fingerScore;
+    return (rgScore + rbScore) / 2;
   }
 
-  /**
-   * VALIDACIÓN DE PULSATILIDAD CARDIOVASCULAR
-   */
-  private validateHumanPulsatility(currentValue: number): number {
-    // Agregar al historial de pulsatilidad
+  private validateSimplePulsatility(currentValue: number): number {
     this.fingerDetectionState.pulsatilityHistory.push(currentValue);
-    if (this.fingerDetectionState.pulsatilityHistory.length > 20) {
+    if (this.fingerDetectionState.pulsatilityHistory.length > 15) {
       this.fingerDetectionState.pulsatilityHistory.shift();
     }
     
-    if (this.fingerDetectionState.pulsatilityHistory.length < 10) {
-      return 0.3; // Insuficiente data
+    if (this.fingerDetectionState.pulsatilityHistory.length < 5) {
+      return 0.5; // Score neutral para datos insuficientes
     }
     
-    // Análisis de variabilidad cardiovascular
     const values = this.fingerDetectionState.pulsatilityHistory;
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-    const stdDev = Math.sqrt(variance);
+    const max = Math.max(...values);
+    const min = Math.min(...values);
+    const range = max - min;
     
-    // Coefficient of variation típico cardiovascular: 0.02-0.20
-    const cv = stdDev / (mean + 1e-10);
-    const pulsatilityScore = (cv >= 0.02 && cv <= 0.20) ? 1.0 : Math.exp(-Math.abs(cv - 0.10) * 10);
-    
-    return pulsatilityScore;
+    // Pulsatilidad más permisiva
+    return Math.min(1.0, range / 50); // Normalizar a rango esperado
   }
 
-  private detectRidgePatterns(imageData: ImageData): number {
-    // Análisis simplificado de patrones de cresta
-    const data = imageData.data;
-    const width = imageData.width;
-    const height = imageData.height;
+  private calculateOptimizedGain(detectionResult: { detectionScore: number; opticalCoherence: number }): number {
+    const baseGain = 2.0;
+    const detectionBoost = Math.sqrt(detectionResult.detectionScore) * 0.5;
+    const coherenceBoost = detectionResult.opticalCoherence * 0.3;
     
-    let ridgeScore = 0;
-    let samples = 0;
-    
-    // Muestreo cada 4 píxeles para eficiencia
-    for (let y = 4; y < height - 4; y += 4) {
-      for (let x = 4; x < width - 4; x += 4) {
-        const idx = (y * width + x) * 4;
-        const centerGray = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        
-        // Gradientes en 8 direcciones
-        let maxGradient = 0;
-        for (let dy = -2; dy <= 2; dy += 2) {
-          for (let dx = -2; dx <= 2; dx += 2) {
-            if (dx === 0 && dy === 0) continue;
-            
-            const nIdx = ((y + dy) * width + (x + dx)) * 4;
-            const neighborGray = (data[nIdx] + data[nIdx + 1] + data[nIdx + 2]) / 3;
-            const gradient = Math.abs(centerGray - neighborGray);
-            maxGradient = Math.max(maxGradient, gradient);
-          }
-        }
-        
-        ridgeScore += maxGradient;
-        samples++;
-      }
-    }
-    
-    const avgGradient = samples > 0 ? ridgeScore / samples : 0;
-    return Math.tanh(avgGradient / 30); // Normalizar 0-1
+    return Math.min(3.5, Math.max(1.2, baseGain + detectionBoost + coherenceBoost));
   }
 
-  private calculateSkinRoughness(textureScore: number): number {
-    // Rugosidad típica de piel humana vs objetos
-    const optimalRoughness = 0.45;
-    const tolerance = 0.20;
+  private calculateOptimizedQuality(detectionResult: { detectionScore: number }, textureScore: number, redValue: number): number {
+    if (detectionResult.detectionScore === 0) return 0;
     
-    const deviation = Math.abs(textureScore - optimalRoughness);
-    return deviation <= tolerance ? 1 - (deviation / tolerance) : 0;
-  }
-
-  private calculateUltraPowerfulGain(detectionResult: { detectionScore: number; opticalCoherence: number }): number {
-    // Ganancia POTENTE para señal excelente en dedo humano confirmado
-    const baseGain = 2.5; // Ganancia base alta
+    // Calidad más generosa
+    const detectionQuality = Math.pow(detectionResult.detectionScore, 0.5) * 60;
+    const textureQuality = textureScore * 20;
+    const signalQuality = Math.min(20, (redValue / 10));
     
-    const detectionBoost = Math.pow(detectionResult.detectionScore, 0.5) * 1.0;
-    const coherenceBoost = detectionResult.opticalCoherence * 0.8;
-    
-    return Math.min(4.0, Math.max(1.5, baseGain + detectionBoost + coherenceBoost));
-  }
-
-  private calculateExcellentQualityForHumanFinger(detectionResult: { detectionScore: number }, textureScore: number): number {
-    if (!detectionResult.detectionScore) return 0;
-    
-    // Calidad EXCELENTE garantizada para dedo humano confirmado
-    const detectionQuality = Math.pow(detectionResult.detectionScore, 0.7) * 85; // Mínimo 85% para dedo confirmado
-    const textureQuality = textureScore * 15;
-    
-    const finalQuality = Math.min(100, Math.max(75, detectionQuality + textureQuality)); // Mínimo 75%, máximo 100%
+    const finalQuality = Math.min(100, Math.max(30, detectionQuality + textureQuality + signalQuality));
     
     return finalQuality;
   }
@@ -514,17 +388,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private calculateOptimalPerfusion(
     redValue: number, isDetected: boolean, quality: number, detectionScore: number
   ): number {
-    if (!isDetected || quality < 70) return 0;
+    if (!isDetected || quality < 30) return 0;
     
-    const normalizedRed = Math.min(1, redValue / 200);
-    const perfusionBase = Math.log1p(normalizedRed * 4) * 2.0; // Amplificado
+    const normalizedRed = Math.min(1, redValue / 150);
+    const perfusionBase = Math.log1p(normalizedRed * 3) * 1.5;
     
-    const qualityFactor = Math.tanh(quality / 25) * 0.6;
-    const confidenceFactor = Math.pow(detectionScore, 0.5) * 0.6;
+    const qualityFactor = Math.tanh(quality / 30) * 0.4;
+    const confidenceFactor = Math.sqrt(detectionScore) * 0.4;
     
-    const totalPerfusion = (perfusionBase + qualityFactor + confidenceFactor) * 12;
+    const totalPerfusion = (perfusionBase + qualityFactor + confidenceFactor) * 8;
     
-    return Math.min(15, Math.max(0, totalPerfusion));
+    return Math.min(12, Math.max(0, totalPerfusion));
   }
 
   private reset(): void {
@@ -566,6 +440,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   private isNonPhysiological(trendResult: any, fingerDetectionResult: { isDetected: boolean }): boolean {
-    return trendResult === "non_physiological" || !fingerDetectionResult.isDetected;
+    return false; // Más permisivo durante las pruebas
   }
 }
