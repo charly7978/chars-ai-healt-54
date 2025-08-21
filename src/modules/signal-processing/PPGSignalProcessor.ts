@@ -8,7 +8,7 @@ import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
 
 /**
- * PROCESADOR PPG OPTIMIZADO - DETECCIÓN PERFECTA SIN FALSOS POSITIVOS
+ * PROCESADOR PPG ULTRA-ROBUSTO - SOLO DETECCIÓN HUMANA REAL
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -20,7 +20,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private calibrationHandler: CalibrationHandler;
   private signalAnalyzer: SignalAnalyzer;
   
-  // SISTEMA OPTIMIZADO DE DETECCIÓN
   private fingerDetectionState = {
     isDetected: false,
     detectionScore: 0,
@@ -35,8 +34,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     valleyHistory: [] as number[]
   };
   
-  // Buffer circular ultra-preciso
-  private readonly BUFFER_SIZE = 64;
+  private readonly BUFFER_SIZE = 128; // buffer más largo para estabilidad
   private signalBuffer: Float32Array;
   private bufferIndex: number = 0;
   private bufferFull: boolean = false;
@@ -44,33 +42,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private isCalibrating: boolean = false;
   private frameCount: number = 0;
   
-  // CONFIGURACIÓN OPTIMIZADA PARA DETECCIÓN REAL
   private readonly CONFIG = {
-    // UMBRALES MÁS PERMISIVOS PERO PRECISOS
-    MIN_RED_THRESHOLD: 10,  // Más bajo para mejor detección
-    MAX_RED_THRESHOLD: 180,
-    MIN_DETECTION_SCORE: 0.9, // Más permisivo
-    MIN_CONSECUTIVE_FOR_DETECTION: 3, // Menos frames requeridos
-    MAX_CONSECUTIVE_FOR_LOSS: 4,
-    
-    // VALIDACIÓN EQUILIBRADA
-    MIN_SNR_REQUIRED: 10.0, // SNR más bajo pero funcional
-    SKIN_COLOR_STRICTNESS: 1.9, // Más permisivo
-    PULSATILITY_MIN_REQUIRED: 1.5, // Más bajo para señales débiles
-    TEXTURE_HUMAN_MIN: 0.9, // Más permisivo
-    STABILITY_FRAMES: 2, // Menos frames para estabilidad
-    
-    NOISE_THRESHOLD: 1.5,
-    PEAK_PROMINENCE: 0.05, // Más sensible para detectar latidos débiles
-    VALLEY_DEPTH: 0.1,
-    SIGNAL_CONSISTENCY: 0.5
+    MIN_RED_THRESHOLD: 15,
+    MAX_RED_THRESHOLD: 170,
+    MIN_DETECTION_SCORE: 0.92,
+    MIN_CONSECUTIVE_FOR_DETECTION: 5,
+    MAX_CONSECUTIVE_FOR_LOSS: 2,
+
+    MIN_SNR_REQUIRED: 15.0,
+    SKIN_COLOR_STRICTNESS: 2.2,
+    PULSATILITY_MIN_REQUIRED: 2.0,
+    TEXTURE_HUMAN_MIN: 1.0,
+    STABILITY_FRAMES: 5,
+
+    NOISE_THRESHOLD: 1.2,
+    PEAK_PROMINENCE: 0.08,
+    VALLEY_DEPTH: 0.12,
+    SIGNAL_CONSISTENCY: 0.7
   };
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    console.log("🎯 PPGSignalProcessor: Sistema OPTIMIZADO activado");
+    console.log("🎯 PPGSignalProcessor: Sistema ULTRA-ROBUSTO activado");
     
     this.signalBuffer = new Float32Array(this.BUFFER_SIZE);
     this.kalmanFilter = new KalmanFilter();
@@ -82,13 +77,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ROI_SIZE_FACTOR: 1.10
     });
     this.calibrationHandler = new CalibrationHandler({
-      CALIBRATION_SAMPLES: 30,
+      CALIBRATION_SAMPLES: 40,
       MIN_RED_THRESHOLD: this.CONFIG.MIN_RED_THRESHOLD,
       MAX_RED_THRESHOLD: this.CONFIG.MAX_RED_THRESHOLD
     });
     this.signalAnalyzer = new SignalAnalyzer({
       QUALITY_LEVELS: 100,
-      QUALITY_HISTORY_SIZE: 50,
+      QUALITY_HISTORY_SIZE: 60,
       MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION,
       MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS
     });
@@ -121,7 +116,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.biophysicalValidator.reset();
       this.signalAnalyzer.reset();
       
-      console.log("✅ PPGSignalProcessor: Sistema ultra-preciso inicializado");
+      console.log("✅ PPGSignalProcessor: Inicialización completada");
     } catch (error) {
       console.error("❌ PPGSignalProcessor: Error inicialización", error);
       this.handleError("INIT_ERROR", "Error inicializando procesador");
@@ -132,7 +127,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.initialize();
-    console.log("🚀 PPGSignalProcessor: Sistema ultra-preciso iniciado");
+    console.log("🚀 PPGSignalProcessor: Sistema iniciado");
   }
 
   stop(): void {
@@ -143,15 +138,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   async calibrate(): Promise<boolean> {
     try {
-      console.log("🔧 PPGSignalProcessor: Calibración ultra-precisa iniciada");
+      console.log("🔧 PPGSignalProcessor: Calibración iniciada");
       await this.initialize();
       
       this.isCalibrating = true;
       
       setTimeout(() => {
         this.isCalibrating = false;
-        console.log("✅ PPGSignalProcessor: Calibración ultra-precisa completada");
-      }, 3000);
+        console.log("✅ PPGSignalProcessor: Calibración completada");
+      }, 4000);
       
       return true;
     } catch (error) {
@@ -168,48 +163,38 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     try {
       this.frameCount = (this.frameCount + 1) % 10000;
       
-      // 1. Extracción optimizada
       const extractionResult = this.frameProcessor.extractFrameData(imageData);
       const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
-      // 2. DETECCIÓN OPTIMIZADA EQUILIBRADA
       const fingerDetectionResult = this.detectFingerOptimized(
         redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, rToGRatio, rToBRatio, imageData
       );
 
-      // 3. Procesamiento mejorado
       let filteredValue = redValue;
       if (fingerDetectionResult.isDetected) {
         filteredValue = this.kalmanFilter.filter(redValue);
         filteredValue = this.sgFilter.filter(filteredValue);
-        
-        // Amplificación controlada
         const preciseGain = this.calculateOptimizedGain(fingerDetectionResult);
         filteredValue = filteredValue * preciseGain;
       }
 
-      // 4. Buffer circular ultra-preciso
       this.signalBuffer[this.bufferIndex] = filteredValue;
       this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
       if (this.bufferIndex === 0) this.bufferFull = true;
 
-      // 5. Análisis de tendencia estricto
       const trendResult = this.trendAnalyzer.analyzeTrend(filteredValue);
       
-      // 6. Calidad ultra-precisa
       const quality = this.calculateUltraPreciseQuality(
         fingerDetectionResult, textureScore, redValue, this.fingerDetectionState.signalToNoiseRatio
       );
 
-      // 7. Índice de perfusión preciso
       const perfusionIndex = this.calculatePrecisePerfusion(
         redValue, fingerDetectionResult.isDetected, quality, fingerDetectionResult.detectionScore
       );
 
-      // Logging optimizado cada 30 frames
       if (this.frameCount % 30 === 0) {
-        console.log("🎯 Detección optimizada:", {
+        console.log("🎯 Estado:", {
           red: redValue.toFixed(2),
           detected: fingerDetectionResult.isDetected,
           score: fingerDetectionResult.detectionScore.toFixed(3),
@@ -218,7 +203,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         });
       }
 
-      // 8. Señal procesada final
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,
@@ -236,43 +220,34 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
   }
 
-  /**
-   * DETECCIÓN OPTIMIZADA EQUILIBRADA
-   */
   private detectFingerOptimized(
     red: number, green: number, blue: number, 
     textureScore: number, rToGRatio: number, rToBRatio: number,
     imageData: ImageData
   ): { isDetected: boolean; detectionScore: number; opticalCoherence: number } {
     
-    // 1. VALIDACIÓN BÁSICA MÁS PERMISIVA
     if (red < this.CONFIG.MIN_RED_THRESHOLD || red > this.CONFIG.MAX_RED_THRESHOLD) {
       this.resetDetectionState();
       return { isDetected: false, detectionScore: 0, opticalCoherence: 0 };
     }
 
-    // 2. Actualizar historial
     this.fingerDetectionState.signalHistory.push(red);
-    if (this.fingerDetectionState.signalHistory.length > 30) {
+    if (this.fingerDetectionState.signalHistory.length > 50) {
       this.fingerDetectionState.signalHistory.shift();
     }
 
-    // 3. VALIDACIONES OPTIMIZADAS
     const skinColorScore = this.validateOptimizedSkinColor(red, green, blue);
-    const textureHumanScore = Math.min(1.0, textureScore * 2.0); // Más permisivo
+    const textureHumanScore = Math.min(1.0, textureScore * 2.0);
     const pulsatilityScore = this.validateOptimizedPulsatility(red);
     const stabilityScore = this.validateOptimizedStability();
     const snrScore = this.calculateOptimizedSNR();
     
-    // 4. SCORE EQUILIBRADO
     const weights = [0.3, 0.2, 0.25, 0.15, 0.1];
     const scores = [skinColorScore, textureHumanScore, pulsatilityScore, stabilityScore, snrScore];
     const rawDetectionScore = scores.reduce((sum, score, i) => sum + score * weights[i], 0);
 
-    // 5. UMBRAL OPTIMIZADO
     const shouldDetect = rawDetectionScore >= this.CONFIG.MIN_DETECTION_SCORE;
 
-    // 6. CONTROL DE CONSECUTIVIDAD OPTIMIZADO
     if (shouldDetect) {
       this.fingerDetectionState.consecutiveDetections++;
       this.fingerDetectionState.consecutiveNonDetections = 0;
@@ -308,32 +283,37 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     };
   }
 
-  /**
-   * VALIDACIONES OPTIMIZADAS
-   */
   private validateOptimizedSkinColor(r: number, g: number, b: number): number {
     const total = r + g + b + 1e-10;
     const redRatio = r / total;
-    
-    // Rangos más amplios para mejor detección
-    if (redRatio >= 0.25 && redRatio <= 0.65) {
-      return Math.min(1.0, redRatio * 2.0);
+    const greenRatio = g / total;
+    const blueRatio = b / total;
+
+    if (redRatio >= 0.35 && redRatio <= 0.65 &&
+        greenRatio >= 0.2 && greenRatio <= 0.45 &&
+        blueRatio <= 0.25) {
+      return 1.0;
     }
-    
     return 0;
   }
 
   private validateOptimizedPulsatility(currentValue: number): number {
-    if (this.fingerDetectionState.signalHistory.length < 10) return 0.5; // Valor por defecto
-    
-    const recent = this.fingerDetectionState.signalHistory.slice(-10);
-    const max = Math.max(...recent);
-    const min = Math.min(...recent);
-    
-    const pulsatility = (max - min) / max;
-    
-    return pulsatility >= this.CONFIG.PULSATILITY_MIN_REQUIRED ? 
-           Math.min(1.0, pulsatility * 5) : pulsatility * 2; // Más permisivo
+    if (this.fingerDetectionState.signalHistory.length < 20) return 0;
+
+    const recent = this.fingerDetectionState.signalHistory.slice(-40);
+    const peaks = this.detectRealPeaks(recent);
+
+    const intervals: number[] = [];
+    for (let i = 1; i < peaks.length; i++) {
+      intervals.push(peaks[i] - peaks[i - 1]);
+    }
+    if (intervals.length < 2) return 0;
+
+    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    const bpm = 60000 / avgInterval;
+
+    if (bpm >= 48 && bpm <= 180) return 1.0;
+    return 0;
   }
 
   private validateOptimizedStability(): number {
@@ -344,13 +324,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const variance = recent.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recent.length;
     const cv = Math.sqrt(variance) / mean;
     
-    return Math.max(0.2, 1 - cv); // Mínimo 0.2 en lugar de 0
+    return Math.max(0.2, 1 - cv);
   }
 
   private calculateOptimizedSNR(): number {
-    if (this.fingerDetectionState.signalHistory.length < 20) return 0.5;
+    if (this.fingerDetectionState.signalHistory.length < 30) return 0.5;
     
-    const signal = this.fingerDetectionState.signalHistory.slice(-20);
+    const signal = this.fingerDetectionState.signalHistory.slice(-30);
     const signalPower = this.calculateSignalPower(signal);
     const noisePower = this.calculateNoisePower(signal);
     
@@ -360,7 +340,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.fingerDetectionState.signalToNoiseRatio = snr;
     
     return snr >= this.CONFIG.MIN_SNR_REQUIRED ? 
-           Math.min(1.0, snr / 20) : Math.max(0.1, snr / 20); // Más permisivo
+           Math.min(1.0, snr / 20) : Math.max(0.1, snr / 20);
   }
 
   private detectRealPeaks(signal: number[]): number[] {
@@ -392,7 +372,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   private calculateSignalPower(signal: number[]): number {
-    // Potencia en banda cardíaca (0.8-3.5 Hz aproximado)
     let power = 0;
     for (let i = 1; i < signal.length; i++) {
       const diff = signal[i] - signal[i-1];
@@ -402,7 +381,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   private calculateNoisePower(signal: number[]): number {
-    // Estimación de ruido usando diferencias de segundo orden
     let noisePower = 0;
     for (let i = 2; i < signal.length; i++) {
       const secondDiff = signal[i] - 2 * signal[i-1] + signal[i-2];
@@ -418,8 +396,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private calculateOptimizedGain(detectionResult: { detectionScore: number; opticalCoherence: number }): number {
     const baseGain = 2.0;
-    const detectionBoost = detectionResult.detectionScore * 0.5;
-    
+    const detectionBoost = detectionResult.detectionScore * 0.3;
     return Math.min(3.0, Math.max(1.2, baseGain + detectionBoost));
   }
 
@@ -429,17 +406,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     redValue: number,
     snr: number
   ): number {
-    if (detectionResult.detectionScore < 0.5) return 0;
-    
-    const detectionQuality = Math.pow(detectionResult.detectionScore, 0.8) * 40;
-    const textureQuality = textureScore * 25;
-    const signalQuality = Math.min(25, (redValue / 8));
-    const snrQuality = Math.min(10, Math.max(0, snr - 10));
-    
-    const finalQuality = Math.min(100, Math.max(0, 
-      detectionQuality + textureQuality + signalQuality + snrQuality));
-    
-    return finalQuality;
+    if (detectionResult.detectionScore < 0.6) return 0;
+
+    const detectionQuality = detectionResult.detectionScore * 40;
+    const snrQuality = Math.min(40, snr * 2);
+    const pulsatilityQuality = this.validateOptimizedPulsatility(redValue) * 20;
+    const textureQuality = Math.min(20, textureScore * 20);
+
+    return Math.min(100, detectionQuality + snrQuality + pulsatilityQuality + textureQuality);
   }
 
   private calculatePrecisePerfusion(
@@ -474,11 +448,4 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     console.error("❌ PPGSignalProcessor:", code, message);
     const error: ProcessingError = {
       code,
-      message,
-      timestamp: Date.now()
-    };
-    if (typeof this.onError === 'function') {
-      this.onError(error);
-    }
-  }
-}
+     
