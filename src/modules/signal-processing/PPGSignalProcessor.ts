@@ -65,7 +65,7 @@ export default class PPGSignalProcessor {
     // resample uniformemente a N puntos para análisis espectral
     const sampled = this.resampleUniform(this.buffer, 256);
     const detr = this.detrend(sampled);
-    const smooth = savitzkyGolay(detr, 11, 3);
+    const smooth = savitzkyGolay(detr, 11);
 
     // análisis espectral via Goertzel en rango 0.8 - 3.0 Hz (48 - 180 BPM)
     const fs = sampled.length / this.windowSec; // Hz

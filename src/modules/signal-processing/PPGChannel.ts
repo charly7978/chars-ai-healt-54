@@ -1,3 +1,4 @@
+
 /**
  * Canal PPG avanzado:
  * - mantiene buffer temporal (timestamps + valores)
@@ -20,7 +21,7 @@ export default class PPGChannel {
   private buffer: Sample[] = [];
   private windowSec: number;
   private gain: number;
-  private minRMeanForFinger = 5; // ULTRA REDUCIDO: muy permisivo para detectar dedo
+  private minRMeanForFinger = 15; // EQUILIBRADO: detecta dedos con señal moderada
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -35,9 +36,9 @@ export default class PPGChannel {
     const t0 = t - this.windowSec;
     while (this.buffer.length && this.buffer[0].t < t0) this.buffer.shift();
     
-    // DEBUG: Log del estado del buffer
-    if (this.buffer.length % 10 === 0) { // Log cada 10 muestras
-      console.log(`📊 Canal ${this.channelId} - Buffer Status:`, {
+    // DEBUG: Log del estado del buffer cada 30 muestras
+    if (this.buffer.length % 30 === 0) {
+      console.log(`📊 Canal ${this.channelId} - Buffer:`, {
         length: this.buffer.length,
         timeSpan: this.buffer.length > 0 ? (this.buffer[this.buffer.length-1].t - this.buffer[0].t).toFixed(2) + 's' : '0s',
         lastValue: v.toFixed(2),
@@ -53,7 +54,7 @@ export default class PPGChannel {
   getGain() { return this.gain; }
 
   analyze() {
-    if (this.buffer.length < 3) { // ULTRA REDUCIDO: buffer mínimo muy pequeño para análisis instantáneo
+    if (this.buffer.length < 10) { // EQUILIBRADO: buffer mínimo razonable
       return { calibratedSignal: [], bpm: null, rrIntervals: [], snr: 0, quality: 0, isFingerDetected: false, gain: this.gain };
     }
 
@@ -92,19 +93,19 @@ export default class PPGChannel {
     const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 300, 0.2);
     const bpmTime = rr.length ? Math.round(60000 / (rr.reduce((a,b)=>a+b,0)/rr.length)) : null;
 
-    // decisión dedo: mean raw (antes normalización) y coverage es responsabilidad del CameraView + manager;
+    // decisión dedo: equilibrada entre permisividad y precisión
     const meanRaw = sampled.reduce((a,b)=>a+b,0)/sampled.length;
-    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 0.3 && (bpmSpectral || bpmTime); // ULTRA REDUCIDO snr de 0.8 a 0.3
+    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 0.6 && (bpmSpectral || bpmTime);
 
-    // DEBUG: Log de detección de dedo por canal
-    console.log(`🔴 Canal ${this.channelId} - Finger Detection:`, {
+    // DEBUG: Log de detección de dedo
+    console.log(`🔴 Canal ${this.channelId} - Finger:`, {
       meanRaw: meanRaw.toFixed(2),
-      minRMeanForFinger: this.minRMeanForFinger,
+      minRequired: this.minRMeanForFinger,
       snr: snr.toFixed(2),
       bpmSpectral,
       bpmTime,
       isFinger,
-      bufferLength: this.buffer.length
+      quality: quality.toFixed(1)
     });
 
     return {

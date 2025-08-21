@@ -11,7 +11,7 @@ import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(true); // ACTIVADO por defecto para detectar dedo
+  const [isCameraOn, setIsCameraOn] = useState(true);
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
@@ -44,7 +44,6 @@ const Index = () => {
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
-  // HOOKS ÚNICOS
   const { 
     handleSample,
     lastResult
@@ -54,7 +53,6 @@ const Index = () => {
     processSignal: processHeartBeat, 
     setArrhythmiaState,
     reset: resetHeartBeat,
-    debugInfo: heartDebugInfo
   } = useHeartBeatProcessor();
   
   const { 
@@ -74,8 +72,6 @@ const Index = () => {
     const randomBytes = new Uint32Array(3);
     crypto.getRandomValues(randomBytes);
     sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
-    
-    console.log(`🚀 INICIALIZACIÓN ÚNICA GARANTIZADA: ${sessionIdRef.current}`);
     
     return () => {
       initializationLock.current = false;
@@ -146,15 +142,12 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  // FUNCIÓN DE INICIO MEJORADA
   const startMonitoring = () => {
     if (systemState.current !== 'IDLE') {
-      console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current}`);
       return;
     }
     
     systemState.current = 'STARTING';
-    console.log(`🎬 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
     enterFullScreen();
     setIsMonitoring(true);
@@ -164,8 +157,6 @@ const Index = () => {
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // CALIBRACIÓN CON TIMEOUT REDUCIDO
-    console.log(`🔧 Calibración iniciada`);
     setIsCalibrating(true);
     startCalibration();
     
@@ -174,7 +165,7 @@ const Index = () => {
         systemState.current = 'ACTIVE';
       }
       setIsCalibrating(false);
-    }, 2000); // REDUCIDO DE 3000 A 2000ms
+    }, 2000);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -266,20 +257,17 @@ const Index = () => {
     systemState.current = 'IDLE';
   };
 
-  // PROCESAMIENTO CON UMBRALES MÁS PERMISIVOS
   useEffect(() => {
     if (!lastResult) return;
 
-    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 20) || lastResult.channels[0]; // REDUCIDO DE 30 A 20
+    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 30) || lastResult.channels[0];
     setSignalQuality(bestChannel?.quality || 0);
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 15; // REDUCIDO DE 25 A 15 - MÁS PERMISIVO
+    const MIN_SIGNAL_QUALITY = 25;
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
-      // NO RESETEAR INMEDIATAMENTE - dar más tiempo
-      console.log(`⚠️ Calidad baja: dedo=${bestChannel?.isFingerDetected}, calidad=${bestChannel?.quality}`);
       return;
     }
 
@@ -349,6 +337,72 @@ const Index = () => {
     }
   };
 
+  const SignalQualitySensor = () => {
+    const getQualityColor = () => {
+      if (signalQuality >= 80) return 'from-emerald-400 to-green-500';
+      if (signalQuality >= 60) return 'from-yellow-400 to-amber-500';  
+      if (signalQuality >= 40) return 'from-orange-400 to-red-500';
+      return 'from-red-500 to-red-700';
+    };
+
+    const getQualityText = () => {
+      if (!lastResult?.fingerDetected) return 'Sin detección';
+      if (signalQuality >= 80) return 'Excelente';
+      if (signalQuality >= 60) return 'Buena';
+      if (signalQuality >= 40) return 'Regular';
+      return 'Débil';
+    };
+
+    return (
+      <div className="absolute top-6 right-6 bg-black/80 backdrop-blur-sm rounded-2xl p-4 border border-white/20">
+        <div className="text-center">
+          <div className="text-white/70 text-sm font-medium mb-2">CALIDAD DE SEÑAL</div>
+          
+          {/* Indicador circular animado */}
+          <div className="relative w-16 h-16 mx-auto mb-3">
+            <svg className="w-16 h-16 transform -rotate-90" viewBox="0 0 64 64">
+              <circle 
+                cx="32" cy="32" r="28" 
+                fill="none" 
+                stroke="rgba(255,255,255,0.1)" 
+                strokeWidth="4"
+              />
+              <circle 
+                cx="32" cy="32" r="28" 
+                fill="none" 
+                stroke="url(#qualityGradient)" 
+                strokeWidth="4"
+                strokeLinecap="round"
+                strokeDasharray={`${signalQuality * 1.75} 175`}
+                className="transition-all duration-1000 ease-out"
+              />
+              <defs>
+                <linearGradient id="qualityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor={signalQuality >= 80 ? '#10b981' : signalQuality >= 60 ? '#f59e0b' : signalQuality >= 40 ? '#f97316' : '#ef4444'} />
+                  <stop offset="100%" stopColor={signalQuality >= 80 ? '#059669' : signalQuality >= 60 ? '#d97706' : signalQuality >= 40 ? '#ea580c' : '#dc2626'} />
+                </linearGradient>
+              </defs>
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-white font-bold text-lg">{signalQuality}%</span>
+            </div>
+          </div>
+          
+          {/* Estado textual */}
+          <div className={`text-sm font-medium bg-gradient-to-r ${getQualityColor()} bg-clip-text text-transparent`}>
+            {getQualityText()}
+          </div>
+          
+          {/* Indicadores en tiempo real */}
+          <div className="mt-3 space-y-1 text-xs text-white/60">
+            <div>BPM: {lastResult?.aggregatedBPM || '--'}</div>
+            <div>Canales: {lastResult?.channels.filter(c => c.isFingerDetected).length || 0}/{lastResult?.channels.length || 0}</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
       height: '100svh',
@@ -359,20 +413,6 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
-             {/* DEBUG MEJORADO */}
-       <div className="absolute top-4 left-4 text-white z-50 bg-black/70 p-2 rounded text-xs">
-         <div>Canales: {lastResult?.channels.length || 0}</div>
-         <div>BPM: {lastResult?.aggregatedBPM || '--'}</div>
-         <div>Calidad: {signalQuality}%</div>
-         <div>Dedo: {lastResult?.fingerDetected ? 'SÍ' : 'NO'}</div>
-         <div>Estado: {systemState.current}</div>
-         <div>Cámara: {isCameraOn ? 'ON' : 'OFF'}</div>
-         <div>Coverage: {lastResult?.channels[0]?.isFingerDetected ? 'DETECTADO' : 'NO'}</div>
-         {rrIntervals.length > 0 && (
-           <div>RR: {rrIntervals.map(i => i + 'ms').join(', ')}</div>
-         )}
-       </div>
-
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -393,13 +433,16 @@ const Index = () => {
             onSample={handleSample}
             isMonitoring={isCameraOn}
             targetFps={30}
-            roiSize={320} // AUMENTADO: ROI más grande para capturar mejor el dedo
+            roiSize={320}
             enableTorch={true}
-            coverageThresholdPixelBrightness={8} // MUY REDUCIDO: más permisivo para detectar dedos
+            coverageThresholdPixelBrightness={15}
           />
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
+          {/* Sensor de Calidad Real */}
+          <SignalQualitySensor />
+          
           <div className="flex-1">
             <PPGSignalMeter 
               value={beatMarker}
@@ -413,7 +456,7 @@ const Index = () => {
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
+          <div className="absolute inset-x-0 top-[50%] bottom-[60px] bg-black/10 px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
                 label="FRECUENCIA CARDÍACA"

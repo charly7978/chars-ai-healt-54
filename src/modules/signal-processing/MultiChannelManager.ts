@@ -1,3 +1,4 @@
+
 /**
  * Manager multicanal avanzado (6 canales por defecto)
  * - Crea canales con pequeñas variantes iniciales (diversidad)
@@ -19,8 +20,8 @@ export default class MultiChannelManager {
   private fingerState = false;
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
-  private fingerEnableFramesToConfirm = 2; // ULTRA REDUCIDO: frames consecutivos con dedo para confirmar
-  private fingerDisableFramesToConfirm = 2; // ULTRA REDUCIDO: frames consecutivos sin dedo para desconfirmar
+  private fingerEnableFramesToConfirm = 3; // EQUILIBRADO: frames consecutivos con dedo para confirmar
+  private fingerDisableFramesToConfirm = 5; // frames consecutivos sin dedo para desconfirmar
 
   constructor(n = 6, windowSec = 8) {
     this.n = n;
@@ -34,7 +35,7 @@ export default class MultiChannelManager {
 
   pushSample(rawValue: number, timestampMs: number) {
     this.lastTimestamp = timestampMs;
-    // alimentar todos los canales (podrían recibir transforms distintos en el futuro)
+    // alimentar todos los canales
     for (const ch of this.channels) ch.pushSample(rawValue, timestampMs);
   }
 
@@ -56,24 +57,20 @@ export default class MultiChannelManager {
       } as any);
     }
 
-    // DEBUG: Log de análisis de canales
-    console.log('🔍 MultiChannel Analysis:', {
-      channels: res.length,
-      fingerDetected: nFinger,
-      coverageRatio: (globalCoverageRatio * 100).toFixed(1) + '%',
-      frameDiff: globalFrameDiff.toFixed(1),
-      channelDetails: res.map(ch => ({
-        id: ch.channelId,
-        finger: ch.isFingerDetected,
-        quality: ch.quality,
-        snr: ch.snr.toFixed(2)
-      }))
-    });
+    // DEBUG: Log cada 10 análisis
+    if (Date.now() % 10000 < 100) {
+      console.log('🔍 MultiChannel:', {
+        fingerDetected: nFinger,
+        coverageRatio: (globalCoverageRatio * 100).toFixed(1) + '%',
+        frameDiff: globalFrameDiff.toFixed(1),
+        bestQuality: Math.max(...res.map(c => c.quality))
+      });
+    }
 
-    // consenso: requerir que >= mitad de canales detecten dedo y coverageRatio alto y bajo movimiento
+    // consenso: requerir que >= mitad de canales detecten dedo y cobertura adecuada
     const majority = Math.ceil(this.n / 2);
-    const coverageOk = globalCoverageRatio > 0.02; // ULTRA REDUCIDO: al menos ~2% pix cubiertos (muy permisivo)
-    const motionOk = globalFrameDiff < 25; // MUY AUMENTADO: brillo muy tolerante entre frames
+    const coverageOk = globalCoverageRatio > 0.05; // EQUILIBRADO: al menos ~5% píxeles cubiertos
+    const motionOk = globalFrameDiff < 20; // EQUILIBRADO: tolerancia moderada al movimiento
     const channelConsensus = nFinger >= majority;
 
     // Actualizar debounce
@@ -89,19 +86,17 @@ export default class MultiChannelManager {
       }
     }
 
-    // Feedback adaptativo: ajustar gains según quality (PID leve)
+    // Feedback adaptativo: ajustar gains según quality
     for (const r of res) {
       const ch = this.channels[r.channelId];
-      // Si detecta dedo pero baja quality -> aumentar gain suavemente
-      if (r.isFingerDetected && r.quality < 40) {
+      if (r.isFingerDetected && r.quality < 50) {
         ch.adjustGainRel(0.02); // +2%
       }
-      // Si no detecta dedo y gain alto -> reducir
-      if (!r.isFingerDetected && r.gain > 1.5) ch.adjustGainRel(-0.03);
+      if (!r.isFingerDetected && r.gain > 1.5) ch.adjustGainRel(-0.02);
     }
 
     // agregación BPM: escoger valores de canales con quality >= threshold
-    const good = res.filter(c => c.bpm && c.quality >= 45).map(c => ({bpm: c.bpm as number, q: c.quality}));
+    const good = res.filter(c => c.bpm && c.quality >= 50).map(c => ({bpm: c.bpm as number, q: c.quality}));
     let aggregatedBPM: number | null = null;
     if (good.length) {
       // voto ponderado por quality
@@ -112,7 +107,6 @@ export default class MultiChannelManager {
       // fallback: usar cualquier bpm disponible promediado
       const any = res.filter(c => c.bpm);
       if (any.length) aggregatedBPM = Math.round(any.reduce((s,c)=>s + (c.bpm||0),0)/any.length);
-      else aggregatedBPM = null;
     }
 
     const aggregatedQuality = Math.round(res.reduce((s,c)=>s + c.quality,0)/Math.max(1,res.length));
