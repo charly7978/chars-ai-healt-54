@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { toast } from "@/components/ui/use-toast";
-import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
+import { VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -8,6 +8,7 @@ interface CameraViewProps {
   isFingerDetected?: boolean;
   signalQuality?: number;
   onFingerDetected?: (detected: boolean, quality: number) => void;
+  processVitalSigns: (ppgValue: number, rrData?: { intervals: number[]; lastPeakTime: number | null }) => any;
 }
 
 const CameraView = ({ 
@@ -16,10 +17,10 @@ const CameraView = ({
   isFingerDetected = false, 
   signalQuality = 0,
   onFingerDetected,
+  processVitalSigns,
 }: CameraViewProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
-  const vitalProcessor = useRef(new VitalSignsProcessor());
   const [torchEnabled, setTorchEnabled] = useState(false);
   const frameIntervalRef = useRef<number>(1000 / 30); // 30 FPS
   const lastFrameTimeRef = useRef<number>(0);
@@ -300,8 +301,8 @@ const CameraView = ({
     
     console.log("📊 Frame procesado:", { red: red[0], ir: ir[0], green: green[0] });
     
-    // ✅ UNIFICADO: Usar solo el procesador principal
-    const results = vitalProcessor.current.processSignal(
+    // ✅ UNIFICADO: Usar la función processVitalSigns que viene como prop
+    const results = processVitalSigns(
       red[0], // Usar solo el valor principal
       undefined // Sin datos RR por ahora
     );

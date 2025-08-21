@@ -449,6 +449,7 @@ const Index = () => {
             isMonitoring={isCameraOn}
             isFingerDetected={fingerDetected}
             signalQuality={signalQuality}
+            processVitalSigns={processVitalSigns}
             onFingerDetected={(detected, quality) => {
               setSignalQuality(quality);
               setFingerDetected(detected);
