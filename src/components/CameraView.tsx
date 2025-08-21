@@ -59,6 +59,7 @@ const CameraView = ({
 
   const startCamera = async () => {
     console.log("🎬 INICIANDO CÁMARA"); // LOG VISIBLE
+    alert("🎬 INICIANDO CÁMARA"); // TEMPORAL PARA CELULAR
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         if (process.env.NODE_ENV !== 'production') {
@@ -308,6 +309,7 @@ const CameraView = ({
     // LOG VISIBLE si detecta dedo
     if (fingerDetected) {
       console.log(`✅ DEDO DETECTADO! Calidad: ${signalQuality}`);
+      alert(`✅ DEDO DETECTADO! Calidad: ${signalQuality}`); // TEMPORAL PARA CELULAR
     }
     
     // ✅ RESTAURAR CALLBACK: Notificar detección de dedo
@@ -445,6 +447,7 @@ const CameraView = ({
     // Iniciar procesamiento después de un delay para estabilizar la cámara
     setTimeout(() => {
       console.log("🚀 INICIANDO PROCESAMIENTO DE FRAMES");
+      alert("🚀 INICIANDO PROCESAMIENTO DE FRAMES"); // TEMPORAL PARA CELULAR
       processNextFrame();
     }, 2000);
   };
@@ -474,6 +477,7 @@ const CameraView = ({
     if (stream && isMonitoring) {
       console.log("🎥 CameraView: Cámara lista, iniciando procesamiento en tiempo real");
       console.log("🎥 CÁMARA LISTA - INICIANDO PROCESAMIENTO"); // LOG VISIBLE
+      alert("🎥 CÁMARA LISTA - INICIANDO PROCESAMIENTO"); // TEMPORAL PARA CELULAR
       startRealTimeProcessing();
     }
   }, [stream, isMonitoring]);
