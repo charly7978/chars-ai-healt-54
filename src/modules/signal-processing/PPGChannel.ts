@@ -34,6 +34,16 @@ export default class PPGChannel {
     this.buffer.push({ t, v });
     const t0 = t - this.windowSec;
     while (this.buffer.length && this.buffer[0].t < t0) this.buffer.shift();
+    
+    // DEBUG: Log del estado del buffer
+    if (this.buffer.length % 10 === 0) { // Log cada 10 muestras
+      console.log(`📊 Canal ${this.channelId} - Buffer Status:`, {
+        length: this.buffer.length,
+        timeSpan: this.buffer.length > 0 ? (this.buffer[this.buffer.length-1].t - this.buffer[0].t).toFixed(2) + 's' : '0s',
+        lastValue: v.toFixed(2),
+        gain: this.gain.toFixed(2)
+      });
+    }
   }
 
   adjustGainRel(rel: number) {
@@ -43,7 +53,7 @@ export default class PPGChannel {
   getGain() { return this.gain; }
 
   analyze() {
-    if (this.buffer.length < 10) {
+    if (this.buffer.length < 5) { // REDUCIDO: buffer mínimo más pequeño para análisis más rápido
       return { calibratedSignal: [], bpm: null, rrIntervals: [], snr: 0, quality: 0, isFingerDetected: false, gain: this.gain };
     }
 
@@ -84,7 +94,7 @@ export default class PPGChannel {
 
     // decisión dedo: mean raw (antes normalización) y coverage es responsabilidad del CameraView + manager;
     const meanRaw = sampled.reduce((a,b)=>a+b,0)/sampled.length;
-    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 1.5 && (bpmSpectral || bpmTime); // REDUCIDO snr de 3 a 1.5
+    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 0.8 && (bpmSpectral || bpmTime); // MUY REDUCIDO snr de 1.5 a 0.8
 
     // DEBUG: Log de detección de dedo por canal
     console.log(`🔴 Canal ${this.channelId} - Finger Detection:`, {

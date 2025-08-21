@@ -31,7 +31,8 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       brightnessMean: s.brightnessMean.toFixed(1),
       coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%',
       frameDiff: s.frameDiff.toFixed(1),
-      inputSignal: inputSignal.toFixed(1)
+      inputSignal: inputSignal.toFixed(1),
+      timestamp: new Date(s.timestamp).toLocaleTimeString()
     });
 
     mgrRef.current!.pushSample(inputSignal, s.timestamp);

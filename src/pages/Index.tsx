@@ -395,7 +395,7 @@ const Index = () => {
             targetFps={30}
             roiSize={160}
             enableTorch={true}
-            coverageThresholdPixelBrightness={30}
+            coverageThresholdPixelBrightness={8} // MUY REDUCIDO: más permisivo para detectar dedos
           />
         </div>
 
