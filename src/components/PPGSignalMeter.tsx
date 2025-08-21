@@ -10,6 +10,7 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
+  onPeakDetected?: (peak: {time: number, value: number, isArrhythmia: boolean}) => void;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
     timestamp: number;
@@ -25,6 +26,7 @@ const PPGSignalMeter = ({
   isFingerDetected,
   onStartMeasurement,
   onReset,
+  onPeakDetected,
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false
@@ -175,11 +177,18 @@ const PPGSignalMeter = ({
       );
       
       if (!tooClose) {
-        peaksRef.current.push({
+        const newPeak = {
           time: peak.time,
           value: peak.value,
           isArrhythmia: peak.isArrhythmia
-        });
+        };
+        
+        peaksRef.current.push(newPeak);
+        
+        // NOTIFICAR AL PADRE QUE SE DETECTÓ UN PICO (LATIDO)
+        if (onPeakDetected) {
+          onPeakDetected(newPeak);
+        }
       }
     }
     

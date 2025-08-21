@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
@@ -288,6 +288,41 @@ const Index = () => {
     setCalibrationProgress(undefined);
   };
 
+  // MANEJAR PICO DETECTADO DESDE EL MONITOR CARDIACO (PPGSignalMeter)
+  const handlePeakDetected = useCallback((peak: {time: number, value: number, isArrhythmia: boolean}) => {
+    console.log('Index.tsx: Pico detectado por PPGSignalMeter', peak);
+    
+    // NOTIFICAR LATIDO DETECTADO (BEEP + VIBRACIÓN)
+    try {
+      // BEEP SONORO
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.1);
+      
+      // VIBRACIÓN
+      if (navigator.vibrate) {
+        navigator.vibrate([50, 25, 50]);
+      }
+      
+      console.log('Index.tsx: Beep y vibración activados por pico detectado');
+    } catch (error) {
+      console.warn('Error en notificación de latido:', error);
+    }
+  }, []);
+
   const handleStreamReady = (stream: MediaStream) => {
     if (!isMonitoring) return;
     
@@ -434,37 +469,10 @@ const Index = () => {
       // NOTIFICAR LATIDO DETECTADO (BEEP + VIBRACIÓN) - Basado en nuevos intervalos RR
       if (vitals.rrIntervals && vitals.rrIntervals.length > rrIntervals.length) {
         // Se detectó un nuevo latido (nuevo intervalo RR)
-        try {
-          // BEEP SONORO
-          const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-          const oscillator = audioContext.createOscillator();
-          const gainNode = audioContext.createGain();
-          
-          oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-          oscillator.type = 'sine';
-          
-          gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-          gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01);
-          gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.1);
-          
-          oscillator.connect(gainNode);
-          gainNode.connect(audioContext.destination);
-          
-          oscillator.start(audioContext.currentTime);
-          oscillator.stop(audioContext.currentTime + 0.1);
-          
-          // VIBRACIÓN
-          if (navigator.vibrate) {
-            navigator.vibrate([50, 25, 50]);
-          }
-          
-          console.log('Index.tsx: Latido detectado - beep y vibración activados', {
-            newRRCount: vitals.rrIntervals.length,
-            previousRRCount: rrIntervals.length
-          });
-        } catch (error) {
-          console.warn('Error en notificación de latido:', error);
-        }
+        console.log('Index.tsx: Nuevo intervalo RR detectado', {
+          newRRCount: vitals.rrIntervals.length,
+          previousRRCount: rrIntervals.length
+        });
       }
       // Actualizar intervalos RR para debug
       if (vitals.rrIntervals && vitals.rrIntervals.length > 0) {
@@ -590,6 +598,7 @@ const Index = () => {
               isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
+              onPeakDetected={handlePeakDetected}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData}
               preserveResults={showResults}
