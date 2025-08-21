@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
@@ -17,11 +16,15 @@ const Index = () => {
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
-    pressure: "--/--",
-    arrhythmiaStatus: "--",
     glucose: 0,
+    hemoglobin: 0,
+    pressure: { systolic: 0, diastolic: 0 },
+    arrhythmiaCount: 0,
+    arrhythmiaStatus: "SIN ARRITMIAS|0",
     lipids: { totalCholesterol: 0, triglycerides: 0 },
-    hemoglobin: 0
+    isCalibrating: false,
+    calibrationProgress: 0,
+    lastArrhythmiaData: undefined
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
@@ -30,7 +33,7 @@ const Index = () => {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
-  const [calibrationProgress, setCalibrationProgress] = useState<VitalSignsResult['calibration']>();
+  const [calibrationProgress, setCalibrationProgress] = useState(0);
   
   // REFERENCIAS ÚNICAS - CONTROL ABSOLUTO DE INSTANCIAS
   const measurementTimerRef = useRef<number | null>(null);
@@ -275,13 +278,12 @@ const Index = () => {
     
     setElapsedTime(0);
     setSignalQuality(0);
-    setCalibrationProgress(undefined);
+    setCalibrationProgress(0);
     
     systemState.current = 'IDLE';
     console.log(`✅ FINALIZACIÓN COMPLETADA - ${sessionIdRef.current}`);
   };
 
-  // RESET ÚNICO TOTAL
   const handleReset = () => {
     systemState.current = 'STOPPING';
     console.log(`🔄 RESET ÚNICO TOTAL - ${sessionIdRef.current}`);
@@ -307,16 +309,20 @@ const Index = () => {
     setBeatMarker(0);
     setVitalSigns({ 
       spo2: 0,
-      pressure: "--/--",
-      arrhythmiaStatus: "--",
       glucose: 0,
+      hemoglobin: 0,
+      pressure: { systolic: 0, diastolic: 0 },
+      arrhythmiaCount: 0,
+      arrhythmiaStatus: "SIN ARRITMIAS|0",
       lipids: { totalCholesterol: 0, triglycerides: 0 },
-      hemoglobin: 0
+      isCalibrating: false,
+      calibrationProgress: 0,
+      lastArrhythmiaData: undefined
     });
     setArrhythmiaCount("--");
     setSignalQuality(0);
     lastArrhythmiaData.current = null;
-    setCalibrationProgress(undefined);
+    setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
     
     systemState.current = 'IDLE';
@@ -456,7 +462,7 @@ const Index = () => {
       const currentProgress = getCalibrationProgress();
       setCalibrationProgress(currentProgress);
 
-      if (!currentProgress?.isCalibrating) {
+      if (currentProgress >= 100) {
         clearInterval(interval);
         setIsCalibrating(false);
         console.log(`✅ Calibración ÚNICA finalizada - ${sessionIdRef.current}`);
@@ -573,7 +579,7 @@ const Index = () => {
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
-                value={vitalSigns.pressure}
+                value={vitalSigns.pressure ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` : "--/--"}
                 unit="mmHg"
                 highlighted={showResults}
               />
