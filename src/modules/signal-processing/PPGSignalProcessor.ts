@@ -47,14 +47,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // CONFIGURACIÓN OPTIMIZADA PARA DETECCIÓN REAL
   private readonly CONFIG = {
     // UMBRALES MÁS PERMISIVOS PERO PRECISOS
-    MIN_RED_THRESHOLD: 20,  // Más bajo para mejor detección
-    MAX_RED_THRESHOLD: 250,
-    MIN_DETECTION_SCORE: 0.4, // Más permisivo
-    MIN_CONSECUTIVE_FOR_DETECTION: 3, // Menos frames requeridos
+    MIN_RED_THRESHOLD: 40,  // Más bajo para mejor detección
+    MAX_RED_THRESHOLD: 200,
+    MIN_DETECTION_SCORE: 0.9, // Más permisivo
+    MIN_CONSECUTIVE_FOR_DETECTION: 5, // Menos frames requeridos
     MAX_CONSECUTIVE_FOR_LOSS: 8,
     
     // VALIDACIÓN EQUILIBRADA
-    MIN_SNR_REQUIRED: 8.0, // SNR más bajo pero funcional
+    MIN_SNR_REQUIRED: 10.0, // SNR más bajo pero funcional
     SKIN_COLOR_STRICTNESS: 0.6, // Más permisivo
     PULSATILITY_MIN_REQUIRED: 0.1, // Más bajo para señales débiles
     TEXTURE_HUMAN_MIN: 0.4, // Más permisivo
