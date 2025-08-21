@@ -22,6 +22,19 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // Escalar ratio a 0..255 para la entrada del canal (similar al rMean usado antes)
     const inputSignal = ratio * 255;
 
+    // DEBUG: Log cada 30 frames para no saturar
+    if (Math.random() < 0.03) { // ~3% de frames
+      console.log(`[useSignalProcessor] Sample:`, {
+        rMean: Math.round(s.rMean),
+        gMean: Math.round(s.gMean),
+        bMean: Math.round(s.bMean),
+        ratio: Math.round(ratio * 1000) / 1000,
+        inputSignal: Math.round(inputSignal * 100) / 100,
+        coverageRatio: Math.round(s.coverageRatio * 1000) / 1000,
+        frameDiff: Math.round(s.frameDiff * 100) / 100
+      });
+    }
+
     mgrRef.current!.pushSample(inputSignal, s.timestamp);
     const res = mgrRef.current!.analyzeAll(s.coverageRatio, s.frameDiff);
     setLastResult(res);

@@ -20,7 +20,9 @@ export default class PPGChannel {
   private buffer: Sample[] = [];
   private windowSec: number;
   private gain: number;
-  private minRMeanForFinger = 20; // configurable
+  private minRMeanForFinger = 5; // REDUCIDO: era 20, ahora 5 para ratio*255
+  private minSnrForFinger = 1.5; // REDUCIDO: era 3, ahora 1.5
+  private minQualityForFinger = 15; // NUEVO: umbral mínimo de calidad
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -82,9 +84,30 @@ export default class PPGChannel {
     const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 300, 0.2);
     const bpmTime = rr.length ? Math.round(60000 / (rr.reduce((a,b)=>a+b,0)/rr.length)) : null;
 
-    // decisión dedo: mean raw (antes normalización) y coverage es responsabilidad del CameraView + manager;
+    // decisión dedo: CRITERIOS MÁS PERMISIVOS
     const meanRaw = sampled.reduce((a,b)=>a+b,0)/sampled.length;
-    const isFinger = meanRaw >= this.minRMeanForFinger && snr > 3 && (bpmSpectral || bpmTime);
+    const hasGoodSignal = meanRaw >= this.minRMeanForFinger;
+    const hasGoodSnr = snr >= this.minSnrForFinger;
+    const hasGoodQuality = quality >= this.minQualityForFinger;
+    const hasBpm = bpmSpectral || bpmTime;
+    
+    // DETECCIÓN MÁS PERMISIVA: solo requiere 2 de 4 criterios
+    const criteria = [hasGoodSignal, hasGoodSnr, hasGoodQuality, hasBpm];
+    const passedCriteria = criteria.filter(Boolean).length;
+    const isFinger = passedCriteria >= 2; // Solo necesita 2 de 4 criterios
+
+    // DEBUG: Log cada 10 frames para no saturar console
+    if (this.buffer.length % 10 === 0) {
+      console.log(`[PPGChannel ${this.channelId}] Debug:`, {
+        meanRaw: Math.round(meanRaw * 100) / 100,
+        snr: Math.round(snr * 100) / 100,
+        quality: Math.round(quality),
+        bpm: bpmTime || bpmSpectral,
+        criteria: { hasGoodSignal, hasGoodSnr, hasGoodQuality, hasBpm },
+        passedCriteria,
+        isFinger
+      });
+    }
 
     return {
       calibratedSignal: smooth,
