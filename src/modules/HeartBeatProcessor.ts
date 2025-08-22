@@ -336,8 +336,8 @@ export class HeartBeatProcessor {
 
     // GATING ROBUSTO por dedo/calidad/SNR antes de aceptar picos
     const gatedFinger = ctx?.fingerDetected === true;
-    const gatedQuality = (ctx?.channelQuality ?? 0) >= 45;
-    const gatedSnr = (ctx?.channelSnr ?? 0) >= 1.4;
+    const gatedQuality = (ctx?.channelQuality ?? 0) >= 42; // sutil baja
+    const gatedSnr = (ctx?.channelSnr ?? 0) >= 1.3;        // sutil baja
 
     let spectralOkComputed = false;
     let bandRatioComputed = 0;
@@ -360,7 +360,7 @@ export class HeartBeatProcessor {
         const oobFreqs = [0.2, 0.4, 0.6, 4.0, 5.0, 6.0];
         let oob = 0; for (const f of oobFreqs) oob += this.goertzel(x, fs, f);
         bandRatioComputed = oob > 0 ? band / oob : band;
-        spectralOkComputed = bandRatioComputed > 2.0;
+        spectralOkComputed = bandRatioComputed > 1.8; // sutil baja
         
         if (this.validatePeak(normalizedValue, confidence) && spectralOkComputed) {
           this.previousPeakTime = this.lastPeakTime;

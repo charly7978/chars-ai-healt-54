@@ -50,21 +50,22 @@ const PPGSignalMeter = ({
   const peaksRef = useRef<{time: number, value: number, isArrhythmia: boolean}[]>([]);
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
-  const WINDOW_WIDTH_MS = 3500;
-  const CANVAS_WIDTH = 1100;
-  const CANVAS_HEIGHT = 700;
-  const GRID_SIZE_X = 250;
-  const GRID_SIZE_Y = 55;
+  const WINDOW_WIDTH_MS = 2300;
+  const CANVAS_WIDTH = 1000;
+  const CANVAS_HEIGHT = 800;
+  const GRID_SIZE_X = 45;
+  const GRID_SIZE_Y = 10;
   const verticalScale = 95.0;
   const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
   const PEAK_DETECTION_WINDOW = 8;
-  const PEAK_THRESHOLD = 2;
-  const MIN_PEAK_DISTANCE_MS = 300;
-  const IMMEDIATE_RENDERING = true;
+  const PEAK_THRESHOLD = 3;
+  const MIN_PEAK_DISTANCE_MS = 400;
+  const IMMEDIATE_RENDERING = false; // activar limitador de FPS
   const MAX_PEAKS_TO_DISPLAY = 25;
 
   useEffect(() => {
@@ -278,8 +279,9 @@ const PPGSignalMeter = ({
       ctx.lineCap = 'round';
       
       let firstPoint = true;
-      
-      for (let i = 1; i < points.length; i++) {
+      // Decimación adaptativa para reducir el costo de dibujo
+      const step = Math.max(1, Math.floor(points.length / Math.max(100, canvas.width / 4)));
+      for (let i = 1; i < points.length; i += step) {
         const prevPoint = points[i - 1];
         const point = points[i];
         
@@ -386,6 +388,7 @@ const PPGSignalMeter = ({
       />
 
       {/* Panel de diagnóstico (sobre la botonera) */}
+      {showDebug && (
       <div className="absolute left-0 right-0 bottom-[60px] z-10 px-3 pb-2">
         <div className="mx-3 rounded-lg border border-white/10 bg-black/40 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
           <div>
@@ -427,6 +430,17 @@ const PPGSignalMeter = ({
             <div className="font-bold truncate">{debug?.reasons && debug.reasons.length ? debug.reasons.join(', ') : '—'}</div>
           </div>
         </div>
+      </div>
+      )}
+
+      {/* Toggle para el panel de diagnóstico */}
+      <div className="absolute left-3 bottom-[60px] z-10">
+        <button
+          onClick={() => setShowDebug(v => !v)}
+          className={`px-3 py-1 rounded-full text-[10px] font-semibold border transition-colors ${showDebug ? 'bg-blue-600/80 border-white/20 text-white' : 'bg-black/40 border-white/10 text-blue-100'} backdrop-blur`}
+        >
+          {showDebug ? 'Ocultar DEBUG' : 'Mostrar DEBUG'}
+        </button>
       </div>
 
       <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
