@@ -23,12 +23,12 @@ export default class MultiChannelManager {
   private fingerUnstableCount = 0;
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
-  private readonly FRAMES_TO_CONFIRM_FINGER = 8;    // Más frames para confirmar (era 5)
-  private readonly FRAMES_TO_LOSE_FINGER = 12;      // Más tolerancia para perder (era 8)
-  private readonly MIN_COVERAGE_RATIO = 0.20;       // 20% cobertura mínima (era 15%)
-  private readonly MAX_FRAME_DIFF = 18;              // Más tolerancia a movimiento (era 15)
-  private readonly MIN_CONSENSUS_RATIO = 0.33;      // 33% canales deben detectar (era 40%)
-  private readonly MIN_QUALITY_THRESHOLD = 25;       // Calidad mínima para BPM válido
+  private readonly FRAMES_TO_CONFIRM_FINGER = 5;    // Reducido de 8 a 5 para confirmación más rápida
+  private readonly FRAMES_TO_LOSE_FINGER = 15;      // Aumentado de 12 a 15 para más tolerancia
+  private readonly MIN_COVERAGE_RATIO = 0.15;       // Reducido de 20% a 15% para más sensibilidad
+  private readonly MAX_FRAME_DIFF = 25;             // Aumentado de 18 a 25 para más tolerancia
+  private readonly MIN_CONSENSUS_RATIO = 0.25;      // Reducido de 33% a 25% para mejor detección
+  private readonly MIN_QUALITY_THRESHOLD = 20;      // Reducido de 25 a 20 para más sensibilidad
 
   constructor(n = 6, windowSec = 8) {
     this.n = n;
@@ -101,8 +101,8 @@ export default class MultiChannelManager {
     // Condición global mejorada: todos los criterios principales + calidad
     const globalCondition = coverageOk && motionOk && consensusOk && qualityOk;
 
-    // Debug logging cada ~2 segundos con información detallada
-    if (Date.now() % 2000 < 100) {
+    // Debug logging cada ~4 segundos con información detallada (aumentado de 2)
+    if (Date.now() % 4000 < 100) {
       console.log('🏭 MultiChannelManager Estado Detallado:', {
         detectedChannels: `${detectedChannels}/${this.n}`,
         coverageRatio: (globalCoverageRatio * 100).toFixed(1) + '%',

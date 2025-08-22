@@ -88,30 +88,58 @@ const CameraView: React.FC<CameraViewProps> = ({
         canvas.style.display = 'none';
         canvasRef.current = canvas;
 
-        // CONFIGURAR LINTERNA INMEDIATAMENTE
-        if (enableTorch) {
-          try {
-            const [videoTrack] = stream.getVideoTracks();
-            const capabilities = (videoTrack as any).getCapabilities?.();
-            
-            console.log('📱 Capacidades:', capabilities);
-            
-            if (capabilities?.torch) {
-              await (videoTrack as any).applyConstraints({
-                advanced: [{ 
-                  torch: true,
-                  exposureMode: 'manual',
-                  exposureTime: 33000, // Optimizado para PPG
-                  whiteBalanceMode: 'manual'
-                }]
-              });
-              setTorchEnabled(true);
-              console.log('🔦 ✅ LINTERNA ACTIVADA - PPG OPTIMIZADA');
+        // ESPERAR A QUE EL VIDEO ESTÉ LISTO ANTES DE CONFIGURAR LINTERNA
+        await new Promise<void>((resolve) => {
+          const checkVideo = () => {
+            if (video.readyState >= 2) {
+              resolve();
             } else {
-              console.log('🔦 ❌ Sin soporte de linterna');
+              video.addEventListener('loadedmetadata', () => resolve(), { once: true });
             }
-          } catch (torchError) {
-            console.error('🔦 Error linterna:', torchError);
+          };
+          checkVideo();
+        });
+
+        // CONFIGURAR LINTERNA DESPUÉS DE QUE EL VIDEO ESTÉ LISTO
+        if (enableTorch) {
+          const attempts = 3;
+          for (let attempt = 0; attempt < attempts; attempt++) {
+            try {
+              const [videoTrack] = stream.getVideoTracks();
+              const capabilities = (videoTrack as any).getCapabilities?.();
+              
+              console.log(`🔦 Intento ${attempt + 1} - Capacidades:`, capabilities);
+              
+              if (capabilities?.torch) {
+                // Aplicar constraints con linterna activada
+                await (videoTrack as any).applyConstraints({
+                  advanced: [{
+                    torch: true
+                  }]
+                });
+                
+                // Esperar un momento para que se aplique
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Verificar si se aplicó correctamente
+                const settings = (videoTrack as any).getSettings?.();
+                if (settings?.torch) {
+                  setTorchEnabled(true);
+                  console.log('🔦 ✅ LINTERNA ACTIVADA EXITOSAMENTE');
+                  break;
+                } else {
+                  console.log('🔦 ⚠️ Linterna no confirmada, reintentando...');
+                }
+              } else {
+                console.log('🔦 ❌ Dispositivo sin soporte de linterna');
+                break;
+              }
+            } catch (torchError) {
+              console.error(`🔦 Error intento ${attempt + 1}:`, torchError);
+              if (attempt === attempts - 1) {
+                console.error('🔦 ❌ No se pudo activar la linterna después de múltiples intentos');
+              }
+            }
           }
         }
 
@@ -305,123 +333,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     };
   }, [isMonitoring, targetFps, roiSize, enableTorch, coverageThresholdPixelBrightness]);
 
-  // EFECTO PARA INICIAR CAPTURA CUANDO CAMBIA isMonitoring
-  useEffect(() => {
-    if (isMonitoring && isStreamActive && videoRef.current) {
-      const startFrameCapture = () => {
-        if (!isMonitoring) return;
-        
-        const captureLoop = () => {
-          if (!isMonitoring || !videoRef.current || !canvasRef.current) {
-            return;
-          }
-          
-          try {
-            const sample = captureOptimizedFrame();
-            if (sample && onSample) {
-              onSample(sample);
-            }
-          } catch (captureError) {
-            console.error('Error en captura:', captureError);
-          }
-          
-          rafRef.current = requestAnimationFrame(() => {
-            setTimeout(captureLoop, 1000 / targetFps);
-          });
-        };
-        
-        const captureOptimizedFrame = (): CameraSample | null => {
-          const video = videoRef.current;
-          const canvas = canvasRef.current;
-          
-          if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
-            return null;
-          }
-
-          const centerX = video.videoWidth / 2;
-          const centerY = video.videoHeight / 2;
-          const roiW = Math.min(roiSize, video.videoWidth * 0.3);
-          const roiH = Math.min(roiSize, video.videoHeight * 0.3);
-          const sx = centerX - roiW / 2;
-          const sy = centerY - roiH / 2;
-
-          canvas.width = roiW;
-          canvas.height = roiH;
-          
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return null;
-          
-          ctx.drawImage(video, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
-          const imageData = ctx.getImageData(0, 0, roiW, roiH);
-          const data = imageData.data;
-
-          let rSum = 0, gSum = 0, bSum = 0;
-          let rSum2 = 0, gSum2 = 0, bSum2 = 0;
-          let brightSum = 0;
-          let brightPixels = 0;
-          const threshold = coverageThresholdPixelBrightness;
-
-          const totalPixels = data.length / 4;
-
-          for (let i = 0; i < data.length; i += 4) {
-            const r = data[i];
-            const g = data[i + 1]; 
-            const b = data[i + 2];
-            const brightness = (r + g + b) / 3;
-            
-            rSum += r;
-            gSum += g;
-            bSum += b;
-            rSum2 += r * r;
-            gSum2 += g * g;
-            bSum2 += b * b;
-            brightSum += brightness;
-            
-            if (brightness >= threshold) brightPixels++;
-          }
-          
-          const rMean = rSum / totalPixels;
-          const gMean = gSum / totalPixels;
-          const bMean = bSum / totalPixels;
-          const brightnessMean = brightSum / totalPixels;
-          
-          const rVar = Math.max(0, rSum2/totalPixels - rMean*rMean);
-          const gVar = Math.max(0, gSum2/totalPixels - gMean*gMean);
-          const bVar = Math.max(0, bSum2/totalPixels - bMean*bMean);
-          
-          const rStd = Math.sqrt(rVar);
-          const gStd = Math.sqrt(gVar);
-          const bStd = Math.sqrt(bVar);
-          
-          const prevBrightness = prevBrightnessRef.current;
-          const frameDiff = prevBrightness !== null ? Math.abs(brightnessMean - prevBrightness) : 0;
-          prevBrightnessRef.current = brightnessMean;
-          
-          const coverageRatio = brightPixels / totalPixels;
-
-          return {
-            timestamp: Date.now(),
-            rMean,
-            gMean,
-            bMean,
-            brightnessMean,
-            rStd,
-            gStd,
-            bStd,
-            frameDiff,
-            coverageRatio
-          };
-        };
-        
-        rafRef.current = requestAnimationFrame(captureLoop);
-      };
-      
-      startFrameCapture();
-    } else if (!isMonitoring && rafRef.current) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-  }, [isMonitoring, isStreamActive, targetFps, roiSize, coverageThresholdPixelBrightness, onSample]);
+  // EFECTO PARA INICIAR CAPTURA CUANDO CAMBIA isMonitoring - ELIMINADO CÓDIGO DUPLICADO
 
   return (
     <div className="absolute inset-0 bg-black">

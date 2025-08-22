@@ -25,8 +25,8 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // Valores ya están en rango 0-255 desde CameraView
     const inputSignal = s.rMean;
     
-    // Log detallado cada 30 muestras para debug
-    if (sampleCountRef.current % 30 === 0) {
+    // Log detallado cada 150 muestras para debug (reducido de 30)
+    if (sampleCountRef.current % 150 === 0) {
       console.log('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
         timestamp: new Date(s.timestamp).toLocaleTimeString(),
         inputSignal: inputSignal.toFixed(1),
@@ -46,8 +46,8 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // CRÍTICO: Analizar con métricas globales correctas
     const result = mgrRef.current!.analyzeAll(s.coverageRatio, s.frameDiff);
     
-    // Log resultado cada 50 muestras o cuando hay detección
-    if (result.fingerDetected || sampleCountRef.current % 50 === 0) {
+    // Log resultado cada 150 muestras o cuando hay detección (reducido de 50)
+    if (result.fingerDetected || sampleCountRef.current % 150 === 0) {
       const activeChannels = result.channels.filter(c => c.isFingerDetected).length;
       const bestChannel = result.channels.reduce((best, current) => 
         current.quality > best.quality ? current : best, result.channels[0]);

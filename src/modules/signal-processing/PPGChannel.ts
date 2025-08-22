@@ -23,11 +23,11 @@ export default class PPGChannel {
   private gain: number;
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
-  private minRMeanForFinger = 60;   // Brillo mínimo para detectar dedo (era 15, muy bajo)
-  private maxRMeanForFinger = 240;  // Máximo brillo (evitar saturación)
-  private minVarianceForPulse = 1.5; // Mínima variación para detectar pulso
-  private minSNRForFinger = 1.1;    // SNR mínimo aceptable (relajado)
-  private maxFrameDiffForStability = 12; // Máxima diferencia entre frames
+  private minRMeanForFinger = 40;   // Reducido de 60 a 40 para mejor sensibilidad
+  private maxRMeanForFinger = 250;  // Aumentado a 250 para evitar falsos negativos
+  private minVarianceForPulse = 0.8; // Reducido de 1.5 a 0.8 para detectar pulsos más débiles
+  private minSNRForFinger = 0.8;    // Reducido de 1.1 a 0.8 para mayor sensibilidad
+  private maxFrameDiffForStability = 20; // Aumentado de 12 a 20 para más tolerancia
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -55,8 +55,8 @@ export default class PPGChannel {
       this.buffer.shift();
     }
     
-    // Debug logging cada 100 muestras para no saturar
-    if (this.buffer.length % 100 === 0 && this.channelId === 0) {
+    // Debug logging cada 300 muestras para no saturar (aumentado de 100)
+    if (this.buffer.length % 300 === 0 && this.channelId === 0) {
       console.log(`📊 Canal ${this.channelId} Buffer:`, {
         bufferSize: this.buffer.length,
         timeSpan: this.buffer.length > 1 ? 
@@ -116,14 +116,14 @@ export default class PPGChannel {
       sampled.map(x => (x - mean) / std) : 
       sampled.map(x => x - mean);
 
-    // Filtrado pasabanda OPTIMIZADO (0.8-4 Hz para rango cardíaco completo)
+    // Filtrado pasabanda OPTIMIZADO (0.5-3.5 Hz para rango cardíaco más amplio)
     const fs = N / this.windowSec;
     const biquad = new Biquad();
-    biquad.setBandpass(1.8, 0.8, fs); // Centro 1.8Hz (108 bpm), ancho 0.8Hz
+    biquad.setBandpass(1.5, 1.2, fs); // Centro 1.5Hz (90 bpm), ancho 1.2Hz más amplio
     const filtered = biquad.processArray(normalized);
 
     // Suavizado Savitzky-Golay con ventana optimizada
-    const smooth = savitzkyGolay(filtered, 15); // Ventana más grande para mejor suavizado
+    const smooth = savitzkyGolay(filtered, 11); // Reducido de 15 a 11 para preservar más detalles
 
     // Análisis espectral MEJORADO con Goertzel
     const freqs = this.linspace(0.8, 4.0, 200); // Más resolución frecuencial
@@ -158,8 +158,8 @@ export default class PPGChannel {
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
     // Detección de picos temporales para RR intervals
-    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 400, 0.12); // Umbral más bajo
-    const bpmTemporal = rr.length >= 3 ? 
+    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 300, 0.08); // Reducido de 400ms a 300ms y umbral de 0.12 a 0.08
+    const bpmTemporal = rr.length >= 2 ? // Reducido de 3 a 2 para más sensibilidad
       Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
 
     // CRITERIOS DE DETECCIÓN DE DEDO MEJORADOS Y BALANCEADOS
@@ -170,9 +170,9 @@ export default class PPGChannel {
                   (bpmTemporal && bpmTemporal >= 50 && bpmTemporal <= 160);
     const signalStrengthOk = maxPower > 1e-5; // Mínima fuerza de señal
     
-    // Consenso: al menos 4 de 5 criterios deben cumplirse
+    // Consenso: al menos 3 de 5 criterios deben cumplirse (más sensible)
     const criteriaCount = [brightnessOk, varianceOk, snrOk, bpmOk, signalStrengthOk].filter(Boolean).length;
-    const isFingerDetected = criteriaCount >= 4;
+    const isFingerDetected = criteriaCount >= 3;
 
     // Debug detección COMPLETA solo para canal 0 o cuando hay detección
     if (this.channelId === 0 || isFingerDetected) {
