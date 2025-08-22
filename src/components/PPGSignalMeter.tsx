@@ -281,6 +281,7 @@ const PPGSignalMeter = ({
       ctx.lineCap = 'round';
       
 <<<<<<< Current (Your changes)
+<<<<<<< Current (Your changes)
       let firstPoint = true;
       // Decimación adaptativa para reducir el costo de dibujo
       const step = Math.max(1, Math.floor(points.length / Math.max(100, canvas.width / 4)));
@@ -322,6 +323,24 @@ const PPGSignalMeter = ({
           ctx.moveTo(x2, y2);
         }
         lastX = x2; lastY = y2;
+=======
+      // Suavizado Bézier: construir curva con puntos intermedios
+      const toXY = (pt: PPGDataPoint) => ({
+        x: canvas.width - ((now - pt.time) * canvas.width / WINDOW_WIDTH_MS),
+        y: canvas.height / 2 - pt.value
+      });
+      const pts = visiblePoints.map(toXY);
+      if (pts.length > 0) ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 2; i++) {
+        const xc = (pts[i].x + pts[i + 1].x) / 2;
+        const yc = (pts[i].y + pts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc);
+      }
+      // Últimos dos puntos
+      const n = pts.length;
+      if (n >= 3) {
+        ctx.quadraticCurveTo(pts[n - 2].x, pts[n - 2].y, pts[n - 1].x, pts[n - 1].y);
+>>>>>>> Incoming (Background Agent changes)
       }
       
       ctx.stroke();
