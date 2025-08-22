@@ -5,10 +5,7 @@ interface SignalQualityIndicatorProps {
   quality: number;
   isMonitoring: boolean;
   isFingerDetected: boolean;
-  bpm?: number;
   snr?: number;
-  activeChannels?: number;
-  totalChannels?: number;
   className?: string;
 }
 
@@ -16,97 +13,78 @@ const SignalQualityIndicator = ({
   quality, 
   isMonitoring, 
   isFingerDetected,
-  bpm = 0,
   snr = 0,
-  activeChannels = 0,
-  totalChannels = 0,
   className = ""
 }: SignalQualityIndicatorProps) => {
   
-  // CÁLCULO DE CALIDAD MEJORADO - 100% REAL
   const qualityMetrics = useMemo(() => {
     const normalizedQuality = Math.max(0, Math.min(100, quality));
     const qualityPercent = Math.round(normalizedQuality);
     
-    // Determinar estado basado en calidad real
     let status = "DESCONOCIDO";
     let color = "text-gray-400";
-    let bgColor = "bg-gray-500/20";
-    let borderColor = "border-gray-500/30";
+    let bgColor = "bg-gray-500/10";
     
     if (!isMonitoring) {
       status = "INACTIVO";
       color = "text-gray-400";
-      bgColor = "bg-gray-500/10";
-      borderColor = "border-gray-500/20";
+      bgColor = "bg-gray-500/5";
     } else if (!isFingerDetected) {
       status = "SIN DEDO";
       color = "text-orange-400";
-      bgColor = "bg-orange-500/20";
-      borderColor = "border-orange-500/30";
+      bgColor = "bg-orange-500/10";
     } else if (qualityPercent < 30) {
       status = "BAJA";
       color = "text-red-400";
-      bgColor = "bg-red-500/20";
-      borderColor = "border-red-500/30";
+      bgColor = "bg-red-500/10";
     } else if (qualityPercent < 60) {
       status = "MEDIA";
       color = "text-yellow-400";
-      bgColor = "bg-yellow-500/20";
-      borderColor = "border-yellow-500/30";
+      bgColor = "bg-yellow-500/10";
     } else if (qualityPercent < 80) {
       status = "BUENA";
       color = "text-blue-400";
-      bgColor = "bg-blue-500/20";
-      borderColor = "border-blue-500/30";
+      bgColor = "bg-blue-500/10";
     } else {
       status = "EXCELENTE";
       color = "text-green-400";
-      bgColor = "bg-green-500/20";
-      borderColor = "border-green-500/30";
+      bgColor = "bg-green-500/10";
     }
     
     return {
       qualityPercent,
       status,
       color,
-      bgColor,
-      borderColor
+      bgColor
     };
   }, [quality, isMonitoring, isFingerDetected]);
-
-  const channelEfficiency = totalChannels > 0 ? 
-    Math.round((activeChannels / totalChannels) * 100) : 0;
 
   return (
     <div className={`
       ${qualityMetrics.bgColor} 
-      ${qualityMetrics.borderColor} 
-      border backdrop-blur-md rounded-2xl p-4 min-w-[200px] 
-      shadow-lg transition-all duration-300 
+      backdrop-blur-md rounded-lg p-2 min-w-[120px] max-w-[140px]
+      border border-white/5 shadow-sm transition-all duration-300 
       ${className}
     `}>
-      {/* TÍTULO */}
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-white text-sm font-semibold">
-          Calidad PPG
-        </h3>
-        <div className={`w-3 h-3 rounded-full ${qualityMetrics.bgColor} animate-pulse`} />
+      {/* TÍTULO COMPACTO */}
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-white text-xs font-medium">Calidad</span>
+        <div className={`w-2 h-2 rounded-full ${qualityMetrics.bgColor} animate-pulse`} />
       </div>
 
-      {/* INDICADOR PRINCIPAL DE CALIDAD */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className={`text-lg font-bold ${qualityMetrics.color}`}>
+      {/* INDICADOR PRINCIPAL */}
+      <div className="mb-2">
+        <div className="flex items-center justify-between mb-1">
+          <span className={`text-sm font-bold ${qualityMetrics.color}`}>
             {qualityMetrics.qualityPercent}%
           </span>
-          <span className={`text-xs ${qualityMetrics.color} font-medium`}>
+          <span className={`text-[10px] ${qualityMetrics.color} font-medium`}>
             {qualityMetrics.status}
           </span>
         </div>
         
-        {/* BARRA DE PROGRESO DE CALIDAD */}
-        <div className="w-full h-2 bg-black/30 rounded-full overflow-hidden">
+        {/* BARRA DE PROGRESO COMPACTA */}
+        <div className="w-full h-1 bg-black/20 rounded-full overflow-hidden">
           <div 
             className={`h-full transition-all duration-500 ${
               qualityMetrics.qualityPercent < 30 ? 'bg-gradient-to-r from-red-500 to-red-400' :
@@ -119,56 +97,13 @@ const SignalQualityIndicator = ({
         </div>
       </div>
 
-      {/* MÉTRICAS DETALLADAS */}
+      {/* SOLO SNR SI ESTÁ MONITOREANDO */}
       {isMonitoring && (
-        <div className="space-y-2">
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-white/70">BPM:</span>
-            <span className="text-white font-medium">
-              {bpm > 0 ? Math.round(bpm) : '--'}
-            </span>
-          </div>
-          
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-white/70">SNR:</span>
-            <span className="text-white font-medium">
-              {snr > 0 ? snr.toFixed(1) + ' dB' : '--'}
-            </span>
-          </div>
-          
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-white/70">Canales:</span>
-            <span className="text-white font-medium">
-              {activeChannels}/{totalChannels}
-            </span>
-          </div>
-          
-          <div className="flex justify-between items-center text-xs">
-            <span className="text-white/70">Eficiencia:</span>
-            <span className={`font-medium ${
-              channelEfficiency >= 50 ? 'text-green-400' : 'text-orange-400'
-            }`}>
-              {channelEfficiency}%
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* ESTADO DEL DEDO */}
-      {isMonitoring && (
-        <div className="mt-3 pt-3 border-t border-white/10">
-          <div className="flex items-center justify-center">
-            <div className={`flex items-center space-x-2 ${
-              isFingerDetected ? 'text-green-400' : 'text-orange-400'
-            }`}>
-              <div className={`w-2 h-2 rounded-full ${
-                isFingerDetected ? 'bg-green-400 animate-pulse' : 'bg-orange-400 animate-bounce'
-              }`} />
-              <span className="text-xs font-medium">
-                {isFingerDetected ? 'Dedo detectado' : 'Posicione el dedo'}
-              </span>
-            </div>
-          </div>
+        <div className="text-[10px] text-center">
+          <span className="text-white/70">SNR: </span>
+          <span className="text-white font-medium">
+            {snr > 0 ? snr.toFixed(1) + 'dB' : '--'}
+          </span>
         </div>
       )}
     </div>

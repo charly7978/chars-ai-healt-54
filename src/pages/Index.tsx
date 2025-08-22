@@ -6,7 +6,6 @@ import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
-import SignalQualityIndicator from "@/components/SignalQualityIndicator";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
@@ -41,7 +40,6 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
-  // CONTROL DE ESTADOS CRÍTICO - Evita degradación
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
@@ -69,7 +67,6 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
-  // SISTEMA DE LIMPIEZA PROFUNDA - Soluciona degradación
   const performSystemCleanup = useCallback(() => {
     if (cleanupInProgress.current) {
       console.log('🧹 Cleanup ya en progreso, saltando...');
@@ -80,18 +77,15 @@ const Index = () => {
     console.log('🧹 SISTEMA CLEANUP PROFUNDO iniciado...');
     
     try {
-      // Limpiar timers
       if (measurementTimerRef.current) {
         clearInterval(measurementTimerRef.current);
         measurementTimerRef.current = null;
       }
       
-      // Reset procesadores
       resetSignalProcessor();
       resetHeartBeat();
       fullResetVitalSigns();
       
-      // Reset estados React
       setIsMonitoring(false);
       setIsCameraOn(false);
       setShowResults(false);
@@ -116,13 +110,11 @@ const Index = () => {
         lastArrhythmiaData: undefined
       });
       
-      // Reset referencias
       arrhythmiaDetectedRef.current = false;
       lastArrhythmiaData.current = null;
       
       systemState.current = 'IDLE';
       
-      // Forzar garbage collection
       setTimeout(() => {
         if (window.gc) {
           window.gc();
@@ -137,26 +129,11 @@ const Index = () => {
     }
   }, [resetSignalProcessor, resetHeartBeat, fullResetVitalSigns]);
 
-  useEffect(() => {
-    if (initializationLock.current) return;
-    
-    initializationLock.current = true;
-    const randomBytes = new Uint32Array(3);
-    crypto.getRandomValues(randomBytes);
-    sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
-    
-    return () => {
-      initializationLock.current = false;
-    };
-  }, []);
-
-  // PANTALLA COMPLETA INMERSIVA MEJORADA
   const enterFullScreen = useCallback(async () => {
     if (isFullscreen) return;
     try {
       const docEl = document.documentElement;
       
-      // Intentar diferentes métodos de fullscreen
       if (docEl.requestFullscreen) {
         await docEl.requestFullscreen();
       } else if ((docEl as any).webkitRequestFullscreen) {
@@ -167,7 +144,6 @@ const Index = () => {
         await (docEl as any).mozRequestFullScreen();
       }
       
-      // Configurar orientación si está disponible
       if (screen.orientation && screen.orientation.lock) {
         try {
           await screen.orientation.lock('portrait');
@@ -201,7 +177,19 @@ const Index = () => {
     }
   }, [isFullscreen]);
 
-  // EFECTOS OPTIMIZADOS
+  useEffect(() => {
+    if (initializationLock.current) return;
+    
+    initializationLock.current = true;
+    const randomBytes = new Uint32Array(3);
+    crypto.getRandomValues(randomBytes);
+    sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
+    
+    return () => {
+      initializationLock.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     const timer = setTimeout(() => enterFullScreen(), 500);
     
@@ -229,7 +217,6 @@ const Index = () => {
     };
   }, []);
 
-  // Prevenir scroll y zoom
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
     const preventZoom = (e: TouchEvent) => {
@@ -264,7 +251,6 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  // SISTEMA DE INICIO MEJORADO - Evita errores de estado
   const startMonitoring = useCallback(() => {
     if (systemState.current !== 'IDLE') {
       console.log('⚠️ Sistema ocupado, esperando...', systemState.current);
@@ -274,10 +260,8 @@ const Index = () => {
     systemState.current = 'STARTING';
     console.log('🚀 INICIANDO MONITOREO VERSIÓN 2.0...');
     
-    // Cleanup preventivo
     performSystemCleanup();
     
-    // Activar sistemas
     enterFullScreen();
     setIsMonitoring(true);
     setIsCameraOn(true);
@@ -296,11 +280,10 @@ const Index = () => {
       }
     }, 3000);
     
-    // TIMER EXTENDIDO A 40 SEGUNDOS
     measurementTimerRef.current = window.setInterval(() => {
       setElapsedTime(prev => {
         const newTime = prev + 1;
-        if (newTime >= 40) { // CAMBIADO DE 30 A 40 SEGUNDOS
+        if (newTime >= 40) {
           finalizeMeasurement();
           return 40;
         }
@@ -312,7 +295,6 @@ const Index = () => {
     console.log('✅ Monitoreo iniciado exitosamente');
   }, [enterFullScreen, startCalibration, performSystemCleanup]);
 
-  // SISTEMA DE FINALIZACIÓN MEJORADO - Evita cuelgues
   const finalizeMeasurement = useCallback(() => {
     if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') {
       console.log('⚠️ Finalización ya en progreso o sistema idle');
@@ -349,17 +331,13 @@ const Index = () => {
     console.log('✅ Medición finalizada exitosamente');
   }, [isCalibrating, forceCalibrationCompletion, resetVitalSigns]);
 
-  // SISTEMA DE RESET MEJORADO - Limpieza total
   const handleReset = useCallback(() => {
     console.log('🔄 RESET TOTAL DEL SISTEMA...');
     
-    // Forzar parada inmediata
     systemState.current = 'STOPPING';
     
-    // Cleanup completo
     performSystemCleanup();
     
-    // Esperar un frame para asegurar cleanup
     setTimeout(() => {
       console.log('✅ Reset completado exitosamente');
     }, 100);
@@ -445,13 +423,6 @@ const Index = () => {
     }
   }, [isMonitoring, finalizeMeasurement, startMonitoring]);
 
-  const activeChannels = lastResult?.channels.filter(c => c.isFingerDetected).length || 0;
-  const totalChannels = lastResult?.channels.length || 0;
-  const avgSNR = lastResult?.channels.length ? 
-    (lastResult.channels.reduce((sum, c) => sum + c.snr, 0) / lastResult.channels.length) : 
-    0;
-  const currentBPM = lastResult?.aggregatedBPM || heartRate;
-
   return (
     <div 
       className="fixed inset-0 flex flex-col bg-gradient-to-br from-black via-gray-900 to-black overflow-hidden"
@@ -469,7 +440,6 @@ const Index = () => {
         transition: 'all 0.3s ease-in-out'
       }}
     >
-      {/* OVERLAY DE PANTALLA COMPLETA MEJORADO */}
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -501,19 +471,20 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* SENSOR DE CALIDAD MEJORADO */}
-          <SignalQualityIndicator 
-            quality={signalQuality}
-            isMonitoring={isMonitoring}
-            isFingerDetected={lastResult?.fingerDetected || false}
-            bpm={currentBPM}
-            snr={avgSNR}
-            activeChannels={activeChannels}
-            totalChannels={totalChannels}
-            className="absolute top-4 right-4 z-20"
-          />
+          {isMonitoring && (
+            <div className="absolute top-3 right-3 z-20 bg-black/30 backdrop-blur rounded-lg px-3 py-1 border border-white/10">
+              <div className="text-white text-xs font-medium">
+                {elapsedTime}/40s
+              </div>
+              <div className="w-20 h-0.5 bg-white/20 rounded-full mt-1">
+                <div 
+                  className="h-full bg-gradient-to-r from-green-400 to-blue-400 rounded-full transition-all duration-1000"
+                  style={{ width: `${(elapsedTime / 40) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
           
-          {/* MEDIDOR PPG MEJORADO */}
           <div className="flex-1 pt-12">
             <PPGSignalMeter 
               value={beatMarker}
@@ -527,22 +498,6 @@ const Index = () => {
             />
           </div>
 
-          {/* TIEMPO Y PROGRESO MEJORADO */}
-          {isMonitoring && (
-            <div className="absolute top-4 left-4 z-20 bg-black/40 backdrop-blur rounded-xl px-4 py-2 border border-white/10">
-              <div className="text-white text-sm font-medium">
-                Progreso: {elapsedTime}/40s
-              </div>
-              <div className="w-32 h-1 bg-white/20 rounded-full mt-1">
-                <div 
-                  className="h-full bg-gradient-to-r from-green-400 to-blue-400 rounded-full transition-all duration-1000"
-                  style={{ width: `${(elapsedTime / 40) * 100}%` }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* SIGNOS VITALES GRID MEJORADO */}
           <div className="absolute inset-x-0 top-[50%] bottom-[60px] bg-black/5 backdrop-blur-sm px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center max-w-6xl mx-auto">
               <VitalSign 
@@ -584,7 +539,6 @@ const Index = () => {
             </div>
           </div>
 
-          {/* BOTONERA MEJORADA */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4 z-20">
             <div className="w-1/2">
               <MonitorButton 
