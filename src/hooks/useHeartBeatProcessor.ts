@@ -52,7 +52,7 @@ export const useHeartBeatProcessor = () => {
   }, []);
 
   // PROCESAMIENTO UNIFICADO DE SEÑAL - ELIMINADAS DUPLICIDADES
-  const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
+  const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number, ctx?: { quality?: number; snr?: number }): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
         bpm: 0,
@@ -82,7 +82,11 @@ export const useHeartBeatProcessor = () => {
     processedSignalsRef.current++;
 
     // PROCESAMIENTO MATEMÁTICO AVANZADO DIRECTO
-    const result = processorRef.current.processSignal(value, timestamp);
+    const result = processorRef.current.processSignal(value, timestamp, {
+      fingerDetected,
+      channelQuality: ctx?.quality,
+      channelSnr: ctx?.snr
+    });
     const rrData = processorRef.current.getRRIntervals();
     const currentQuality = result.signalQuality || 0;
     

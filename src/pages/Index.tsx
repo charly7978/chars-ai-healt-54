@@ -353,7 +353,8 @@ const Index = () => {
     const heartBeatResult = processHeartBeat(
       bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
       bestChannel.isFingerDetected, 
-      lastResult.timestamp
+      lastResult.timestamp,
+      { quality: bestChannel.quality, snr: bestChannel.snr }
     );
     
     // Log para debug del procesamiento
@@ -603,6 +604,22 @@ const Index = () => {
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
+              debug={{
+                snr: (lastResult?.channels.find(c => c.isFingerDetected)?.snr) ?? 0,
+                bandRatio: (typeof heartBeatResult?.debug?.bandRatio === 'number' ? heartBeatResult.debug.bandRatio : undefined) as any,
+                reasons: (() => {
+                  const r: string[] = [];
+                  if (!heartBeatResult?.debug?.gatedFinger) r.push('sin dedo');
+                  if (!heartBeatResult?.debug?.gatedQuality) r.push('calidad baja');
+                  if (!heartBeatResult?.debug?.gatedSnr) r.push('SNR bajo');
+                  if (heartBeatResult?.debug && heartBeatResult.debug.spectralOk === false) r.push('espectral bajo');
+                  return r;
+                })(),
+                gatedFinger: heartBeatResult?.debug?.gatedFinger,
+                gatedQuality: heartBeatResult?.debug?.gatedQuality,
+                gatedSnr: heartBeatResult?.debug?.gatedSnr,
+                spectralOk: heartBeatResult?.debug?.spectralOk
+              }}
             />
           </div>
 
