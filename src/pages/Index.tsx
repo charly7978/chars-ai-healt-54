@@ -616,22 +616,7 @@ const Index = () => {
               preserveResults={showResults}
               debug={{
                 snr: (lastResult?.channels.find(c => c.isFingerDetected)?.snr) ?? 0,
-<<<<<<< Current (Your changes)
-                bandRatio: (typeof heartBeatResult?.debug?.bandRatio === 'number' ? heartBeatResult.debug.bandRatio : undefined) as any,
-                reasons: (() => {
-                  const r: string[] = [];
-                  if (!heartBeatResult?.debug?.gatedFinger) r.push('sin dedo');
-                  if (!heartBeatResult?.debug?.gatedQuality) r.push('calidad baja');
-                  if (!heartBeatResult?.debug?.gatedSnr) r.push('SNR bajo');
-                  if (heartBeatResult?.debug && heartBeatResult.debug.spectralOk === false) r.push('espectral bajo');
-                  return r;
-                })(),
-                gatedFinger: heartBeatResult?.debug?.gatedFinger,
-                gatedQuality: heartBeatResult?.debug?.gatedQuality,
-                gatedSnr: heartBeatResult?.debug?.gatedSnr,
-                spectralOk: heartBeatResult?.debug?.spectralOk
-=======
-                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined) as any,
+                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined),
                 reasons: (() => {
                   const r: string[] = [];
                   if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedFinger) r.push('sin dedo');
@@ -644,7 +629,6 @@ const Index = () => {
                 gatedQuality: lastHeartbeatDebug?.gatedQuality,
                 gatedSnr: lastHeartbeatDebug?.gatedSnr,
                 spectralOk: lastHeartbeatDebug?.spectralOk
->>>>>>> Incoming (Background Agent changes)
               }}
             />
           </div>
