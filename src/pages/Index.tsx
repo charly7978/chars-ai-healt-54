@@ -34,6 +34,7 @@ const Index = () => {
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
+  const [lastHeartbeatDebug, setLastHeartbeatDebug] = useState<{ bandRatio?: number; gatedFinger?: boolean; gatedQuality?: boolean; gatedSnr?: boolean; spectralOk?: boolean } | null>(null);
   
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
@@ -356,6 +357,15 @@ const Index = () => {
       lastResult.timestamp,
       { quality: bestChannel.quality, snr: bestChannel.snr }
     );
+    if (heartBeatResult?.debug) {
+      setLastHeartbeatDebug({
+        bandRatio: heartBeatResult.debug.bandRatio,
+        gatedFinger: heartBeatResult.debug.gatedFinger,
+        gatedQuality: heartBeatResult.debug.gatedQuality,
+        gatedSnr: heartBeatResult.debug.gatedSnr,
+        spectralOk: heartBeatResult.debug.spectralOk
+      });
+    }
     
     // Log para debug del procesamiento
     if (debugSampleCountRef.current % 30 === 0) {
@@ -606,6 +616,7 @@ const Index = () => {
               preserveResults={showResults}
               debug={{
                 snr: (lastResult?.channels.find(c => c.isFingerDetected)?.snr) ?? 0,
+<<<<<<< Current (Your changes)
                 bandRatio: (typeof heartBeatResult?.debug?.bandRatio === 'number' ? heartBeatResult.debug.bandRatio : undefined) as any,
                 reasons: (() => {
                   const r: string[] = [];
@@ -619,6 +630,21 @@ const Index = () => {
                 gatedQuality: heartBeatResult?.debug?.gatedQuality,
                 gatedSnr: heartBeatResult?.debug?.gatedSnr,
                 spectralOk: heartBeatResult?.debug?.spectralOk
+=======
+                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined) as any,
+                reasons: (() => {
+                  const r: string[] = [];
+                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedFinger) r.push('sin dedo');
+                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedQuality) r.push('calidad baja');
+                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedSnr) r.push('SNR bajo');
+                  if (lastHeartbeatDebug && lastHeartbeatDebug.spectralOk === false) r.push('espectral bajo');
+                  return r;
+                })(),
+                gatedFinger: lastHeartbeatDebug?.gatedFinger,
+                gatedQuality: lastHeartbeatDebug?.gatedQuality,
+                gatedSnr: lastHeartbeatDebug?.gatedSnr,
+                spectralOk: lastHeartbeatDebug?.spectralOk
+>>>>>>> Incoming (Background Agent changes)
               }}
             />
           </div>
