@@ -16,6 +16,7 @@ export default class MultiChannelManager {
   private n: number;
   private windowSec: number;
   private lastTimestamp = Date.now();
+  private readonly STALE_MS = 350; // si no hay muestras recientes, perder detección
   
   // Estado de detección con debounce MEJORADO
   private fingerState = false;
@@ -61,6 +62,33 @@ export default class MultiChannelManager {
   }
 
   analyzeAll(globalCoverageRatio = 0.0, globalFrameDiff = 0.0): MultiChannelResult {
+    // Si no hay muestras recientes, forzar pérdida inmediata de detección
+    const now = Date.now();
+    if (now - this.lastTimestamp > this.STALE_MS) {
+      if (this.fingerState) {
+        console.log('⏱️ Inactividad detectada, forzando pérdida de detección');
+      }
+      this.fingerState = false;
+      this.fingerStableCount = 0;
+      this.fingerUnstableCount++;
+      return {
+        timestamp: this.lastTimestamp,
+        channels: this.channels.map((ch, idx) => ({
+          channelId: idx,
+          calibratedSignal: [],
+          bpm: null,
+          rrIntervals: [],
+          snr: 0,
+          quality: 0,
+          isFingerDetected: false,
+          gain: ch.getGain()
+        } as any)),
+        aggregatedBPM: null,
+        aggregatedQuality: 0,
+        fingerDetected: false
+      };
+    }
+
     // Analizar todos los canales
     const channelResults: ChannelResult[] = [];
     let detectedChannels = 0;

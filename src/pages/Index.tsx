@@ -236,6 +236,9 @@ const Index = () => {
     setIsMonitoring(false);
     setIsCameraOn(false);
     setIsCalibrating(false);
+    setSignalQuality(0);
+    setBeatMarker(0);
+    setHeartbeatSignal(0);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -249,7 +252,6 @@ const Index = () => {
     }
     
     setElapsedTime(0);
-    setSignalQuality(0);
     setCalibrationProgress(0);
     
     systemState.current = 'IDLE';
@@ -262,6 +264,9 @@ const Index = () => {
     setIsCameraOn(false);
     setShowResults(false);
     setIsCalibrating(false);
+    setSignalQuality(0);
+    setBeatMarker(0);
+    setHeartbeatSignal(0);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -273,8 +278,6 @@ const Index = () => {
     
     setElapsedTime(0);
     setHeartRate(0);
-    setHeartbeatSignal(0);
-    setBeatMarker(0);
     setVitalSigns({ 
       spo2: 0,
       glucose: 0,

@@ -20,6 +20,10 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
 
   const handleSample = (s: CameraSample) => {
     sampleCountRef.current++;
+    // Protección contra muestras inválidas o NaN
+    if (!isFinite(s.rMean) || !isFinite(s.gMean) || !isFinite(s.bMean)) {
+      return;
+    }
     
     // CRÍTICO: Usar canal ROJO directamente - es el mejor para PPG
     // Valores ya están en rango 0-255 desde CameraView
