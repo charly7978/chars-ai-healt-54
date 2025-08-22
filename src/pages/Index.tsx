@@ -180,12 +180,17 @@ const Index = () => {
     setIsCalibrating(true);
     startCalibration();
     
+    // TRANSICIÓN MÁS RÁPIDA A ESTADO ACTIVO PARA MEJORAR DETECCIÓN
     setTimeout(() => {
-      if (systemState.current === 'CALIBRATING') {
-        systemState.current = 'ACTIVE';
-      }
+      systemState.current = 'CALIBRATING';
+      console.log('🔄 Sistema en estado CALIBRATING para permitir procesamiento');
+    }, 500);
+    
+    setTimeout(() => {
+      systemState.current = 'ACTIVE';
       setIsCalibrating(false);
-    }, 2000);
+      console.log('✅ Sistema en estado ACTIVE - procesamiento completo habilitado');
+    }, 3000); // Aumentado ligeramente para mejor calibración
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -278,16 +283,43 @@ const Index = () => {
   useEffect(() => {
     if (!lastResult) return;
 
-    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 30) || lastResult.channels[0];
+    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 20) || 
+                       lastResult.channels.find(ch => ch.quality > 15) || 
+                       lastResult.channels[0];
     setSignalQuality(bestChannel?.quality || 0);
     
-    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
-    
-    const MIN_SIGNAL_QUALITY = 25;
-    
-    if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
+    // PERMITIR PROCESAMIENTO DURANTE CALIBRACIÓN Y ESTADO ACTIVO
+    if (!isMonitoring || (systemState.current !== 'ACTIVE' && systemState.current !== 'CALIBRATING')) {
       return;
     }
+    
+    // UMBRAL DE CALIDAD MÁS PERMISIVO PARA MEJORAR DETECCIÓN
+    const MIN_SIGNAL_QUALITY = 10; // Reducido de 25 a 10
+    
+    // CONDICIONES MÁS FLEXIBLES PARA PROCESAMIENTO
+    const hasMinimumQuality = (bestChannel?.quality || 0) >= MIN_SIGNAL_QUALITY;
+    const hasSignalData = bestChannel?.calibratedSignal && bestChannel.calibratedSignal.length > 0;
+    
+    // PROCESAR INCLUSO SIN DETECCIÓN PERFECTA DE DEDO SI HAY SEÑAL
+    if (!hasMinimumQuality || !hasSignalData) {
+      // Log para debugging
+      console.log('🚫 Saltando procesamiento:', {
+        quality: bestChannel?.quality || 0,
+        minRequired: MIN_SIGNAL_QUALITY,
+        hasSignal: hasSignalData,
+        fingerDetected: bestChannel?.isFingerDetected,
+        systemState: systemState.current
+      });
+      return;
+    }
+    
+    // Log exitoso para debugging
+    console.log('✅ Procesando señal:', {
+      quality: bestChannel?.quality || 0,
+      fingerDetected: bestChannel?.isFingerDetected,
+      signalValue: bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1],
+      systemState: systemState.current
+    });
 
     const heartBeatResult = processHeartBeat(
       bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
