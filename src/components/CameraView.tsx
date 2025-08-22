@@ -41,14 +41,11 @@ const CameraView: React.FC<CameraViewProps> = ({
         // CRÍTICO: Constraints optimizadas para PPG
         const constraints: MediaStreamConstraints = {
           video: {
-            facingMode: 'environment', // Cámara trasera SIEMPRE
+            facingMode: { ideal: 'environment' },
             width: { ideal: 1920, min: 1280 },
             height: { ideal: 1080, min: 720 },
-            frameRate: { ideal: targetFps, min: 20 },
-            // Configuración PPG específica
-            exposureMode: 'manual',
-            whiteBalanceMode: 'manual',
-            focusMode: 'manual'
+            frameRate: { ideal: 30, max: 60 },
+            aspectRatio: { ideal: 16/9 }
           },
           audio: false
         };
@@ -169,9 +166,19 @@ const CameraView: React.FC<CameraViewProps> = ({
         }
         
         // Programar siguiente frame
-        rafRef.current = requestAnimationFrame(() => {
-          setTimeout(captureLoop, 1000 / targetFps);
-        });
+        const frameDelay = 1000 / targetFps;
+        const nextFrameTime = performance.now() + frameDelay;
+        
+        const scheduleNextFrame = () => {
+          const now = performance.now();
+          if (now >= nextFrameTime) {
+            captureLoop();
+          } else {
+            rafRef.current = requestAnimationFrame(scheduleNextFrame);
+          }
+        };
+        
+        rafRef.current = requestAnimationFrame(scheduleNextFrame);
       };
       
       rafRef.current = requestAnimationFrame(captureLoop);

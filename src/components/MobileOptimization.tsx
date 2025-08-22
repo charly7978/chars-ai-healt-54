@@ -115,20 +115,19 @@ const MobileOptimization: React.FC<MobileOptimizationProps> = ({
   };
 
   const handleOptimize = useCallback(() => {
-    // Simular proceso de optimización
-    setOptimizationComplete(false);
+    // Aplicar optimizaciones directamente sin simular proceso
+    setOptimizationComplete(true);
     
-    setTimeout(() => {
-      if (onOptimize) {
-        onOptimize();
-      }
-      setOptimizationComplete(true);
-      
-      // Ocultar el mensaje después de 3 segundos
-      setTimeout(() => {
-        setOptimizationComplete(false);
-      }, 3000);
-    }, 1500);
+    if (onOptimize) {
+      onOptimize();
+    }
+    
+    // Ocultar el mensaje después de 2 segundos con requestAnimationFrame para mejor rendimiento
+    const timeoutId = window.setTimeout(() => {
+      setOptimizationComplete(false);
+    }, 2000);
+    
+    return () => window.clearTimeout(timeoutId);
   }, [onOptimize]);
 
   // Obtener configuración de optimización según el modo de energía

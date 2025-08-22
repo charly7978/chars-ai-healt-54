@@ -79,15 +79,31 @@ const Index = () => {
   }, []);
 
   const enterFullScreen = async () => {
-    if (isFullscreen) return;
+    const elem = document.documentElement;
+    
     try {
-      const docEl = document.documentElement;
-      if (docEl.requestFullscreen) {
-        await docEl.requestFullscreen();
+      if (elem.requestFullscreen) {
+        await elem.requestFullscreen();
+      } else if ((elem as any).webkitRequestFullscreen) {
+        await (elem as any).webkitRequestFullscreen();
+      } else if ((elem as any).mozRequestFullScreen) {
+        await (elem as any).mozRequestFullScreen();
+      } else if ((elem as any).msRequestFullscreen) {
+        await (elem as any).msRequestFullscreen();
       }
+      
+      // Forzar orientación horizontal en móviles si es posible
+      if ('orientation' in screen && (screen.orientation as any).lock) {
+        try {
+          await (screen.orientation as any).lock('landscape');
+        } catch (e) {
+          // Ignorar si no es soportado
+        }
+      }
+      
       setIsFullscreen(true);
     } catch (err) {
-      console.log('Error pantalla completa:', err);
+      console.warn('No se pudo entrar en pantalla completa:', err);
     }
   };
   
@@ -324,7 +340,7 @@ const Index = () => {
         clearInterval(interval);
         setIsCalibrating(false);
       }
-    }, 500);
+    }, 100); // Optimizado de 500ms a 100ms para mejor respuesta
 
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
