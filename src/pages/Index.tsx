@@ -90,20 +90,6 @@ const Index = () => {
         await (elem as any).mozRequestFullScreen();
       } else if ((elem as any).msRequestFullscreen) {
         await (elem as any).msRequestFullscreen();
-<<<<<<< Current (Your changes)
-<<<<<<< Current (Your changes)
-      }
-      
-      // Forzar orientación horizontal en móviles si es posible
-      if ('orientation' in screen && (screen.orientation as any).lock) {
-        try {
-          await (screen.orientation as any).lock('landscape');
-        } catch (e) {
-          // Ignorar si no es soportado
-        }
-      }
-      
-=======
       }
       
       // Mantener orientación vertical (portrait) en móviles
@@ -116,21 +102,6 @@ const Index = () => {
         }
       }
       
->>>>>>> Incoming (Background Agent changes)
-=======
-      }
-      
-      // Mantener orientación vertical (portrait) en móviles
-      if ('orientation' in screen && (screen.orientation as any).lock) {
-        try {
-          await (screen.orientation as any).lock('portrait-primary');
-        } catch (e) {
-          // Ignorar si no es soportado
-          console.log('Orientación vertical no pudo ser forzada');
-        }
-      }
-      
->>>>>>> Incoming (Background Agent changes)
       setIsFullscreen(true);
     } catch (err) {
       console.warn('No se pudo entrar en pantalla completa:', err);
