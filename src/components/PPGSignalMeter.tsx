@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Fingerprint, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
-import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
+import SignalQualityIndicator from './SignalQualityIndicator';
 
 interface PPGSignalMeterProps {
   value: number;
@@ -17,6 +17,8 @@ interface PPGSignalMeterProps {
     rrVariation: number;
   } | null;
   preserveResults?: boolean;
+  snr?: number;
+  isMonitoring?: boolean;
 }
 
 const PPGSignalMeter = ({ 
@@ -27,7 +29,9 @@ const PPGSignalMeter = ({
   onReset,
   arrhythmiaStatus,
   rawArrhythmiaData,
-  preserveResults = false
+  preserveResults = false,
+  snr = 0,
+  isMonitoring = false
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -40,6 +44,14 @@ const PPGSignalMeter = ({
   const peaksRef = useRef<{time: number, value: number, isArrhythmia: boolean}[]>([]);
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // CLEANUP PROFUNDO MEJORADO
+  const cleanupRefs = useRef({
+    buffer: null as CircularBuffer | null,
+    baseline: null as number | null,
+    lastValue: null as number | null,
+    peaks: [] as {time: number, value: number, isArrhythmia: boolean}[]
+  });
 
   const WINDOW_WIDTH_MS = 2300;
   const CANVAS_WIDTH = 1000;
@@ -57,19 +69,55 @@ const PPGSignalMeter = ({
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
 
+  // CLEANUP CRÍTICO MEJORADO - Prevenir degradación
+  const performCriticalCleanup = useCallback(() => {
+    console.log('🧹 CRITICAL CLEANUP PPGSignalMeter iniciado...');
+    
+    // Cancelar animaciones pendientes
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = undefined;
+    }
+    
+    // Limpiar canvas
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      }
+    }
+    
+    // Reset completo de estados
+    if (dataBufferRef.current) {
+      dataBufferRef.current.clear();
+      dataBufferRef.current = null;
+    }
+    
+    baselineRef.current = null;
+    lastValueRef.current = null;
+    lastRenderTimeRef.current = 0;
+    lastArrhythmiaTime.current = 0;
+    arrhythmiaCountRef.current = 0;
+    peaksRef.current = [];
+    
+    // Reset alerts
+    setShowArrhythmiaAlert(false);
+    
+    console.log('✅ CRITICAL CLEANUP PPGSignalMeter completado');
+  }, []);
+
   useEffect(() => {
     if (!dataBufferRef.current) {
       dataBufferRef.current = new CircularBuffer(BUFFER_SIZE);
     }
-    if (preserveResults && !isFingerDetected) {
-      if (dataBufferRef.current) {
-        dataBufferRef.current.clear();
-      }
-      peaksRef.current = [];
-      baselineRef.current = null;
-      lastValueRef.current = null;
+    
+    // CLEANUP cuando se detiene monitoreo o preserveResults cambia
+    if (!isMonitoring || (preserveResults && !isFingerDetected)) {
+      performCriticalCleanup();
+      // Recrear buffer limpio
+      dataBufferRef.current = new CircularBuffer(BUFFER_SIZE);
     }
-  }, [preserveResults, isFingerDetected]);
+  }, [preserveResults, isFingerDetected, isMonitoring, performCriticalCleanup]);
 
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
@@ -78,11 +126,11 @@ const PPGSignalMeter = ({
 
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
     // FONDO AZUL OSCURO PARA MONITOR CARDÍACO
-    ctx.fillStyle = '#1e3a8a'; // blue-800 - azul oscuro pero no estropea visualización
+    ctx.fillStyle = '#1e3a8a'; // blue-800
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)'; // blue-500 con transparencia para grid
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)'; // blue-500 con transparencia
     ctx.lineWidth = 0.5;
     
     // Draw vertical grid lines
@@ -90,7 +138,7 @@ const PPGSignalMeter = ({
       ctx.moveTo(x, 0);
       ctx.lineTo(x, CANVAS_HEIGHT);
       if (x % (GRID_SIZE_X * 5) === 0) {
-        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)'; // blue-100 para texto
+        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)';
         ctx.font = '10px Inter';
         ctx.textAlign = 'center';
         ctx.fillText(x.toString(), x, CANVAS_HEIGHT - 5);
@@ -102,7 +150,7 @@ const PPGSignalMeter = ({
       ctx.moveTo(0, y);
       ctx.lineTo(CANVAS_WIDTH, y);
       if (y % (GRID_SIZE_Y * 5) === 0) {
-        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)'; // blue-100 para texto
+        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)';
         ctx.font = '10px Inter';
         ctx.textAlign = 'right';
         ctx.fillText(y.toString(), 15, y + 3);
@@ -110,9 +158,9 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     
-    // Draw center line (baseline) - más visible sobre fondo azul
+    // Draw center line (baseline)
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(219, 234, 254, 0.6)'; // blue-100 semi-transparente
+    ctx.strokeStyle = 'rgba(219, 234, 254, 0.6)';
     ctx.lineWidth = 1;
     ctx.moveTo(0, CANVAS_HEIGHT / 2);
     ctx.lineTo(CANVAS_WIDTH, CANVAS_HEIGHT / 2);
@@ -120,7 +168,7 @@ const PPGSignalMeter = ({
     
     const status = arrhythmiaStatus ? parseArrhythmiaStatus(arrhythmiaStatus) : null;
     if (status?.status === 'DETECTED') {
-      ctx.fillStyle = '#ef4444'; // red-500 para alertas
+      ctx.fillStyle = '#ef4444';
       ctx.font = 'bold 24px Inter';
       ctx.textAlign = 'left';
       ctx.fillText(status.count > 1 
@@ -194,7 +242,9 @@ const PPGSignalMeter = ({
 
   const renderSignal = useCallback(() => {
     if (!canvasRef.current || !dataBufferRef.current) {
-      animationFrameRef.current = requestAnimationFrame(renderSignal);
+      if (isMonitoring) {
+        animationFrameRef.current = requestAnimationFrame(renderSignal);
+      }
       return;
     }
     
@@ -202,7 +252,9 @@ const PPGSignalMeter = ({
     const timeSinceLastRender = currentTime - lastRenderTimeRef.current;
     
     if (!IMMEDIATE_RENDERING && timeSinceLastRender < FRAME_TIME) {
-      animationFrameRef.current = requestAnimationFrame(renderSignal);
+      if (isMonitoring) {
+        animationFrameRef.current = requestAnimationFrame(renderSignal);
+      }
       return;
     }
     
@@ -210,7 +262,9 @@ const PPGSignalMeter = ({
     const ctx = canvas.getContext('2d', { alpha: false });
     
     if (!ctx) {
-      animationFrameRef.current = requestAnimationFrame(renderSignal);
+      if (isMonitoring) {
+        animationFrameRef.current = requestAnimationFrame(renderSignal);
+      }
       return;
     }
     
@@ -218,9 +272,8 @@ const PPGSignalMeter = ({
     
     drawGrid(ctx);
     
-    if (preserveResults && !isFingerDetected) {
+    if (!isMonitoring || (preserveResults && !isFingerDetected)) {
       lastRenderTimeRef.current = currentTime;
-      animationFrameRef.current = requestAnimationFrame(renderSignal);
       return;
     }
     
@@ -257,8 +310,8 @@ const PPGSignalMeter = ({
     
     if (points.length > 1) {
       ctx.beginPath();
-      ctx.strokeStyle = '#10b981'; // emerald-500 - verde brillante para onda cardíaca sobre azul
-      ctx.lineWidth = 3; // Más gruesa para mejor visibilidad
+      ctx.strokeStyle = '#10b981'; // emerald-500
+      ctx.lineWidth = 3;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
@@ -284,12 +337,12 @@ const PPGSignalMeter = ({
         if (point.isArrhythmia) {
           ctx.stroke();
           ctx.beginPath();
-          ctx.strokeStyle = '#DC2626'; // red-600 para arritmias
+          ctx.strokeStyle = '#DC2626';
           ctx.moveTo(x1, y1);
           ctx.lineTo(x2, y2);
           ctx.stroke();
           ctx.beginPath();
-          ctx.strokeStyle = '#10b981'; // volver a verde
+          ctx.strokeStyle = '#10b981';
           ctx.moveTo(x2, y2);
           firstPoint = true;
         }
@@ -329,18 +382,29 @@ const PPGSignalMeter = ({
     }
     
     lastRenderTimeRef.current = currentTime;
-    animationFrameRef.current = requestAnimationFrame(renderSignal);
-  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
+    if (isMonitoring) {
+      animationFrameRef.current = requestAnimationFrame(renderSignal);
+    }
+  }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults, isMonitoring]);
 
   useEffect(() => {
-    renderSignal();
+    if (isMonitoring) {
+      renderSignal();
+    } else {
+      // STOP rendering cuando no está monitoreando
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = undefined;
+      }
+    }
     
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = undefined;
       }
     };
-  }, [renderSignal]);
+  }, [renderSignal, isMonitoring]);
 
   useEffect(() => {
     const offscreen = document.createElement('canvas');
@@ -355,13 +419,23 @@ const PPGSignalMeter = ({
   }, [drawGrid]);
 
   const handleReset = useCallback(() => {
+    console.log('🔄 PPGSignalMeter Reset iniciado...');
+    performCriticalCleanup();
     setShowArrhythmiaAlert(false);
-    peaksRef.current = [];
     onReset();
-  }, [onReset]);
+    console.log('✅ PPGSignalMeter Reset completado');
+  }, [onReset, performCriticalCleanup]);
+
+  // CLEANUP al desmontar
+  useEffect(() => {
+    return () => {
+      console.log('🗑️ PPGSignalMeter desmontando...');
+      performCriticalCleanup();
+    };
+  }, [performCriticalCleanup]);
 
   return (
-    <div className="fixed inset-0 bg-blue-950/95 backdrop-blur-sm"> {/* Fondo azul oscuro general */}
+    <div className="fixed inset-0 bg-blue-950/95 backdrop-blur-sm">
       <canvas
         ref={canvasRef}
         width={CANVAS_WIDTH}
@@ -369,36 +443,15 @@ const PPGSignalMeter = ({
         className="w-full h-[100vh] absolute inset-0 z-0"
       />
 
-      <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
-        <div className="flex items-center gap-2">
-          <span className="text-lg font-bold text-blue-100">PPG</span> {/* Texto claro sobre azul */}
-          <div className="w-[180px]">
-            <div className={`h-1 w-full rounded-full bg-gradient-to-r ${getQualityColor(quality)} transition-all duration-1000 ease-in-out`}>
-              <div
-                className="h-full rounded-full bg-white/20 animate-pulse transition-all duration-1000"
-                style={{ width: `${isFingerDetected ? quality : 0}%` }}
-              />
-            </div>
-            <span className="text-[8px] text-center mt-0.5 font-medium transition-colors duration-700 block text-blue-200"> {/* Texto claro */}
-              {getQualityText(quality, isFingerDetected, 'meter')}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex flex-col items-center">
-          <Fingerprint
-            className={`h-8 w-8 transition-colors duration-300 ${
-              !isFingerDetected ? 'text-blue-400' :
-              quality > 75 ? 'text-green-400' :
-              quality > 50 ? 'text-yellow-400' :
-              'text-red-400'
-            }`}
-            strokeWidth={1.5}
-          />
-          <span className="text-[8px] text-center font-medium text-blue-200"> {/* Texto claro */}
-            {isFingerDetected ? "Dedo detectado" : "Ubique su dedo"}
-          </span>
-        </div>
+      {/* INDICADOR DE CALIDAD MOVIDO A ARRIBA IZQUIERDA CON MÁS TRANSPARENCIA */}
+      <div className="absolute top-2 left-2 z-10">
+        <SignalQualityIndicator
+          quality={quality}
+          isMonitoring={isMonitoring}
+          isFingerDetected={isFingerDetected}
+          snr={snr}
+          className="bg-black/20 backdrop-blur-md border-white/10"
+        />
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 h-[60px] grid grid-cols-2 bg-transparent z-10">

@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { CameraSample } from '@/types';
 
@@ -33,33 +34,69 @@ const CameraView: React.FC<CameraViewProps> = ({
   const mountedRef = useRef(true);
   const frameIntervalRef = useRef<number>(1000 / targetFps);
   const lastCaptureRef = useRef<number>(0);
+  const torchTrackRef = useRef<MediaStreamTrack | null>(null);
 
-  // CLEANUP PROFUNDO - Soluciona degradación después del primer uso
+  // CLEANUP PROFUNDO MEJORADO - Soluciona degradación
   const performDeepCleanup = () => {
-    console.log('🧹 CLEANUP PROFUNDO iniciado...');
+    console.log('🧹 CLEANUP PROFUNDO CameraView iniciado...');
     
+    // CRITICAL: Cancelar RAF primero
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
     
+    // CRITICAL: Apagar linterna ANTES de cerrar stream
+    if (torchTrackRef.current && torchEnabled) {
+      console.log('🔦 APAGANDO LINTERNA...');
+      try {
+        torchTrackRef.current.applyConstraints({
+          torch: false
+        } as any).catch(console.error);
+      } catch (e) {
+        console.log('🔦 Error apagando linterna:', e);
+      }
+      setTorchEnabled(false);
+      torchTrackRef.current = null;
+    }
+    
+    // CRITICAL: Cerrar stream completamente
     const stream = streamRef.current;
     if (stream) {
+      console.log('📹 Cerrando stream y todos los tracks...');
       stream.getTracks().forEach(track => {
+        console.log('🛑 Stopping track:', track.label, track.kind);
         track.stop();
         track.enabled = false;
+        
+        // FORCE cleanup de eventos
+        track.onended = null;
+        track.onmute = null;
+        track.onunmute = null;
       });
       streamRef.current = null;
     }
     
+    // CRITICAL: Limpiar video element
     if (videoRef.current) {
-      videoRef.current.pause();
-      videoRef.current.srcObject = null;
-      videoRef.current.src = '';
-      videoRef.current.load();
+      console.log('📺 Limpiando video element...');
+      const video = videoRef.current;
+      video.pause();
+      video.srcObject = null;
+      video.src = '';
+      video.load();
+      
+      // FORCE remove eventos
+      video.onloadedmetadata = null;
+      video.oncanplay = null;
+      video.onplaying = null;
+      video.onerror = null;
+      video.onabort = null;
+      
       videoRef.current = null;
     }
     
+    // CRITICAL: Limpiar canvas
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
@@ -68,22 +105,26 @@ const CameraView: React.FC<CameraViewProps> = ({
       canvasRef.current = null;
     }
     
+    // CRITICAL: Limpiar container DOM
     if (containerRef.current) {
       containerRef.current.innerHTML = '';
     }
     
+    // RESET completo de estados
     setIsStreamActive(false);
     setTorchEnabled(false);
     setError(null);
     prevBrightnessRef.current = null;
     
-    console.log('✅ CLEANUP PROFUNDO completado');
+    console.log('✅ CLEANUP PROFUNDO CameraView completado');
   };
 
+  // FORZAR CLEANUP cuando isMonitoring cambia
   useEffect(() => {
     mountedRef.current = true;
     
     if (!isMonitoring) {
+      console.log('🛑 isMonitoring=false, ejecutando cleanup...');
       performDeepCleanup();
       return;
     }
@@ -92,11 +133,12 @@ const CameraView: React.FC<CameraViewProps> = ({
     
     const startCamera = async () => {
       try {
-        console.log('🎥 INICIANDO CÁMARA OPTIMIZADA VERSIÓN 2.0...');
+        console.log('🎥 INICIANDO CÁMARA MEJORADA...');
         
+        // CLEANUP PREVENTIVO antes de iniciar
         performDeepCleanup();
         
-        // CONSTRAINTS MEJORADAS PARA PPG
+        // CONSTRAINTS OPTIMIZADAS
         const constraints: MediaStreamConstraints = {
           video: {
             width: { ideal: 1920, min: 1280 },
@@ -116,7 +158,10 @@ const CameraView: React.FC<CameraViewProps> = ({
         }
 
         streamRef.current = stream;
-        console.log('📹 Stream obtenido:', stream.getVideoTracks()[0].getSettings());
+        const videoTrack = stream.getVideoTracks()[0];
+        torchTrackRef.current = videoTrack;
+        
+        console.log('📹 Stream obtenido:', videoTrack.getSettings());
         
         // CREAR VIDEO ELEMENT MEJORADO
         const video = document.createElement('video');
@@ -133,83 +178,81 @@ const CameraView: React.FC<CameraViewProps> = ({
           border: none;
           outline: none;
         `;
-        video.srcObject = stream;
         
         videoRef.current = video;
 
-        // FORZAR AGREGADO AL DOM - SIEMPRE
-        if (containerRef.current) {
+        // AGREGAR AL DOM INMEDIATAMENTE
+        if (containerRef.current && mounted && mountedRef.current) {
           containerRef.current.innerHTML = '';
           containerRef.current.appendChild(video);
-          console.log('✅ Video agregado al DOM forzadamente');
+          console.log('✅ Video agregado al DOM');
         }
 
-        // LINTERNA - MÉTODOS CORREGIDOS SIN PROPIEDADES INVÁLIDAS
-        if (enableTorch) {
-          const videoTrack = stream.getVideoTracks()[0];
+        // LINTERNA - MÚLTIPLES MÉTODOS ROBUSTOS
+        if (enableTorch && mounted && mountedRef.current) {
           console.log('🔦 Intentando activar linterna...', videoTrack.getCapabilities());
           
-          // MÉTODO 1: Torch básico
-          try {
+          const tryTorchMethod = async (methodName: string, torchFn: () => Promise<void>) => {
+            try {
+              await torchFn();
+              setTorchEnabled(true);
+              console.log(`🔦 ✅ LINTERNA ACTIVADA - ${methodName}`);
+              return true;
+            } catch (e) {
+              console.log(`🔦 ${methodName} falló:`, e);
+              return false;
+            }
+          };
+
+          // MÉTODO 1: Capabilities básico
+          const method1Success = await tryTorchMethod('Capabilities', async () => {
             const capabilities = videoTrack.getCapabilities();
             if (capabilities.torch) {
               await videoTrack.applyConstraints({
                 advanced: [{ torch: true }]
               });
-              setTorchEnabled(true);
-              console.log('🔦 ✅ LINTERNA ACTIVADA - Método 1 (capabilities)');
             } else {
               throw new Error('Torch no disponible en capabilities');
             }
-          } catch (e1) {
-            console.log('🔦 Método 1 falló:', e1);
-            
-            // MÉTODO 2: Forzar torch directo
-            try {
+          });
+
+          // MÉTODO 2: Forzar torch directo
+          if (!method1Success) {
+            const method2Success = await tryTorchMethod('Forzado', async () => {
               await videoTrack.applyConstraints({
-                torch: true as any
-              });
-              setTorchEnabled(true);
-              console.log('🔦 ✅ LINTERNA ACTIVADA - Método 2 (forzado)');
-            } catch (e2) {
-              console.log('🔦 Método 2 falló:', e2);
-              
-              // MÉTODO 3: Advanced constraints con exposición manual
-              try {
+                torch: true
+              } as any);
+            });
+
+            // MÉTODO 3: Advanced constraints
+            if (!method2Success) {
+              const method3Success = await tryTorchMethod('Advanced', async () => {
                 await videoTrack.applyConstraints({
-                  advanced: [{ 
-                    torch: true,
-                    exposureMode: 'manual' as any
-                  }]
-                });
-                setTorchEnabled(true);
-                console.log('🔦 ✅ LINTERNA ACTIVADA - Método 3 (advanced + exposure)');
-              } catch (e3) {
-                console.log('🔦 Método 3 falló:', e3);
-                
-                // MÉTODO 4: ImageCapture API
-                try {
+                  advanced: [{ torch: true }]
+                } as any);
+              });
+
+              // MÉTODO 4: ImageCapture API
+              if (!method3Success) {
+                await tryTorchMethod('ImageCapture', async () => {
                   const imageCapture = new ImageCapture(videoTrack);
                   await imageCapture.takePhoto();
                   await videoTrack.applyConstraints({ torch: true } as any);
-                  setTorchEnabled(true);
-                  console.log('🔦 ✅ LINTERNA ACTIVADA - Método 4 (ImageCapture)');
-                } catch (e4) {
-                  console.log('🔦 Todos los métodos fallaron. Continuando sin linterna...');
-                  console.log('🔦 ⚠️ La app funcionará pero sin flash');
-                }
+                });
               }
             }
           }
         }
 
+        // SETUP CANVAS
         const canvas = document.createElement('canvas');
         canvas.style.display = 'none';
         canvas.style.imageRendering = 'pixelated';
         canvasRef.current = canvas;
 
+        // VIDEO READY HANDLERS
         const onVideoReady = () => {
-          if (video.readyState >= 2 && video.videoWidth > 0) {
+          if (video.readyState >= 2 && video.videoWidth > 0 && mounted && mountedRef.current) {
             console.log('📹 Video listo:', {
               width: video.videoWidth,
               height: video.videoHeight,
@@ -226,9 +269,13 @@ const CameraView: React.FC<CameraViewProps> = ({
           }
         };
 
+        // ASEGURAR srcObject DESPUÉS de eventos
         video.addEventListener('loadedmetadata', onVideoReady);
         video.addEventListener('canplay', onVideoReady);
         video.addEventListener('playing', onVideoReady);
+        
+        // SET srcObject AL FINAL
+        video.srcObject = stream;
 
       } catch (err: any) {
         console.error('❌ ERROR CÁMARA:', err);
@@ -371,8 +418,10 @@ const CameraView: React.FC<CameraViewProps> = ({
     };
   }, [isMonitoring]);
 
+  // CLEANUP AL DESMONTAR
   useEffect(() => {
     return () => {
+      console.log('🗑️ CameraView desmontando...');
       mountedRef.current = false;
       if (cleanupRef.current) {
         cleanupRef.current();
@@ -413,7 +462,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       )}
       
       {torchEnabled && (
-        <div className="absolute top-4 left-4 bg-yellow-500/20 border border-yellow-500/30 rounded-full p-3 backdrop-blur">
+        <div className="absolute top-4 right-4 bg-yellow-500/20 border border-yellow-500/30 rounded-full p-3 backdrop-blur">
           <div className="text-yellow-400 text-xl animate-pulse filter drop-shadow-lg">🔦</div>
         </div>
       )}
