@@ -23,10 +23,10 @@ export default class PPGChannel {
   private gain: number;
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
-  private minRMeanForFinger = 50;   // Ajustado a 50 (era 40, muy bajo)
+  private minRMeanForFinger = 85;   // Más alto para asegurar piel iluminada por linterna
   private maxRMeanForFinger = 245;  // Ajustado a 245
-  private minVarianceForPulse = 1.0; // Ajustado a 1.0 (era 0.8)
-  private minSNRForFinger = 1.0;    // Ajustado a 1.0 (era 0.8)
+  private minVarianceForPulse = 3.0; // Mayor varianza mínima temporal
+  private minSNRForFinger = 1.5;    // SNR más exigente
   private maxFrameDiffForStability = 15; // Ajustado a 15 (era 20)
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
@@ -162,17 +162,13 @@ export default class PPGChannel {
     const bpmTemporal = rr.length >= 2 ? 
       Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
 
-    // CRITERIOS DE DETECCIÓN DE DEDO MEJORADOS Y BALANCEADOS
+    // CRITERIOS DE DETECCIÓN DE DEDO ESTRICTOS (sin falsos positivos)
     const brightnessOk = mean >= this.minRMeanForFinger && mean <= this.maxRMeanForFinger;
     const varianceOk = variance >= this.minVarianceForPulse;
     const snrOk = snr >= this.minSNRForFinger;
     const bpmOk = (bpmSpectral && bpmSpectral >= 50 && bpmSpectral <= 160) || 
                   (bpmTemporal && bpmTemporal >= 50 && bpmTemporal <= 160);
-    const signalStrengthOk = maxPower > 1e-5; // Mínima fuerza de señal
-    
-    // Consenso: al menos 3 de 5 criterios deben cumplirse (más sensible)
-    const criteriaCount = [brightnessOk, varianceOk, snrOk, bpmOk, signalStrengthOk].filter(Boolean).length;
-    const isFingerDetected = criteriaCount >= 3;
+    const isFingerDetected = Boolean(brightnessOk && varianceOk && snrOk && bpmOk);
 
     // Debug detección COMPLETA solo para canal 0 o cuando hay detección
     if ((this.channelId === 0 && this.buffer.length % 120 === 0) || isFingerDetected) {
@@ -196,10 +192,8 @@ export default class PPGChannel {
         varianceOk: `${varianceOk} (min ${this.minVarianceForPulse})`,
         snrOk: `${snrOk} (min ${this.minSNRForFinger})`,
         bpmOk: `${bpmOk} (50-160 bpm)`,
-        signalStrengthOk: `${signalStrengthOk} (min 1e-5)`,
         
         // Resultado final
-        criteriaCount: `${criteriaCount}/5`,
         quality: quality.toFixed(1),
         isFingerDetected
       });

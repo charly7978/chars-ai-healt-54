@@ -289,7 +289,9 @@ const CameraView: React.FC<CameraViewProps> = ({
         brightSum2 += brightness * brightness;
         if (r > 250) redSaturated++;
         
-        if (brightness >= threshold) brightPixels++;
+        // Contar solo píxeles compatibles con piel iluminada (rojo predominante)
+        const isPhysioRed = (r >= 70) && (r > g + 10) && (r > b + 10) && (r / (g + 1) >= 1.2);
+        if (brightness >= threshold && isPhysioRed) brightPixels++;
       }
       
       const rMean = rSum / totalPixels;

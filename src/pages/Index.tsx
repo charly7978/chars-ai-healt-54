@@ -299,8 +299,12 @@ const Index = () => {
   useEffect(() => {
     if (!lastResult) return;
 
-    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 30) || lastResult.channels[0];
-    setSignalQuality(bestChannel?.quality || 0);
+    const bestChannel = lastResult.fingerDetected
+      ? lastResult.channels
+          .filter(ch => ch.isFingerDetected)
+          .sort((a, b) => b.quality - a.quality)[0]
+      : undefined;
+    setSignalQuality(lastResult.fingerDetected ? (bestChannel?.quality || 0) : 0);
     
     // Log para debug
     if (debugSampleCountRef.current % 30 === 0) {
@@ -420,9 +424,10 @@ const Index = () => {
 
     const getQualityText = () => {
       if (!lastResult?.fingerDetected) return 'Sin detección';
-      if (signalQuality >= 80) return 'Excelente';
-      if (signalQuality >= 60) return 'Buena';
-      if (signalQuality >= 40) return 'Regular';
+      if (!lastResult?.fingerDetected) return 'Sin detección';
+      if (signalQuality >= 85) return 'Excelente';
+      if (signalQuality >= 65) return 'Buena';
+      if (signalQuality >= 45) return 'Regular';
       return 'Débil';
     };
 
