@@ -57,7 +57,7 @@ const PPGSignalMeter = ({
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 95.0;
+  let verticalScale = 95.0;
   const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
@@ -246,10 +246,25 @@ const PPGSignalMeter = ({
       baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
     }
     
+    // Smoothing de render (no afecta cálculo base)
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
     
     const normalizedValue = (baselineRef.current || 0) - smoothedValue;
+    // Ganancia adaptativa en función de la variación reciente para evitar onda "planchada"
+    if (dataBufferRef.current) {
+      const recent = dataBufferRef.current.getPoints().slice(-60).map(p => p.value);
+      if (recent.length > 10) {
+        const rmax = Math.max(...recent);
+        const rmin = Math.min(...recent);
+        const span = Math.max(1, rmax - rmin);
+        // Ajuste de ganancia: si el span es pequeño, aumentar escala; si es grande, reducir
+        const gain = Math.min(3.0, Math.max(0.7, 120 / span));
+        verticalScale = 95.0 * gain;
+      } else {
+        verticalScale = 95.0;
+      }
+    }
     const scaledValue = normalizedValue * verticalScale;
     
     let isArrhythmia = false;
