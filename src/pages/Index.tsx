@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
@@ -43,12 +43,10 @@ const Index = () => {
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
-  const cleanupInProgress = useRef<boolean>(false);
   
   const { 
     handleSample,
-    lastResult,
-    reset: resetSignalProcessor
+    lastResult
   } = useSignalProcessor();
   
   const { 
@@ -67,116 +65,6 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
-  const performSystemCleanup = useCallback(() => {
-    if (cleanupInProgress.current) {
-      console.log('🧹 Cleanup ya en progreso, saltando...');
-      return;
-    }
-    
-    cleanupInProgress.current = true;
-    console.log('🧹 SISTEMA CLEANUP PROFUNDO iniciado...');
-    
-    try {
-      if (measurementTimerRef.current) {
-        clearInterval(measurementTimerRef.current);
-        measurementTimerRef.current = null;
-      }
-      
-      resetSignalProcessor();
-      resetHeartBeat();
-      fullResetVitalSigns();
-      
-      setIsMonitoring(false);
-      setIsCameraOn(false);
-      setShowResults(false);
-      setIsCalibrating(false);
-      setElapsedTime(0);
-      setHeartRate(0);
-      setHeartbeatSignal(0);
-      setBeatMarker(0);
-      setSignalQuality(0);
-      setCalibrationProgress(0);
-      setArrhythmiaCount("--");
-      setVitalSigns({
-        spo2: 0,
-        glucose: 0,
-        hemoglobin: 0,
-        pressure: { systolic: 0, diastolic: 0 },
-        arrhythmiaCount: 0,
-        arrhythmiaStatus: "SIN ARRITMIAS|0",
-        lipids: { totalCholesterol: 0, triglycerides: 0 },
-        isCalibrating: false,
-        calibrationProgress: 0,
-        lastArrhythmiaData: undefined
-      });
-      
-      arrhythmiaDetectedRef.current = false;
-      lastArrhythmiaData.current = null;
-      
-      systemState.current = 'IDLE';
-      
-      setTimeout(() => {
-        if (window.gc) {
-          window.gc();
-        }
-      }, 100);
-      
-      console.log('✅ SISTEMA CLEANUP PROFUNDO completado');
-    } catch (error) {
-      console.error('❌ Error en cleanup:', error);
-    } finally {
-      cleanupInProgress.current = false;
-    }
-  }, [resetSignalProcessor, resetHeartBeat, fullResetVitalSigns]);
-
-  const enterFullScreen = useCallback(async () => {
-    if (isFullscreen) return;
-    try {
-      const docEl = document.documentElement;
-      
-      if (docEl.requestFullscreen) {
-        await docEl.requestFullscreen();
-      } else if ((docEl as any).webkitRequestFullscreen) {
-        await (docEl as any).webkitRequestFullscreen();
-      } else if ((docEl as any).msRequestFullscreen) {
-        await (docEl as any).msRequestFullscreen();
-      } else if ((docEl as any).mozRequestFullScreen) {
-        await (docEl as any).mozRequestFullScreen();
-      }
-      
-      if (screen.orientation && screen.orientation.lock) {
-        try {
-          await screen.orientation.lock('portrait');
-        } catch (e) {
-          console.log('Orientación no bloqueada:', e);
-        }
-      }
-      
-      setIsFullscreen(true);
-      console.log('📱 Pantalla completa activada');
-    } catch (err) {
-      console.log('Error pantalla completa:', err);
-    }
-  }, [isFullscreen]);
-  
-  const exitFullScreen = useCallback(() => {
-    if (!isFullscreen) return;
-    try {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      } else if ((document as any).webkitExitFullscreen) {
-        (document as any).webkitExitFullscreen();
-      } else if ((document as any).msExitFullscreen) {
-        (document as any).msExitFullscreen();
-      } else if ((document as any).mozCancelFullScreen) {
-        (document as any).mozCancelFullScreen();
-      }
-      setIsFullscreen(false);
-    } catch (err) {
-      console.log('Error salir fullscreen:', err);
-    }
-  }, [isFullscreen]);
-
   useEffect(() => {
     if (initializationLock.current) return;
     
@@ -190,57 +78,60 @@ const Index = () => {
     };
   }, []);
 
+  const enterFullScreen = async () => {
+    if (isFullscreen) return;
+    try {
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        await docEl.requestFullscreen();
+      }
+      setIsFullscreen(true);
+    } catch (err) {
+      console.log('Error pantalla completa:', err);
+    }
+  };
+  
+  const exitFullScreen = () => {
+    if (!isFullscreen) return;
+    try {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+      setIsFullscreen(false);
+    } catch (err) {}
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => enterFullScreen(), 500);
+    const timer = setTimeout(() => enterFullScreen(), 1000);
     
     const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(
         document.fullscreenElement || 
-        (document as any).webkitFullscreenElement ||
-        (document as any).msFullscreenElement ||
-        (document as any).mozFullScreenElement
+        (document as any).webkitFullscreenElement
       ));
     };
     
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-    document.addEventListener('mozfullscreenchange', handleFullscreenChange);
-    document.addEventListener('MSFullscreenChange', handleFullscreenChange);
     
     return () => {
       clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
-      document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
       exitFullScreen();
     };
   }, []);
 
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
-    const preventZoom = (e: TouchEvent) => {
-      if (e.touches.length > 1) {
-        e.preventDefault();
-      }
-    };
-    
     const options = { passive: false };
     
     document.body.addEventListener('touchmove', preventScroll, options);
     document.body.addEventListener('scroll', preventScroll, options);
-    document.body.addEventListener('touchstart', preventZoom, options);
-    document.body.addEventListener('gesturestart', preventScroll, options);
-    document.body.addEventListener('gesturechange', preventScroll, options);
-    document.body.addEventListener('gestureend', preventScroll, options);
 
     return () => {
       document.body.removeEventListener('touchmove', preventScroll);
       document.body.removeEventListener('scroll', preventScroll);
-      document.body.removeEventListener('touchstart', preventZoom);
-      document.body.removeEventListener('gesturestart', preventScroll);
-      document.body.removeEventListener('gesturechange', preventScroll);
-      document.body.removeEventListener('gestureend', preventScroll);
     };
   }, []);
 
@@ -251,16 +142,12 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  const startMonitoring = useCallback(() => {
+  const startMonitoring = () => {
     if (systemState.current !== 'IDLE') {
-      console.log('⚠️ Sistema ocupado, esperando...', systemState.current);
       return;
     }
     
     systemState.current = 'STARTING';
-    console.log('🚀 INICIANDO MONITOREO VERSIÓN 2.0...');
-    
-    performSystemCleanup();
     
     enterFullScreen();
     setIsMonitoring(true);
@@ -274,35 +161,34 @@ const Index = () => {
     startCalibration();
     
     setTimeout(() => {
-      if (systemState.current === 'STARTING') {
+      if (systemState.current === 'CALIBRATING') {
         systemState.current = 'ACTIVE';
-        setIsCalibrating(false);
       }
-    }, 3000);
+      setIsCalibrating(false);
+    }, 2000);
+    
+    if (measurementTimerRef.current) {
+      clearInterval(measurementTimerRef.current);
+    }
     
     measurementTimerRef.current = window.setInterval(() => {
       setElapsedTime(prev => {
         const newTime = prev + 1;
-        if (newTime >= 40) {
+        if (newTime >= 30) {
           finalizeMeasurement();
-          return 40;
+          return 30;
         }
         return newTime;
       });
     }, 1000);
     
     systemState.current = 'ACTIVE';
-    console.log('✅ Monitoreo iniciado exitosamente');
-  }, [enterFullScreen, startCalibration, performSystemCleanup]);
+  };
 
-  const finalizeMeasurement = useCallback(() => {
-    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') {
-      console.log('⚠️ Finalización ya en progreso o sistema idle');
-      return;
-    }
+  const finalizeMeasurement = () => {
+    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') return;
     
     systemState.current = 'STOPPING';
-    console.log('🏁 FINALIZANDO MEDICIÓN...');
     
     if (isCalibrating) {
       forceCalibrationCompletion();
@@ -328,20 +214,48 @@ const Index = () => {
     setCalibrationProgress(0);
     
     systemState.current = 'IDLE';
-    console.log('✅ Medición finalizada exitosamente');
-  }, [isCalibrating, forceCalibrationCompletion, resetVitalSigns]);
+  };
 
-  const handleReset = useCallback(() => {
-    console.log('🔄 RESET TOTAL DEL SISTEMA...');
-    
+  const handleReset = () => {
     systemState.current = 'STOPPING';
     
-    performSystemCleanup();
+    setIsMonitoring(false);
+    setIsCameraOn(false);
+    setShowResults(false);
+    setIsCalibrating(false);
     
-    setTimeout(() => {
-      console.log('✅ Reset completado exitosamente');
-    }, 100);
-  }, [performSystemCleanup]);
+    if (measurementTimerRef.current) {
+      clearInterval(measurementTimerRef.current);
+      measurementTimerRef.current = null;
+    }
+    
+    fullResetVitalSigns();
+    resetHeartBeat();
+    
+    setElapsedTime(0);
+    setHeartRate(0);
+    setHeartbeatSignal(0);
+    setBeatMarker(0);
+    setVitalSigns({ 
+      spo2: 0,
+      glucose: 0,
+      hemoglobin: 0,
+      pressure: { systolic: 0, diastolic: 0 },
+      arrhythmiaCount: 0,
+      arrhythmiaStatus: "SIN ARRITMIAS|0",
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      isCalibrating: false,
+      calibrationProgress: 0,
+      lastArrhythmiaData: undefined
+    });
+    setArrhythmiaCount("--");
+    setSignalQuality(0);
+    lastArrhythmiaData.current = null;
+    setCalibrationProgress(0);
+    arrhythmiaDetectedRef.current = false;
+    
+    systemState.current = 'IDLE';
+  };
 
   useEffect(() => {
     if (!lastResult) return;
@@ -415,45 +329,158 @@ const Index = () => {
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
-  const handleToggleMonitoring = useCallback(() => {
+  const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
       startMonitoring();
     }
-  }, [isMonitoring, finalizeMeasurement, startMonitoring]);
+  };
+
+  const SignalQualitySensor = () => {
+    const getQualityColor = () => {
+      if (!lastResult?.fingerDetected) return 'from-gray-500 to-gray-600';
+      if (signalQuality >= 80) return 'from-emerald-400 to-green-500';
+      if (signalQuality >= 60) return 'from-yellow-400 to-amber-500';  
+      if (signalQuality >= 40) return 'from-orange-400 to-red-500';
+      return 'from-red-500 to-red-700';
+    };
+
+    const getQualityText = () => {
+      if (!lastResult?.fingerDetected) return 'Sin detección';
+      if (signalQuality >= 80) return 'Excelente';
+      if (signalQuality >= 60) return 'Buena';
+      if (signalQuality >= 40) return 'Regular';
+      return 'Débil';
+    };
+
+    const getStatusColor = () => {
+      if (!lastResult?.fingerDetected) return 'text-gray-400';
+      if (signalQuality >= 75) return 'text-green-400';
+      if (signalQuality >= 50) return 'text-yellow-400';
+      return 'text-red-400';
+    };
+
+    // Métricas en tiempo real
+    const activeChannels = lastResult?.channels.filter(c => c.isFingerDetected).length || 0;
+    const totalChannels = lastResult?.channels.length || 0;
+    const avgSNR = lastResult?.channels.length ? 
+      (lastResult.channels.reduce((sum, c) => sum + c.snr, 0) / lastResult.channels.length).toFixed(1) : 
+      '0.0';
+    
+    const bestChannel = lastResult?.channels.find(c => c.isFingerDetected && c.quality > 30);
+    const currentBPM = lastResult?.aggregatedBPM || bestChannel?.bpm || '--';
+
+    return (
+      <div className="absolute top-4 right-4 bg-black/85 backdrop-blur-md rounded-xl p-3 border border-white/10 min-w-[140px]">
+        <div className="text-center">
+          <div className="text-white/60 text-xs font-medium mb-2 uppercase tracking-wider">
+            Calidad PPG
+          </div>
+          
+          {/* Indicador circular principal */}
+          <div className="relative w-12 h-12 mx-auto mb-2">
+            <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 48 48">
+              <circle 
+                cx="24" cy="24" r="20" 
+                fill="none" 
+                stroke="rgba(255,255,255,0.08)" 
+                strokeWidth="3"
+              />
+              <circle 
+                cx="24" cy="24" r="20" 
+                fill="none" 
+                stroke="url(#qualityGradient)" 
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeDasharray={`${(signalQuality / 100) * 125.6} 125.6`}
+                className="transition-all duration-700 ease-out"
+                style={{
+                  filter: lastResult?.fingerDetected ? 
+                    'drop-shadow(0 0 4px currentColor)' : 'none'
+                }}
+              />
+              <defs>
+                <linearGradient id="qualityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor={
+                    signalQuality >= 80 ? '#10b981' : 
+                    signalQuality >= 60 ? '#f59e0b' : 
+                    signalQuality >= 40 ? '#f97316' : '#ef4444'
+                  } />
+                  <stop offset="100%" stopColor={
+                    signalQuality >= 80 ? '#059669' : 
+                    signalQuality >= 60 ? '#d97706' : 
+                    signalQuality >= 40 ? '#ea580c' : '#dc2626'
+                  } />
+                </linearGradient>
+              </defs>
+            </svg>
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className={`text-sm font-bold ${getStatusColor()}`}>
+                {signalQuality}%
+              </span>
+            </div>
+          </div>
+          
+          {/* Estado textual */}
+          <div className={`text-xs font-medium mb-2 ${getStatusColor()}`}>
+            {getQualityText()}
+          </div>
+          
+          {/* Métricas detalladas */}
+          <div className="space-y-1 text-xs text-white/50">
+            <div className="flex justify-between">
+              <span>BPM:</span>
+              <span className="text-white/70 font-medium">{currentBPM}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Canales:</span>
+              <span className="text-white/70">{activeChannels}/{totalChannels}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>SNR:</span>
+              <span className="text-white/70">{avgSNR}</span>
+            </div>
+          </div>
+          
+          {/* Indicador de estado */}
+          <div className="mt-2 pt-2 border-t border-white/10">
+            <div className="flex items-center justify-center space-x-1">
+              <div className={`w-2 h-2 rounded-full ${
+                lastResult?.fingerDetected ? 
+                'bg-green-400 animate-pulse' : 
+                'bg-gray-500'
+              }`}></div>
+              <span className="text-xs text-white/60">
+                {lastResult?.fingerDetected ? 'Detectado' : 'Buscando...'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div 
-      className="fixed inset-0 flex flex-col bg-gradient-to-br from-black via-gray-900 to-black overflow-hidden"
-      style={{ 
-        height: '100svh',
-        width: '100vw',
-        maxWidth: '100vw',
-        maxHeight: '100svh',
-        paddingTop: 'env(safe-area-inset-top)',
-        paddingBottom: 'env(safe-area-inset-bottom)',
-        background: isFullscreen ? 
-          'radial-gradient(ellipse at center, #0a0a0a 0%, #000 70%, #111 100%)' :
-          'linear-gradient(135deg, #1a1a1a 0%, #000 50%, #0a0a0a 100%)',
-        transform: isFullscreen ? 'scale(1.02)' : 'scale(1)',
-        transition: 'all 0.3s ease-in-out'
-      }}
-    >
+    <div className="fixed inset-0 flex flex-col bg-black" style={{ 
+      height: '100svh',
+      width: '100vw',
+      maxWidth: '100vw',
+      maxHeight: '100svh',
+      overflow: 'hidden',
+      paddingTop: 'env(safe-area-inset-top)',
+      paddingBottom: 'env(safe-area-inset-bottom)'
+    }}>
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
-          className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/95 backdrop-blur-md text-white transition-all duration-500"
+          className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/90 text-white"
         >
-          <div className="text-center p-8 bg-gradient-to-br from-primary/20 to-secondary/20 rounded-3xl backdrop-blur-sm border border-white/10 shadow-2xl transform hover:scale-105 transition-transform">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto mb-4 text-primary animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
+          <div className="text-center p-4 bg-primary/20 rounded-lg backdrop-blur-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
             </svg>
-            <p className="text-2xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-              Monitor Cardíaco PPG
-            </p>
-            <p className="text-lg text-white/80">Toca para pantalla completa inmersiva</p>
-            <p className="text-sm text-white/60 mt-2">Experiencia médica optimizada</p>
+            <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
           </div>
         </button>
       )}
@@ -471,19 +498,8 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {isMonitoring && (
-            <div className="absolute top-3 right-3 z-20 bg-black/30 backdrop-blur rounded-lg px-3 py-1 border border-white/10">
-              <div className="text-white text-xs font-medium">
-                {elapsedTime}/40s
-              </div>
-              <div className="w-20 h-0.5 bg-white/20 rounded-full mt-1">
-                <div 
-                  className="h-full bg-gradient-to-r from-green-400 to-blue-400 rounded-full transition-all duration-1000"
-                  style={{ width: `${(elapsedTime / 40) * 100}%` }}
-                />
-              </div>
-            </div>
-          )}
+          {/* Sensor de Calidad REAL y Funcional */}
+          <SignalQualitySensor />
           
           <div className="flex-1 pt-12">
             <PPGSignalMeter 
@@ -498,8 +514,8 @@ const Index = () => {
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[50%] bottom-[60px] bg-black/5 backdrop-blur-sm px-4 py-6">
-            <div className="grid grid-cols-3 gap-4 place-items-center max-w-6xl mx-auto">
+          <div className="absolute inset-x-0 top-[50%] bottom-[60px] bg-black/10 px-4 py-6">
+            <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
                 label="FRECUENCIA CARDÍACA"
                 value={heartRate || "--"}
@@ -539,13 +555,12 @@ const Index = () => {
             </div>
           </div>
 
-          <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4 z-20">
+          <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 
                 isMonitoring={isMonitoring} 
                 onToggle={handleToggleMonitoring} 
                 variant="monitor"
-                className="transform hover:scale-105 transition-transform duration-200 shadow-lg"
               />
             </div>
             <div className="w-1/2">
@@ -553,7 +568,6 @@ const Index = () => {
                 isMonitoring={isMonitoring} 
                 onToggle={handleReset} 
                 variant="reset"
-                className="transform hover:scale-105 transition-transform duration-200 shadow-lg"
               />
             </div>
           </div>

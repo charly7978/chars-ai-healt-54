@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
+import { Fingerprint, AlertCircle } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
-import SignalQualityIndicator from './SignalQualityIndicator';
+import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
 
 interface PPGSignalMeterProps {
@@ -77,29 +77,32 @@ const PPGSignalMeter = ({
   }, []);
 
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
-    ctx.fillStyle = '#1e3a8a';
+    // FONDO AZUL OSCURO PARA MONITOR CARDÍACO
+    ctx.fillStyle = '#1e3a8a'; // blue-800 - azul oscuro pero no estropea visualización
     ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)';
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)'; // blue-500 con transparencia para grid
     ctx.lineWidth = 0.5;
     
+    // Draw vertical grid lines
     for (let x = 0; x <= CANVAS_WIDTH; x += GRID_SIZE_X) {
       ctx.moveTo(x, 0);
       ctx.lineTo(x, CANVAS_HEIGHT);
       if (x % (GRID_SIZE_X * 5) === 0) {
-        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)';
+        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)'; // blue-100 para texto
         ctx.font = '10px Inter';
         ctx.textAlign = 'center';
         ctx.fillText(x.toString(), x, CANVAS_HEIGHT - 5);
       }
     }
     
+    // Draw horizontal grid lines
     for (let y = 0; y <= CANVAS_HEIGHT; y += GRID_SIZE_Y) {
       ctx.moveTo(0, y);
       ctx.lineTo(CANVAS_WIDTH, y);
       if (y % (GRID_SIZE_Y * 5) === 0) {
-        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)';
+        ctx.fillStyle = 'rgba(219, 234, 254, 0.8)'; // blue-100 para texto
         ctx.font = '10px Inter';
         ctx.textAlign = 'right';
         ctx.fillText(y.toString(), 15, y + 3);
@@ -107,8 +110,9 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     
+    // Draw center line (baseline) - más visible sobre fondo azul
     ctx.beginPath();
-    ctx.strokeStyle = 'rgba(219, 234, 254, 0.6)';
+    ctx.strokeStyle = 'rgba(219, 234, 254, 0.6)'; // blue-100 semi-transparente
     ctx.lineWidth = 1;
     ctx.moveTo(0, CANVAS_HEIGHT / 2);
     ctx.lineTo(CANVAS_WIDTH, CANVAS_HEIGHT / 2);
@@ -116,7 +120,7 @@ const PPGSignalMeter = ({
     
     const status = arrhythmiaStatus ? parseArrhythmiaStatus(arrhythmiaStatus) : null;
     if (status?.status === 'DETECTED') {
-      ctx.fillStyle = '#ef4444';
+      ctx.fillStyle = '#ef4444'; // red-500 para alertas
       ctx.font = 'bold 24px Inter';
       ctx.textAlign = 'left';
       ctx.fillText(status.count > 1 
@@ -253,8 +257,8 @@ const PPGSignalMeter = ({
     
     if (points.length > 1) {
       ctx.beginPath();
-      ctx.strokeStyle = '#10b981';
-      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#10b981'; // emerald-500 - verde brillante para onda cardíaca sobre azul
+      ctx.lineWidth = 3; // Más gruesa para mejor visibilidad
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
@@ -280,12 +284,12 @@ const PPGSignalMeter = ({
         if (point.isArrhythmia) {
           ctx.stroke();
           ctx.beginPath();
-          ctx.strokeStyle = '#DC2626';
+          ctx.strokeStyle = '#DC2626'; // red-600 para arritmias
           ctx.moveTo(x1, y1);
           ctx.lineTo(x2, y2);
           ctx.stroke();
           ctx.beginPath();
-          ctx.strokeStyle = '#10b981';
+          ctx.strokeStyle = '#10b981'; // volver a verde
           ctx.moveTo(x2, y2);
           firstPoint = true;
         }
@@ -357,7 +361,7 @@ const PPGSignalMeter = ({
   }, [onReset]);
 
   return (
-    <div className="fixed inset-0 bg-blue-950/95 backdrop-blur-sm">
+    <div className="fixed inset-0 bg-blue-950/95 backdrop-blur-sm"> {/* Fondo azul oscuro general */}
       <canvas
         ref={canvasRef}
         width={CANVAS_WIDTH}
@@ -365,13 +369,36 @@ const PPGSignalMeter = ({
         className="w-full h-[100vh] absolute inset-0 z-0"
       />
 
-      <div className="absolute top-3 left-3 z-10">
-        <SignalQualityIndicator 
-          quality={quality}
-          isMonitoring={true}
-          isFingerDetected={isFingerDetected}
-          snr={0}
-        />
+      <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
+        <div className="flex items-center gap-2">
+          <span className="text-lg font-bold text-blue-100">PPG</span> {/* Texto claro sobre azul */}
+          <div className="w-[180px]">
+            <div className={`h-1 w-full rounded-full bg-gradient-to-r ${getQualityColor(quality)} transition-all duration-1000 ease-in-out`}>
+              <div
+                className="h-full rounded-full bg-white/20 animate-pulse transition-all duration-1000"
+                style={{ width: `${isFingerDetected ? quality : 0}%` }}
+              />
+            </div>
+            <span className="text-[8px] text-center mt-0.5 font-medium transition-colors duration-700 block text-blue-200"> {/* Texto claro */}
+              {getQualityText(quality, isFingerDetected, 'meter')}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-col items-center">
+          <Fingerprint
+            className={`h-8 w-8 transition-colors duration-300 ${
+              !isFingerDetected ? 'text-blue-400' :
+              quality > 75 ? 'text-green-400' :
+              quality > 50 ? 'text-yellow-400' :
+              'text-red-400'
+            }`}
+            strokeWidth={1.5}
+          />
+          <span className="text-[8px] text-center font-medium text-blue-200"> {/* Texto claro */}
+            {isFingerDetected ? "Dedo detectado" : "Ubique su dedo"}
+          </span>
+        </div>
       </div>
 
       <div className="fixed bottom-0 left-0 right-0 h-[60px] grid grid-cols-2 bg-transparent z-10">
