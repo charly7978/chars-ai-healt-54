@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import { CameraSample } from '@/types';
 
@@ -32,8 +31,6 @@ const CameraView: React.FC<CameraViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const mountedRef = useRef(true);
-
-  // OPTIMIZACIÓN CRÍTICA: Evitar re-renders innecesarios
   const frameIntervalRef = useRef<number>(1000 / targetFps);
   const lastCaptureRef = useRef<number>(0);
 
@@ -41,13 +38,11 @@ const CameraView: React.FC<CameraViewProps> = ({
   const performDeepCleanup = () => {
     console.log('🧹 CLEANUP PROFUNDO iniciado...');
     
-    // Cancelar RAF
     if (rafRef.current) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
     
-    // Limpiar stream completamente
     const stream = streamRef.current;
     if (stream) {
       stream.getTracks().forEach(track => {
@@ -57,7 +52,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       streamRef.current = null;
     }
     
-    // Limpiar video element
     if (videoRef.current) {
       videoRef.current.pause();
       videoRef.current.srcObject = null;
@@ -66,7 +60,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       videoRef.current = null;
     }
     
-    // Limpiar canvas
     if (canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d');
       if (ctx) {
@@ -75,12 +68,10 @@ const CameraView: React.FC<CameraViewProps> = ({
       canvasRef.current = null;
     }
     
-    // Limpiar DOM container
     if (containerRef.current) {
       containerRef.current.innerHTML = '';
     }
     
-    // Reset estados
     setIsStreamActive(false);
     setTorchEnabled(false);
     setError(null);
@@ -103,16 +94,16 @@ const CameraView: React.FC<CameraViewProps> = ({
       try {
         console.log('🎥 INICIANDO CÁMARA OPTIMIZADA VERSIÓN 2.0...');
         
-        // Cleanup preventivo
         performDeepCleanup();
         
-        // CONSTRAINTS MEJORADAS - Sin facingMode problemático
+        // CONSTRAINTS MEJORADAS PARA PPG
         const constraints: MediaStreamConstraints = {
           video: {
             width: { ideal: 1920, min: 1280 },
             height: { ideal: 1080, min: 720 },
             frameRate: { ideal: targetFps, min: 15 },
-            aspectRatio: { ideal: 16/9 }
+            aspectRatio: { ideal: 16/9 },
+            facingMode: { ideal: 'environment' }
           },
           audio: false
         };
@@ -153,12 +144,12 @@ const CameraView: React.FC<CameraViewProps> = ({
           console.log('✅ Video agregado al DOM forzadamente');
         }
 
-        // LINTERNA - MÉTODO AGRESIVO Y MÚLTIPLE
+        // LINTERNA - MÉTODOS CORREGIDOS SIN PROPIEDADES INVÁLIDAS
         if (enableTorch) {
           const videoTrack = stream.getVideoTracks()[0];
           console.log('🔦 Intentando activar linterna...', videoTrack.getCapabilities());
           
-          // MÉTODO 1: Torch capability check + apply
+          // MÉTODO 1: Torch básico
           try {
             const capabilities = videoTrack.getCapabilities();
             if (capabilities.torch) {
@@ -168,12 +159,12 @@ const CameraView: React.FC<CameraViewProps> = ({
               setTorchEnabled(true);
               console.log('🔦 ✅ LINTERNA ACTIVADA - Método 1 (capabilities)');
             } else {
-              console.log('🔦 ❌ Torch no disponible en capabilities');
+              throw new Error('Torch no disponible en capabilities');
             }
           } catch (e1) {
             console.log('🔦 Método 1 falló:', e1);
             
-            // MÉTODO 2: Forzar torch sin verificar capabilities
+            // MÉTODO 2: Forzar torch directo
             try {
               await videoTrack.applyConstraints({
                 torch: true as any
@@ -188,27 +179,35 @@ const CameraView: React.FC<CameraViewProps> = ({
                 await videoTrack.applyConstraints({
                   advanced: [{ 
                     torch: true,
-                    exposureMode: 'manual' as any,
-                    exposureCompensation: { exact: 2.0 } as any
+                    exposureMode: 'manual' as any
                   }]
                 });
                 setTorchEnabled(true);
                 console.log('🔦 ✅ LINTERNA ACTIVADA - Método 3 (advanced + exposure)');
               } catch (e3) {
-                console.log('🔦 Todos los métodos fallaron:', e3);
-                console.log('🔦 ⚠️ Continuando sin linterna...');
+                console.log('🔦 Método 3 falló:', e3);
+                
+                // MÉTODO 4: ImageCapture API
+                try {
+                  const imageCapture = new ImageCapture(videoTrack);
+                  await imageCapture.takePhoto();
+                  await videoTrack.applyConstraints({ torch: true } as any);
+                  setTorchEnabled(true);
+                  console.log('🔦 ✅ LINTERNA ACTIVADA - Método 4 (ImageCapture)');
+                } catch (e4) {
+                  console.log('🔦 Todos los métodos fallaron. Continuando sin linterna...');
+                  console.log('🔦 ⚠️ La app funcionará pero sin flash');
+                }
               }
             }
           }
         }
 
-        // CANVAS OPTIMIZADO MEJORADO
         const canvas = document.createElement('canvas');
         canvas.style.display = 'none';
         canvas.style.imageRendering = 'pixelated';
         canvasRef.current = canvas;
 
-        // ESPERAR VIDEO READY Y INICIAR CAPTURA
         const onVideoReady = () => {
           if (video.readyState >= 2 && video.videoWidth > 0) {
             console.log('📹 Video listo:', {
@@ -221,7 +220,6 @@ const CameraView: React.FC<CameraViewProps> = ({
             setError(null);
             onStreamReady?.(stream);
             
-            // INICIAR CAPTURA OPTIMIZADA
             if (mounted && mountedRef.current && isMonitoring) {
               startOptimizedCapture();
             }
@@ -239,7 +237,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       }
     };
 
-    // SISTEMA DE CAPTURA ULTRA-OPTIMIZADO V2
+    // SISTEMA DE CAPTURA ULTRA-OPTIMIZADO
     const startOptimizedCapture = () => {
       let frameCount = 0;
       const startTime = performance.now();
@@ -249,7 +247,6 @@ const CameraView: React.FC<CameraViewProps> = ({
           return;
         }
         
-        // THROTTLING INTELIGENTE - Solo capturar si pasó suficiente tiempo
         if (currentTime - lastCaptureRef.current >= frameIntervalRef.current) {
           try {
             const sample = captureFrame();
@@ -257,7 +254,6 @@ const CameraView: React.FC<CameraViewProps> = ({
               onSample(sample);
               frameCount++;
               
-              // Log de performance cada 100 frames
               if (frameCount % 100 === 0) {
                 const elapsed = (performance.now() - startTime) / 1000;
                 const actualFps = frameCount / elapsed;
@@ -277,7 +273,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       console.log('🎬 Captura de frames iniciada');
     };
 
-    // CAPTURA DE FRAME ULTRA-OPTIMIZADA V2
+    // CAPTURA DE FRAME ULTRA-OPTIMIZADA
     const captureFrame = (): CameraSample | null => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -286,7 +282,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         return null;
       }
 
-      // ROI OPTIMIZADA - Centrada y proporcional
       const centerX = video.videoWidth / 2;
       const centerY = video.videoHeight / 2;
       const roiW = Math.min(roiSize, video.videoWidth * 0.3);
@@ -304,12 +299,10 @@ const CameraView: React.FC<CameraViewProps> = ({
       });
       if (!ctx) return null;
       
-      // CAPTURA DIRECTA ROI
       ctx.drawImage(video, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
       const imageData = ctx.getImageData(0, 0, roiW, roiH);
       const data = imageData.data;
 
-      // PROCESAMIENTO ULTRA-OPTIMIZADO
       let rSum = 0, gSum = 0, bSum = 0;
       let rSum2 = 0, gSum2 = 0, bSum2 = 0;
       let brightSum = 0;
@@ -317,7 +310,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       const threshold = coverageThresholdPixelBrightness;
       const totalPixels = data.length / 4;
 
-      // LOOP OPTIMIZADO - Menos cálculos
       for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1]; 
@@ -340,7 +332,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       const bMean = bSum / totalPixels;
       const brightnessMean = brightSum / totalPixels;
       
-      // VARIANZAS OPTIMIZADAS
       const rVar = Math.max(0, rSum2/totalPixels - rMean*rMean);
       const gVar = Math.max(0, gSum2/totalPixels - gMean*gMean);
       const bVar = Math.max(0, bSum2/totalPixels - bMean*bMean);
@@ -349,7 +340,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       const gStd = Math.sqrt(gVar);
       const bStd = Math.sqrt(bVar);
       
-      // FRAME DIFF OPTIMIZADO
       const prevBrightness = prevBrightnessRef.current;
       const frameDiff = prevBrightness !== null ? Math.abs(brightnessMean - prevBrightness) : 0;
       prevBrightnessRef.current = brightnessMean;
@@ -370,12 +360,10 @@ const CameraView: React.FC<CameraViewProps> = ({
       };
     };
 
-    // Guardar función de cleanup
     cleanupRef.current = performDeepCleanup;
     
     startCamera();
 
-    // CLEANUP MEJORADO
     return () => {
       mounted = false;
       mountedRef.current = false;
@@ -383,7 +371,6 @@ const CameraView: React.FC<CameraViewProps> = ({
     };
   }, [isMonitoring]);
 
-  // Cleanup al desmontar componente
   useEffect(() => {
     return () => {
       mountedRef.current = false;
@@ -404,7 +391,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         }}
       />
       
-      {/* INDICADORES OPTIMIZADOS */}
       {!isStreamActive && isMonitoring && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/95 backdrop-blur-sm">
           <div className="text-white text-center p-6 bg-black/50 rounded-2xl border border-white/10">
@@ -426,7 +412,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         </div>
       )}
       
-      {/* INDICADORES DE ESTADO MEJORADOS */}
       {torchEnabled && (
         <div className="absolute top-4 left-4 bg-yellow-500/20 border border-yellow-500/30 rounded-full p-3 backdrop-blur">
           <div className="text-yellow-400 text-xl animate-pulse filter drop-shadow-lg">🔦</div>
