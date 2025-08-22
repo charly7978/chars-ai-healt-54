@@ -1,4 +1,4 @@
-import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
+// Eliminado import de AdvancedMathematicalProcessor para evitar inicialización pesada no utilizada
 
 export interface VitalSignsResult {
   spo2: number;
@@ -27,7 +27,7 @@ export interface VitalSignsResult {
  * PROCESADOR CORREGIDO CON NÚMEROS PRECISOS Y PONDERADO FINAL
  */
 export class VitalSignsProcessor {
-  private mathProcessor: AdvancedMathematicalProcessor;
+  // Eliminada referencia a AdvancedMathematicalProcessor (no utilizada en este procesador)
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
@@ -63,7 +63,7 @@ export class VitalSignsProcessor {
   
   constructor() {
     console.log("🚀 VitalSignsProcessor: Sistema CORREGIDO con números precisos");
-    this.mathProcessor = new AdvancedMathematicalProcessor();
+    // Eliminada inicialización de AdvancedMathematicalProcessor
   }
 
   startCalibration(): void {

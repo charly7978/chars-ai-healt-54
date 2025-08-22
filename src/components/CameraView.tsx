@@ -148,9 +148,14 @@ const CameraView: React.FC<CameraViewProps> = ({
           }
           
           // Si no se pudo activar, mostrar advertencia
-          if (!torchActivated && capabilities?.torch) {
-            console.warn('🔦 ⚠️ ADVERTENCIA: La linterna está soportada pero no se pudo activar');
-          }
+          try {
+            const [videoTrack] = stream.getVideoTracks();
+            const caps = (videoTrack as any).getCapabilities?.();
+            if (!torchActivated && caps?.torch) {
+              console.warn('🔦 ⚠️ ADVERTENCIA: La linterna está soportada pero no se pudo activar');
+            }
+          } catch {}
+          
         }
 
         // ESPERAR VIDEO READY

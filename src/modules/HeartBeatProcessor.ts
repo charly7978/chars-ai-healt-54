@@ -689,14 +689,8 @@ export class HeartBeatProcessor {
         const bpm = this.bpmHistory[i];
         if (bpm > 30 && bpm < 200) { // Validar BPM fisiológico
           const rrInterval = 60000 / bpm;
-          // Aplicar variabilidad realista basada en calidad de señal
-          const variability = this.currentSignalQuality > 70 ? 0.02 : 0.05;
-          // Usar crypto.getRandomValues() en lugar de Math.random() para aplicaciones médicas
-          const randomBytes = new Uint32Array(1);
-          crypto.getRandomValues(randomBytes);
-          const randomValue = randomBytes[0] / (0xFFFFFFFF + 1);
-          const adjustedRR = rrInterval * (1 + (randomValue - 0.5) * variability);
-          rrIntervals.push(Math.max(300, Math.min(2000, adjustedRR)));
+          // No introducir jitter artificial; confiar en derivaciones reales
+          rrIntervals.push(Math.max(300, Math.min(2000, rrInterval)));
         }
       }
     }

@@ -216,7 +216,12 @@ const PPGSignalMeter = ({
     
     const now = Date.now();
     
-    drawGrid(ctx);
+    // Usar grilla prerenderizada si está disponible para reducir carga
+    if (gridCanvasRef.current) {
+      ctx.drawImage(gridCanvasRef.current, 0, 0, canvas.width, canvas.height);
+    } else {
+      drawGrid(ctx);
+    }
     
     if (preserveResults && !isFingerDetected) {
       lastRenderTimeRef.current = currentTime;
@@ -328,6 +333,7 @@ const PPGSignalMeter = ({
       });
     }
     
+    // Limitar a TARGET_FPS usando timestamp
     lastRenderTimeRef.current = currentTime;
     animationFrameRef.current = requestAnimationFrame(renderSignal);
   }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);

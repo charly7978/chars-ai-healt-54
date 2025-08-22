@@ -126,7 +126,7 @@ export default class PPGChannel {
     const smooth = savitzkyGolay(filtered, 13); // Ajustado a 13
 
     // Análisis espectral MEJORADO con Goertzel
-    const freqs = this.linspace(0.8, 4.0, 200); // Más resolución frecuencial
+    const freqs = this.linspace(0.8, 4.0, 120); // Resolución suficiente con menor costo
     const powers = freqs.map(f => goertzelPower(smooth, fs, f));
     
     // Encontrar pico espectral MÁS ROBUSTO
@@ -175,7 +175,7 @@ export default class PPGChannel {
     const isFingerDetected = criteriaCount >= 3;
 
     // Debug detección COMPLETA solo para canal 0 o cuando hay detección
-    if (this.channelId === 0 || isFingerDetected) {
+    if ((this.channelId === 0 && this.buffer.length % 120 === 0) || isFingerDetected) {
       console.log(`🔍 Canal ${this.channelId} Análisis Completo:`, {
         // Estadísticas básicas
         mean: mean.toFixed(1),

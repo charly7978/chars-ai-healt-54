@@ -565,11 +565,7 @@ const Index = () => {
             targetFps={30}
             roiSize={320}
             enableTorch={true}
-<<<<<<< Current (Your changes)
-            coverageThresholdPixelBrightness={50}
-=======
-            coverageThresholdPixelBrightness={30}
->>>>>>> Incoming (Background Agent changes)
+            coverageThresholdPixelBrightness={40}
           />
         </div>
 
