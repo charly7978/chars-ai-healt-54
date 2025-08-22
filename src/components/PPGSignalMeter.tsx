@@ -47,13 +47,13 @@ const PPGSignalMeter = ({
   const GRID_SIZE_X = 22;
   const GRID_SIZE_Y = 10;
   const verticalScale = 225.0;
-  const SMOOTHING_FACTOR = 1.6;
+  const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
   const PEAK_DETECTION_WINDOW = 8;
-  const PEAK_THRESHOLD = 3;
-  const MIN_PEAK_DISTANCE_MS = 400;
+  const PEAK_THRESHOLD = 2;
+  const MIN_PEAK_DISTANCE_MS = 300;
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
 
