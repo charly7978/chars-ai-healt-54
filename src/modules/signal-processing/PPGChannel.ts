@@ -23,17 +23,10 @@ export default class PPGChannel {
   private gain: number;
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
-<<<<<<< Current (Your changes)
-  private minRMeanForFinger = 85;   // Más alto para asegurar piel iluminada por linterna
-  private maxRMeanForFinger = 245;  // Ajustado a 245
-  private minVarianceForPulse = 3.0; // Mayor varianza mínima temporal
-  private minSNRForFinger = 1.5;    // SNR más exigente
-=======
   private minRMeanForFinger = 80;   // Sutil baja para favorecer dedo real
   private maxRMeanForFinger = 245;  // Ajustado a 245
   private minVarianceForPulse = 2.6; // Sutil baja
   private minSNRForFinger = 1.35;    // Sutil baja
->>>>>>> Incoming (Background Agent changes)
   private maxFrameDiffForStability = 15; // Ajustado a 15 (era 20)
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {

@@ -897,8 +897,6 @@ export class HeartBeatProcessor {
     
     return Math.min(Math.max(Math.round(totalQuality), 0), 100);
   }
-<<<<<<< Current (Your changes)
-=======
 
   // Validación espectral rápida (Goertzel)
   private isCardiacBandPresent(samples: number[], fs: number): boolean {
@@ -937,5 +935,4 @@ export class HeartBeatProcessor {
     const imag = s2 * Math.sin(omega);
     return real * real + imag * imag;
   }
->>>>>>> Incoming (Background Agent changes)
 }
