@@ -266,7 +266,9 @@ const CameraView: React.FC<CameraViewProps> = ({
       let rSum = 0, gSum = 0, bSum = 0;
       let rSum2 = 0, gSum2 = 0, bSum2 = 0;
       let brightSum = 0;
+      let brightSum2 = 0;
       let brightPixels = 0;
+      let redSaturated = 0;
       const threshold = coverageThresholdPixelBrightness;
 
       const totalPixels = data.length / 4;
@@ -284,6 +286,8 @@ const CameraView: React.FC<CameraViewProps> = ({
         gSum2 += g * g;
         bSum2 += b * b;
         brightSum += brightness;
+        brightSum2 += brightness * brightness;
+        if (r > 250) redSaturated++;
         
         if (brightness >= threshold) brightPixels++;
       }
@@ -292,6 +296,8 @@ const CameraView: React.FC<CameraViewProps> = ({
       const gMean = gSum / totalPixels;
       const bMean = bSum / totalPixels;
       const brightnessMean = brightSum / totalPixels;
+      const brightnessVar = Math.max(0, brightSum2/totalPixels - brightnessMean*brightnessMean);
+      const brightnessStd = Math.sqrt(brightnessVar);
       
       // VARIANZAS CORRECTAS
       const rVar = Math.max(0, rSum2/totalPixels - rMean*rMean);
@@ -308,6 +314,10 @@ const CameraView: React.FC<CameraViewProps> = ({
       prevBrightnessRef.current = brightnessMean;
       
       const coverageRatio = brightPixels / totalPixels;
+      const rgRatio = gMean > 1 ? rMean / gMean : 10;
+      const rgbSum = rMean + gMean + bMean;
+      const redFraction = rgbSum > 0 ? rMean / rgbSum : 0;
+      const saturationRatio = redSaturated / totalPixels;
 
       return {
         timestamp: Date.now(),
@@ -315,11 +325,15 @@ const CameraView: React.FC<CameraViewProps> = ({
         gMean,
         bMean,
         brightnessMean,
+        brightnessStd,
         rStd,
         gStd,
         bStd,
         frameDiff,
-        coverageRatio
+        coverageRatio,
+        rgRatio,
+        redFraction,
+        saturationRatio
       };
     };
 

@@ -6,11 +6,15 @@ export type CameraSample = {
   gMean: number;
   bMean: number;
   brightnessMean: number;
+  brightnessStd: number;
   rStd: number;
   gStd: number;
   bStd: number;
   frameDiff: number; // abs diff prev mean brightness
   coverageRatio: number; // 0..1 -> % pix que cumplen condiciones de dedo
+  rgRatio: number; // rMean/gMean
+  redFraction: number; // rMean/(r+g+b)
+  saturationRatio: number; // % de pixeles con rojo saturado
 };
 
 export type ChannelResult = {

@@ -23,12 +23,21 @@ export default class MultiChannelManager {
   private fingerUnstableCount = 0;
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
+<<<<<<< Current (Your changes)
   private readonly FRAMES_TO_CONFIRM_FINGER = 6;    // equilibrio velocidad/estabilidad
   private readonly FRAMES_TO_LOSE_FINGER = 12;      // tolerancia moderada a inestabilidad
   private readonly MIN_COVERAGE_RATIO = 0.16;       // sensibilidad adecuada
   private readonly MAX_FRAME_DIFF = 22;             // tolerancia a micro-movimientos
   private readonly MIN_CONSENSUS_RATIO = 0.28;      // consenso balanceado
   private readonly MIN_QUALITY_THRESHOLD = 21;      // calidad mínima razonable
+=======
+  private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // más robusto para confirmar
+  private readonly FRAMES_TO_LOSE_FINGER = 6;       // caída más rápida al retirar dedo
+  private readonly MIN_COVERAGE_RATIO = 0.22;       // mayor cobertura mínima
+  private readonly MAX_FRAME_DIFF = 20;             // menos tolerancia a movimiento
+  private readonly MIN_CONSENSUS_RATIO = 0.34;      // mayor consenso entre canales
+  private readonly MIN_QUALITY_THRESHOLD = 30;      // calidad mínima más alta
+>>>>>>> Incoming (Background Agent changes)
 
   constructor(n = 6, windowSec = 8) {
     this.n = n;

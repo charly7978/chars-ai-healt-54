@@ -44,7 +44,14 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     mgrRef.current!.pushSample(inputSignal, s.timestamp);
     
     // CRÍTICO: Analizar con métricas globales correctas
-    const result = mgrRef.current!.analyzeAll(s.coverageRatio, s.frameDiff);
+    // Ajuste de cobertura y movimiento usando métricas adicionales
+    const adjustedCoverage = Math.min(1,
+      s.coverageRatio *
+      (s.redFraction > 0.42 && s.rgRatio > 1.1 && s.rgRatio < 4.0 ? 1.2 : 0.8) *
+      (s.saturationRatio < 0.15 ? 1.0 : 0.7)
+    );
+    const adjustedMotion = s.frameDiff + (s.brightnessStd > 8 ? 6 : 0);
+    const result = mgrRef.current!.analyzeAll(adjustedCoverage, adjustedMotion);
     
     // Log resultado cada 150 muestras o cuando hay detección (reducido de 50)
     if (result.fingerDetected || sampleCountRef.current % 150 === 0) {
