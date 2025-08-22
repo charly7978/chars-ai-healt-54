@@ -109,12 +109,12 @@ const CameraView = ({
         }
       }
       
-      // MÉTODO 2: Constraint flashlight
+      // MÉTODO 2: Constraint torch alternativo
       try {
         await videoTrack.applyConstraints({
-          advanced: [{ flashlight: true }]
+          torch: true
         });
-        console.log('✅ Linterna activada - Método 2 (flashlight constraint)');
+        console.log('✅ Linterna activada - Método 2 (torch alternativo)');
         return true;
       } catch {}
       
@@ -199,7 +199,10 @@ const CameraView = ({
         }
         
         // Inicializar procesador
-        processorRef.current = new FrameProcessor(roiSize, coverageThresholdPixelBrightness);
+        processorRef.current = new FrameProcessor({
+          TEXTURE_GRID_SIZE: 4,
+          ROI_SIZE_FACTOR: roiSize / Math.min(1280, 720)
+        });
         
         console.log('✅ Cámara iniciada exitosamente');
       }
@@ -225,13 +228,37 @@ const CameraView = ({
     lastFrameTimeRef.current = currentTime;
     
     try {
-      const sample = processorRef.current.processVideoFrame(videoRef.current, Date.now());
+      // Crear canvas para extraer frame data
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) return;
       
-      if (sample) {
-        const isFingerPresent = sample.coverageRatio > 0.3 && sample.rMean > 40;
-        setFingerDetected(isFingerPresent);
-        onSample(sample);
-      }
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      context.drawImage(videoRef.current, 0, 0);
+      
+      const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      const frameData = processorRef.current.extractFrameData(imageData);
+      const roi = processorRef.current.detectROI(frameData.redValue, imageData);
+      
+      // Crear sample compatible con CameraSample
+      const sample = {
+        timestamp: Date.now(),
+        rMean: frameData.avgRed,
+        gMean: frameData.avgGreen,
+        bMean: frameData.avgBlue,
+        brightnessMean: (frameData.avgRed + frameData.avgGreen + frameData.avgBlue) / 3,
+        rStd: 0, // Simplificado para esta versión
+        gStd: 0, // Simplificado para esta versión
+        bStd: 0, // Simplificado para esta versión
+        frameDiff: 0, // Simplificado para esta versión
+        coverageRatio: frameData.textureScore,
+        roi: roi
+      };
+      
+      const isFingerPresent = sample.coverageRatio > 0.3 && sample.rMean > 40;
+      setFingerDetected(isFingerPresent);
+      onSample(sample);
     } catch (error) {
       console.error('Error procesando frame:', error);
     } finally {
