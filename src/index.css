@@ -200,4 +200,38 @@ input, select, textarea, button {
   .safe-right {
     padding-right: env(safe-area-inset-right);
   }
+<<<<<<< Current (Your changes)
+=======
+}
+
+/* Optimización para orientación vertical */
+@media screen and (orientation: portrait) {
+  #root {
+    max-width: 100vw;
+    margin: 0 auto;
+  }
+  
+  /* Ajustes específicos para móviles en vertical */
+  .camera-container {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 3/4;
+  }
+  
+  /* Botones más grandes para mejor usabilidad */
+  button {
+    min-height: 48px;
+    min-width: 48px;
+  }
+}
+
+/* Mensaje de orientación mejorado */
+@media screen and (orientation: landscape) and (max-width: 896px) {
+  body::before {
+    content: "⟲ Por favor, gire su dispositivo a posición vertical para mejor experiencia";
+    background: rgba(0, 0, 0, 0.95);
+    backdrop-filter: blur(10px);
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+>>>>>>> Incoming (Background Agent changes)
 }
