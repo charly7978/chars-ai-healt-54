@@ -6,10 +6,10 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
   private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03; // REDUCIDO para mayor sensibilidad
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.45; // REDUCIDO para ser menos estricto
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.004; // Más sensible
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300; // REDUCIDO para detecciones más rápidas
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.65; // AUMENTADO para ser más estricto
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
   private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
 
   // Parámetros de filtrado MÁS CONSERVADORES
@@ -25,8 +25,8 @@ export class HeartBeatProcessor {
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
   // AUTO-RESET más agresivo para falsos positivos
-  private readonly LOW_SIGNAL_THRESHOLD = 0.01; // Umbral más bajo para ser menos agresivo
-  private readonly LOW_SIGNAL_FRAMES = 25; // Aumentado para evitar resets prematuros
+  private readonly LOW_SIGNAL_THRESHOLD = 0.02; // Umbral más alto
+  private readonly LOW_SIGNAL_FRAMES = 15; // Reducido para reset más rápido
   private lowSignalCount = 0;
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
@@ -34,11 +34,11 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites MÁS PERMISIVOS para parámetros adaptativos
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.02; // REDUCIDO para mayor sensibilidad
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.15; // REDUCIDO para ser menos restrictivo
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.35; // REDUCIDO para menor exigencia
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.75; // Mantenido
+  // Límites MÁS ESTRICTOS para parámetros adaptativos
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.12; // Aumentado significativamente
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
 
@@ -273,7 +273,7 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
 
-    if (this.signalBuffer.length < 15) { // REDUCIDO para comenzar detección más rápido
+    if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
         bpm: 0,
         confidence: 0,
@@ -322,22 +322,10 @@ export class HeartBeatProcessor {
         ? now - this.lastPeakTime
         : Number.MAX_VALUE;
 
-              // Validación médicamente apropiada
-        if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
-          // Validación estricta según criterios médicos
-          const isValidPeak = this.validatePeak(normalizedValue, confidence);
-          
-          // LOG DE DEBUG PARA DETECCIÓN DE PICOS
-          console.log('🔍 Validando pico:', {
-            normalizedValue: normalizedValue.toFixed(3),
-            confidence: confidence.toFixed(3),
-            signalQuality: this.currentSignalQuality.toFixed(1),
-            timeSinceLastPeak,
-            isValidPeak,
-            timestamp: new Date().toLocaleTimeString()
-          });
-          
-          if (isValidPeak) {
+      // Validación médicamente apropiada
+      if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
+        // Validación estricta según criterios médicos
+        if (this.validatePeak(normalizedValue, confidence)) {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
@@ -552,15 +540,12 @@ export class HeartBeatProcessor {
    * Validación de picos basada estrictamente en criterios médicos
    */
   private validatePeak(peakValue: number, confidence: number): boolean {
-    // VALIDACIÓN MÁS PERMISIVA PARA MEJORAR DETECCIÓN
-    const isHighConfidence = confidence >= (this.MIN_PEAK_CONFIRMATION_CONFIDENCE * 0.7); // 70% del umbral original
-    const isGoodSignalQuality = this.currentSignalQuality >= (this.MIN_PEAK_CONFIRMATION_QUALITY * 0.6); // 60% del umbral original
-    
-    // TAMBIÉN VALIDAR POR AMPLITUD DE PICO
-    const hasMinimumAmplitude = Math.abs(peakValue) >= 0.1; // Umbral mínimo de amplitud
+    // Un pico es válido si tiene suficiente confianza y la calidad de la señal es alta.
+    // Esto asegura que solo los picos robustos y fisiológicamente plausibles sean considerados.
+    const isHighConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
+    const isGoodSignalQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY;
 
-    // LÓGICA OR: Si cumple confianza O calidad O amplitud, es válido
-    return isHighConfidence || isGoodSignalQuality || hasMinimumAmplitude;
+    return isHighConfidence && isGoodSignalQuality;
   }
 
   private updateBPM() {
@@ -802,7 +787,7 @@ export class HeartBeatProcessor {
   private calculateSignalQuality(normalizedValue: number, confidence: number): number {
     // Si no hay suficientes datos para una evaluación precisa
     if (this.signalBuffer.length < 10) {
-      return Math.min(this.currentSignalQuality + 8, 50); // INCREMENTO MÁS RÁPIDO hasta 50 durante calibración
+      return Math.min(this.currentSignalQuality + 5, 30); // Incremento gradual hasta 30 durante calibración
     }
     
     // Calcular estadísticas de señal reciente
@@ -818,11 +803,11 @@ export class HeartBeatProcessor {
     let rhythmQuality = 0;
     
     // 1. Calidad basada en amplitud (0-40)
-    // UMBRAL MÁS PERMISIVO para señal plana
-    if (range < 0.0005) { // UMBRAL REDUCIDO para señal prácticamente plana
-        amplitudeQuality = 5; // DAR ALGO DE CALIDAD INICIAL en lugar de 0
+    // Penalizar fuertemente las amplitudes muy bajas (señal plana o casi plana)
+    if (range < 0.001) { // Umbral para señal prácticamente plana
+        amplitudeQuality = 0; // Calidad nula si la señal es plana
     } else {
-        amplitudeQuality = Math.min(Math.abs(normalizedValue) * 150, 40); // MAYOR factor de amplificación
+        amplitudeQuality = Math.min(Math.abs(normalizedValue) * 100, 40); // Mayor factor de amplificación
     }
     
     // 2. Calidad basada en estabilidad de señal (0-30)
