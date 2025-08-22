@@ -1,12 +1,11 @@
 
-import React from 'react';
-import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
+import React, { useMemo } from 'react';
 
 interface SignalQualityIndicatorProps {
   quality: number;
-  isMonitoring?: boolean;
-  isFingerDetected?: boolean;
-  bpm?: number | null;
+  isMonitoring: boolean;
+  isFingerDetected: boolean;
+  bpm?: number;
   snr?: number;
   activeChannels?: number;
   totalChannels?: number;
@@ -15,104 +14,163 @@ interface SignalQualityIndicatorProps {
 
 const SignalQualityIndicator = ({ 
   quality, 
-  isMonitoring = false,
-  isFingerDetected = false,
-  bpm = null,
+  isMonitoring, 
+  isFingerDetected,
+  bpm = 0,
   snr = 0,
   activeChannels = 0,
   totalChannels = 0,
-  className = "" 
+  className = ""
 }: SignalQualityIndicatorProps) => {
-  const displayQuality = isMonitoring ? quality : 0;
-  const showWarning = displayQuality > 0 && displayQuality < 30;
-
-  // CÁLCULO DE CALIDAD REAL EN PORCENTAJE
-  const qualityPercentage = Math.min(100, Math.max(0, displayQuality));
   
+  // CÁLCULO DE CALIDAD MEJORADO - 100% REAL
+  const qualityMetrics = useMemo(() => {
+    const normalizedQuality = Math.max(0, Math.min(100, quality));
+    const qualityPercent = Math.round(normalizedQuality);
+    
+    // Determinar estado basado en calidad real
+    let status = "DESCONOCIDO";
+    let color = "text-gray-400";
+    let bgColor = "bg-gray-500/20";
+    let borderColor = "border-gray-500/30";
+    
+    if (!isMonitoring) {
+      status = "INACTIVO";
+      color = "text-gray-400";
+      bgColor = "bg-gray-500/10";
+      borderColor = "border-gray-500/20";
+    } else if (!isFingerDetected) {
+      status = "SIN DEDO";
+      color = "text-orange-400";
+      bgColor = "bg-orange-500/20";
+      borderColor = "border-orange-500/30";
+    } else if (qualityPercent < 30) {
+      status = "BAJA";
+      color = "text-red-400";
+      bgColor = "bg-red-500/20";
+      borderColor = "border-red-500/30";
+    } else if (qualityPercent < 60) {
+      status = "MEDIA";
+      color = "text-yellow-400";
+      bgColor = "bg-yellow-500/20";
+      borderColor = "border-yellow-500/30";
+    } else if (qualityPercent < 80) {
+      status = "BUENA";
+      color = "text-blue-400";
+      bgColor = "bg-blue-500/20";
+      borderColor = "border-blue-500/30";
+    } else {
+      status = "EXCELENTE";
+      color = "text-green-400";
+      bgColor = "bg-green-500/20";
+      borderColor = "border-green-500/30";
+    }
+    
+    return {
+      qualityPercent,
+      status,
+      color,
+      bgColor,
+      borderColor
+    };
+  }, [quality, isMonitoring, isFingerDetected]);
+
+  const channelEfficiency = totalChannels > 0 ? 
+    Math.round((activeChannels / totalChannels) * 100) : 0;
+
   return (
-    <div className={`bg-black/85 backdrop-blur-md rounded-xl p-3 border border-white/10 min-w-[140px] ${className}`}>
-      <div className="text-center">
-        <div className="text-white/60 text-xs font-medium mb-2 uppercase tracking-wider">
+    <div className={`
+      ${qualityMetrics.bgColor} 
+      ${qualityMetrics.borderColor} 
+      border backdrop-blur-md rounded-2xl p-4 min-w-[200px] 
+      shadow-lg transition-all duration-300 
+      ${className}
+    `}>
+      {/* TÍTULO */}
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-white text-sm font-semibold">
           Calidad PPG
-        </div>
-        
-        {/* Indicador circular principal */}
-        <div className="relative w-12 h-12 mx-auto mb-2">
-          <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 48 48">
-            <circle 
-              cx="24" cy="24" r="20" 
-              fill="none" 
-              stroke="rgba(255,255,255,0.08)" 
-              strokeWidth="3"
-            />
-            <circle 
-              cx="24" cy="24" r="20" 
-              fill="none" 
-              stroke="url(#qualityGradient)" 
-              strokeWidth="3"
-              strokeLinecap="round"
-              strokeDasharray={`${(qualityPercentage / 100) * 125.6} 125.6`}
-              className="transition-all duration-500 ease-out"
-              style={{
-                filter: isFingerDetected ? 
-                  'drop-shadow(0 0 4px currentColor)' : 'none'
-              }}
-            />
-            <defs>
-              <linearGradient id="qualityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stopColor={getQualityColor(qualityPercentage, isFingerDetected)} />
-                <stop offset="100%" stopColor={getQualityColor(qualityPercentage, isFingerDetected)} />
-              </linearGradient>
-            </defs>
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className={`text-sm font-bold`} style={{ color: getQualityColor(qualityPercentage, isFingerDetected) }}>
-              {qualityPercentage}%
-            </span>
-          </div>
-        </div>
-        
-        {/* Estado textual */}
-        <div className={`text-xs font-medium mb-2`} style={{ color: getQualityColor(qualityPercentage, isFingerDetected) }}>
-          {getQualityText(qualityPercentage, isFingerDetected)}
-        </div>
-        
-        {/* Métricas detalladas */}
-        <div className="space-y-1 text-xs text-white/50">
-          <div className="flex justify-between">
-            <span>BPM:</span>
-            <span className="text-white/70 font-medium">{bpm || '--'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>Canales:</span>
-            <span className="text-white/70">{activeChannels}/{totalChannels}</span>
-          </div>
-          <div className="flex justify-between">
-            <span>SNR:</span>
-            <span className="text-white/70">{snr.toFixed(1)}</span>
-          </div>
-        </div>
-        
-        {/* Indicador de estado */}
-        <div className="mt-2 pt-2 border-t border-white/10">
-          <div className="flex items-center justify-center space-x-1">
-            <div className={`w-2 h-2 rounded-full ${
-              isFingerDetected ? 
-              'bg-green-400 animate-pulse' : 
-              'bg-gray-500'
-            }`}></div>
-            <span className="text-xs text-white/60">
-              {isFingerDetected ? 'Detectado' : 'Buscando...'}
-            </span>
-          </div>
-        </div>
-        
-        {showWarning && (
-          <div className="mt-2 text-[10px] text-amber-400">
-            Ajuste la posición del dedo
-          </div>
-        )}
+        </h3>
+        <div className={`w-3 h-3 rounded-full ${qualityMetrics.bgColor} animate-pulse`} />
       </div>
+
+      {/* INDICADOR PRINCIPAL DE CALIDAD */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className={`text-lg font-bold ${qualityMetrics.color}`}>
+            {qualityMetrics.qualityPercent}%
+          </span>
+          <span className={`text-xs ${qualityMetrics.color} font-medium`}>
+            {qualityMetrics.status}
+          </span>
+        </div>
+        
+        {/* BARRA DE PROGRESO DE CALIDAD */}
+        <div className="w-full h-2 bg-black/30 rounded-full overflow-hidden">
+          <div 
+            className={`h-full transition-all duration-500 ${
+              qualityMetrics.qualityPercent < 30 ? 'bg-gradient-to-r from-red-500 to-red-400' :
+              qualityMetrics.qualityPercent < 60 ? 'bg-gradient-to-r from-yellow-500 to-yellow-400' :
+              qualityMetrics.qualityPercent < 80 ? 'bg-gradient-to-r from-blue-500 to-blue-400' :
+              'bg-gradient-to-r from-green-500 to-green-400'
+            }`}
+            style={{ width: `${qualityMetrics.qualityPercent}%` }}
+          />
+        </div>
+      </div>
+
+      {/* MÉTRICAS DETALLADAS */}
+      {isMonitoring && (
+        <div className="space-y-2">
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-white/70">BPM:</span>
+            <span className="text-white font-medium">
+              {bpm > 0 ? Math.round(bpm) : '--'}
+            </span>
+          </div>
+          
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-white/70">SNR:</span>
+            <span className="text-white font-medium">
+              {snr > 0 ? snr.toFixed(1) + ' dB' : '--'}
+            </span>
+          </div>
+          
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-white/70">Canales:</span>
+            <span className="text-white font-medium">
+              {activeChannels}/{totalChannels}
+            </span>
+          </div>
+          
+          <div className="flex justify-between items-center text-xs">
+            <span className="text-white/70">Eficiencia:</span>
+            <span className={`font-medium ${
+              channelEfficiency >= 50 ? 'text-green-400' : 'text-orange-400'
+            }`}>
+              {channelEfficiency}%
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* ESTADO DEL DEDO */}
+      {isMonitoring && (
+        <div className="mt-3 pt-3 border-t border-white/10">
+          <div className="flex items-center justify-center">
+            <div className={`flex items-center space-x-2 ${
+              isFingerDetected ? 'text-green-400' : 'text-orange-400'
+            }`}>
+              <div className={`w-2 h-2 rounded-full ${
+                isFingerDetected ? 'bg-green-400 animate-pulse' : 'bg-orange-400 animate-bounce'
+              }`} />
+              <span className="text-xs font-medium">
+                {isFingerDetected ? 'Dedo detectado' : 'Posicione el dedo'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
