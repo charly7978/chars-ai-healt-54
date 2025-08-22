@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
@@ -6,6 +6,7 @@ import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
+import SignalQualityIndicator from "@/components/SignalQualityIndicator";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
@@ -78,7 +79,7 @@ const Index = () => {
     };
   }, []);
 
-  const enterFullScreen = async () => {
+  const enterFullScreen = useCallback(async () => {
     if (isFullscreen) return;
     try {
       const docEl = document.documentElement;
@@ -89,9 +90,9 @@ const Index = () => {
     } catch (err) {
       console.log('Error pantalla completa:', err);
     }
-  };
+  }, [isFullscreen]);
   
-  const exitFullScreen = () => {
+  const exitFullScreen = useCallback(() => {
     if (!isFullscreen) return;
     try {
       if (document.exitFullscreen) {
@@ -99,7 +100,7 @@ const Index = () => {
       }
       setIsFullscreen(false);
     } catch (err) {}
-  };
+  }, [isFullscreen]);
 
   useEffect(() => {
     const timer = setTimeout(() => enterFullScreen(), 1000);
@@ -142,10 +143,8 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  const startMonitoring = () => {
-    if (systemState.current !== 'IDLE') {
-      return;
-    }
+  const startMonitoring = useCallback(() => {
+    if (systemState.current !== 'IDLE') return;
     
     systemState.current = 'STARTING';
     
@@ -183,9 +182,9 @@ const Index = () => {
     }, 1000);
     
     systemState.current = 'ACTIVE';
-  };
+  }, [enterFullScreen, startCalibration]);
 
-  const finalizeMeasurement = () => {
+  const finalizeMeasurement = useCallback(() => {
     if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') return;
     
     systemState.current = 'STOPPING';
@@ -214,9 +213,9 @@ const Index = () => {
     setCalibrationProgress(0);
     
     systemState.current = 'IDLE';
-  };
+  }, [isCalibrating, forceCalibrationCompletion, resetVitalSigns]);
 
-  const handleReset = () => {
+  const handleReset = useCallback(() => {
     systemState.current = 'STOPPING';
     
     setIsMonitoring(false);
@@ -255,7 +254,7 @@ const Index = () => {
     arrhythmiaDetectedRef.current = false;
     
     systemState.current = 'IDLE';
-  };
+  }, [fullResetVitalSigns, resetHeartBeat]);
 
   useEffect(() => {
     if (!lastResult) return;
@@ -329,137 +328,20 @@ const Index = () => {
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
-  const handleToggleMonitoring = () => {
+  const handleToggleMonitoring = useCallback(() => {
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
       startMonitoring();
     }
-  };
+  }, [isMonitoring, finalizeMeasurement, startMonitoring]);
 
-  const SignalQualitySensor = () => {
-    const getQualityColor = () => {
-      if (!lastResult?.fingerDetected) return 'from-gray-500 to-gray-600';
-      if (signalQuality >= 80) return 'from-emerald-400 to-green-500';
-      if (signalQuality >= 60) return 'from-yellow-400 to-amber-500';  
-      if (signalQuality >= 40) return 'from-orange-400 to-red-500';
-      return 'from-red-500 to-red-700';
-    };
-
-    const getQualityText = () => {
-      if (!lastResult?.fingerDetected) return 'Sin detección';
-      if (signalQuality >= 80) return 'Excelente';
-      if (signalQuality >= 60) return 'Buena';
-      if (signalQuality >= 40) return 'Regular';
-      return 'Débil';
-    };
-
-    const getStatusColor = () => {
-      if (!lastResult?.fingerDetected) return 'text-gray-400';
-      if (signalQuality >= 75) return 'text-green-400';
-      if (signalQuality >= 50) return 'text-yellow-400';
-      return 'text-red-400';
-    };
-
-    // Métricas en tiempo real
-    const activeChannels = lastResult?.channels.filter(c => c.isFingerDetected).length || 0;
-    const totalChannels = lastResult?.channels.length || 0;
-    const avgSNR = lastResult?.channels.length ? 
-      (lastResult.channels.reduce((sum, c) => sum + c.snr, 0) / lastResult.channels.length).toFixed(1) : 
-      '0.0';
-    
-    const bestChannel = lastResult?.channels.find(c => c.isFingerDetected && c.quality > 30);
-    const currentBPM = lastResult?.aggregatedBPM || bestChannel?.bpm || '--';
-
-    return (
-      <div className="absolute top-4 right-4 bg-black/85 backdrop-blur-md rounded-xl p-3 border border-white/10 min-w-[140px]">
-        <div className="text-center">
-          <div className="text-white/60 text-xs font-medium mb-2 uppercase tracking-wider">
-            Calidad PPG
-          </div>
-          
-          {/* Indicador circular principal */}
-          <div className="relative w-12 h-12 mx-auto mb-2">
-            <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 48 48">
-              <circle 
-                cx="24" cy="24" r="20" 
-                fill="none" 
-                stroke="rgba(255,255,255,0.08)" 
-                strokeWidth="3"
-              />
-              <circle 
-                cx="24" cy="24" r="20" 
-                fill="none" 
-                stroke="url(#qualityGradient)" 
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeDasharray={`${(signalQuality / 100) * 125.6} 125.6`}
-                className="transition-all duration-700 ease-out"
-                style={{
-                  filter: lastResult?.fingerDetected ? 
-                    'drop-shadow(0 0 4px currentColor)' : 'none'
-                }}
-              />
-              <defs>
-                <linearGradient id="qualityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor={
-                    signalQuality >= 80 ? '#10b981' : 
-                    signalQuality >= 60 ? '#f59e0b' : 
-                    signalQuality >= 40 ? '#f97316' : '#ef4444'
-                  } />
-                  <stop offset="100%" stopColor={
-                    signalQuality >= 80 ? '#059669' : 
-                    signalQuality >= 60 ? '#d97706' : 
-                    signalQuality >= 40 ? '#ea580c' : '#dc2626'
-                  } />
-                </linearGradient>
-              </defs>
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className={`text-sm font-bold ${getStatusColor()}`}>
-                {signalQuality}%
-              </span>
-            </div>
-          </div>
-          
-          {/* Estado textual */}
-          <div className={`text-xs font-medium mb-2 ${getStatusColor()}`}>
-            {getQualityText()}
-          </div>
-          
-          {/* Métricas detalladas */}
-          <div className="space-y-1 text-xs text-white/50">
-            <div className="flex justify-between">
-              <span>BPM:</span>
-              <span className="text-white/70 font-medium">{currentBPM}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Canales:</span>
-              <span className="text-white/70">{activeChannels}/{totalChannels}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>SNR:</span>
-              <span className="text-white/70">{avgSNR}</span>
-            </div>
-          </div>
-          
-          {/* Indicador de estado */}
-          <div className="mt-2 pt-2 border-t border-white/10">
-            <div className="flex items-center justify-center space-x-1">
-              <div className={`w-2 h-2 rounded-full ${
-                lastResult?.fingerDetected ? 
-                'bg-green-400 animate-pulse' : 
-                'bg-gray-500'
-              }`}></div>
-              <span className="text-xs text-white/60">
-                {lastResult?.fingerDetected ? 'Detectado' : 'Buscando...'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  const activeChannels = lastResult?.channels.filter(c => c.isFingerDetected).length || 0;
+  const totalChannels = lastResult?.channels.length || 0;
+  const avgSNR = lastResult?.channels.length ? 
+    (lastResult.channels.reduce((sum, c) => sum + c.snr, 0) / lastResult.channels.length) : 
+    0;
+  const currentBPM = lastResult?.aggregatedBPM || heartRate;
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
@@ -498,8 +380,17 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* Sensor de Calidad REAL y Funcional */}
-          <SignalQualitySensor />
+          {/* SENSOR DE CALIDAD OPTIMIZADO */}
+          <SignalQualityIndicator 
+            quality={signalQuality}
+            isMonitoring={isMonitoring}
+            isFingerDetected={lastResult?.fingerDetected || false}
+            bpm={currentBPM}
+            snr={avgSNR}
+            activeChannels={activeChannels}
+            totalChannels={totalChannels}
+            className="absolute top-4 right-4"
+          />
           
           <div className="flex-1 pt-12">
             <PPGSignalMeter 
