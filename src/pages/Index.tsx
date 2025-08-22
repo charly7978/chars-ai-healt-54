@@ -34,7 +34,6 @@ const Index = () => {
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
-  const [lastHeartbeatDebug, setLastHeartbeatDebug] = useState<{ bandRatio?: number; gatedFinger?: boolean; gatedQuality?: boolean; gatedSnr?: boolean; spectralOk?: boolean } | null>(null);
   
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
@@ -48,8 +47,7 @@ const Index = () => {
   
   const { 
     handleSample,
-    lastResult,
-    reset: resetSignalProcessor
+    lastResult
   } = useSignalProcessor();
   
   // Agregar contador de muestras local para debug
@@ -185,13 +183,6 @@ const Index = () => {
       return;
     }
     
-    // Reset completo de pipelines para un nuevo ciclo limpio
-    fullResetVitalSigns();
-    resetHeartBeat();
-    // Reiniciar también el procesador multicanal
-    resetSignalProcessor();
-    // Esto limpia detecciones previas que podrían sesgar
-    
     systemState.current = 'STARTING';
     
     // Solo entrar en pantalla completa si el usuario lo permite
@@ -262,10 +253,6 @@ const Index = () => {
     
     setElapsedTime(0);
     setCalibrationProgress(0);
-    
-    // Reset de pipelines para preparar próximo ciclo sin arrastre
-    resetHeartBeat();
-    resetSignalProcessor();
     
     systemState.current = 'IDLE';
   };
@@ -354,18 +341,8 @@ const Index = () => {
     const heartBeatResult = processHeartBeat(
       bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
       bestChannel.isFingerDetected, 
-      lastResult.timestamp,
-      { quality: bestChannel.quality, snr: bestChannel.snr }
+      lastResult.timestamp
     );
-    if (heartBeatResult?.debug) {
-      setLastHeartbeatDebug({
-        bandRatio: heartBeatResult.debug.bandRatio,
-        gatedFinger: heartBeatResult.debug.gatedFinger,
-        gatedQuality: heartBeatResult.debug.gatedQuality,
-        gatedSnr: heartBeatResult.debug.gatedSnr,
-        spectralOk: heartBeatResult.debug.spectralOk
-      });
-    }
     
     // Log para debug del procesamiento
     if (debugSampleCountRef.current % 30 === 0) {
@@ -606,7 +583,7 @@ const Index = () => {
           
           <div className="flex-1 pt-12">
             <PPGSignalMeter 
-              value={heartbeatSignal}
+              value={beatMarker}
               quality={signalQuality}
               isFingerDetected={lastResult?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
@@ -614,22 +591,6 @@ const Index = () => {
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
-              debug={{
-                snr: (lastResult?.channels.find(c => c.isFingerDetected)?.snr) ?? 0,
-                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined),
-                reasons: (() => {
-                  const r: string[] = [];
-                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedFinger) r.push('sin dedo');
-                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedQuality) r.push('calidad baja');
-                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedSnr) r.push('SNR bajo');
-                  if (lastHeartbeatDebug && lastHeartbeatDebug.spectralOk === false) r.push('espectral bajo');
-                  return r;
-                })(),
-                gatedFinger: lastHeartbeatDebug?.gatedFinger,
-                gatedQuality: lastHeartbeatDebug?.gatedQuality,
-                gatedSnr: lastHeartbeatDebug?.gatedSnr,
-                spectralOk: lastHeartbeatDebug?.spectralOk
-              }}
             />
           </div>
 
