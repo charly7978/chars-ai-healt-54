@@ -2,6 +2,93 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CameraSample } from '@/types';
 
+// FUNCIÓN AUXILIAR PARA CONFIGURAR LINTERNA CON MÚLTIPLES ESTRATEGIAS
+const setupTorchWithFallbacks = async (
+  stream: MediaStream, 
+  setTorchEnabled: (enabled: boolean) => void
+): Promise<void> => {
+  const [videoTrack] = stream.getVideoTracks();
+  
+  if (!videoTrack) {
+    console.log('🔦 ❌ No hay video track disponible');
+    return;
+  }
+
+  try {
+    // ESTRATEGIA 1: Intentar con constraints avanzados (API moderna)
+    const capabilities = (videoTrack as any).getCapabilities?.();
+    console.log('📱 Capacidades del dispositivo:', capabilities);
+    
+    if (capabilities?.torch) {
+      console.log('🔦 🚀 Intentando activar linterna con API moderna...');
+      
+      // Aplicar constraints de torch paso a paso
+      await (videoTrack as any).applyConstraints({
+        advanced: [{ torch: true }]
+      });
+      
+      // Verificar que se aplicó correctamente
+      const settings = (videoTrack as any).getSettings?.();
+      if (settings?.torch) {
+        setTorchEnabled(true);
+        console.log('🔦 ✅ LINTERNA ACTIVADA CON API MODERNA');
+        return;
+      }
+    }
+    
+    // ESTRATEGIA 2: Intentar con constraints básicos
+    console.log('🔦 🚀 Intentando activar linterna con constraints básicos...');
+    await (videoTrack as any).applyConstraints({
+      torch: true
+    });
+    
+    const settings = (videoTrack as any).getSettings?.();
+    if (settings?.torch) {
+      setTorchEnabled(true);
+      console.log('🔦 ✅ LINTERNA ACTIVADA CON CONSTRAINTS BÁSICOS');
+      return;
+    }
+    
+    // ESTRATEGIA 3: Intentar recrear el stream con torch
+    console.log('🔦 🚀 Intentando recrear stream con torch...');
+    const newConstraints: MediaStreamConstraints = {
+      video: {
+        facingMode: { ideal: 'environment' },
+        torch: true as any,
+        width: { ideal: 1920, min: 1280 },
+        height: { ideal: 1080, min: 720 },
+        frameRate: { ideal: 30, max: 60 }
+      },
+      audio: false
+    };
+    
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia(newConstraints);
+      const [newVideoTrack] = newStream.getVideoTracks();
+      const newSettings = (newVideoTrack as any).getSettings?.();
+      
+      if (newSettings?.torch) {
+        // Reemplazar el track actual
+        stream.removeTrack(videoTrack);
+        stream.addTrack(newVideoTrack);
+        setTorchEnabled(true);
+        console.log('🔦 ✅ LINTERNA ACTIVADA RECREANDO STREAM');
+        return;
+      } else {
+        // Cerrar el stream nuevo si no funcionó
+        newStream.getTracks().forEach(track => track.stop());
+      }
+    } catch (recreateError) {
+      console.log('🔦 ⚠️ No se pudo recrear stream con torch:', recreateError);
+    }
+    
+    console.log('🔦 ❌ Sin soporte de linterna en este dispositivo');
+    
+  } catch (torchError) {
+    console.error('🔦 ❌ Error configurando linterna:', torchError);
+  }
+};
+
 interface CameraViewProps {
   onStreamReady?: (s: MediaStream) => void;
   onSample?: (s: CameraSample) => void;
@@ -88,6 +175,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         canvas.style.display = 'none';
         canvasRef.current = canvas;
 
+<<<<<<< Current (Your changes)
         // ESPERAR A QUE EL VIDEO ESTÉ LISTO ANTES DE CONFIGURAR LINTERNA
         await new Promise<void>((resolve) => {
           const checkVideo = () => {
@@ -103,8 +191,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         // CONFIGURAR LINTERNA DESPUÉS DE QUE EL VIDEO ESTÉ LISTO
         if (enableTorch) {
           const attempts = 3;
-          let torchActivated = false;
-          
           for (let attempt = 0; attempt < attempts; attempt++) {
             try {
               const [videoTrack] = stream.getVideoTracks();
@@ -121,15 +207,12 @@ const CameraView: React.FC<CameraViewProps> = ({
                 });
                 
                 // Esperar un momento para que se aplique
-                await new Promise(resolve => setTimeout(resolve, 200)); // Aumentado a 200ms
+                await new Promise(resolve => setTimeout(resolve, 100));
                 
                 // Verificar si se aplicó correctamente
                 const settings = (videoTrack as any).getSettings?.();
-                console.log('🔦 Settings después de aplicar:', settings);
-                
-                if (settings?.torch === true) {
+                if (settings?.torch) {
                   setTorchEnabled(true);
-                  torchActivated = true;
                   console.log('🔦 ✅ LINTERNA ACTIVADA EXITOSAMENTE');
                   break;
                 } else {
@@ -146,11 +229,11 @@ const CameraView: React.FC<CameraViewProps> = ({
               }
             }
           }
-          
-          // Si no se pudo activar, mostrar advertencia
-          if (!torchActivated && capabilities?.torch) {
-            console.warn('🔦 ⚠️ ADVERTENCIA: La linterna está soportada pero no se pudo activar');
-          }
+=======
+        // CONFIGURAR LINTERNA CON MÚLTIPLES ESTRATEGIAS
+        if (enableTorch) {
+          await setupTorchWithFallbacks(stream, setTorchEnabled);
+>>>>>>> Incoming (Background Agent changes)
         }
 
         // ESPERAR VIDEO READY
@@ -197,14 +280,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         try {
           const sample = captureOptimizedFrame();
           if (sample && onSample) {
-            // Log cada 30 frames para debug
-            if (rafRef.current && rafRef.current % 30 === 0) {
-              console.log('📸 CameraView - Muestra capturada:', {
-                rMean: sample.rMean.toFixed(1),
-                coverageRatio: (sample.coverageRatio * 100).toFixed(1) + '%',
-                timestamp: new Date(sample.timestamp).toLocaleTimeString()
-              });
-            }
             onSample(sample);
           }
         } catch (captureError) {

@@ -8,7 +8,6 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
-import { CameraSample } from "@/types";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -49,22 +48,6 @@ const Index = () => {
     handleSample,
     lastResult
   } = useSignalProcessor();
-  
-  // Agregar contador de muestras local para debug
-  const debugSampleCountRef = useRef(0);
-  
-  // Wrapper para debug
-  const handleCameraSample = (sample: CameraSample) => {
-    debugSampleCountRef.current++;
-    if (debugSampleCountRef.current % 30 === 0) {
-      console.log('📱 Index - Recibiendo muestra:', {
-        count: debugSampleCountRef.current,
-        rMean: sample.rMean.toFixed(1),
-        isMonitoring
-      });
-    }
-    handleSample(sample);
-  };
   
   const { 
     processSignal: processHeartBeat, 
@@ -197,16 +180,17 @@ const Index = () => {
     setIsCalibrating(true);
     startCalibration();
     
-    // Cambiar estado a CALIBRATING
-    systemState.current = 'CALIBRATING';
+    // TRANSICIÓN MÁS RÁPIDA A ESTADO ACTIVO PARA MEJORAR DETECCIÓN
+    setTimeout(() => {
+      systemState.current = 'CALIBRATING';
+      console.log('🔄 Sistema en estado CALIBRATING para permitir procesamiento');
+    }, 500);
     
     setTimeout(() => {
-      if (systemState.current === 'CALIBRATING') {
-        systemState.current = 'ACTIVE';
-        console.log('✅ Sistema cambiado a ACTIVE después de calibración');
-      }
+      systemState.current = 'ACTIVE';
       setIsCalibrating(false);
-    }, 2000);
+      console.log('✅ Sistema en estado ACTIVE - procesamiento completo habilitado');
+    }, 3000); // Aumentado ligeramente para mejor calibración
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -299,55 +283,49 @@ const Index = () => {
   useEffect(() => {
     if (!lastResult) return;
 
-    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 30) || lastResult.channels[0];
+    const bestChannel = lastResult.channels.find(ch => ch.isFingerDetected && ch.quality > 20) || 
+                       lastResult.channels.find(ch => ch.quality > 15) || 
+                       lastResult.channels[0];
     setSignalQuality(bestChannel?.quality || 0);
     
-    // Log para debug
-    if (debugSampleCountRef.current % 30 === 0) {
-      console.log('🔄 Index useEffect - Estado:', {
-        hasLastResult: !!lastResult,
-        isMonitoring,
-        systemState: systemState.current,
-        bestChannelId: bestChannel?.channelId,
-        bestChannelDetected: bestChannel?.isFingerDetected,
-        bestChannelQuality: bestChannel?.quality,
-        signalLength: bestChannel?.calibratedSignal?.length
-      });
-    }
-    
-    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
-    
-    const MIN_SIGNAL_QUALITY = 20; // Reducido de 25 a 20
-    
-    if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
-      // Log cuando no detecta para debug
-      if (debugSampleCountRef.current % 30 === 0) {
-        console.log('⚠️ No procesando señal:', {
-          isFingerDetected: bestChannel?.isFingerDetected,
-          quality: bestChannel?.quality,
-          minRequired: MIN_SIGNAL_QUALITY
-        });
-      }
+    // PERMITIR PROCESAMIENTO DURANTE CALIBRACIÓN Y ESTADO ACTIVO
+    if (!isMonitoring || (systemState.current !== 'ACTIVE' && systemState.current !== 'CALIBRATING')) {
       return;
     }
+    
+    // UMBRAL DE CALIDAD MÁS PERMISIVO PARA MEJORAR DETECCIÓN
+    const MIN_SIGNAL_QUALITY = 10; // Reducido de 25 a 10
+    
+    // CONDICIONES MÁS FLEXIBLES PARA PROCESAMIENTO
+    const hasMinimumQuality = (bestChannel?.quality || 0) >= MIN_SIGNAL_QUALITY;
+    const hasSignalData = bestChannel?.calibratedSignal && bestChannel.calibratedSignal.length > 0;
+    
+    // PROCESAR INCLUSO SIN DETECCIÓN PERFECTA DE DEDO SI HAY SEÑAL
+    if (!hasMinimumQuality || !hasSignalData) {
+      // Log para debugging
+      console.log('🚫 Saltando procesamiento:', {
+        quality: bestChannel?.quality || 0,
+        minRequired: MIN_SIGNAL_QUALITY,
+        hasSignal: hasSignalData,
+        fingerDetected: bestChannel?.isFingerDetected,
+        systemState: systemState.current
+      });
+      return;
+    }
+    
+    // Log exitoso para debugging
+    console.log('✅ Procesando señal:', {
+      quality: bestChannel?.quality || 0,
+      fingerDetected: bestChannel?.isFingerDetected,
+      signalValue: bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1],
+      systemState: systemState.current
+    });
 
     const heartBeatResult = processHeartBeat(
       bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
       bestChannel.isFingerDetected, 
       lastResult.timestamp
     );
-    
-    // Log para debug del procesamiento
-    if (debugSampleCountRef.current % 30 === 0) {
-      console.log('💓 Procesando heartbeat:', {
-        signalValue: bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1]?.toFixed(3),
-        signalLength: bestChannel.calibratedSignal.length,
-        isFingerDetected: bestChannel.isFingerDetected,
-        timestamp: new Date(lastResult.timestamp).toLocaleTimeString(),
-        resultBPM: heartBeatResult.bpm,
-        isPeak: heartBeatResult.isPeak
-      });
-    }
     
     const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
@@ -560,16 +538,12 @@ const Index = () => {
       <div className="flex-1 relative">
         <div className="absolute inset-0">
           <CameraView 
-            onSample={handleCameraSample}
+            onSample={handleSample}
             isMonitoring={isCameraOn}
             targetFps={30}
             roiSize={320}
             enableTorch={true}
-<<<<<<< Current (Your changes)
             coverageThresholdPixelBrightness={50}
-=======
-            coverageThresholdPixelBrightness={30}
->>>>>>> Incoming (Background Agent changes)
           />
         </div>
 
