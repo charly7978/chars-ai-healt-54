@@ -280,22 +280,27 @@ const PPGSignalMeter = ({
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
-      // Suavizado Bézier: construir curva con puntos intermedios
+      // Polilínea con decimación por píxel (sin cortes)
       const toXY = (pt: PPGDataPoint) => ({
         x: canvas.width - ((now - pt.time) * canvas.width / WINDOW_WIDTH_MS),
         y: canvas.height / 2 - pt.value
       });
       const pts = visiblePoints.map(toXY);
-      if (pts.length > 0) ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length - 2; i++) {
-        const xc = (pts[i].x + pts[i + 1].x) / 2;
-        const yc = (pts[i].y + pts[i + 1].y) / 2;
-        ctx.quadraticCurveTo(pts[i].x, pts[i].y, xc, yc);
-      }
-      // Últimos dos puntos
-      const n = pts.length;
-      if (n >= 3) {
-        ctx.quadraticCurveTo(pts[n - 2].x, pts[n - 2].y, pts[n - 1].x, pts[n - 1].y);
+      // Recorremos de más viejo a más nuevo, dibujando un punto por píxel
+      let lastDrawnX = -Infinity;
+      let started = false;
+      for (let i = 0; i < pts.length; i++) {
+        const { x, y } = pts[i];
+        if (!started) {
+          ctx.moveTo(x, y);
+          lastDrawnX = x;
+          started = true;
+          continue;
+        }
+        if (x - lastDrawnX >= 1) {
+          ctx.lineTo(x, y);
+          lastDrawnX = x;
+        }
       }
       
       ctx.stroke();
