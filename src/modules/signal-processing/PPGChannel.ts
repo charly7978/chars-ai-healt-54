@@ -23,11 +23,11 @@ export default class PPGChannel {
   private gain: number;
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
-  private minRMeanForFinger = 40;   // Reducido de 60 a 40 para mejor sensibilidad
-  private maxRMeanForFinger = 250;  // Aumentado a 250 para evitar falsos negativos
-  private minVarianceForPulse = 0.8; // Reducido de 1.5 a 0.8 para detectar pulsos más débiles
-  private minSNRForFinger = 0.8;    // Reducido de 1.1 a 0.8 para mayor sensibilidad
-  private maxFrameDiffForStability = 20; // Aumentado de 12 a 20 para más tolerancia
+  private minRMeanForFinger = 50;   // Ajustado a 50 (era 40, muy bajo)
+  private maxRMeanForFinger = 245;  // Ajustado a 245
+  private minVarianceForPulse = 1.0; // Ajustado a 1.0 (era 0.8)
+  private minSNRForFinger = 1.0;    // Ajustado a 1.0 (era 0.8)
+  private maxFrameDiffForStability = 15; // Ajustado a 15 (era 20)
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -116,14 +116,14 @@ export default class PPGChannel {
       sampled.map(x => (x - mean) / std) : 
       sampled.map(x => x - mean);
 
-    // Filtrado pasabanda OPTIMIZADO (0.5-3.5 Hz para rango cardíaco más amplio)
+    // Filtrado pasabanda OPTIMIZADO (0.7-3.0 Hz para rango cardíaco típico)
     const fs = N / this.windowSec;
     const biquad = new Biquad();
-    biquad.setBandpass(1.5, 1.2, fs); // Centro 1.5Hz (90 bpm), ancho 1.2Hz más amplio
+    biquad.setBandpass(1.6, 1.0, fs); // Centro 1.6Hz (96 bpm), ancho 1.0Hz
     const filtered = biquad.processArray(normalized);
 
     // Suavizado Savitzky-Golay con ventana optimizada
-    const smooth = savitzkyGolay(filtered, 11); // Reducido de 15 a 11 para preservar más detalles
+    const smooth = savitzkyGolay(filtered, 13); // Ajustado a 13
 
     // Análisis espectral MEJORADO con Goertzel
     const freqs = this.linspace(0.8, 4.0, 200); // Más resolución frecuencial
@@ -158,8 +158,8 @@ export default class PPGChannel {
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
     // Detección de picos temporales para RR intervals
-    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 300, 0.08); // Reducido de 400ms a 300ms y umbral de 0.12 a 0.08
-    const bpmTemporal = rr.length >= 2 ? // Reducido de 3 a 2 para más sensibilidad
+    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 350, 0.10); // Ajustado a 350ms y umbral 0.10
+    const bpmTemporal = rr.length >= 2 ? 
       Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
 
     // CRITERIOS DE DETECCIÓN DE DEDO MEJORADOS Y BALANCEADOS

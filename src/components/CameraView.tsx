@@ -103,6 +103,8 @@ const CameraView: React.FC<CameraViewProps> = ({
         // CONFIGURAR LINTERNA DESPUÉS DE QUE EL VIDEO ESTÉ LISTO
         if (enableTorch) {
           const attempts = 3;
+          let torchActivated = false;
+          
           for (let attempt = 0; attempt < attempts; attempt++) {
             try {
               const [videoTrack] = stream.getVideoTracks();
@@ -119,12 +121,15 @@ const CameraView: React.FC<CameraViewProps> = ({
                 });
                 
                 // Esperar un momento para que se aplique
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise(resolve => setTimeout(resolve, 200)); // Aumentado a 200ms
                 
                 // Verificar si se aplicó correctamente
                 const settings = (videoTrack as any).getSettings?.();
-                if (settings?.torch) {
+                console.log('🔦 Settings después de aplicar:', settings);
+                
+                if (settings?.torch === true) {
                   setTorchEnabled(true);
+                  torchActivated = true;
                   console.log('🔦 ✅ LINTERNA ACTIVADA EXITOSAMENTE');
                   break;
                 } else {
@@ -140,6 +145,11 @@ const CameraView: React.FC<CameraViewProps> = ({
                 console.error('🔦 ❌ No se pudo activar la linterna después de múltiples intentos');
               }
             }
+          }
+          
+          // Si no se pudo activar, mostrar advertencia
+          if (!torchActivated && capabilities?.torch) {
+            console.warn('🔦 ⚠️ ADVERTENCIA: La linterna está soportada pero no se pudo activar');
           }
         }
 
@@ -187,6 +197,14 @@ const CameraView: React.FC<CameraViewProps> = ({
         try {
           const sample = captureOptimizedFrame();
           if (sample && onSample) {
+            // Log cada 30 frames para debug
+            if (rafRef.current && rafRef.current % 30 === 0) {
+              console.log('📸 CameraView - Muestra capturada:', {
+                rMean: sample.rMean.toFixed(1),
+                coverageRatio: (sample.coverageRatio * 100).toFixed(1) + '%',
+                timestamp: new Date(sample.timestamp).toLocaleTimeString()
+              });
+            }
             onSample(sample);
           }
         } catch (captureError) {

@@ -238,6 +238,17 @@ export class HeartBeatProcessor {
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
   } {
+    // Log cada 30 llamadas para debug
+    if (this.values.length % 30 === 0) {
+      console.log('🔬 HeartBeatProcessor - Recibiendo:', {
+        value: value.toFixed(4),
+        timestamp: timestamp ? new Date(timestamp).toLocaleTimeString() : 'no timestamp',
+        bufferLength: this.values.length,
+        smoothedValue: this.smoothedValue.toFixed(4),
+        baseline: this.baseline.toFixed(4)
+      });
+    }
+    
     // LIMPIEZA AUTOMÁTICA: Cada 50 frames, limpiar buffers para prevenir degradación
     if (this.values.length % 50 === 0) {
       this.cleanupBuffers();
