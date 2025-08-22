@@ -47,7 +47,8 @@ const Index = () => {
   
   const { 
     handleSample,
-    lastResult
+    lastResult,
+    reset: resetSignalProcessor
   } = useSignalProcessor();
   
   // Agregar contador de muestras local para debug
@@ -183,6 +184,13 @@ const Index = () => {
       return;
     }
     
+    // Reset completo de pipelines para un nuevo ciclo limpio
+    fullResetVitalSigns();
+    resetHeartBeat();
+    // Reiniciar también el procesador multicanal
+    resetSignalProcessor();
+    // Esto limpia detecciones previas que podrían sesgar
+    
     systemState.current = 'STARTING';
     
     // Solo entrar en pantalla completa si el usuario lo permite
@@ -253,6 +261,10 @@ const Index = () => {
     
     setElapsedTime(0);
     setCalibrationProgress(0);
+    
+    // Reset de pipelines para preparar próximo ciclo sin arrastre
+    resetHeartBeat();
+    resetSignalProcessor();
     
     systemState.current = 'IDLE';
   };
