@@ -280,50 +280,6 @@ const PPGSignalMeter = ({
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
-<<<<<<< Current (Your changes)
-<<<<<<< Current (Your changes)
-      let firstPoint = true;
-      // Decimación adaptativa para reducir el costo de dibujo
-      const step = Math.max(1, Math.floor(points.length / Math.max(100, canvas.width / 4)));
-      for (let i = 1; i < points.length; i += step) {
-        const prevPoint = points[i - 1];
-        const point = points[i];
-        
-        const x1 = canvas.width - ((now - prevPoint.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y1 = canvas.height / 2 - prevPoint.value;
-        
-=======
-      // Decimación adaptativa para reducir el costo de dibujo sin romper continuidad
-      const step = Math.max(1, Math.floor(visiblePoints.length / Math.max(200, canvas.width / 3)));
-      let moved = false;
-      let lastX = 0, lastY = 0;
-      for (let i = 0; i < visiblePoints.length; i += step) {
-        const point = visiblePoints[i];
-         
->>>>>>> Incoming (Background Agent changes)
-        const x2 = canvas.width - ((now - point.time) * canvas.width / WINDOW_WIDTH_MS);
-        const y2 = canvas.height / 2 - point.value;
-        if (!moved) {
-          ctx.moveTo(x2, y2);
-          moved = true;
-        } else {
-          // Conectar desde el último punto dibujado
-          ctx.lineTo(x2, y2);
-        }
-        
-        if (point.isArrhythmia) {
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.strokeStyle = '#DC2626'; // red-600 para arritmias
-          ctx.moveTo(lastX, lastY);
-          ctx.lineTo(x2, y2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.strokeStyle = '#10b981'; // volver a verde
-          ctx.moveTo(x2, y2);
-        }
-        lastX = x2; lastY = y2;
-=======
       // Suavizado Bézier: construir curva con puntos intermedios
       const toXY = (pt: PPGDataPoint) => ({
         x: canvas.width - ((now - pt.time) * canvas.width / WINDOW_WIDTH_MS),
@@ -340,7 +296,6 @@ const PPGSignalMeter = ({
       const n = pts.length;
       if (n >= 3) {
         ctx.quadraticCurveTo(pts[n - 2].x, pts[n - 2].y, pts[n - 1].x, pts[n - 1].y);
->>>>>>> Incoming (Background Agent changes)
       }
       
       ctx.stroke();
