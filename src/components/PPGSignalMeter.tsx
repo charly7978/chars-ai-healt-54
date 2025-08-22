@@ -57,7 +57,7 @@ const PPGSignalMeter = ({
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  let verticalScale = 95.0;
+  const verticalScale = 110.0;
   const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
@@ -65,7 +65,7 @@ const PPGSignalMeter = ({
   const PEAK_DETECTION_WINDOW = 8;
   const PEAK_THRESHOLD = 3;
   const MIN_PEAK_DISTANCE_MS = 400;
-  const IMMEDIATE_RENDERING = false; // activar limitador de FPS
+  const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
 
   useEffect(() => {
@@ -243,28 +243,14 @@ const PPGSignalMeter = ({
     if (baselineRef.current === null) {
       baselineRef.current = value;
     } else {
-      baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
+      baselineRef.current = baselineRef.current * 0.98 + value * 0.02;
     }
     
     // Smoothing de render (no afecta cálculo base)
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
     
-    const normalizedValue = (baselineRef.current || 0) - smoothedValue;
-    // Ganancia adaptativa en función de la variación reciente para evitar onda "planchada"
-    if (dataBufferRef.current) {
-      const recent = dataBufferRef.current.getPoints().slice(-60).map(p => p.value);
-      if (recent.length > 10) {
-        const rmax = Math.max(...recent);
-        const rmin = Math.min(...recent);
-        const span = Math.max(1, rmax - rmin);
-        // Ajuste de ganancia: si el span es pequeño, aumentar escala; si es grande, reducir
-        const gain = Math.min(3.0, Math.max(0.7, 120 / span));
-        verticalScale = 95.0 * gain;
-      } else {
-        verticalScale = 95.0;
-      }
-    }
+    const normalizedValue = smoothedValue - (baselineRef.current || 0);
     const scaledValue = normalizedValue * verticalScale;
     
     let isArrhythmia = false;
@@ -290,8 +276,8 @@ const PPGSignalMeter = ({
     const visiblePoints = points.filter(p => now - p.time <= WINDOW_WIDTH_MS);
     if (visiblePoints.length > 1) {
       ctx.beginPath();
-      ctx.strokeStyle = '#10b981'; // emerald-500 - verde brillante para onda cardíaca sobre azul
-      ctx.lineWidth = 3; // Más gruesa para mejor visibilidad
+      ctx.strokeStyle = '#38bdf8'; // sky-400 - azul/cian clásico
+      ctx.lineWidth = 2;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
@@ -326,27 +312,16 @@ const PPGSignalMeter = ({
         
         if (x >= 0 && x <= canvas.width) {
           ctx.beginPath();
-          ctx.arc(x, y, 5, 0, Math.PI * 2);
-          ctx.fillStyle = peak.isArrhythmia ? '#DC2626' : '#0EA5E9';
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fillStyle = '#38bdf8'; // punto azul para pico normal
           ctx.fill();
-          
           if (peak.isArrhythmia) {
             ctx.beginPath();
-            ctx.arc(x, y, 10, 0, Math.PI * 2);
-            ctx.strokeStyle = '#FEF7CD';
-            ctx.lineWidth = 3;
+            ctx.arc(x, y, 6, 0, Math.PI * 2);
+            ctx.strokeStyle = '#DC2626'; // anillo rojo para arritmia
+            ctx.lineWidth = 2;
             ctx.stroke();
-            
-            ctx.font = 'bold 18px Inter'; 
-            ctx.fillStyle = '#F97316';
-            ctx.textAlign = 'center';
-            ctx.fillText('ARRITMIA', x, y - 25);
           }
-          
-          ctx.font = 'bold 16px Inter'; 
-          ctx.fillStyle = '#000000';
-          ctx.textAlign = 'center';
-          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 15);
         }
       });
     }
