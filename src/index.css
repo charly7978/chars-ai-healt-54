@@ -200,8 +200,6 @@ input, select, textarea, button {
   .safe-right {
     padding-right: env(safe-area-inset-right);
   }
-<<<<<<< Current (Your changes)
-=======
 }
 
 /* Optimización para orientación vertical */
@@ -233,5 +231,4 @@ input, select, textarea, button {
     backdrop-filter: blur(10px);
     font-family: system-ui, -apple-system, sans-serif;
   }
->>>>>>> Incoming (Background Agent changes)
 }

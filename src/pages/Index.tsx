@@ -91,6 +91,7 @@ const Index = () => {
       } else if ((elem as any).msRequestFullscreen) {
         await (elem as any).msRequestFullscreen();
 <<<<<<< Current (Your changes)
+<<<<<<< Current (Your changes)
       }
       
       // Forzar orientación horizontal en móviles si es posible
@@ -102,6 +103,20 @@ const Index = () => {
         }
       }
       
+=======
+      }
+      
+      // Mantener orientación vertical (portrait) en móviles
+      if ('orientation' in screen && (screen.orientation as any).lock) {
+        try {
+          await (screen.orientation as any).lock('portrait-primary');
+        } catch (e) {
+          // Ignorar si no es soportado
+          console.log('Orientación vertical no pudo ser forzada');
+        }
+      }
+      
+>>>>>>> Incoming (Background Agent changes)
 =======
       }
       
