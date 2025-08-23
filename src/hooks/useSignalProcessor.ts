@@ -2,7 +2,6 @@
 import { useMemo, useRef, useState } from 'react';
 import MultiChannelManager from '@/modules/signal-processing/MultiChannelManager';
 import { CameraSample, MultiChannelResult } from '@/types';
-import ChannelSplitter from '@/modules/signal-processing/ChannelSplitter';
 
 /**
  * Hook CORREGIDO que maneja el flujo completo CameraView -> MultiChannelManager
@@ -13,18 +12,10 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const mgrRef = useRef<MultiChannelManager | null>(null);
   const [lastResult, setLastResult] = useState<MultiChannelResult | null>(null);
   const sampleCountRef = useRef(0);
-  // Estado para preprocesamiento real por canal (R/G)
-  const dcRedRef = useRef(0);
-  const dcGreenRef = useRef(0);
-  const lastAcRef = useRef(0);
-  const splitterRef = useRef<ChannelSplitter | null>(null);
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
     console.log('🏭 MultiChannelManager CREADO:', { channels, windowSec });
-  }
-  if (!splitterRef.current) {
-    splitterRef.current = new ChannelSplitter(channels);
   }
 
   const handleSample = (s: CameraSample) => {
@@ -34,34 +25,15 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       return;
     }
     
-    // Preprocesamiento base local para derivada y DC
-    const alpha = 0.97; // constante de tiempo ~1s
-    dcRedRef.current = alpha * dcRedRef.current + (1 - alpha) * s.rMean;
-    dcGreenRef.current = alpha * dcGreenRef.current + (1 - alpha) * s.gMean;
-    let acR = s.rMean - dcRedRef.current;
-    let acG = s.gMean - dcGreenRef.current;
-    // Limitar derivada para suprimir artefactos bruscos por movimiento
-    const maxDelta = Math.max(1.5, (s.brightnessStd ?? 6) * 0.8);
-    const delta = (acR + acG) * 0.5 - lastAcRef.current;
-    if (Math.abs(delta) > maxDelta) {
-      const sign = delta > 0 ? 1 : -1;
-      const clamped = lastAcRef.current + sign * maxDelta;
-      const adjust = clamped - ((acR + acG) * 0.5);
-      acR += adjust;
-      acG += adjust;
-    }
-    lastAcRef.current = (acR + acG) * 0.5;
-    // Divisor de canales con feedback
-    const channelsVals = splitterRef.current!.split({ ...s, rMean: dcRedRef.current + acR, gMean: dcGreenRef.current + acG });
-    // Empujar cada canal como una muestra al MultiChannelManager
-    // Aquí simplificamos: se empuja la mezcla principal (canal 2) como referencia temporal
-    const inputSignal = channelsVals[2];
-
+    // CRÍTICO: Usar canal ROJO directamente - es el mejor para PPG
+    // Valores ya están en rango 0-255 desde CameraView
+    const inputSignal = s.rMean;
+    
     // Log detallado cada 150 muestras para debug (reducido de 30)
     if (sampleCountRef.current % 150 === 0) {
       console.log('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
         timestamp: new Date(s.timestamp).toLocaleTimeString(),
-        inputSignal: inputSignal.toFixed(2),
+        inputSignal: inputSignal.toFixed(1),
         rMean: s.rMean.toFixed(1),
         gMean: s.gMean.toFixed(1),
         bMean: s.bMean.toFixed(1),
@@ -104,15 +76,6 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     }
     
     setLastResult(result);
-    // Feedback al splitter desde el mejor canal detectado
-    const best = result.channels.find(c => c.isFingerDetected) || result.channels[0];
-    if (best) {
-      splitterRef.current!.updateFeedback({
-        preferred: best.snr > 1.6 ? 'red' : (best.quality < 40 ? 'green' : 'mixed'),
-        quality: best.quality,
-        snr: best.snr
-      });
-    }
   };
 
   const adjustChannelGain = (channelId: number, deltaRel: number) => {

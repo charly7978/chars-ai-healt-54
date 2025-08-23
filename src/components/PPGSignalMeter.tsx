@@ -50,21 +50,20 @@ const PPGSignalMeter = ({
   const peaksRef = useRef<{time: number, value: number, isArrhythmia: boolean}[]>([]);
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [showDebug, setShowDebug] = useState(false);
 
-  const WINDOW_WIDTH_MS = 2300;
-  const CANVAS_WIDTH = 1000;
-  const CANVAS_HEIGHT = 800;
-  const GRID_SIZE_X = 45;
-  const GRID_SIZE_Y = 10;
-  const verticalScale = 110.0;
+  const WINDOW_WIDTH_MS = 3500;
+  const CANVAS_WIDTH = 800;
+  const CANVAS_HEIGHT = 600;
+  const GRID_SIZE_X = 350;
+  const GRID_SIZE_Y = 155;
+  const verticalScale = 225.0;
   const SMOOTHING_FACTOR = 1.5;
   const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
   const PEAK_DETECTION_WINDOW = 8;
-  const PEAK_THRESHOLD = 3;
-  const MIN_PEAK_DISTANCE_MS = 400;
+  const PEAK_THRESHOLD = 2;
+  const MIN_PEAK_DISTANCE_MS = 300;
   const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
 
@@ -243,14 +242,13 @@ const PPGSignalMeter = ({
     if (baselineRef.current === null) {
       baselineRef.current = value;
     } else {
-      baselineRef.current = baselineRef.current * 0.98 + value * 0.02;
+      baselineRef.current = baselineRef.current * 0.95 + value * 0.05;
     }
     
-    // Smoothing de render (no afecta cálculo base)
     const smoothedValue = smoothValue(value, lastValueRef.current);
     lastValueRef.current = smoothedValue;
     
-    const normalizedValue = smoothedValue - (baselineRef.current || 0);
+    const normalizedValue = (baselineRef.current || 0) - smoothedValue;
     const scaledValue = normalizedValue * verticalScale;
     
     let isArrhythmia = false;
@@ -272,35 +270,43 @@ const PPGSignalMeter = ({
     const points = dataBufferRef.current.getPoints();
     detectPeaks(points, now);
     
-    // Usar solo puntos visibles en la ventana actual
-    const visiblePoints = points.filter(p => now - p.time <= WINDOW_WIDTH_MS);
-    if (visiblePoints.length > 1) {
+    if (points.length > 1) {
       ctx.beginPath();
-      ctx.strokeStyle = '#38bdf8'; // sky-400 - azul/cian clásico
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#10b981'; // emerald-500 - verde brillante para onda cardíaca sobre azul
+      ctx.lineWidth = 3; // Más gruesa para mejor visibilidad
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
-      // Polilínea con decimación por píxel (sin cortes)
-      const toXY = (pt: PPGDataPoint) => ({
-        x: canvas.width - ((now - pt.time) * canvas.width / WINDOW_WIDTH_MS),
-        y: canvas.height / 2 - pt.value
-      });
-      const pts = visiblePoints.map(toXY);
-      // Recorremos de más viejo a más nuevo, dibujando un punto por píxel
-      let lastDrawnX = -Infinity;
-      let started = false;
-      for (let i = 0; i < pts.length; i++) {
-        const { x, y } = pts[i];
-        if (!started) {
-          ctx.moveTo(x, y);
-          lastDrawnX = x;
-          started = true;
-          continue;
+      let firstPoint = true;
+      
+      for (let i = 1; i < points.length; i++) {
+        const prevPoint = points[i - 1];
+        const point = points[i];
+        
+        const x1 = canvas.width - ((now - prevPoint.time) * canvas.width / WINDOW_WIDTH_MS);
+        const y1 = canvas.height / 2 - prevPoint.value;
+        
+        const x2 = canvas.width - ((now - point.time) * canvas.width / WINDOW_WIDTH_MS);
+        const y2 = canvas.height / 2 - point.value;
+        
+        if (firstPoint) {
+          ctx.moveTo(x1, y1);
+          firstPoint = false;
         }
-        if (x - lastDrawnX >= 1) {
-          ctx.lineTo(x, y);
-          lastDrawnX = x;
+        
+        ctx.lineTo(x2, y2);
+        
+        if (point.isArrhythmia) {
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.strokeStyle = '#DC2626'; // red-600 para arritmias
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.strokeStyle = '#10b981'; // volver a verde
+          ctx.moveTo(x2, y2);
+          firstPoint = true;
         }
       }
       
@@ -312,16 +318,27 @@ const PPGSignalMeter = ({
         
         if (x >= 0 && x <= canvas.width) {
           ctx.beginPath();
-          ctx.arc(x, y, 3, 0, Math.PI * 2);
-          ctx.fillStyle = '#38bdf8'; // punto azul para pico normal
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
+          ctx.fillStyle = peak.isArrhythmia ? '#DC2626' : '#0EA5E9';
           ctx.fill();
+          
           if (peak.isArrhythmia) {
             ctx.beginPath();
-            ctx.arc(x, y, 6, 0, Math.PI * 2);
-            ctx.strokeStyle = '#DC2626'; // anillo rojo para arritmia
-            ctx.lineWidth = 2;
+            ctx.arc(x, y, 10, 0, Math.PI * 2);
+            ctx.strokeStyle = '#FEF7CD';
+            ctx.lineWidth = 3;
             ctx.stroke();
+            
+            ctx.font = 'bold 18px Inter'; 
+            ctx.fillStyle = '#F97316';
+            ctx.textAlign = 'center';
+            ctx.fillText('ARRITMIA', x, y - 25);
           }
+          
+          ctx.font = 'bold 16px Inter'; 
+          ctx.fillStyle = '#000000';
+          ctx.textAlign = 'center';
+          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 15);
         }
       });
     }
@@ -369,7 +386,6 @@ const PPGSignalMeter = ({
       />
 
       {/* Panel de diagnóstico (sobre la botonera) */}
-      {showDebug && (
       <div className="absolute left-0 right-0 bottom-[60px] z-10 px-3 pb-2">
         <div className="mx-3 rounded-lg border border-white/10 bg-black/40 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
           <div>
@@ -411,17 +427,6 @@ const PPGSignalMeter = ({
             <div className="font-bold truncate">{debug?.reasons && debug.reasons.length ? debug.reasons.join(', ') : '—'}</div>
           </div>
         </div>
-      </div>
-      )}
-
-      {/* Toggle para el panel de diagnóstico */}
-      <div className="absolute left-3 bottom-[60px] z-10">
-        <button
-          onClick={() => setShowDebug(v => !v)}
-          className={`px-3 py-1 rounded-full text-[10px] font-semibold border transition-colors ${showDebug ? 'bg-blue-600/80 border-white/20 text-white' : 'bg-black/40 border-white/10 text-blue-100'} backdrop-blur`}
-        >
-          {showDebug ? 'Ocultar DEBUG' : 'Mostrar DEBUG'}
-        </button>
       </div>
 
       <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
