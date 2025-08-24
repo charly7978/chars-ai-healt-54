@@ -278,8 +278,6 @@ export default class PPGChannel {
       (sorted[mid - 1] + sorted[mid]) / 2 : 
       sorted[mid];
   }
-<<<<<<< Current (Your changes)
-=======
 
   private stdArray(arr: number[]): number {
     if (arr.length === 0) return 0;
@@ -287,5 +285,4 @@ export default class PPGChannel {
     const variance = arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/arr.length;
     return Math.sqrt(variance);
   }
->>>>>>> Incoming (Background Agent changes)
 }
