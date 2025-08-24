@@ -1,0 +1,24 @@
+# COMMIT MÉDICO - SIN SIMULACIONES PERMITIDAS
+# 
+# TIPO DE CAMBIO:
+# - feat: Nueva funcionalidad
+# - fix: Corrección de bug
+# - docs: Documentación
+# - style: Formato de código
+# - refactor: Refactorización
+# - test: Pruebas
+# - chore: Tareas de mantenimiento
+#
+# DESCRIPCIÓN:
+# 
+# CAMBIOS REALIZADOS:
+# 
+# VALIDACIONES:
+# - [ ] Sin Math.random() o simulaciones
+# - [ ] Rangos fisiológicos válidos
+# - [ ] Componentes actualizados
+# - [ ] Tests pasando
+#
+# ISSUES RELACIONADOS:
+# 
+# NOTAS ADICIONALES:
