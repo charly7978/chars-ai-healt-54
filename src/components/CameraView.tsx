@@ -320,6 +320,25 @@ const CameraView: React.FC<CameraViewProps> = ({
       const rgbSum = rMean + gMean + bMean;
       const redFraction = rgbSum > 0 ? rMean / rgbSum : 0;
       const saturationRatio = redSaturated / totalPixels;
+      
+      // Calcular confianza de dedo y estado de exposición
+      const coverageScore = Math.min(1, coverageRatio / 0.35);
+      const rgScore = rgRatio < 1.1 ? 0 : rgRatio > 4 ? 0.2 : 0.2 + 0.8 * ((rgRatio - 1.1) / (4 - 1.1));
+      const brightnessScore = Math.max(0, Math.min(1, (brightnessMean - 30) / 140));
+      const motionPenalty = frameDiff > 10 ? Math.max(0.3, 1 - (frameDiff - 10) / 30) : 1;
+      const satPenalty = saturationRatio > 0.2 ? Math.max(0.5, 1 - (saturationRatio - 0.2) / 0.3) : 1;
+      const fingerConfidence = Math.max(0, Math.min(1, (0.5 * coverageScore + 0.25 * rgScore + 0.25 * brightnessScore) * motionPenalty * satPenalty));
+
+      let exposureState: 'ok' | 'dark' | 'saturated' | 'low_coverage' | 'moving' = 'ok';
+      if (saturationRatio > 0.4 || rMean > 245 || brightnessMean > 230) {
+        exposureState = 'saturated';
+      } else if (brightnessMean < 35 || rMean < 45) {
+        exposureState = 'dark';
+      } else if (coverageRatio < 0.2) {
+        exposureState = 'low_coverage';
+      } else if (frameDiff > 25 || brightnessStd > 12) {
+        exposureState = 'moving';
+      }
 
       return {
         timestamp: Date.now(),
@@ -335,7 +354,9 @@ const CameraView: React.FC<CameraViewProps> = ({
         coverageRatio,
         rgRatio,
         redFraction,
-        saturationRatio
+        saturationRatio,
+        fingerConfidence,
+        exposureState
       };
     };
 

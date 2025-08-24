@@ -15,6 +15,9 @@ export type CameraSample = {
   rgRatio: number; // rMean/gMean
   redFraction: number; // rMean/(r+g+b)
   saturationRatio: number; // % de pixeles con rojo saturado
+  // Campos opcionales para robustecer la detección
+  fingerConfidence?: number; // 0..1 confianza de dedo sobre lente
+  exposureState?: 'ok' | 'dark' | 'saturated' | 'low_coverage' | 'moving';
 };
 
 export type ChannelResult = {

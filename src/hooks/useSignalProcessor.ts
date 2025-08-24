@@ -12,6 +12,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const mgrRef = useRef<MultiChannelManager | null>(null);
   const [lastResult, setLastResult] = useState<MultiChannelResult | null>(null);
   const sampleCountRef = useRef(0);
+  const lastEnvRef = useRef<{ fingerConfidence: number; exposureState: CameraSample['exposureState'] } | null>(null);
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
@@ -25,9 +26,17 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       return;
     }
     
-    // CRÍTICO: Usar canal ROJO directamente - es el mejor para PPG
-    // Valores ya están en rango 0-255 desde CameraView
-    const inputSignal = s.rMean;
+    // Guardar estado de captura para UI/ajustes globales
+    lastEnvRef.current = {
+      fingerConfidence: typeof s.fingerConfidence === 'number' ? s.fingerConfidence : 0,
+      exposureState: s.exposureState
+    };
+    
+    // Refinamiento de señal: fusión ROJO + crominancia (r - 0.5 g)
+    // Mantener escala 0-255 para no romper los umbrales en canales
+    const chroma = s.rMean - 0.5 * s.gMean;
+    const fused = 0.7 * s.rMean + 0.3 * chroma;
+    const inputSignal = Math.max(0, Math.min(255, fused));
     
     // Log detallado cada 150 muestras para debug (reducido de 30)
     if (sampleCountRef.current % 150 === 0) {
@@ -48,13 +57,23 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     mgrRef.current!.pushSample(inputSignal, s.timestamp);
     
     // CRÍTICO: Analizar con métricas globales correctas
-    // Ajuste de cobertura y movimiento usando métricas adicionales
-    const adjustedCoverage = Math.min(1,
-      s.coverageRatio *
-      (s.redFraction > 0.42 && s.rgRatio > 1.1 && s.rgRatio < 4.0 ? 1.2 : 0.8) *
-      (s.saturationRatio < 0.15 ? 1.0 : 0.7)
-    );
-    const adjustedMotion = s.frameDiff + (s.brightnessStd > 8 ? 6 : 0);
+    // Ajuste de cobertura y movimiento usando métricas adicionales y confianza
+    const confidence = lastEnvRef.current?.fingerConfidence ?? 0;
+    const exposure = lastEnvRef.current?.exposureState;
+    
+    let coverageBoost = (s.redFraction > 0.42 && s.rgRatio > 1.1 && s.rgRatio < 4.0) ? 1.2 : 0.85;
+    coverageBoost *= (s.saturationRatio < 0.15) ? 1.0 : 0.75;
+    coverageBoost *= 0.8 + 0.4 * confidence; // 0.8..1.2
+    
+    if (exposure === 'dark') coverageBoost *= 0.75;
+    if (exposure === 'saturated') coverageBoost *= 0.7;
+    if (exposure === 'low_coverage') coverageBoost *= 0.6;
+    
+    const adjustedCoverage = Math.max(0, Math.min(1, s.coverageRatio * coverageBoost));
+    
+    let motion = s.frameDiff + (s.brightnessStd > 8 ? 6 : 0);
+    if (exposure === 'moving') motion += 8;
+    const adjustedMotion = motion;
     const result = mgrRef.current!.analyzeAll(adjustedCoverage, adjustedMotion);
     
     // Log resultado cada 150 muestras o cuando hay detección (reducido de 50)
@@ -113,7 +132,9 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       avgSNR: avgSNR.toFixed(2),
       avgQuality: avgQuality.toFixed(1),
       fingerDetected: lastResult.fingerDetected,
-      aggregatedBPM: lastResult.aggregatedBPM
+      aggregatedBPM: lastResult.aggregatedBPM,
+      fingerConfidence: lastEnvRef.current?.fingerConfidence ?? 0,
+      exposureState: lastEnvRef.current?.exposureState ?? 'ok'
     };
   };
 

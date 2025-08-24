@@ -28,6 +28,9 @@ export default class PPGChannel {
   private minVarianceForPulse = 2.6; // Sutil baja
   private minSNRForFinger = 1.35;    // Sutil baja
   private maxFrameDiffForStability = 15; // Ajustado a 15 (era 20)
+  // Umbrales adicionales para robustecer gating
+  private readonly minStdSmoothForPulse = 0.18; // amplitud mínima en señal filtrada normalizada
+  private readonly maxRRCoeffVar = 0.35;        // variación máxima permitida en RR (coef. variación)
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -162,13 +165,24 @@ export default class PPGChannel {
     const bpmTemporal = rr.length >= 2 ? 
       Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
 
+    // Chequeos adicionales: amplitud AC y regularidad RR
+    const stdSmooth = this.stdArray(smooth);
+    const acOk = stdSmooth >= this.minStdSmoothForPulse || variance >= this.minVarianceForPulse;
+    let rrConsistencyOk = true;
+    if (rr.length >= 3) {
+      const meanRR = rr.reduce((a,b)=>a+b,0)/rr.length;
+      const stdRR = Math.sqrt(rr.reduce((a,b)=>a+(b-meanRR)*(b-meanRR),0)/rr.length);
+      const cvRR = stdRR / Math.max(1, meanRR);
+      rrConsistencyOk = cvRR <= this.maxRRCoeffVar;
+    }
+
     // CRITERIOS DE DETECCIÓN DE DEDO ESTRICTOS (sin falsos positivos)
     const brightnessOk = mean >= this.minRMeanForFinger && mean <= this.maxRMeanForFinger;
     const varianceOk = variance >= this.minVarianceForPulse;
     const snrOk = snr >= this.minSNRForFinger;
     const bpmOk = (bpmSpectral && bpmSpectral >= 50 && bpmSpectral <= 160) || 
                   (bpmTemporal && bpmTemporal >= 50 && bpmTemporal <= 160);
-    const isFingerDetected = Boolean(brightnessOk && varianceOk && snrOk && bpmOk);
+    const isFingerDetected = Boolean(brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk);
 
     // Debug detección COMPLETA solo para canal 0 o cuando hay detección
     if ((this.channelId === 0 && this.buffer.length % 120 === 0) || isFingerDetected) {
@@ -186,6 +200,10 @@ export default class PPGChannel {
         // BPM
         bpmSpectral,
         bpmTemporal,
+        stdSmooth: stdSmooth.toFixed(3),
+        acOk,
+        rrCount: rr.length,
+        rrConsistencyOk,
         
         // Criterios individuales
         brightnessOk: `${brightnessOk} (${this.minRMeanForFinger}-${this.maxRMeanForFinger})`,
@@ -260,4 +278,14 @@ export default class PPGChannel {
       (sorted[mid - 1] + sorted[mid]) / 2 : 
       sorted[mid];
   }
+<<<<<<< Current (Your changes)
+=======
+
+  private stdArray(arr: number[]): number {
+    if (arr.length === 0) return 0;
+    const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
+    const variance = arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/arr.length;
+    return Math.sqrt(variance);
+  }
+>>>>>>> Incoming (Background Agent changes)
 }
