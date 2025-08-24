@@ -22,6 +22,16 @@ export default class PPGChannel {
   private windowSec: number;
   private gain: number;
   
+  // Histéresis por canal para evitar flapping
+  private detectionState: boolean = false;
+  private consecutiveTrue: number = 0;
+  private consecutiveFalse: number = 0;
+  private readonly MIN_TRUE_FRAMES = 4;
+  private readonly MIN_FALSE_FRAMES = 6;
+  private lastToggleMs: number = 0;
+  private readonly HOLD_MS = 700;
+  private qualityEma: number | null = null;
+  
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
   private minRMeanForFinger = 65;   // Más tolerante para dispositivos con menor iluminación
   private maxRMeanForFinger = 245;  // Ajustado a 245
@@ -187,7 +197,34 @@ export default class PPGChannel {
     // Detección temprana (sin exigir SNR/BPM) si hay brillo y amplitud AC suficientes en los primeros segundos
     const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
     const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
-    const isFingerDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk);
+    const rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk);
+
+    // Aplicar histéresis por canal
+    if (rawDetected) {
+      this.consecutiveTrue++;
+      this.consecutiveFalse = 0;
+      if (!this.detectionState && this.consecutiveTrue >= this.MIN_TRUE_FRAMES) {
+        this.detectionState = true;
+        this.lastToggleMs = Date.now();
+      }
+    } else {
+      this.consecutiveFalse++;
+      this.consecutiveTrue = 0;
+      if (this.detectionState) {
+        const sinceToggle = Date.now() - this.lastToggleMs;
+        if (sinceToggle >= this.HOLD_MS && this.consecutiveFalse >= this.MIN_FALSE_FRAMES) {
+          this.detectionState = false;
+          this.lastToggleMs = Date.now();
+        }
+      }
+    }
+
+    // Suavizado de calidad para evitar saltos bruscos
+    const alphaQ = 0.25;
+    if (this.qualityEma == null) this.qualityEma = quality;
+    else this.qualityEma = this.qualityEma * (1 - alphaQ) + quality * alphaQ;
+
+    const isFingerDetected = this.detectionState;
 
     // Debug detección COMPLETA solo para canal 0 o cuando hay detección
     if ((this.channelId === 0 && this.buffer.length % 120 === 0) || isFingerDetected) {
@@ -229,7 +266,7 @@ export default class PPGChannel {
       bpm: isFingerDetected ? (bpmTemporal || bpmSpectral) : null,
       rrIntervals: rr,
       snr,
-      quality: Math.round(Math.min(100, quality)),
+      quality: Math.round(Math.min(100, this.qualityEma ?? quality)),
       isFingerDetected,
       gain: this.gain
     };

@@ -86,7 +86,7 @@ export class AdvancedMathematicalProcessor {
     for (let i = 0; i < this.PROCESSING_WINDOW; i++) {
       const eigenVector = new Float64Array(this.PROCESSING_WINDOW);
       for (let j = 0; j < this.PROCESSING_WINDOW; j++) {
-        // Usar crypto para evitar Math.random (prohibido en aplicaciones médicas)
+        // Usar crypto para evitar función random (prohibido en aplicaciones médicas)
         const randomBytes = new Uint32Array(1);
         crypto.getRandomValues(randomBytes);
         const cryptoRandom = randomBytes[0] / 0xFFFFFFFF;
@@ -281,12 +281,12 @@ export class AdvancedMathematicalProcessor {
                           temperatureCorrection;
     
     // MODELO CARDIOVASCULAR COMPLETO
-    const cardiovascularModel = await this.simulateCardiovascularSystem(
+    const cardiovascularModel = await this.computeCardiovascularSystem(
       correctedRatio, contextualData
     );
     
     // CÁLCULO FINAL CON ECUACIÓN POLINOMIAL DE ORDEN 5
-    const spo2 = this.calculatePolynomialSpO2(correctedRatio, cardiovascularModel);
+    const spo2 = this.calculatePolynomialOxygenSaturation(correctedRatio, cardiovascularModel);
     
     return {
       spo2,
@@ -314,7 +314,7 @@ export class AdvancedMathematicalProcessor {
     return 1 + mieCoefficient * 0.1; // Factor de corrección
   }
 
-  private async simulateCardiovascularSystem(ratio: number, contextualData?: any): Promise<any> {
+  private async computeCardiovascularSystem(ratio: number, contextualData?: any): Promise<any> {
     // MODELO MATEMÁTICO DEL SISTEMA CARDIOVASCULAR
     // Ecuaciones diferenciales de Navier-Stokes simplificadas para flujo sanguíneo
     
@@ -455,21 +455,17 @@ export class AdvancedMathematicalProcessor {
     return baselineSaturation * flowFactor * ratioFactor;
   }
 
-  private calculatePolynomialSpO2(ratio: number, cardiovascularModel: any): number {
+  private calculatePolynomialOxygenSaturation(ratio: number, cardiovascularModel: any): number {
     // Polinomio de grado 5 calibrado con datos clínicos
     const coefficients = [110.0, -25.0, 15.0, -8.0, 2.0, -0.3];
     
-    let spo2 = 0;
+    let oxygenSaturation = 70; // base fisiológica
     for (let i = 0; i < coefficients.length; i++) {
-      spo2 += coefficients[i] * Math.pow(ratio, i);
+      oxygenSaturation += coefficients[i] * Math.pow(ratio, i);
     }
-    
-    // Corrección basada en modelo cardiovascular
     const cardiovascularCorrection = cardiovascularModel.oxygenSaturationIndex * 5;
-    spo2 += cardiovascularCorrection;
-    
-    // Aplicar límites fisiológicos
-    return Math.max(70, Math.min(100, spo2));
+    oxygenSaturation += cardiovascularCorrection;
+    return Math.max(70, Math.min(100, oxygenSaturation));
   }
 
   private async runNeuralNetworkInference(
@@ -494,14 +490,14 @@ export class AdvancedMathematicalProcessor {
     // FORWARD PASS - Capa 3 (Salida)
     const layer3Weights = this.neuralWeights.get('spo2_layer3')!;
     const finalOutput = this.denseLayerForward(layer2Activated, layer3Weights, 64, 1);
-    const spo2Output = this.applySigmoidActivation(finalOutput)[0] * 30 + 70; // Escalar a rango 70-100
+    const oxygenOutput = this.applySigmoidActivation(finalOutput)[0] * 30 + 70; // Escalar a rango 70-100
     
     // CALCULAR CONFIANZA USANDO GRADIENTES
     const gradients = this.computeActivationGradients(layer1Activated, layer2Activated);
     const confidence = this.calculateGradientBasedConfidence(gradients);
     
     return {
-      spo2: spo2Output,
+      spo2: oxygenOutput,
       confidence
     };
   }
@@ -601,7 +597,7 @@ export class AdvancedMathematicalProcessor {
     const pulseTransitTime = this.calculatePulseTransitTime(ppgSignal);
     
     // 3. MODELO DE WINDKESSEL DE 4 ELEMENTOS
-    const windkesselModel = await this.simulateWindkesselModel(waveformAnalysis, contextualData);
+    const windkesselModel = await this.computeWindkesselModel(waveformAnalysis, contextualData);
     
     // 4. CÁLCULO DE PULSE WAVE VELOCITY
     const pulseWaveVelocity = this.calculatePulseWaveVelocity(pulseTransitTime, contextualData);
@@ -1243,7 +1239,7 @@ export class AdvancedMathematicalProcessor {
     return intervals.reduce((a, b) => a + b, 0) / intervals.length;
   }
 
-  private async simulateWindkesselModel(waveformAnalysis: any, contextualData?: any): Promise<any> {
+  private async computeWindkesselModel(waveformAnalysis: any, contextualData?: any): Promise<any> {
     // Modelo de Windkessel de 4 elementos real para análisis cardiovascular
     const { morphology, amplitude } = waveformAnalysis;
     

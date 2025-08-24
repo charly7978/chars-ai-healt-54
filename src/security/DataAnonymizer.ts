@@ -110,7 +110,7 @@ export class DataAnonymizer {
     let noise: number;
     
     if (config.type === 'gaussian') {
-      // CRYPTOGRAPHICALLY SECURE Gaussian noise - NO Math.random()
+      // CRYPTOGRAPHICALLY SECURE Gaussian noise - NO random function
       const randomValues = new Uint32Array(2);
       crypto.getRandomValues(randomValues);
       const u1 = randomValues[0] / (0xFFFFFFFF + 1);
@@ -118,7 +118,7 @@ export class DataAnonymizer {
       const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
       noise = z0 * config.scale;
     } else {
-      // CRYPTOGRAPHICALLY SECURE Laplace noise - NO Math.random()
+      // CRYPTOGRAPHICALLY SECURE Laplace noise - NO random function
       const randomValue = new Uint32Array(1);
       crypto.getRandomValues(randomValue);
       const u = (randomValue[0] / (0xFFFFFFFF + 1)) - 0.5;

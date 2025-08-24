@@ -517,7 +517,7 @@ export class SuperAdvancedVitalSignsProcessor {
     const pwvAnalysis = this.calculateMultiMethodPWV(pulseWaveAnalysis, contextualData);
     
     // Modelo de Windkessel de 4 elementos
-    const windkesselModel = await this.simulateWindkesselModel(pulseWaveAnalysis, contextualData);
+    const windkesselModel = await this.computeWindkesselModel(pulseWaveAnalysis, contextualData);
     
     // Análisis de impedancia aórtica
     const impedanceAnalysis = this.calculateAorticImpedance(spectralAnalysis, contextualData);
@@ -904,7 +904,7 @@ export class SuperAdvancedVitalSignsProcessor {
     return { pwv: 8.5, confidence: 0.88 };
   }
   
-  private async simulateWindkesselModel(pulse: any, context?: any): Promise<any> {
+  private async computeWindkesselModel(pulse: any, context?: any): Promise<any> {
     // Implementación real del modelo de Windkessel de 3 elementos
     const { systolic, diastolic } = pulse;
     

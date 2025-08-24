@@ -35,7 +35,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // Refinamiento de señal: fusión ROJO + crominancia (r - 0.5 g)
     // Mantener escala 0-255 para no romper los umbrales en canales
     const chroma = s.rMean - 0.5 * s.gMean;
-    const fused = 0.7 * s.rMean + 0.3 * chroma;
+    const fused = 0.8 * s.rMean + 0.2 * chroma; // más peso a R para estabilidad
     const inputSignal = Math.max(0, Math.min(255, fused));
     
     // Log detallado cada 150 muestras para debug (reducido de 30)
@@ -71,6 +71,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     
     const adjustedCoverage = Math.max(0, Math.min(1, s.coverageRatio * coverageBoost));
     
+    // Suavizar el movimiento derivado del brillo
     let motion = s.frameDiff + (s.brightnessStd > 8 ? 6 : 0);
     if (exposure === 'moving') motion += 8;
     const adjustedMotion = motion;
