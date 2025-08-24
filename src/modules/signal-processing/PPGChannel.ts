@@ -23,14 +23,16 @@ export default class PPGChannel {
   private gain: number;
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
-  private minRMeanForFinger = 80;   // Sutil baja para favorecer dedo real
+  private minRMeanForFinger = 65;   // Más tolerante para dispositivos con menor iluminación
   private maxRMeanForFinger = 245;  // Ajustado a 245
-  private minVarianceForPulse = 2.6; // Sutil baja
-  private minSNRForFinger = 1.35;    // Sutil baja
+  private minVarianceForPulse = 2.2; // Más tolerante
+  private minSNRForFinger = 1.20;    // Más tolerante para detección inicial
   private maxFrameDiffForStability = 15; // Ajustado a 15 (era 20)
   // Umbrales adicionales para robustecer gating
-  private readonly minStdSmoothForPulse = 0.18; // amplitud mínima en señal filtrada normalizada
+  private readonly minStdSmoothForPulse = 0.16; // amplitud mínima en señal filtrada normalizada
   private readonly maxRRCoeffVar = 0.35;        // variación máxima permitida en RR (coef. variación)
+  private readonly EARLY_DETECT_MIN_SAMPLES = 60; // ~2s con 30FPS
+  private readonly EARLY_DETECT_MAX_SAMPLES = 120; // ~4s ventana temprana
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -182,7 +184,10 @@ export default class PPGChannel {
     const snrOk = snr >= this.minSNRForFinger;
     const bpmOk = (bpmSpectral && bpmSpectral >= 50 && bpmSpectral <= 160) || 
                   (bpmTemporal && bpmTemporal >= 50 && bpmTemporal <= 160);
-    const isFingerDetected = Boolean(brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk);
+    // Detección temprana (sin exigir SNR/BPM) si hay brillo y amplitud AC suficientes en los primeros segundos
+    const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
+    const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
+    const isFingerDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk);
 
     // Debug detección COMPLETA solo para canal 0 o cuando hay detección
     if ((this.channelId === 0 && this.buffer.length % 120 === 0) || isFingerDetected) {
@@ -204,6 +209,8 @@ export default class PPGChannel {
         acOk,
         rrCount: rr.length,
         rrConsistencyOk,
+        earlyWindow: inEarlyWindow,
+        earlyOk,
         
         // Criterios individuales
         brightnessOk: `${brightnessOk} (${this.minRMeanForFinger}-${this.maxRMeanForFinger})`,

@@ -26,7 +26,7 @@ export default class MultiChannelManager {
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
   private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // más robusto para confirmar
   private readonly FRAMES_TO_LOSE_FINGER = 6;       // caída más rápida al retirar dedo
-  private readonly MIN_COVERAGE_RATIO = 0.20;       // sutil baja
+  private readonly MIN_COVERAGE_RATIO = 0.18;       // sutil baja adicional
   private readonly MAX_FRAME_DIFF = 21;             // sutil ajuste
   private readonly MIN_CONSENSUS_RATIO = 0.32;      // sutil baja
   private readonly MIN_QUALITY_THRESHOLD = 28;      // sutil baja
@@ -130,6 +130,8 @@ export default class MultiChannelManager {
     
     // Condición global mejorada: todos los criterios principales + calidad
     const globalCondition = strongDetection;
+    // Condición de pre-detección basada solo en cobertura y movimiento estables
+    const preCondition = coverageOk && motionOk;
 
     // Debug logging cada ~4 segundos con información detallada (aumentado de 2)
     if (Date.now() % 4000 < 100) {
@@ -168,6 +170,16 @@ export default class MultiChannelManager {
             frameDiff: globalFrameDiff.toFixed(1),
             validBPMs
           });
+        }
+        this.fingerState = true;
+      }
+    } else if (preCondition) {
+      // Pre-detección: cobertura y estabilidad suficientes, aún sin consenso/BPM
+      this.fingerStableCount++;
+      this.fingerUnstableCount = 0;
+      if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 3) {
+        if (!this.fingerState) {
+          console.log('✅ DEDO PRESENTE (PRE-DETECCIÓN) - cobertura y estabilidad OK');
         }
         this.fingerState = true;
       }
