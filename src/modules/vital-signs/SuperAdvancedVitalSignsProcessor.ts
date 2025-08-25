@@ -6,7 +6,7 @@
  */
 
 import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
-import { simulationEradicator } from '../../security/SimulationEradicator';
+import { medicalIntegrityGuard } from '../../security/MedicalIntegrityGuard';
 
 interface AdvancedVitalSignsResult {
   // Oximetría de pulso con análisis espectral
@@ -243,10 +243,10 @@ export class SuperAdvancedVitalSignsProcessor {
     
     const processingStartTime = performance.now();
     
-    // VALIDACIÓN ANTI-SIMULACIÓN MÁS TOLERANTE PARA DEBUGGING
+    // VALIDACIÓN DE INTEGRIDAD BIOFÍSICA
     try {
-      const simulationValidation = await simulationEradicator.validateBiophysicalSignal(
-        ppgSignal, 
+      const simulationValidation = await medicalIntegrityGuard.validateBiophysicalSignal(
+        ppgSignal,
         Date.now(),
         {
           heartRate: this.estimateHeartRateQuick(ppgSignal),

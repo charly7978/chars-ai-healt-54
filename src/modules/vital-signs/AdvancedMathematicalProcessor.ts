@@ -5,7 +5,7 @@
  * Prohibidas las simulaciones - Solo medición biofísica real
  */
 
-import { simulationEradicator } from '../../security/SimulationEradicator';
+import { medicalIntegrityGuard } from '../../security/MedicalIntegrityGuard';
 
 interface ComplexSpectralAnalysis {
   fourierTransform: Complex64Array;
@@ -162,15 +162,15 @@ export class AdvancedMathematicalProcessor {
     quantumBiophysics: QuantumBiophysicsModel;
   }> {
     
-    // VALIDACIÓN ANTI-SIMULACIÓN
-    const simulationCheck = await simulationEradicator.validateBiophysicalSignal(
+    // VALIDACIÓN DE INTEGRIDAD BIOFÍSICA
+    const simulationCheck = await medicalIntegrityGuard.validateBiophysicalSignal(
       [...redSignal, ...irSignal], 
       Date.now(), 
       {}
     );
     
-    if (simulationCheck.isSimulation) {
-      throw new Error(`SIMULACIÓN DETECTADA: ${simulationCheck.violationDetails.join(', ')}`);
+    if (simulationCheck.isInvalid) {
+      throw new Error(`INTEGRIDAD INVÁLIDA: ${simulationCheck.violationDetails.join(', ')}`);
     }
 
     // 1. ANÁLISIS ESPECTRAL MULTIDIMENSIONAL
@@ -581,13 +581,13 @@ export class AdvancedMathematicalProcessor {
     confidence: number;
   }> {
     
-    // VALIDACIÓN ANTI-SIMULACIÓN
-    const simulationCheck = await simulationEradicator.validateBiophysicalSignal(
+    // VALIDACIÓN DE INTEGRIDAD BIOFÍSICA
+    const simulationCheck = await medicalIntegrityGuard.validateBiophysicalSignal(
       ppgSignal, Date.now(), {}
     );
     
-    if (simulationCheck.isSimulation) {
-      throw new Error(`SIMULACIÓN DETECTADA: ${simulationCheck.violationDetails.join(', ')}`);
+    if (simulationCheck.isInvalid) {
+      throw new Error(`INTEGRIDAD INVÁLIDA: ${simulationCheck.violationDetails.join(', ')}`);
     }
     
     // 1. ANÁLISIS MORFOLÓGICO DE ONDA DE PULSO
