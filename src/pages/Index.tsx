@@ -387,7 +387,11 @@ const Index = () => {
     const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
 <<<<<<< Current (Your changes)
+<<<<<<< Current (Your changes)
     setHeartbeatSignal(signalValue);
+=======
+    // La onda se actualiza por muestra de cámara en tiempo real, no desde análisis decimado
+>>>>>>> Incoming (Background Agent changes)
 =======
     // La onda se actualiza por muestra de cámara en tiempo real, no desde análisis decimado
 >>>>>>> Incoming (Background Agent changes)
