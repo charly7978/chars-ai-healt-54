@@ -111,7 +111,9 @@ export class HeartBeatProcessor {
       this.audioContext = new AudioContext();
       await this.audioContext.resume();
       console.log("HeartBeatProcessor: Audio Context Initialized and resumed");
-      // No reproducir sonido de prueba para evitar beep de inicio y consumo adicional
+      
+      // Reproducir un sonido de prueba audible para desbloquear el audio
+      await this.playTestSound(0.3); // Volumen incrementado
     } catch (error) {
       console.error("HeartBeatProcessor: Error initializing audio", error);
     }
@@ -156,7 +158,9 @@ export class HeartBeatProcessor {
     }
 
     try {
-      // Deshabilitar vibración para evitar movimiento del dispositivo y pérdida de señal
+      if (navigator.vibrate) {
+        navigator.vibrate(this.VIBRATION_PATTERN);
+      }
 
       const currentTime = this.audioContext.currentTime;
 
@@ -289,7 +293,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: -1,
+        bpm: 0,
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,

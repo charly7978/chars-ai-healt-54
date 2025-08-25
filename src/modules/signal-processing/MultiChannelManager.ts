@@ -200,7 +200,6 @@ export default class MultiChannelManager {
           this.fingerState = true;
           this.lastGlobalToggle = now2;
         }
-<<<<<<< Current (Your changes)
       }
     } else if (preCondition) {
       // Pre-detección: cobertura y estabilidad suficientes, aún sin consenso/BPM
@@ -211,8 +210,6 @@ export default class MultiChannelManager {
           console.log('✅ DEDO PRESENTE (PRE-DETECCIÓN) - cobertura y estabilidad OK');
         }
         this.fingerState = true;
-=======
->>>>>>> Incoming (Background Agent changes)
       }
     } else {
       this.fingerUnstableCount++;
