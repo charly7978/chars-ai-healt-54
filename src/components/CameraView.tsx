@@ -238,9 +238,15 @@ const CameraView: React.FC<CameraViewProps> = ({
       // ROI CENTRADA Y OPTIMIZADA
       const centerX = video.videoWidth / 2;
       const centerY = video.videoHeight / 2;
+<<<<<<< Current (Your changes)
       // ROI más pequeña para reducir carga de CPU
       const roiW = Math.min(roiSize, video.videoWidth * 0.2);
       const roiH = Math.min(roiSize, video.videoHeight * 0.2);
+=======
+      // ROI equilibrada para buena SNR sin exceso de carga
+      const roiW = Math.min(roiSize, video.videoWidth * 0.3);
+      const roiH = Math.min(roiSize, video.videoHeight * 0.3);
+>>>>>>> Incoming (Background Agent changes)
       const sx = centerX - roiW / 2;
       const sy = centerY - roiH / 2;
 

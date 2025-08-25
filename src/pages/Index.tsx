@@ -351,8 +351,9 @@ const Index = () => {
       return;
     }
 
+    const signalValue = bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0;
     const heartBeatResult = processHeartBeat(
-      bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0,
+      signalValue,
       bestChannel.isFingerDetected, 
       lastResult.timestamp,
       { quality: bestChannel.quality, snr: bestChannel.snr }
@@ -381,7 +382,7 @@ const Index = () => {
     
     const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
-    setHeartbeatSignal(bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0);
+    setHeartbeatSignal(signalValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {

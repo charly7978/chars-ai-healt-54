@@ -7,7 +7,7 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
   private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
   private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.65; // AUMENTADO para ser más estricto
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.55; // Más permisivo para estabilizar detección
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
   private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
@@ -21,7 +21,7 @@ export class HeartBeatProcessor {
   // Parámetros de beep más estrictos
   private readonly BEEP_DURATION = 450; 
   private readonly BEEP_VOLUME = 1.0;
-  private readonly MIN_BEEP_INTERVAL_MS = 700; // Aumentado para evitar beeps excesivos
+  private readonly MIN_BEEP_INTERVAL_MS = 1200; // Intervalo mayor para evitar beeps repetidos
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
   // AUTO-RESET más agresivo para falsos positivos
@@ -37,13 +37,13 @@ export class HeartBeatProcessor {
   // Límites MÁS ESTRICTOS para parámetros adaptativos
   private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.12; // Aumentado significativamente
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.45; // Más permisivo para estabilizar señales reales
   private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
 
   // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
+  private readonly SIGNAL_BOOST_FACTOR = 1.2; // Evitar sobre-amplificar y generar picos falsos
   private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // Reducido para ser más selectivo
   
   // Control del auto-ajuste más estricto
@@ -112,8 +112,7 @@ export class HeartBeatProcessor {
       await this.audioContext.resume();
       console.log("HeartBeatProcessor: Audio Context Initialized and resumed");
       
-      // Reproducir un sonido de prueba audible para desbloquear el audio
-      await this.playTestSound(0.3); // Volumen incrementado
+      // No reproducir test beep para evitar sonidos de reinicio
     } catch (error) {
       console.error("HeartBeatProcessor: Error initializing audio", error);
     }
@@ -293,7 +292,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: 0,
+        bpm: Number.NaN,
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,

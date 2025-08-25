@@ -14,6 +14,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const sampleCountRef = useRef(0);
   const lastEnvRef = useRef<{ fingerConfidence: number; exposureState: CameraSample['exposureState'] } | null>(null);
   const lastAnalyzeTimeRef = useRef<number>(0);
+  const analyzeIntervalMsRef = useRef<number>(50); // ~20 Hz para mejor latencia
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
@@ -79,7 +80,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // Decimar análisis pesado a ~12 Hz para evitar bloquear el hilo principal
     const now = performance.now();
     let result: MultiChannelResult | null = null;
-    if (now - lastAnalyzeTimeRef.current >= 80 || !lastResult) {
+    if (now - lastAnalyzeTimeRef.current >= analyzeIntervalMsRef.current || !lastResult) {
       result = mgrRef.current!.analyzeAll(adjustedCoverage, adjustedMotion);
       lastAnalyzeTimeRef.current = now;
       
