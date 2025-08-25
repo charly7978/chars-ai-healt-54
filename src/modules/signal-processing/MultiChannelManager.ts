@@ -16,7 +16,7 @@ export default class MultiChannelManager {
   private n: number;
   private windowSec: number;
   private lastTimestamp = Date.now();
-  private readonly STALE_MS = 350; // si no hay muestras recientes, perder detección
+  private readonly STALE_MS = 900; // tolerar pausas breves sin perder detección
   
   // Estado de detección con debounce MEJORADO
   private fingerState = false;
@@ -28,12 +28,12 @@ export default class MultiChannelManager {
   private motionEma: number | null = null;
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
-  private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // más robusto para confirmar
-  private readonly FRAMES_TO_LOSE_FINGER = 6;       // caída más rápida al retirar dedo
-  private readonly MIN_COVERAGE_RATIO = 0.18;       // sutil baja adicional
-  private readonly MAX_FRAME_DIFF = 21;             // sutil ajuste
-  private readonly MIN_CONSENSUS_RATIO = 0.32;      // sutil baja
-  private readonly MIN_QUALITY_THRESHOLD = 28;      // sutil baja
+  private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // robusto para confirmar
+  private readonly FRAMES_TO_LOSE_FINGER = 20;      // perder dedo sólo tras ~1s inestable
+  private readonly MIN_COVERAGE_RATIO = 0.14;       // permitir luz más baja
+  private readonly MAX_FRAME_DIFF = 28;             // tolerar más autoexposición/micro-mov
+  private readonly MIN_CONSENSUS_RATIO = 0.32;      // igual
+  private readonly MIN_QUALITY_THRESHOLD = 20;      // más permisivo para estabilidad
 
   constructor(n = 6, windowSec = 8) {
     this.n = n;

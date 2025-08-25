@@ -33,11 +33,11 @@ export default class PPGChannel {
   private qualityEma: number | null = null;
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
-  private minRMeanForFinger = 65;   // Más tolerante para dispositivos con menor iluminación
-  private maxRMeanForFinger = 245;  // Ajustado a 245
-  private minVarianceForPulse = 2.2; // Más tolerante
-  private minSNRForFinger = 1.20;    // Más tolerante para detección inicial
-  private maxFrameDiffForStability = 15; // Ajustado a 15 (era 20)
+  private minRMeanForFinger = 55;   // más permisivo para baja luz
+  private maxRMeanForFinger = 248;  // margen superior mayor
+  private minVarianceForPulse = 1.6; // aceptar AC más débil
+  private minSNRForFinger = 1.05;    // permitir SNR justo en inicio
+  private maxFrameDiffForStability = 18; // tolerar micro-movimiento
   // Umbrales adicionales para robustecer gating
   private readonly minStdSmoothForPulse = 0.16; // amplitud mínima en señal filtrada normalizada
   private readonly maxRRCoeffVar = 0.35;        // variación máxima permitida en RR (coef. variación)
@@ -161,11 +161,11 @@ export default class PPGChannel {
     const snr = signalPower / Math.max(1e-6, noisePower);
     
     // Calidad MEJORADA basada en múltiples factores
-    const qualitySpectral = Math.min(40, Math.max(0, (snr - 1) * 20)); // Menos peso a SNR
-    const qualityVariance = variance > this.minVarianceForPulse ? 25 : 0; // Más peso a varianza
-    const qualityStability = this.buffer.length >= 150 ? 20 : 
-                            this.buffer.length >= 100 ? 15 : 10; // Estabilidad temporal
-    const qualitySignalStrength = Math.min(15, Math.max(0, (maxPower - 1e-4) * 50000)); // Fuerza de señal
+    const qualitySpectral = Math.min(40, Math.max(0, (snr - 1) * 28));
+    const qualityVariance = variance > this.minVarianceForPulse ? 30 : 8;
+    const qualityStability = this.buffer.length >= 150 ? 22 : 
+                            this.buffer.length >= 100 ? 18 : 12;
+    const qualitySignalStrength = Math.min(20, Math.max(0, (maxPower - 1e-4) * 65000));
     
     const quality = qualitySpectral + qualityVariance + qualityStability + qualitySignalStrength;
 
@@ -192,8 +192,8 @@ export default class PPGChannel {
     const brightnessOk = mean >= this.minRMeanForFinger && mean <= this.maxRMeanForFinger;
     const varianceOk = variance >= this.minVarianceForPulse;
     const snrOk = snr >= this.minSNRForFinger;
-    const bpmOk = (bpmSpectral && bpmSpectral >= 50 && bpmSpectral <= 160) || 
-                  (bpmTemporal && bpmTemporal >= 50 && bpmTemporal <= 160);
+    const bpmOk = (bpmSpectral && bpmSpectral >= 45 && bpmSpectral <= 180) || 
+                  (bpmTemporal && bpmTemporal >= 45 && bpmTemporal <= 180);
     // Detección temprana (sin exigir SNR/BPM) si hay brillo y amplitud AC suficientes en los primeros segundos
     const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
     const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;

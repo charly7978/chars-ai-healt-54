@@ -67,7 +67,7 @@ export const useHeartBeatProcessor = () => {
     const currentTime = Date.now();
     
     // CONTROL DE TASA DE PROCESAMIENTO PARA EVITAR SOBRECARGA
-    if (currentTime - lastProcessTimeRef.current < 16) { // ~60 FPS máximo
+    if (currentTime - lastProcessTimeRef.current < 50) { // ~20 Hz
       return {
         bpm: currentBPM,
         confidence,

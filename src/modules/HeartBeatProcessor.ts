@@ -9,7 +9,7 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
   private readonly DEFAULT_MIN_CONFIDENCE = 0.55; // Más permisivo para estabilizar detección
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 380; // levemente más rápido para latidos reales
   private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
 
   // Parámetros de filtrado MÁS CONSERVADORES
@@ -39,8 +39,8 @@ export class HeartBeatProcessor {
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
   private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.45; // Más permisivo para estabilizar señales reales
   private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
+  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.05; // algo más permisivo
+  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.006; // algo más permisivo
 
   // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.2; // Evitar sobre-amplificar y generar picos falsos

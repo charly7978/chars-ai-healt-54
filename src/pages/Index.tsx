@@ -384,7 +384,8 @@ const Index = () => {
       });
     }
     
-    const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
+    // Unificar fuente de BPM: HeartBeatProcessor es autoridad
+    const finalBpm = heartBeatResult.bpm;
     setHeartRate(finalBpm);
     // La onda se actualiza por muestra de cámara en tiempo real, no desde análisis decimado
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
