@@ -1,0 +1,151 @@
+#!/bin/bash
+
+# Pre-commit hook para prevenir conflictos de merge
+# Integrado con el sistema anti-simulación existente
+
+echo "🛡️ VERIFICANDO CÓDIGO MÉDICO - SIN SIMULACIONES PERMITIDAS"
+echo "🛡️ VERIFICANDO CONFLICTOS DE MERGE - SIN CONFLICTOS PERMITIDOS"
+
+# Verificar si hay archivos staged
+staged_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|js|jsx)$')
+
+if [ -z "$staged_files" ]; then
+    echo "✅ No hay archivos de código para verificar"
+    exit 0
+fi
+
+echo "📋 Archivos a verificar:"
+echo "$staged_files"
+
+# Flag para tracking de violaciones críticas
+critical_violations=0
+merge_conflicts=0
+total_files=0
+
+echo "🔍 EJECUTANDO VALIDACIÓN ANTI-SIMULACIÓN Y ANTI-CONFLICTOS..."
+
+# Verificar cada archivo staged
+while IFS= read -r file; do
+    if [ -f "$file" ]; then
+        total_files=$((total_files + 1))
+        echo "   Verificando: $file"
+        
+        # VERIFICACIÓN ANTI-CONFLICTOS DE MERGE
+        if grep -n "^<<<<<<<" "$file" > /dev/null || \
+           grep -n "^=======" "$file" > /dev/null || \
+           grep -n "^>>>>>>>" "$file" > /dev/null; then
+            echo "❌ CRÍTICO: Conflictos de merge detectados en $file"
+            grep -n "^<<<<<<<\|^=======\|^>>>>>>>" "$file"
+            merge_conflicts=$((merge_conflicts + 1))
+            critical_violations=$((critical_violations + 1))
+        fi
+        
+        # VERIFICACIÓN ANTI-SIMULACIÓN (mantener tu sistema existente)
+        if grep -n "Math\.random()" "$file" > /dev/null; then
+            echo "❌ CRÍTICO: Math.random() detectado en $file"
+            grep -n "Math\.random()" "$file"
+            critical_violations=$((critical_violations + 1))
+        fi
+        
+        # Verificar keywords de simulación
+        simulation_patterns=("fake" "mock" "dummy" "simulate")
+        for pattern in "${simulation_patterns[@]}"; do
+            if grep -ni "$pattern" "$file" | grep -v "// REAL DATA\|// NO SIMULATION" > /dev/null; then
+                echo "❌ CRÍTICO: Keyword de simulación '$pattern' detectado en $file"
+                grep -ni "$pattern" "$file" | grep -v "// REAL DATA\|// NO SIMULATION"
+                critical_violations=$((critical_violations + 1))
+            fi
+        done
+        
+        # Verificar valores hardcodeados sospechosos
+        if grep -n "bpm\s*[=:]\s*[0-9]" "$file" > /dev/null; then
+            echo "⚠️  ADVERTENCIA: Posible BPM hardcodeado en $file"
+            grep -n "bpm\s*[=:]\s*[0-9]" "$file"
+        fi
+        
+        if grep -n "spo2\?\s*[=:]\s*[0-9]" "$file" > /dev/null; then
+            echo "⚠️  ADVERTENCIA: Posible SpO2 hardcodeado en $file"
+            grep -n "spo2\?\s*[=:]\s*[0-9]" "$file"
+        fi
+        
+        # Verificar rangos fisiológicos
+        bpm_values=$(grep -o "bpm\s*[=:]\s*[0-9]\+" "$file" | grep -o "[0-9]\+" || true)
+        for bpm in $bpm_values; do
+            if [ "$bpm" -lt 30 ] || [ "$bpm" -gt 200 ]; then
+                echo "❌ CRÍTICO: BPM no fisiológico ($bpm) en $file"
+                critical_violations=$((critical_violations + 1))
+            fi
+        done
+        
+        spo2_values=$(grep -o "spo2\?\s*[=:]\s*[0-9]\+" "$file" | grep -o "[0-9]\+" || true)
+        for spo2 in $spo2_values; do
+            if [ "$spo2" -lt 70 ] || [ "$spo2" -gt 100 ]; then
+                echo "❌ CRÍTICO: SpO2 no fisiológico ($spo2) en $file"
+                critical_violations=$((critical_violations + 1))
+            fi
+        done
+    fi
+done <<< "$staged_files"
+
+# Verificar archivos de configuración críticos
+config_files=("src/security/" "src/modules/vital-signs/" "src/modules/signal-processing/")
+for config_dir in "${config_files[@]}"; do
+    if [ -d "$config_dir" ]; then
+        echo "🔒 Verificando directorio crítico: $config_dir"
+        if find "$config_dir" -name "*.ts" -o -name "*.tsx" | xargs grep -l "Math\.random\|fake\|mock\|dummy" > /dev/null 2>&1; then
+            echo "❌ CRÍTICO: Simulación detectada en directorio médico crítico $config_dir"
+            critical_violations=$((critical_violations + 1))
+        fi
+    fi
+done
+
+# Generar reporte final
+echo ""
+echo "📊 REPORTE DE VALIDACIÓN MÉDICA Y ANTI-CONFLICTOS"
+echo "=================================================="
+echo "Archivos verificados: $total_files"
+echo "Conflictos de merge: $merge_conflicts"
+echo "Violaciones críticas totales: $critical_violations"
+
+if [ $critical_violations -gt 0 ]; then
+    echo ""
+    echo "🚨 COMMIT RECHAZADO - VIOLACIONES CRÍTICAS DETECTADAS"
+    echo ""
+    echo "RAZONES DEL RECHAZO:"
+    if [ $merge_conflicts -gt 0 ]; then
+        echo "- Se detectaron $merge_conflicts conflictos de merge"
+    fi
+    echo "- Se detectaron $critical_violations violaciones críticas totales"
+    echo "- Uso de Math.random() en código médico"
+    echo "- Keywords de simulación en funciones críticas"
+    echo "- Valores no fisiológicos hardcodeados"
+    echo ""
+    echo "ACCIONES REQUERIDAS:"
+    if [ $merge_conflicts -gt 0 ]; then
+        echo "1. Resolver conflictos de merge: ejecuta 'merge-guardian.bat fix'"
+    fi
+    echo "2. Reemplazar Math.random() con crypto.getRandomValues()"
+    echo "3. Eliminar keywords de simulación (fake, mock, dummy, simulate)"
+    echo "4. Validar rangos fisiológicos (BPM: 30-200, SpO2: 70-100)"
+    echo "5. Asegurar que todos los datos provienen de sensores reales"
+    echo ""
+    echo "💡 AYUDA:"
+    if [ $merge_conflicts -gt 0 ]; then
+        echo "- Para conflictos de merge: merge-guardian.bat fix"
+    fi
+    echo "- Use simulationEradicator.generateCryptographicRandom() en lugar de Math.random()"
+    echo "- Implemente validación biofísica estricta"
+    echo "- Consulte la documentación médica en /docs/medical-validation.md"
+    echo ""
+    echo "❌ COMMIT BLOQUEADO - CORRIJA LAS VIOLACIONES ANTES DE CONTINUAR"
+    exit 1
+fi
+
+echo "✅ VALIDACIÓN MÉDICA Y ANTI-CONFLICTOS EXITOSA"
+echo "   - Sin simulaciones detectadas"
+echo "   - Sin conflictos de merge detectados"
+echo "   - Todos los valores en rangos fisiológicos"
+echo "   - Código apto para producción médica"
+echo ""
+echo "🏥 COMMIT APROBADO PARA APLICACIÓN MÉDICA"
+exit 0
