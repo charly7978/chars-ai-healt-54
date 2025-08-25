@@ -30,6 +30,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const captureStartedRef = useRef<boolean>(false);
 
   useEffect(() => {
     let mounted = true;
@@ -171,7 +172,8 @@ const CameraView: React.FC<CameraViewProps> = ({
             onStreamReady?.(stream);
             
             // INICIAR CAPTURA INMEDIATAMENTE
-            if (isMonitoring) {
+            if (isMonitoring && !captureStartedRef.current) {
+              captureStartedRef.current = true;
               startFrameCapture();
             }
           } else {
@@ -360,6 +362,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     // CLEANUP EFFECT
     return () => {
       mounted = false;
+      captureStartedRef.current = false;
       
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current);
