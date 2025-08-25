@@ -200,6 +200,11 @@ const Index = () => {
     
     // Solo entrar en pantalla completa si el usuario lo permite
     // enterFullScreen();
+
+    // Deshabilitar audio del latido para evitar beeps en dispositivos inestables
+    try {
+      (window as any).__hbAudioEnabled__ = false;
+    } catch {}
     setIsMonitoring(true);
     setIsCameraOn(true);
     setShowResults(false);

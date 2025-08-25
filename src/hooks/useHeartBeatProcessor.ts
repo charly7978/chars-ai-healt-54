@@ -40,6 +40,13 @@ export const useHeartBeatProcessor = () => {
     console.log(`💓 CREANDO PROCESADOR CARDÍACO UNIFICADO - ${sessionIdRef.current}`);
     
     processorRef.current = new HeartBeatProcessor();
+    // Configurar flag de audio opcional desde window
+    try {
+      const audioFlag = (window as any).__hbAudioEnabled__;
+      if (typeof audioFlag === 'boolean') {
+        (processorRef.current as any).audioEnabled = audioFlag;
+      }
+    } catch {}
     processingStateRef.current = 'ACTIVE';
     
     return () => {

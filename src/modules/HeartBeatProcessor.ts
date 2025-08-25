@@ -94,6 +94,7 @@ export class HeartBeatProcessor {
   private currentSignalQuality: number = 0;
 
   private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
+  private audioEnabled: boolean = false; // Desactivar audio/vibración para estabilidad
 
   constructor() {
     // Inicializar parámetros adaptativos con valores médicamente apropiados
@@ -146,20 +147,17 @@ export class HeartBeatProcessor {
   }
 
   private async playHeartSound(volume: number = this.BEEP_VOLUME, playArrhythmiaTone: boolean) {
-    if (!this.audioContext || this.isInWarmup()) {
+    if (!this.audioEnabled || !this.audioContext || this.isInWarmup()) {
       return;
     }
 
     const now = Date.now();
     if (now - this.lastBeepTime < this.MIN_BEEP_INTERVAL_MS) {
-      console.log("HeartBeatProcessor: Ignorando beep - demasiado cerca del anterior", now - this.lastBeepTime);
       return;
     }
 
     try {
-      if (navigator.vibrate) {
-        navigator.vibrate(this.VIBRATION_PATTERN);
-      }
+      // Vibración deshabilitada para estabilidad
 
       const currentTime = this.audioContext.currentTime;
 
@@ -220,7 +218,7 @@ export class HeartBeatProcessor {
       }
       const interval = now - this.lastBeepTime;
       this.lastBeepTime = now;
-      console.log(`HeartBeatProcessor: Latido reproducido. Intervalo: ${interval} ms, BPM estimado: ${Math.round(this.getSmoothBPM())}`);
+      // Log deshabilitado para evitar jank en dispositivos
     } catch (error) {
       console.error("HeartBeatProcessor: Error playing heart sound", error);
     }
