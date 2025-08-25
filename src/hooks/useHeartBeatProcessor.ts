@@ -55,7 +55,7 @@ export const useHeartBeatProcessor = () => {
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number, ctx?: { quality?: number; snr?: number }): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
-        bpm: 0,
+        bpm: Number.NaN,
         confidence: 0,
         isPeak: false,
         arrhythmiaCount: 0,
