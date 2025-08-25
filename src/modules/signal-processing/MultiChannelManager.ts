@@ -201,16 +201,6 @@ export default class MultiChannelManager {
           this.lastGlobalToggle = now2;
         }
       }
-    } else if (preCondition) {
-      // Pre-detección: cobertura y estabilidad suficientes, aún sin consenso/BPM
-      this.fingerStableCount++;
-      this.fingerUnstableCount = 0;
-      if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 3) {
-        if (!this.fingerState) {
-          console.log('✅ DEDO PRESENTE (PRE-DETECCIÓN) - cobertura y estabilidad OK');
-        }
-        this.fingerState = true;
-      }
     } else {
       this.fingerUnstableCount++;
       

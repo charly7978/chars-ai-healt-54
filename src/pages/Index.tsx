@@ -55,16 +55,20 @@ const Index = () => {
   // Agregar contador de muestras local para debug
   const debugSampleCountRef = useRef(0);
   
-  // Wrapper para debug
+  // Wrapper para debug y alimentación de onda en tiempo real (alta tasa)
   const handleCameraSample = (sample: CameraSample) => {
     debugSampleCountRef.current++;
-    if (debugSampleCountRef.current % 30 === 0) {
+    if (debugSampleCountRef.current % 600 === 0) {
       console.log('📱 Index - Recibiendo muestra:', {
         count: debugSampleCountRef.current,
         rMean: sample.rMean.toFixed(1),
         isMonitoring
       });
     }
+    // Alimentar onda del monitor con señal fusionada (R y crominancia) a alta tasa
+    const chroma = sample.rMean - 0.5 * sample.gMean;
+    const fused = Math.max(0, Math.min(255, 0.8 * sample.rMean + 0.2 * chroma));
+    setHeartbeatSignal(fused);
     handleSample(sample);
   };
   
@@ -323,7 +327,7 @@ const Index = () => {
     setSignalQuality(lastResult.fingerDetected ? (bestChannel?.quality || 0) : 0);
     
     // Log para debug
-    if (debugSampleCountRef.current % 30 === 0) {
+    if (debugSampleCountRef.current % 600 === 0) {
       console.log('🔄 Index useEffect - Estado:', {
         hasLastResult: !!lastResult,
         isMonitoring,
@@ -369,7 +373,7 @@ const Index = () => {
     }
     
     // Log para debug del procesamiento
-    if (debugSampleCountRef.current % 30 === 0) {
+    if (debugSampleCountRef.current % 600 === 0) {
       console.log('💓 Procesando heartbeat:', {
         signalValue: bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1]?.toFixed(3),
         signalLength: bestChannel.calibratedSignal.length,
@@ -382,7 +386,11 @@ const Index = () => {
     
     const finalBpm = lastResult.aggregatedBPM || heartBeatResult.bpm;
     setHeartRate(finalBpm);
+<<<<<<< Current (Your changes)
     setHeartbeatSignal(signalValue);
+=======
+    // La onda se actualiza por muestra de cámara en tiempo real, no desde análisis decimado
+>>>>>>> Incoming (Background Agent changes)
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
