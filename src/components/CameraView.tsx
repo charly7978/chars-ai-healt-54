@@ -202,14 +202,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         try {
           const sample = captureOptimizedFrame();
           if (sample && onSample) {
-            // Log cada 30 frames para debug
-            if (rafRef.current && rafRef.current % 30 === 0) {
-              console.log('📸 CameraView - Muestra capturada:', {
-                rMean: sample.rMean.toFixed(1),
-                coverageRatio: (sample.coverageRatio * 100).toFixed(1) + '%',
-                timestamp: new Date(sample.timestamp).toLocaleTimeString()
-              });
-            }
             onSample(sample);
           }
         } catch (captureError) {
@@ -246,8 +238,9 @@ const CameraView: React.FC<CameraViewProps> = ({
       // ROI CENTRADA Y OPTIMIZADA
       const centerX = video.videoWidth / 2;
       const centerY = video.videoHeight / 2;
-      const roiW = Math.min(roiSize, video.videoWidth * 0.3);
-      const roiH = Math.min(roiSize, video.videoHeight * 0.3);
+      // ROI más pequeña para reducir carga de CPU
+      const roiW = Math.min(roiSize, video.videoWidth * 0.2);
+      const roiH = Math.min(roiSize, video.videoHeight * 0.2);
       const sx = centerX - roiW / 2;
       const sy = centerY - roiH / 2;
 

@@ -275,34 +275,28 @@ export default class PPGChannel {
   // Helper methods OPTIMIZADOS
   private resampleUniform(samples: Sample[], N: number) {
     if (samples.length === 0) return [];
-    
     const t0 = samples[0].t;
     const t1 = samples[samples.length - 1].t;
     const T = Math.max(0.001, t1 - t0);
-    const output: number[] = [];
+    const output: number[] = new Array(N);
     
+    // Recorrido lineal O(N) en el buffer de muestras
+    let j = 0;
     for (let i = 0; i < N; i++) {
       const targetTime = t0 + (i / (N - 1)) * T;
-      let j = 0;
-      
-      // Búsqueda binaria para mayor eficiencia
       while (j < samples.length - 1 && samples[j + 1].t < targetTime) {
         j++;
       }
-      
       const s0 = samples[j];
       const s1 = samples[Math.min(samples.length - 1, j + 1)];
-      
       if (s1.t === s0.t) {
-        output.push(s0.v);
+        output[i] = s0.v;
       } else {
-        // Interpolación cúbica para mejor suavidad
         const alpha = (targetTime - s0.t) / (s1.t - s0.t);
-        const smoothAlpha = alpha * alpha * (3 - 2 * alpha); // Hermite interpolation
-        output.push(s0.v * (1 - smoothAlpha) + s1.v * smoothAlpha);
+        const smoothAlpha = alpha * alpha * (3 - 2 * alpha);
+        output[i] = s0.v * (1 - smoothAlpha) + s1.v * smoothAlpha;
       }
     }
-    
     return output;
   }
 

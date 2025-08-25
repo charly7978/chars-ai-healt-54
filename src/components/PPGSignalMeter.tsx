@@ -52,19 +52,19 @@ const PPGSignalMeter = ({
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const WINDOW_WIDTH_MS = 3500;
-  const CANVAS_WIDTH = 1000;
-  const CANVAS_HEIGHT = 1900;
+  const CANVAS_WIDTH = 1200; // Mantener alta resolución horizontal pero optimizada
+  const CANVAS_HEIGHT = 900; // Reducir altura para disminuir operaciones de dibujo
   const GRID_SIZE_X = 22;
   const GRID_SIZE_Y = 10;
   const verticalScale = 225.0;
   const SMOOTHING_FACTOR = 1.5;
-  const TARGET_FPS = 60;
+  const TARGET_FPS = 30; // Reducir FPS para aliviar el render en main thread
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
   const PEAK_DETECTION_WINDOW = 8;
   const PEAK_THRESHOLD = 2;
   const MIN_PEAK_DISTANCE_MS = 300;
-  const IMMEDIATE_RENDERING = true;
+  const IMMEDIATE_RENDERING = false; // Honrar FRAME_TIME para evitar overdraw
   const MAX_PEAKS_TO_DISPLAY = 25;
 
   useEffect(() => {
@@ -272,8 +272,8 @@ const PPGSignalMeter = ({
     
     if (points.length > 1) {
       ctx.beginPath();
-      ctx.strokeStyle = '#10b981'; // emerald-500 - verde brillante para onda cardíaca sobre azul
-      ctx.lineWidth = 3; // Más gruesa para mejor visibilidad
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2; // Reducir ancho para menos overdraw
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
@@ -312,33 +312,24 @@ const PPGSignalMeter = ({
       
       ctx.stroke();
       
+      // Dibujar picos con estilo ligero
       peaksRef.current.forEach(peak => {
         const x = canvas.width - ((now - peak.time) * canvas.width / WINDOW_WIDTH_MS);
         const y = canvas.height / 2 - peak.value;
         
         if (x >= 0 && x <= canvas.width) {
           ctx.beginPath();
-          ctx.arc(x, y, 5, 0, Math.PI * 2);
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
           ctx.fillStyle = peak.isArrhythmia ? '#DC2626' : '#0EA5E9';
           ctx.fill();
           
           if (peak.isArrhythmia) {
             ctx.beginPath();
-            ctx.arc(x, y, 10, 0, Math.PI * 2);
+            ctx.arc(x, y, 8, 0, Math.PI * 2);
             ctx.strokeStyle = '#FEF7CD';
-            ctx.lineWidth = 3;
+            ctx.lineWidth = 2;
             ctx.stroke();
-            
-            ctx.font = 'bold 18px Inter'; 
-            ctx.fillStyle = '#F97316';
-            ctx.textAlign = 'center';
-            ctx.fillText('ARRITMIA', x, y - 25);
           }
-          
-          ctx.font = 'bold 16px Inter'; 
-          ctx.fillStyle = '#000000';
-          ctx.textAlign = 'center';
-          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 15);
         }
       });
     }

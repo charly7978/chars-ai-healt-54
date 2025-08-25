@@ -13,6 +13,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const [lastResult, setLastResult] = useState<MultiChannelResult | null>(null);
   const sampleCountRef = useRef(0);
   const lastEnvRef = useRef<{ fingerConfidence: number; exposureState: CameraSample['exposureState'] } | null>(null);
+  const lastAnalyzeTimeRef = useRef<number>(0);
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
@@ -38,8 +39,8 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     const fused = 0.8 * s.rMean + 0.2 * chroma; // más peso a R para estabilidad
     const inputSignal = Math.max(0, Math.min(255, fused));
     
-    // Log detallado cada 150 muestras para debug (reducido de 30)
-    if (sampleCountRef.current % 150 === 0) {
+    // Log detallado MUY ocasional para debug
+    if (sampleCountRef.current % 600 === 0) {
       console.log('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
         timestamp: new Date(s.timestamp).toLocaleTimeString(),
         inputSignal: inputSignal.toFixed(1),
@@ -75,27 +76,32 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     let motion = s.frameDiff + (s.brightnessStd > 8 ? 6 : 0);
     if (exposure === 'moving') motion += 8;
     const adjustedMotion = motion;
-    const result = mgrRef.current!.analyzeAll(adjustedCoverage, adjustedMotion);
-    
-    // Log resultado cada 150 muestras o cuando hay detección (reducido de 50)
-    if (result.fingerDetected || sampleCountRef.current % 150 === 0) {
-      const activeChannels = result.channels.filter(c => c.isFingerDetected).length;
-      const bestChannel = result.channels.reduce((best, current) => 
-        current.quality > best.quality ? current : best, result.channels[0]);
+    // Decimar análisis pesado a ~12 Hz para evitar bloquear el hilo principal
+    const now = performance.now();
+    let result: MultiChannelResult | null = null;
+    if (now - lastAnalyzeTimeRef.current >= 80 || !lastResult) {
+      result = mgrRef.current!.analyzeAll(adjustedCoverage, adjustedMotion);
+      lastAnalyzeTimeRef.current = now;
       
-      console.log('🔍 useSignalProcessor - Resultado:', {
-        fingerDetected: result.fingerDetected,
-        aggregatedBPM: result.aggregatedBPM,
-        aggregatedQuality: result.aggregatedQuality,
-        activeChannels: `${activeChannels}/${result.channels.length}`,
-        bestChannelId: bestChannel.channelId,
-        bestChannelQuality: bestChannel.quality.toFixed(1),
-        bestChannelSNR: bestChannel.snr.toFixed(2),
-        bestChannelBPM: bestChannel.bpm || 'null'
-      });
+      // Log resultado muy ocasional o cuando hay detección
+      if (result.fingerDetected || sampleCountRef.current % 600 === 0) {
+        const activeChannels = result.channels.filter(c => c.isFingerDetected).length;
+        const bestChannel = result.channels.reduce((best, current) => 
+          current.quality > best.quality ? current : best, result.channels[0]);
+        
+        console.log('🔍 useSignalProcessor - Resultado:', {
+          fingerDetected: result.fingerDetected,
+          aggregatedBPM: result.aggregatedBPM,
+          aggregatedQuality: result.aggregatedQuality,
+          activeChannels: `${activeChannels}/${result.channels.length}`,
+          bestChannelId: bestChannel.channelId,
+          bestChannelQuality: bestChannel.quality.toFixed(1),
+          bestChannelSNR: bestChannel.snr.toFixed(2),
+          bestChannelBPM: bestChannel.bpm || 'null'
+        });
+      }
+      setLastResult(result);
     }
-    
-    setLastResult(result);
   };
 
   const adjustChannelGain = (channelId: number, deltaRel: number) => {
