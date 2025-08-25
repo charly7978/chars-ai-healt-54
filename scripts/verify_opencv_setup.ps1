@@ -54,7 +54,7 @@ Write-Host "`n[4/6] Checking app/build.gradle..." -ForegroundColor Yellow
 $appBuildGradle = Join-Path $appDir "build.gradle"
 if (Test-Path $appBuildGradle) {
     $buildContent = Get-Content $appBuildGradle -Raw
-    if ($buildContent -match "implementation project\\(['\"]:opencv['\"]\)") {
+    if ($buildContent -match "implementation project\(['""]:opencv['""]\)") {
         Write-Host "✓ OpenCV dependency found in app/build.gradle" -ForegroundColor Green
     } else {
         Write-Host "✗ OpenCV dependency not found in app/build.gradle" -ForegroundColor Red
