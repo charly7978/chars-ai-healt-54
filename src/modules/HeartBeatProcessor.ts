@@ -94,7 +94,7 @@ export class HeartBeatProcessor {
   private currentSignalQuality: number = 0;
 
   private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
-  private audioEnabled: boolean = false; // Desactivar audio/vibración para estabilidad
+  private audioEnabled: boolean = true; // ✅ ACTIVAR AUDIO/VIBRACIÓN PARA LATIDOS REALES
 
   constructor() {
     // Inicializar parámetros adaptativos con valores médicamente apropiados
@@ -157,7 +157,10 @@ export class HeartBeatProcessor {
     }
 
     try {
-      // Vibración deshabilitada para estabilidad
+      // ✅ VIBRACIÓN ACTIVADA PARA FEEDBACK TÁCTIL DE LATIDOS REALES
+      if (navigator.vibrate) {
+        navigator.vibrate(this.VIBRATION_PATTERN);
+      }
 
       const currentTime = this.audioContext.currentTime;
 

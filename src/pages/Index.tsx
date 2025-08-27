@@ -55,20 +55,16 @@ const Index = () => {
   // Agregar contador de muestras local para debug
   const debugSampleCountRef = useRef(0);
   
-  // Wrapper para debug y alimentación de onda en tiempo real (alta tasa)
+  // ✅ DEBUG COUNTER REDUCIDO - MENOS LOGS INNECESARIOS
   const handleCameraSample = (sample: CameraSample) => {
     debugSampleCountRef.current++;
-    if (debugSampleCountRef.current % 600 === 0) {
-      console.log('📱 Index - Recibiendo muestra:', {
-        count: debugSampleCountRef.current,
-        rMean: sample.rMean.toFixed(1),
-        isMonitoring
-      });
-    }
-    // Alimentar onda del monitor con señal fusionada (R y crominancia) a alta tasa
+    
+    // ✅ ALIMENTAR ONDA DEL MONITOR CON SEÑAL PPG REAL
     const chroma = sample.rMean - 0.5 * sample.gMean;
     const fused = Math.max(0, Math.min(255, 0.8 * sample.rMean + 0.2 * chroma));
     setHeartbeatSignal(fused);
+    
+    // ✅ PROCESAR UNA SOLA VEZ - SIN DUPLICACIONES  
     handleSample(sample);
   };
   
@@ -186,25 +182,24 @@ const Index = () => {
 
   const startMonitoring = () => {
     if (systemState.current !== 'IDLE') {
+      console.log('⚠️ PREVINIENDO INICIO MÚLTIPLE - Estado actual:', systemState.current);
       return;
     }
     
-    // Reset completo de pipelines para un nuevo ciclo limpio
+    console.log('🚀 INICIANDO MONITOREO ÚNICO - Sistema limpio');
+    
+    // ✅ RESET COMPLETO PARA EVITAR ARRASTRE DE PROCESOS ANTERIORES
     fullResetVitalSigns();
     resetHeartBeat();
-    // Reiniciar también el procesador multicanal
     resetSignalProcessor();
-    // Esto limpia detecciones previas que podrían sesgar
     
     systemState.current = 'STARTING';
     
-    // Solo entrar en pantalla completa si el usuario lo permite
-    // enterFullScreen();
-
-    // Deshabilitar audio del latido para evitar beeps en dispositivos inestables
+    // ✅ HABILITAR AUDIO Y VIBRACIÓN PARA LATIDOS REALES
     try {
-      (window as any).__hbAudioEnabled__ = false;
+      (window as any).__hbAudioEnabled__ = true;
     } catch {}
+    
     setIsMonitoring(true);
     setIsCameraOn(true);
     setShowResults(false);
@@ -215,13 +210,12 @@ const Index = () => {
     setIsCalibrating(true);
     startCalibration();
     
-    // Cambiar estado a CALIBRATING
     systemState.current = 'CALIBRATING';
     
     setTimeout(() => {
       if (systemState.current === 'CALIBRATING') {
         systemState.current = 'ACTIVE';
-        console.log('✅ Sistema cambiado a ACTIVE después de calibración');
+        console.log('✅ Sistema ACTIVO - Procesamiento de latidos reales habilitado');
       }
       setIsCalibrating(false);
     }, 2000);
@@ -331,35 +325,16 @@ const Index = () => {
       : undefined;
     setSignalQuality(lastResult.fingerDetected ? (bestChannel?.quality || 0) : 0);
     
-    // Log para debug
-    if (debugSampleCountRef.current % 600 === 0) {
-      console.log('🔄 Index useEffect - Estado:', {
-        hasLastResult: !!lastResult,
-        isMonitoring,
-        systemState: systemState.current,
-        bestChannelId: bestChannel?.channelId,
-        bestChannelDetected: bestChannel?.isFingerDetected,
-        bestChannelQuality: bestChannel?.quality,
-        signalLength: bestChannel?.calibratedSignal?.length
-      });
-    }
-    
+    // ✅ SOLO PROCESAR SI ESTAMOS EN ESTADO ACTIVO DE MONITOREO
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 20; // Reducido de 25 a 20
+    const MIN_SIGNAL_QUALITY = 20;
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
-      // Log cuando no detecta para debug
-      if (debugSampleCountRef.current % 30 === 0) {
-        console.log('⚠️ No procesando señal:', {
-          isFingerDetected: bestChannel?.isFingerDetected,
-          quality: bestChannel?.quality,
-          minRequired: MIN_SIGNAL_QUALITY
-        });
-      }
       return;
     }
 
+    // ✅ PROCESAMIENTO ÚNICO DE LATIDOS REALES - SIN DUPLICACIONES
     const signalValue = bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0;
     const heartBeatResult = processHeartBeat(
       signalValue,
@@ -367,6 +342,7 @@ const Index = () => {
       lastResult.timestamp,
       { quality: bestChannel.quality, snr: bestChannel.snr }
     );
+    
     if (heartBeatResult?.debug) {
       setLastHeartbeatDebug({
         bandRatio: heartBeatResult.debug.bandRatio,
@@ -377,29 +353,17 @@ const Index = () => {
       });
     }
     
-    // Log para debug del procesamiento
-    if (debugSampleCountRef.current % 600 === 0) {
-      console.log('💓 Procesando heartbeat:', {
-        signalValue: bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1]?.toFixed(3),
-        signalLength: bestChannel.calibratedSignal.length,
-        isFingerDetected: bestChannel.isFingerDetected,
-        timestamp: new Date(lastResult.timestamp).toLocaleTimeString(),
-        resultBPM: heartBeatResult.bpm,
-        isPeak: heartBeatResult.isPeak
-      });
-    }
-    
-    // Unificar fuente de BPM: HeartBeatProcessor es autoridad
+    // ✅ UNIFICAR FUENTE DE BPM: HeartBeatProcessor es autoridad
     const finalBpm = heartBeatResult.bpm;
     setHeartRate(finalBpm);
-    // La onda se actualiza por muestra de cámara en tiempo real, no desde análisis decimado
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    const vitals = processVitalSigns(bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0, heartBeatResult.rrData);
+    // ✅ PROCESAMIENTO ÚNICO DE SIGNOS VITALES
+    const vitals = processVitalSigns(signalValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
       
@@ -424,7 +388,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastResult, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastResult, isMonitoring]); // ✅ DEPENDENCIAS REDUCIDAS PARA EVITAR DUPLICACIONES
 
   useEffect(() => {
     if (!isCalibrating) return;
