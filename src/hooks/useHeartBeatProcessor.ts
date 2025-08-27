@@ -12,6 +12,13 @@ interface HeartBeatResult {
     intervals: number[];
     lastPeakTime: number | null;
   };
+  debug?: {
+    gatedFinger: boolean;
+    gatedQuality: boolean;
+    gatedSnr: boolean;
+    spectralOk: boolean;
+    bandRatio: number;
+  };
 }
 
 /**
@@ -40,12 +47,10 @@ export const useHeartBeatProcessor = () => {
     console.log(`💓 CREANDO PROCESADOR CARDÍACO UNIFICADO - ${sessionIdRef.current}`);
     
     processorRef.current = new HeartBeatProcessor();
-    // Configurar flag de audio opcional desde window
+    // ✅ FORZAR ACTIVACIÓN DE AUDIO PARA LATIDOS REALES
     try {
-      const audioFlag = (window as any).__hbAudioEnabled__;
-      if (typeof audioFlag === 'boolean') {
-        (processorRef.current as any).audioEnabled = audioFlag;
-      }
+      (processorRef.current as any).audioEnabled = true;
+      (window as any).__hbAudioEnabled__ = true;
     } catch {}
     processingStateRef.current = 'ACTIVE';
     
