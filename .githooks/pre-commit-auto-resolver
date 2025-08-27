@@ -1,0 +1,69 @@
+#!/bin/bash
+
+# 🚀 PRE-COMMIT AUTO-RESOLVER HOOK
+# Se ejecuta automáticamente antes de cada commit
+# Resuelve conflictos de merge y simulaciones sin intervención manual
+
+echo "🛡️ PRE-COMMIT AUTO-RESOLVER ACTIVADO"
+echo "🔧 Verificando y resolviendo problemas automáticamente..."
+
+# Verificar si estamos en Windows
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" ]]; then
+    # Windows - usar script batch
+    if [ -f "scripts/auto-commit-resolver.bat" ]; then
+        echo "🪟 Windows detectado - ejecutando script batch..."
+        cmd //c "scripts\\auto-commit-resolver.bat"
+        RESOLVER_EXIT_CODE=$?
+    else
+        echo "❌ Script de resolución no encontrado en scripts/auto-commit-resolver.bat"
+        exit 1
+    fi
+else
+    # Linux/Mac - usar script de PowerShell si está disponible
+    if command -v pwsh >/dev/null 2>&1; then
+        echo "🐧 Linux/Mac con PowerShell Core - ejecutando script..."
+        pwsh -ExecutionPolicy Bypass -File "scripts/auto-commit-resolver.ps1" auto-fix
+        RESOLVER_EXIT_CODE=$?
+    elif command -v powershell >/dev/null 2>&1; then
+        echo "🐧 Linux/Mac con PowerShell - ejecutando script..."
+        powershell -ExecutionPolicy Bypass -File "scripts/auto-commit-resolver.ps1" auto-fix
+        RESOLVER_EXIT_CODE=$?
+    else
+        echo "❌ PowerShell no disponible en este sistema"
+        echo "💡 Instala PowerShell Core o usa Windows"
+        exit 1
+    fi
+fi
+
+# Verificar resultado del resolver
+if [ $RESOLVER_EXIT_CODE -eq 0 ]; then
+    echo "✅ AUTO-RESOLVER COMPLETADO EXITOSAMENTE"
+    echo "🎯 Continuando con commit..."
+    
+    # Ejecutar el hook anti-simulación original
+    if [ -f ".githooks/pre-commit" ]; then
+        echo "🔍 Ejecutando validación anti-simulación..."
+        .githooks/pre-commit
+        ANTI_SIMULATION_EXIT_CODE=$?
+        
+        if [ $ANTI_SIMULATION_EXIT_CODE -eq 0 ]; then
+            echo "✅ VALIDACIÓN ANTI-SIMULACIÓN EXITOSA"
+            echo "🏥 COMMIT APROBADO PARA APLICACIÓN MÉDICA"
+            exit 0
+        else
+            echo "❌ VALIDACIÓN ANTI-SIMULACIÓN FALLÓ"
+            echo "🔧 El auto-resolver no pudo resolver todos los problemas"
+            echo "💡 Ejecuta manualmente: scripts/auto-commit-resolver.bat"
+            exit 1
+        fi
+    else
+        echo "⚠️ Hook anti-simulación no encontrado - continuando..."
+        exit 0
+    fi
+else
+    echo "❌ AUTO-RESOLVER FALLÓ"
+    echo "🔧 Revisa los errores y ejecuta manualmente:"
+    echo "   Windows: scripts/auto-commit-resolver.bat"
+    echo "   Linux/Mac: pwsh scripts/auto-commit-resolver.ps1 auto-fix"
+    exit 1
+fi

@@ -342,10 +342,21 @@ const PPGSignalMeter = ({
   useEffect(() => {
     renderSignal();
     
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = undefined;
+      } else if (!animationFrameRef.current) {
+        renderSignal();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [renderSignal]);
 

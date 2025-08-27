@@ -94,7 +94,7 @@ export class HeartBeatProcessor {
   private currentSignalQuality: number = 0;
 
   private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
-  private audioEnabled: boolean = false; // Desactivar audio/vibración para estabilidad
+  private audioEnabled: boolean = true; // Audio/vibración habilitados por defecto
 
   constructor() {
     // Inicializar parámetros adaptativos con valores médicamente apropiados
