@@ -14,8 +14,7 @@ export interface Peak {
 export class ImprovedPeakDetector {
   private readonly minHeartRate = 40; // BPM mínimo
   private readonly maxHeartRate = 200; // BPM máximo
-  private readonly adaptiveThreshold = 0.4; // Factor adaptativo más sensible
-  private peakHistory: number[] = []; // Historia para mejorar detección
+  private readonly adaptiveThreshold = 0.6; // Factor adaptativo
   
   /**
    * Detecta picos en una señal PPG usando algoritmo adaptativo
@@ -77,52 +76,41 @@ export class ImprovedPeakDetector {
     const minDistance = Math.floor(fs * 60 / this.maxHeartRate); // Distancia mínima entre picos
     
     // Umbral adaptativo basado en estadísticas locales
-    const windowSize = Math.floor(fs * 1.5); // Ventana de 1.5 segundos
+    const windowSize = Math.floor(fs * 2); // Ventana de 2 segundos
     let lastPeakIdx = -minDistance;
     
-    // Primera pasada: encontrar todos los máximos locales
-    const localMaxima: number[] = [];
-    for (let i = 2; i < signal.length - 2; i++) {
-      // Máximo local con ventana de 5 puntos
-      if (signal[i] > signal[i-2] && signal[i] > signal[i-1] && 
-          signal[i] > signal[i+1] && signal[i] > signal[i+2]) {
-        localMaxima.push(i);
-      }
-    }
-    
-    // Segunda pasada: filtrar por umbral adaptativo
-    for (const i of localMaxima) {
+    for (let i = 1; i < signal.length - 1; i++) {
+      // Condición de pico: máximo local y derivada cruza cero
       if (i - lastPeakIdx < minDistance) continue;
       
-      // Calcular estadísticas locales
-      const start = Math.max(0, i - windowSize/2);
-      const end = Math.min(signal.length, i + windowSize/2);
-      const localSegment = signal.slice(start, end);
+      const isLocalMax = signal[i] > signal[i-1] && signal[i] > signal[i+1];
+      const derivativeCrossing = derivative[i-1] > 0 && derivative[i+1] <= 0;
       
-      // Usar percentiles para robustez
-      const sorted = [...localSegment].sort((a, b) => a - b);
-      const p25 = sorted[Math.floor(sorted.length * 0.25)];
-      const p75 = sorted[Math.floor(sorted.length * 0.75)];
-      const iqr = p75 - p25;
-      
-      // Umbral basado en IQR (más robusto que desviación estándar)
-      const threshold = p75 + this.adaptiveThreshold * iqr;
-      
-      // Calcular prominencia mejorada
-      const prominence = this.calculateProminence(signal, i, windowSize/4);
-      
-      // Verificar derivada para confirmar pico
-      const derivOk = derivative[i-1] > -0.1 && derivative[i+1] < 0.1;
-      
-      if (signal[i] > threshold && prominence > 0.05 && derivOk) {
-        candidates.push({
-          index: i,
-          value: signal[i],
-          timeMs: (i / fs) * 1000,
-          prominence,
-          isValid: true
-        });
-        lastPeakIdx = i;
+      if (isLocalMax || derivativeCrossing) {
+        // Calcular prominencia del pico
+        const prominence = this.calculateProminence(signal, i, windowSize);
+        
+        // Umbral adaptativo basado en ventana local
+        const start = Math.max(0, i - windowSize);
+        const end = Math.min(signal.length, i + windowSize);
+        const localSegment = signal.slice(start, end);
+        const localMean = localSegment.reduce((a, b) => a + b, 0) / localSegment.length;
+        const localStd = Math.sqrt(
+          localSegment.reduce((a, b) => a + (b - localMean) ** 2, 0) / localSegment.length
+        );
+        
+        const threshold = localMean + this.adaptiveThreshold * localStd;
+        
+        if (signal[i] > threshold && prominence > 0.1) {
+          candidates.push({
+            index: i,
+            value: signal[i],
+            timeMs: (i / fs) * 1000,
+            prominence,
+            isValid: true
+          });
+          lastPeakIdx = i;
+        }
       }
     }
     

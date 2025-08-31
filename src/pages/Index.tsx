@@ -59,9 +59,10 @@ const Index = () => {
   const handleCameraSample = (sample: CameraSample) => {
     debugSampleCountRef.current++;
     
-    // ✅ ALIMENTAR ONDA DEL MONITOR CON SEÑAL PPG PROCESADA
-    const ppgValue = sample.rMean - 0.7 * sample.gMean;
-    setHeartbeatSignal(Math.max(0, Math.min(255, 128 + ppgValue)));
+    // ✅ ALIMENTAR ONDA DEL MONITOR CON SEÑAL PPG REAL
+    const chroma = sample.rMean - 0.5 * sample.gMean;
+    const fused = Math.max(0, Math.min(255, 0.8 * sample.rMean + 0.2 * chroma));
+    setHeartbeatSignal(fused);
     
     // ✅ PROCESAR UNA SOLA VEZ - SIN DUPLICACIONES  
     handleSample(sample);
