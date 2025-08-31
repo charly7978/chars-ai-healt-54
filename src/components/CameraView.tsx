@@ -35,6 +35,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   useEffect(() => {
     let mounted = true;
 
+
     const startCam = async () => {
       try {
         console.log('🎥 INICIANDO SISTEMA CÁMARA COMPLETO...');
