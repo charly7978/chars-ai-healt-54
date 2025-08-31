@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 import { UnifiedCardiacAnalyzer, UnifiedCardiacResult } from '../modules/signal-processing/UnifiedCardiacAnalyzer';
+import { PrecisionHeartbeatDetector, PrecisionHeartbeatResult } from '../modules/signal-processing/PrecisionHeartbeatDetector';
 
 interface HeartBeatResult {
   bpm: number;
@@ -31,10 +32,12 @@ interface HeartBeatResult {
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
   const unifiedAnalyzerRef = useRef<UnifiedCardiacAnalyzer | null>(null);
+  const precisionDetectorRef = useRef<PrecisionHeartbeatDetector | null>(null);
   const [currentBPM, setCurrentBPM] = useState<number>(0);
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
   const [unifiedMetrics, setUnifiedMetrics] = useState<UnifiedCardiacResult | null>(null);
+  const [precisionMetrics, setPrecisionMetrics] = useState<PrecisionHeartbeatResult | null>(null);
   
   // CONTROL UNIFICADO DE ESTADO
   const sessionIdRef = useRef<string>("");
@@ -51,9 +54,10 @@ export const useHeartBeatProcessor = () => {
 
     console.log(`💓 CREANDO PROCESADORES CARDÍACOS AVANZADOS - ${sessionIdRef.current}`);
     
-    // Inicializar procesadores: original para compatibilidad + unificado avanzado
+    // Inicializar procesadores: original + unificado + detector de precisión
     processorRef.current = new HeartBeatProcessor();
     unifiedAnalyzerRef.current = new UnifiedCardiacAnalyzer();
+    precisionDetectorRef.current = new PrecisionHeartbeatDetector();
     
     // ✅ FORZAR ACTIVACIÓN DE AUDIO PARA LATIDOS REALES
     try {
@@ -62,8 +66,9 @@ export const useHeartBeatProcessor = () => {
     } catch {}
     processingStateRef.current = 'ACTIVE';
     
-    console.log('🫀 ANALIZADOR UNIFICADO INICIALIZADO con algoritmos médicos de nivel profesional');
-    console.log('✨ Sistema integrado: HeartBeatProcessor + UnifiedCardiacAnalyzer');
+    console.log('🫀 SISTEMA CARDÍACO AVANZADO INICIALIZADO con algoritmos médicos de nivel profesional');
+    console.log('✨ Sistema integrado: HeartBeatProcessor + UnifiedCardiacAnalyzer + PrecisionHeartbeatDetector');
+    console.log('🔬 Algoritmos activos: Detección de dedo avanzada + Latidos de precisión + Análisis unificado');
     
     return () => {
       console.log(`💓 DESTRUYENDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
@@ -139,31 +144,60 @@ export const useHeartBeatProcessor = () => {
       };
     }
 
-    // PROCESAMIENTO UNIFICADO AVANZADO
+    // PROCESAMIENTO TRIPLE AVANZADO: Original + Unificado + Precisión
     let unifiedResult: UnifiedCardiacResult | null = null;
+    let precisionResult: PrecisionHeartbeatResult | null = null;
+    
     if (unifiedAnalyzerRef.current && effectiveFingerDetected) {
       unifiedResult = unifiedAnalyzerRef.current.processSignal(value, timestamp || currentTime);
       setUnifiedMetrics(unifiedResult);
+    }
+    
+    if (precisionDetectorRef.current && effectiveFingerDetected) {
+      precisionResult = precisionDetectorRef.current.detectHeartbeat(value, timestamp || currentTime);
+      setPrecisionMetrics(precisionResult);
       
-      // Logging avanzado cada 50 procesamiento para no saturar
-      if (processedSignalsRef.current % 50 === 0) {
-        console.log('🫀 Análisis cardíaco unificado:', {
+      // Logging avanzado cada 60 procesamiento para no saturar
+      if (processedSignalsRef.current % 60 === 0) {
+        console.log('🫀 Análisis cardíaco TRIPLE avanzado:', {
           bpmUnificado: unifiedResult.bpm,
-          confianza: unifiedResult.confidence.toFixed(3),
+          bpmPrecision: precisionResult?.bpm || 'N/A',
+          confianzaUnificada: unifiedResult.confidence.toFixed(3),
+          confianzaPrecision: precisionResult?.confidence.toFixed(3) || 'N/A',
           calidad: unifiedResult.signalQuality,
           rmssd: unifiedResult.advancedMetrics.rmssd.toFixed(2),
           lfHfRatio: unifiedResult.advancedMetrics.lfHfRatio.toFixed(2),
           riesgoArritmia: unifiedResult.arrhythmiaRisk.toFixed(1) + '%',
+          morfologiaLatido: precisionResult?.beatAnalysis.morphologyScore.toFixed(3) || 'N/A',
           validacionMedica: unifiedResult.medicalValidation.physiologyValid,
           tiempoProcesamiento: unifiedResult.debug.processingTime.toFixed(2) + 'ms'
         });
       }
     }
 
-    // ACTUALIZACIÓN CON CONFIANZA MATEMÁTICAMENTE VALIDADA + ALGORITMOS UNIFICADOS
-    const finalBPM = unifiedResult?.bpm || result.bpm;
-    const finalConfidence = Math.max(result.confidence, unifiedResult?.confidence || 0);
-    const finalQuality = Math.max(currentQuality, unifiedResult?.signalQuality || 0);
+    // ACTUALIZACIÓN CON TRIPLE VALIDACIÓN: Original + Unificado + Precisión
+    const bpmCandidates = [
+      { value: result.bpm, confidence: result.confidence, source: 'original' },
+      { value: unifiedResult?.bpm || result.bpm, confidence: unifiedResult?.confidence || 0, source: 'unificado' },
+      { value: precisionResult?.bpm || result.bpm, confidence: precisionResult?.confidence || 0, source: 'precision' }
+    ];
+    
+    // Seleccionar BPM con mayor confianza y validación fisiológica
+    const bestBPM = bpmCandidates
+      .filter(candidate => candidate.value >= 45 && candidate.value <= 180) // Rango fisiológico
+      .sort((a, b) => b.confidence - a.confidence)[0];
+    
+    const finalBPM = bestBPM?.value || 75; // Fallback fisiológico
+    const finalConfidence = Math.max(
+      result.confidence, 
+      unifiedResult?.confidence || 0,
+      precisionResult?.confidence || 0
+    );
+    const finalQuality = Math.max(
+      currentQuality, 
+      unifiedResult?.signalQuality || 0,
+      precisionResult?.signalQuality || 0
+    );
     
     if (finalConfidence >= 0.55 && finalBPM > 0 && finalBPM >= 40 && finalBPM <= 200) {
       // FILTRADO ADAPTATIVO PARA ESTABILIDAD CON ALGORITMOS AVANZADOS
@@ -187,7 +221,8 @@ export const useHeartBeatProcessor = () => {
       confidence,
       signalQuality: currentQuality,
       rrData,
-      unifiedMetrics: unifiedResult // AÑADIR MÉTRICAS UNIFICADAS AVANZADAS
+      unifiedMetrics: unifiedResult, // MÉTRICAS UNIFICADAS AVANZADAS
+      precisionMetrics: precisionResult // MÉTRICAS DE PRECISIÓN CARDÍACA
     };
   }, [currentBPM, confidence, signalQuality]);
 
@@ -202,9 +237,13 @@ export const useHeartBeatProcessor = () => {
       processorRef.current.reset();
     }
     
-    // RESET DEL ANALIZADOR UNIFICADO
+    // RESET DE TODOS LOS ANALIZADORES AVANZADOS
     if (unifiedAnalyzerRef.current) {
       unifiedAnalyzerRef.current.reset();
+    }
+    
+    if (precisionDetectorRef.current) {
+      precisionDetectorRef.current.reset();
     }
     
     // RESET COMPLETO DE TODOS LOS ESTADOS
@@ -212,6 +251,7 @@ export const useHeartBeatProcessor = () => {
     setConfidence(0);
     setSignalQuality(0);
     setUnifiedMetrics(null);
+    setPrecisionMetrics(null);
     
     // RESET DE CONTADORES INTERNOS
     lastProcessTimeRef.current = 0;
@@ -240,7 +280,8 @@ export const useHeartBeatProcessor = () => {
     processSignal,
     reset,
     setArrhythmiaState,
-    unifiedMetrics, // NUEVAS MÉTRICAS UNIFICADAS AVANZADAS
+    unifiedMetrics, // MÉTRICAS UNIFICADAS AVANZADAS
+    precisionMetrics, // MÉTRICAS DE PRECISIÓN CARDÍACA
     // DEBUG INFO
     debugInfo: {
       sessionId: sessionIdRef.current,

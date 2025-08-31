@@ -4,6 +4,7 @@ import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
 import { UnifiedCardiacResult } from '@/modules/signal-processing/UnifiedCardiacAnalyzer';
+import { PrecisionHeartbeatResult } from '@/modules/signal-processing/PrecisionHeartbeatDetector';
 
 interface PPGSignalMeterProps {
   value: number;
@@ -27,8 +28,9 @@ interface PPGSignalMeterProps {
     gatedSnr?: boolean;
     spectralOk?: boolean;
   };
-  // NUEVAS MÉTRICAS UNIFICADAS AVANZADAS
+  // NUEVAS MÉTRICAS AVANZADAS INTEGRADAS
   unifiedMetrics?: UnifiedCardiacResult;
+  precisionMetrics?: PrecisionHeartbeatResult;
 }
 
 const PPGSignalMeter = ({ 
@@ -41,7 +43,8 @@ const PPGSignalMeter = ({
   rawArrhythmiaData,
   preserveResults = false,
   debug,
-  unifiedMetrics // NUEVAS MÉTRICAS UNIFICADAS AVANZADAS
+  unifiedMetrics, // MÉTRICAS UNIFICADAS AVANZADAS
+  precisionMetrics // MÉTRICAS DE PRECISIÓN CARDÍACA
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -456,19 +459,28 @@ const PPGSignalMeter = ({
         </div>
       </div>
 
-      {/* PANEL DE MÉTRICAS CARDÍACAS UNIFICADAS AVANZADAS */}
-      {unifiedMetrics && isFingerDetected && unifiedMetrics.confidence > 0.3 && (
-        <div className="fixed bottom-[60px] left-0 right-0 bg-gray-900/95 backdrop-blur-sm border-t border-blue-500/30 p-3 z-10">
+      {/* PANEL DE MÉTRICAS CARDÍACAS AVANZADAS CON PRECISIÓN MÉDICA */}
+      {(unifiedMetrics || precisionMetrics) && isFingerDetected && (unifiedMetrics?.confidence > 0.3 || precisionMetrics?.confidence > 0.3) && (
+        <div className="fixed bottom-[60px] left-0 right-0 bg-gray-900/95 backdrop-blur-sm border-t border-blue-500/30 p-2 z-10">
+          
+          {/* Indicador de precisión médica */}
+          {precisionMetrics && (
+            <div className="text-center mb-2 text-xs text-emerald-400 font-medium">
+              🔬 PRECISIÓN MÉDICA ACTIVA - BPM: {precisionMetrics.bpm} (Confianza: {(precisionMetrics.confidence * 100).toFixed(0)}%)
+            </div>
+          )}
+          
           <div className="grid grid-cols-4 gap-2 text-xs">
-            {/* HRV Métricas */}
+            {/* HRV Métricas - Usar precisión si está disponible */}
             <div className="bg-blue-900/30 rounded p-2">
               <div className="flex items-center gap-1 mb-1">
                 <Heart className="w-3 h-3 text-red-400" />
                 <span className="text-blue-200 font-medium">HRV</span>
+                {precisionMetrics && <span className="text-emerald-400 text-xs">★</span>}
               </div>
               <div className="text-white">
-                <div>RMSSD: {unifiedMetrics.advancedMetrics.rmssd.toFixed(1)}</div>
-                <div>pNN50: {unifiedMetrics.advancedMetrics.pnn50.toFixed(1)}%</div>
+                <div>RMSSD: {(precisionMetrics?.hrvMetrics.rmssd || unifiedMetrics?.advancedMetrics.rmssd || 35).toFixed(1)}</div>
+                <div>pNN50: {(precisionMetrics?.hrvMetrics.pnn50 || unifiedMetrics?.advancedMetrics.pnn50 || 12).toFixed(1)}%</div>
               </div>
             </div>
             

@@ -43,6 +43,7 @@ const Index = () => {
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
+  const processedSignalsRef = useRef<number>(0); // Contador para logging inteligente
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
@@ -72,7 +73,8 @@ const Index = () => {
     processSignal: processHeartBeat, 
     setArrhythmiaState,
     reset: resetHeartBeat,
-    unifiedMetrics // NUEVAS MÉTRICAS UNIFICADAS AVANZADAS
+    unifiedMetrics, // MÉTRICAS UNIFICADAS AVANZADAS
+    precisionMetrics // MÉTRICAS DE PRECISIÓN CARDÍACA
   } = useHeartBeatProcessor();
   
   const { 
@@ -354,8 +356,21 @@ const Index = () => {
       });
     }
     
-    // ✅ UNIFICAR FUENTE DE BPM: HeartBeatProcessor es autoridad
-    setHeartRate(heartBeatResult.bpm);
+    // ✅ UNIFICAR FUENTE DE BPM: Usar el más preciso disponible
+    const finalBPM = precisionMetrics?.bpm || heartBeatResult.bpm;
+    setHeartRate(finalBPM);
+    
+    // Incrementar contador y logging de selección de BPM cada 100 procesamiento
+    processedSignalsRef.current++;
+    if (processedSignalsRef.current % 100 === 0) {
+      console.log('🫀 Selección de BPM:', {
+        bpmOriginal: heartBeatResult.bpm,
+        bpmPrecision: precisionMetrics?.bpm || 'N/A',
+        bpmSeleccionado: finalBPM,
+        confianzaPrecision: precisionMetrics?.confidence.toFixed(3) || 'N/A',
+        morfologiaScore: precisionMetrics?.beatAnalysis.morphologyScore.toFixed(3) || 'N/A'
+      });
+    }
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
@@ -604,7 +619,8 @@ const Index = () => {
                 gatedSnr: lastHeartbeatDebug?.gatedSnr,
                 spectralOk: lastHeartbeatDebug?.spectralOk
               }}
-              unifiedMetrics={unifiedMetrics} // PASAR MÉTRICAS UNIFICADAS AVANZADAS
+              unifiedMetrics={unifiedMetrics} // MÉTRICAS UNIFICADAS AVANZADAS
+              precisionMetrics={precisionMetrics} // MÉTRICAS DE PRECISIÓN CARDÍACA
             />
           </div>
 

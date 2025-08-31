@@ -10,9 +10,11 @@
 
 import PPGChannel from './PPGChannel';
 import { ChannelResult, MultiChannelResult } from '@/types';
+import { AdvancedFingerDetector } from './AdvancedFingerDetector';
 
 export default class MultiChannelManager {
   private channels: PPGChannel[] = [];
+  private advancedFingerDetector: AdvancedFingerDetector;
   private n: number;
   private windowSec: number;
   private lastTimestamp = Date.now();
@@ -38,6 +40,7 @@ export default class MultiChannelManager {
   constructor(n = 6, windowSec = 8) {
     this.n = n;
     this.windowSec = windowSec;
+    this.advancedFingerDetector = new AdvancedFingerDetector();
     
     console.log('🏭 MultiChannelManager INICIALIZADO:', {
       channels: n,
