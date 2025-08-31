@@ -12,9 +12,12 @@ echo "🚀 EJECUTANDO AUTOCORRECCIÓN DEFINITIVA AUTOMÁTICA..."
 
 # Detectar el sistema operativo
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
-    # Windows - usar script batch
-    if [ -f "scripts/auto-fix-commit.bat" ]; then
-        echo "🔧 Ejecutando autocorrección para Windows..."
+    # Windows - usar script PowerShell (más robusto)
+    if [ -f "scripts/auto-fix-commit.ps1" ]; then
+        echo "🔧 Ejecutando autocorrección para Windows (PowerShell)..."
+        powershell -ExecutionPolicy Bypass -File scripts/auto-fix-commit.ps1
+    elif [ -f "scripts/auto-fix-commit.bat" ]; then
+        echo "🔧 Ejecutando autocorrección para Windows (Batch)..."
         cmd //c scripts\\auto-fix-commit.bat
     fi
 else
