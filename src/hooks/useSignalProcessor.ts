@@ -92,15 +92,10 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     const now = performance.now();
     let result: MultiChannelResult | null = null;
     if (now - lastAnalyzeTimeRef.current >= analyzeIntervalMsRef.current || !lastResult) {
-<<<<<<< Current (Your changes)
-      if (!mgrRef.current) return;
-      result = mgrRef.current.analyzeAll(adjustedCoverage, adjustedMotion);
-=======
       // Usar las últimas métricas conocidas si están disponibles
       const coverage = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
       const motion = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
       result = mgrRef.current!.analyzeAll(coverage, motion);
->>>>>>> Incoming (Background Agent changes)
       lastAnalyzeTimeRef.current = now;
       
       // Log resultado muy ocasional o cuando hay detección
