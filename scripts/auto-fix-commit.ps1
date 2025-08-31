@@ -77,10 +77,10 @@ if ($duplicateVars) {
 # 3. VALIDAR SINTAXIS TYPESCRIPT
 Write-Host "🔍 Validando sintaxis TypeScript..." -ForegroundColor Yellow
 if (Test-Path "node_modules\.bin\tsc.cmd") {
-    try {
-        & node_modules\.bin\tsc.cmd --noEmit --skipLibCheck 2>$null
+    $tscResult = & node_modules\.bin\tsc.cmd --noEmit --skipLibCheck 2>&1
+    if ($LASTEXITCODE -eq 0) {
         Write-Host "✅ Sintaxis TypeScript válida" -ForegroundColor Green
-    } catch {
+    } else {
         Write-Host "⚠️  Errores de TypeScript detectados, intentando corrección automática..." -ForegroundColor Yellow
     }
 }
@@ -92,10 +92,10 @@ Get-ChildItem -Path "." -Include "*.tmp", "*~" -Recurse | Remove-Item -Force
 # 5. VERIFICAR FORMATO
 Write-Host "🎨 Verificando formato de código..." -ForegroundColor Yellow
 if (Test-Path "node_modules\.bin\prettier.cmd") {
-    try {
-        & node_modules\.bin\prettier.cmd --check src/ 2>$null
+    $prettierResult = & node_modules\.bin\prettier.cmd --check src/ 2>&1
+    if ($LASTEXITCODE -eq 0) {
         Write-Host "✅ Formato de código correcto" -ForegroundColor Green
-    } catch {
+    } else {
         Write-Host "🔧 Aplicando formato automático..." -ForegroundColor Yellow
         & node_modules\.bin\prettier.cmd --write src/
         git add src/
