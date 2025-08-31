@@ -20,7 +20,7 @@ export class SpO2Processor {
    */
   public calculateSpO2(values: number[]): number {
     // VALIDACIÓN ESTRICTA - SOLO PROCESAMIENTO REAL
-    if (values.length < 40) return 98; // Valor fisiológico por defecto
+    if (values.length < 40) return 0;
     
     // FILTRADO MATEMÁTICO AVANZADO - Eliminación de artefactos
     const filteredValues = this.applySavitzkyGolayFilter(values);
@@ -29,7 +29,7 @@ export class SpO2Processor {
     const dc = this.calculateAdvancedDC(filteredValues);
     const ac = this.calculateAdvancedAC(filteredValues);
     
-    if (dc <= 0 || ac <= 0) return 98; // Valor fisiológico por defecto
+    if (dc <= 0 || ac <= 0) return 0;
     
     // ÍNDICE DE PERFUSIÓN REAL basado en modelo hemodinámico
     const perfusionIndex = this.calculateHemodynamicPerfusion(ac, dc);
@@ -47,8 +47,8 @@ export class SpO2Processor {
     // CONVERSIÓN A SPO2 usando algoritmo de Lambert-Beer extendido
     let spo2 = this.convertRatioToSpO2(rawRatio, perfusionIndex);
     
-    // GARANTIZAR VALORES FISIOLÓGICOS SIEMPRE
-    spo2 = Math.max(85, spo2); // Mínimo fisiológico
+    // GARANTIZAR VALORES >= 0 SIEMPRE
+    spo2 = Math.max(0, spo2);
     
     // FILTRADO TEMPORAL ADAPTATIVO
     spo2 = this.applyTemporalFiltering(spo2);
@@ -207,7 +207,7 @@ export class SpO2Processor {
    * Filtrado temporal adaptativo
    */
   private applyTemporalFiltering(newSpO2: number): number {
-    if (newSpO2 <= 0) return 85; // Mínimo fisiológico
+    if (newSpO2 <= 0) return 0;
     
     this.spo2Buffer.push(newSpO2);
     if (this.spo2Buffer.length > this.BUFFER_SIZE) {
@@ -229,7 +229,7 @@ export class SpO2Processor {
     this.spo2Buffer = [];
     this.calibrationSamples = [];
     this.calibrationComplete = false;
-    this.baselineDC = 128; // Baseline fisiológico típico
+    this.baselineDC = 0;
     console.log("🔄 SpO2Processor: Reset matemático completo");
   }
 }

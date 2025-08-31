@@ -8,20 +8,20 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
-import { CameraSample } from "@/types";
 
 const Index = () => {
+  // ESTADO ÚNICO Y DEFINITIVO - CERO DUPLICIDADES
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(true);
+  const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
-    spo2: 98, // Valor fisiológico por defecto
-    glucose: 95, // Valor fisiológico por defecto
-    hemoglobin: 15, // Valor fisiológico por defecto (corregido)
-    pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos
+    spo2: 0,
+    glucose: 0,
+    hemoglobin: 0,
+    pressure: { systolic: 0, diastolic: 0 },
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
-    lipids: { totalCholesterol: 180, triglycerides: 120 }, // Valores fisiológicos
+    lipids: { totalCholesterol: 0, triglycerides: 0 },
     isCalibrating: false,
     calibrationProgress: 0,
     lastArrhythmiaData: undefined
@@ -34,47 +34,35 @@ const Index = () => {
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
-  const [lastHeartbeatDebug, setLastHeartbeatDebug] = useState<{ bandRatio?: number; gatedFinger?: boolean; gatedQuality?: boolean; gatedSnr?: boolean; spectralOk?: boolean } | null>(null);
   
+  // REFERENCIAS ÚNICAS - CONTROL ABSOLUTO DE INSTANCIAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   
+  // CONTROL ÚNICO DE ESTADO - EVITA INICIALIZACIONES PARALELAS ABSOLUTAMENTE
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
-  const processedSignalsRef = useRef<number>(0); // Contador para logging inteligente
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
+  // HOOKS ÚNICOS - UNA SOLA INSTANCIA GARANTIZADA
   const { 
-    handleSample,
-    lastResult,
-    reset: resetSignalProcessor
+    startProcessing, 
+    stopProcessing, 
+    lastSignal, 
+    processFrame, 
+    isProcessing, 
+    framesProcessed,
+    debugInfo: signalDebugInfo
   } = useSignalProcessor();
-  
-  // Agregar contador de muestras local para debug
-  const debugSampleCountRef = useRef(0);
-  
-  // ✅ DEBUG COUNTER REDUCIDO - MENOS LOGS INNECESARIOS
-  const handleCameraSample = (sample: CameraSample) => {
-    debugSampleCountRef.current++;
-    
-    // ✅ ALIMENTAR ONDA DEL MONITOR CON SEÑAL PPG REAL
-    const chroma = sample.rMean - 0.5 * sample.gMean;
-    const fused = Math.max(0, Math.min(255, 0.8 * sample.rMean + 0.2 * chroma));
-    setHeartbeatSignal(fused);
-    
-    // ✅ PROCESAR UNA SOLA VEZ - SIN DUPLICACIONES  
-    handleSample(sample);
-  };
   
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState,
     reset: resetHeartBeat,
-    unifiedMetrics, // MÉTRICAS UNIFICADAS AVANZADAS
-    precisionMetrics // MÉTRICAS DE PRECISIÓN CARDÍACA
+    debugInfo: heartDebugInfo
   } = useHeartBeatProcessor();
   
   const { 
@@ -87,6 +75,7 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
+  // INICIALIZACIÓN ÚNICA CON BLOQUEO ABSOLUTO
   useEffect(() => {
     if (initializationLock.current) return;
     
@@ -95,54 +84,58 @@ const Index = () => {
     crypto.getRandomValues(randomBytes);
     sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
     
+    console.log(`🚀 INICIALIZACIÓN ÚNICA GARANTIZADA: ${sessionIdRef.current}`);
+    console.log(`📊 Debug Info - Signal: ${JSON.stringify(signalDebugInfo)}, Heart: ${JSON.stringify(heartDebugInfo)}`);
+    
     return () => {
+      console.log(`🚀 DESTRUCCIÓN CONTROLADA: ${sessionIdRef.current}`);
       initializationLock.current = false;
     };
   }, []);
 
+  // PANTALLA COMPLETA ÚNICA
   const enterFullScreen = async () => {
-    const elem = document.documentElement;
+    if (isFullscreen) return;
     
     try {
-      if (elem.requestFullscreen) {
-        await elem.requestFullscreen();
-      } else if ((elem as any).webkitRequestFullscreen) {
-        await (elem as any).webkitRequestFullscreen();
-      } else if ((elem as any).mozRequestFullScreen) {
-        await (elem as any).mozRequestFullScreen();
-      } else if ((elem as any).msRequestFullscreen) {
-        await (elem as any).msRequestFullscreen();
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        await docEl.requestFullscreen();
+      } else if ((docEl as any).webkitRequestFullscreen) {
+        await (docEl as any).webkitRequestFullscreen();
       }
       
-      // Mantener orientación vertical (portrait) en móviles
-      if ('orientation' in screen && (screen.orientation as any).lock) {
-        try {
-          await (screen.orientation as any).lock('portrait-primary');
-        } catch (e) {
-          // Ignorar si no es soportado
-          console.log('Orientación vertical no pudo ser forzada');
-        }
+      if (screen.orientation?.lock) {
+        await screen.orientation.lock('portrait').catch(() => {});
       }
       
       setIsFullscreen(true);
+      console.log(`📱 Pantalla completa activada ÚNICA - ${sessionIdRef.current}`);
     } catch (err) {
-      console.warn('No se pudo entrar en pantalla completa:', err);
+      console.log('Error pantalla completa:', err);
     }
   };
   
   const exitFullScreen = () => {
     if (!isFullscreen) return;
+    
     try {
       if (document.exitFullscreen) {
         document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
       }
+      
+      screen.orientation?.unlock();
       setIsFullscreen(false);
-    } catch (err) {}
+    } catch (err) {
+      console.log('Error saliendo de pantalla completa:', err);
+    }
   };
 
+  // INICIALIZACIÓN AUTOMÁTICA ÚNICA
   useEffect(() => {
-    // No entrar automáticamente en pantalla completa
-    // const timer = setTimeout(() => enterFullScreen(), 1000);
+    const timer = setTimeout(() => enterFullScreen(), 1000);
     
     const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(
@@ -155,14 +148,14 @@ const Index = () => {
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     
     return () => {
-      // clearTimeout(timer);
+      clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      // No salir automáticamente de pantalla completa al desmontar
-      // exitFullScreen();
+      exitFullScreen();
     };
   }, []);
 
+  // PREVENIR SCROLL
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
     const options = { passive: false };
@@ -176,53 +169,48 @@ const Index = () => {
     };
   }, []);
 
+  // SINCRONIZACIÓN ÚNICA DE RESULTADOS
   useEffect(() => {
     if (lastValidResults && !isMonitoring) {
       setVitalSigns(lastValidResults);
       setShowResults(true);
+      console.log(`✅ Resultados ÚNICOS sincronizados - ${sessionIdRef.current}`, lastValidResults);
     }
   }, [lastValidResults, isMonitoring]);
 
+  // FUNCIÓN ÚNICA DE INICIO - BLOQUEO TOTAL DE DUPLICIDADES
   const startMonitoring = () => {
+    // BLOQUEO ABSOLUTO DE MÚLTIPLES INICIALIZACIONES
     if (systemState.current !== 'IDLE') {
-      console.log('⚠️ PREVINIENDO INICIO MÚLTIPLE - Estado actual:', systemState.current);
+      console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current} - ${sessionIdRef.current}`);
       return;
     }
     
-    console.log('🚀 INICIANDO MONITOREO ÚNICO - Sistema limpio');
-    
-    // ✅ RESET COMPLETO PARA EVITAR ARRASTRE DE PROCESOS ANTERIORES
-    fullResetVitalSigns();
-    resetHeartBeat();
-    resetSignalProcessor();
-    
     systemState.current = 'STARTING';
+    console.log(`🎬 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
-    // ✅ HABILITAR AUDIO Y VIBRACIÓN PARA LATIDOS REALES
-    try {
-      (window as any).__hbAudioEnabled__ = true;
-    } catch {}
+    // UN SOLO BEEP - NUNCA MÁS
+    if (navigator.vibrate) {
+      navigator.vibrate([200]);
+    }
     
+    enterFullScreen();
     setIsMonitoring(true);
     setIsCameraOn(true);
     setShowResults(false);
     
+    // PROCESAMIENTO ÚNICO
+    startProcessing();
+    
+    // RESET ÚNICO
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    setIsCalibrating(true);
-    startCalibration();
+    // CALIBRACIÓN ÚNICA
+    console.log(`🔧 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
+    startAutoCalibration();
     
-    systemState.current = 'CALIBRATING';
-    
-    setTimeout(() => {
-      if (systemState.current === 'CALIBRATING') {
-        systemState.current = 'ACTIVE';
-        console.log('✅ Sistema ACTIVO - Procesamiento de latidos reales habilitado');
-      }
-      setIsCalibrating(false);
-    }, 2000);
-    
+    // TEMPORIZADOR ÚNICO
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
     }
@@ -237,12 +225,36 @@ const Index = () => {
         return newTime;
       });
     }, 1000);
+    
+    systemState.current = 'ACTIVE';
+    console.log(`✅ SISTEMA ÚNICO ACTIVO - ${sessionIdRef.current}`);
   };
 
+  // CALIBRACIÓN ÚNICA
+  const startAutoCalibration = () => {
+    if (isCalibrating || systemState.current === 'CALIBRATING') return;
+    
+    systemState.current = 'CALIBRATING';
+    console.log(`🎯 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
+    setIsCalibrating(true);
+    startCalibration();
+    
+    // Volver a ACTIVE después de calibración
+    setTimeout(() => {
+      if (systemState.current === 'CALIBRATING') {
+        systemState.current = 'ACTIVE';
+      }
+    }, 3000);
+  };
+
+  // FINALIZACIÓN ÚNICA
   const finalizeMeasurement = () => {
-    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') return;
+    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') {
+      return;
+    }
     
     systemState.current = 'STOPPING';
+    console.log(`🏁 FINALIZACIÓN ÚNICA - ${sessionIdRef.current}`);
     
     if (isCalibrating) {
       forceCalibrationCompletion();
@@ -251,9 +263,7 @@ const Index = () => {
     setIsMonitoring(false);
     setIsCameraOn(false);
     setIsCalibrating(false);
-    setSignalQuality(0);
-    setBeatMarker(0);
-    setHeartbeatSignal(0);
+    stopProcessing();
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -267,25 +277,22 @@ const Index = () => {
     }
     
     setElapsedTime(0);
+    setSignalQuality(0);
     setCalibrationProgress(0);
     
-    // Reset de pipelines para preparar próximo ciclo sin arrastre
-    resetHeartBeat();
-    resetSignalProcessor();
-    
     systemState.current = 'IDLE';
+    console.log(`✅ FINALIZACIÓN COMPLETADA - ${sessionIdRef.current}`);
   };
 
   const handleReset = () => {
     systemState.current = 'STOPPING';
+    console.log(`🔄 RESET ÚNICO TOTAL - ${sessionIdRef.current}`);
     
     setIsMonitoring(false);
     setIsCameraOn(false);
     setShowResults(false);
     setIsCalibrating(false);
-    setSignalQuality(0);
-    setBeatMarker(0);
-    setHeartbeatSignal(0);
+    stopProcessing();
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -295,16 +302,19 @@ const Index = () => {
     fullResetVitalSigns();
     resetHeartBeat();
     
+    // RESET TOTAL DE ESTADOS
     setElapsedTime(0);
     setHeartRate(0);
+    setHeartbeatSignal(0);
+    setBeatMarker(0);
     setVitalSigns({ 
-      spo2: 98, // Valor fisiológico de reset
-      glucose: 95, // Valor fisiológico de reset
-      hemoglobin: 15, // Valor fisiológico de reset (corregido)
-      pressure: { systolic: 120, diastolic: 80 }, // Valores fisiológicos
+      spo2: 0,
+      glucose: 0,
+      hemoglobin: 0,
+      pressure: { systolic: 0, diastolic: 0 },
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",
-      lipids: { totalCholesterol: 180, triglycerides: 120 }, // Valores fisiológicos
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
       isCalibrating: false,
       calibrationProgress: 0,
       lastArrhythmiaData: undefined
@@ -316,69 +326,108 @@ const Index = () => {
     arrhythmiaDetectedRef.current = false;
     
     systemState.current = 'IDLE';
+    console.log(`✅ RESET TOTAL COMPLETADO - ${sessionIdRef.current}`);
   };
 
-  useEffect(() => {
-    if (!lastResult) return;
-
-    const bestChannel = lastResult.fingerDetected
-      ? lastResult.channels
-          .filter(ch => ch.isFingerDetected)
-          .sort((a, b) => b.quality - a.quality)[0]
-      : undefined;
-    setSignalQuality(lastResult.fingerDetected ? (bestChannel?.quality || 0) : 0);
-    
-    // ✅ SOLO PROCESAR SI ESTAMOS EN ESTADO ACTIVO DE MONITOREO
+  // MANEJO ÚNICO DEL STREAM
+  const handleStreamReady = (stream: MediaStream) => {
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 20;
+    console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
     
-    if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
+    const videoTrack = stream.getVideoTracks()[0];
+    
+    // LINTERNA ÚNICA
+    if (videoTrack.getCapabilities()?.torch) {
+      videoTrack.applyConstraints({
+        advanced: [{ torch: true }]
+      }).catch(err => console.error("Error linterna:", err));
+    }
+    
+    // PROCESAMIENTO ÚNICO DE FRAMES
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d', {willReadFrequently: true});
+    if (!tempCtx) return;
+    
+    let lastProcessTime = 0;
+    const targetFrameInterval = 1000/30; // 30 FPS EXACTOS
+    
+    const videoElement = document.querySelector('video') as HTMLVideoElement;
+    if (!videoElement) return;
+    
+    const processImage = async () => {
+      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) return;
+      
+      const now = Date.now();
+      const timeSinceLastProcess = now - lastProcessTime;
+      
+      if (timeSinceLastProcess >= targetFrameInterval) {
+        try {
+          if (videoElement.readyState >= 2) {
+            const targetWidth = Math.min(320, videoElement.videoWidth || 320);
+            const targetHeight = Math.min(240, videoElement.videoHeight || 240);
+            
+            tempCanvas.width = targetWidth;
+            tempCanvas.height = targetHeight;
+            
+            tempCtx.drawImage(
+              videoElement, 
+              0, 0, videoElement.videoWidth, videoElement.videoHeight,
+              0, 0, targetWidth, targetHeight
+            );
+            
+            const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
+            processFrame(imageData);
+            
+            lastProcessTime = now;
+          }
+        } catch (error) {
+          console.error("Error procesando frame:", error);
+        }
+      }
+      
+      if (isMonitoring && systemState.current === 'ACTIVE') {
+        requestAnimationFrame(processImage);
+      }
+    };
+
+    processImage();
+  };
+
+  // PROCESAMIENTO ÚNICO DE SEÑALES
+  useEffect(() => {
+    if (!lastSignal) return;
+
+    setSignalQuality(lastSignal.quality);
+    
+    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
+    
+    const MIN_SIGNAL_QUALITY = 35; // Más permisivo
+    
+    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
+      setHeartRate(0);
+      setHeartbeatSignal(0);
+      setBeatMarker(0);
       return;
     }
 
-    // ✅ PROCESAMIENTO ÚNICO DE LATIDOS REALES - SIN DUPLICACIONES
-    const signalValue = bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0;
+    // PROCESAMIENTO ÚNICO DE LATIDOS
     const heartBeatResult = processHeartBeat(
-      signalValue,
-      bestChannel.isFingerDetected, 
-      lastResult.timestamp,
-      { quality: bestChannel.quality, snr: bestChannel.snr }
+      lastSignal.filteredValue, 
+      lastSignal.fingerDetected, 
+      lastSignal.timestamp
     );
     
-    if (heartBeatResult?.debug) {
-      setLastHeartbeatDebug({
-        bandRatio: heartBeatResult.debug.bandRatio,
-        gatedFinger: heartBeatResult.debug.gatedFinger,
-        gatedQuality: heartBeatResult.debug.gatedQuality,
-        gatedSnr: heartBeatResult.debug.gatedSnr,
-        spectralOk: heartBeatResult.debug.spectralOk
-      });
-    }
-    
-    // ✅ UNIFICAR FUENTE DE BPM: Usar el más preciso disponible
-    const finalBPM = precisionMetrics?.bpm || heartBeatResult.bpm;
-    setHeartRate(finalBPM);
-    
-    // Incrementar contador y logging de selección de BPM cada 100 procesamiento
-    processedSignalsRef.current++;
-    if (processedSignalsRef.current % 100 === 0) {
-      console.log('🫀 Selección de BPM:', {
-        bpmOriginal: heartBeatResult.bpm,
-        bpmPrecision: precisionMetrics?.bpm || 'N/A',
-        bpmSeleccionado: finalBPM,
-        confianzaPrecision: precisionMetrics?.confidence.toFixed(3) || 'N/A',
-        morfologiaScore: precisionMetrics?.beatAnalysis.morphologyScore.toFixed(3) || 'N/A'
-      });
-    }
+    setHeartRate(heartBeatResult.bpm);
+    setHeartbeatSignal(lastSignal.filteredValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // ✅ PROCESAMIENTO ÚNICO DE SIGNOS VITALES
-    const vitals = processVitalSigns(signalValue, heartBeatResult.rrData);
+    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES
+    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
       
@@ -403,8 +452,9 @@ const Index = () => {
         }
       }
     }
-  }, [lastResult, isMonitoring]); // ✅ DEPENDENCIAS REDUCIDAS PARA EVITAR DUPLICACIONES
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
+  // CONTROL DE CALIBRACIÓN ÚNICO
   useEffect(() => {
     if (!isCalibrating) return;
     
@@ -415,142 +465,24 @@ const Index = () => {
       if (currentProgress >= 100) {
         clearInterval(interval);
         setIsCalibrating(false);
+        console.log(`✅ Calibración ÚNICA finalizada - ${sessionIdRef.current}`);
+        
+        if (navigator.vibrate) {
+          navigator.vibrate([100]);
+        }
       }
-    }, 100); // Optimizado de 500ms a 100ms para mejor respuesta
+    }, 500);
 
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
+  // TOGGLE ÚNICO
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
       startMonitoring();
     }
-  };
-
-  const SignalQualitySensor = () => {
-    const getQualityColor = () => {
-      if (!lastResult?.fingerDetected) return 'from-gray-500 to-gray-600';
-      if (signalQuality >= 80) return 'from-emerald-400 to-green-500';
-      if (signalQuality >= 60) return 'from-yellow-400 to-amber-500';  
-      if (signalQuality >= 40) return 'from-orange-400 to-red-500';
-      return 'from-red-500 to-red-700';
-    };
-
-    const getQualityText = () => {
-      if (!lastResult?.fingerDetected) return 'Sin detección';
-      if (signalQuality >= 85) return 'Excelente';
-      if (signalQuality >= 65) return 'Buena';
-      if (signalQuality >= 45) return 'Regular';
-      return 'Débil';
-    };
-
-    const getStatusColor = () => {
-      if (!lastResult?.fingerDetected) return 'text-gray-400';
-      if (signalQuality >= 75) return 'text-green-400';
-      if (signalQuality >= 50) return 'text-yellow-400';
-      return 'text-red-400';
-    };
-
-    // Métricas en tiempo real
-    const activeChannels = lastResult?.channels.filter(c => c.isFingerDetected).length || 0;
-    const totalChannels = lastResult?.channels.length || 0;
-    const avgSNR = lastResult?.channels.length ? 
-      (lastResult.channels.reduce((sum, c) => sum + c.snr, 0) / lastResult.channels.length).toFixed(1) : 
-      '0.0';
-    
-    const bestChannel = lastResult?.channels.find(c => c.isFingerDetected && c.quality > 30);
-    const currentBPM = lastResult?.aggregatedBPM || bestChannel?.bpm || '--';
-
-    return (
-      <div className="absolute top-4 right-4 bg-black/85 backdrop-blur-md rounded-xl p-3 border border-white/10 min-w-[140px]">
-        <div className="text-center">
-          <div className="text-white/60 text-xs font-medium mb-2 uppercase tracking-wider">
-            Calidad PPG
-          </div>
-          
-          {/* Indicador circular principal */}
-          <div className="relative w-12 h-12 mx-auto mb-2">
-            <svg className="w-12 h-12 transform -rotate-90" viewBox="0 0 48 48">
-              <circle 
-                cx="24" cy="24" r="20" 
-                fill="none" 
-                stroke="rgba(255,255,255,0.08)" 
-                strokeWidth="3"
-              />
-              <circle 
-                cx="24" cy="24" r="20" 
-                fill="none" 
-                stroke="url(#qualityGradient)" 
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeDasharray={`${(signalQuality / 100) * 125.6} 125.6`}
-                className="transition-all duration-700 ease-out"
-                style={{
-                  filter: lastResult?.fingerDetected ? 
-                    'drop-shadow(0 0 4px currentColor)' : 'none'
-                }}
-              />
-              <defs>
-                <linearGradient id="qualityGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor={
-                    signalQuality >= 80 ? '#10b981' : 
-                    signalQuality >= 60 ? '#f59e0b' : 
-                    signalQuality >= 40 ? '#f97316' : '#ef4444'
-                  } />
-                  <stop offset="100%" stopColor={
-                    signalQuality >= 80 ? '#059669' : 
-                    signalQuality >= 60 ? '#d97706' : 
-                    signalQuality >= 40 ? '#ea580c' : '#dc2626'
-                  } />
-                </linearGradient>
-              </defs>
-            </svg>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <span className={`text-sm font-bold ${getStatusColor()}`}>
-                {signalQuality}%
-              </span>
-            </div>
-          </div>
-          
-          {/* Estado textual */}
-          <div className={`text-xs font-medium mb-2 ${getStatusColor()}`}>
-            {getQualityText()}
-          </div>
-          
-          {/* Métricas detalladas */}
-          <div className="space-y-1 text-xs text-white/50">
-            <div className="flex justify-between">
-              <span>BPM:</span>
-              <span className="text-white/70 font-medium">{heartRate || '--'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Canales:</span>
-              <span className="text-white/70">{activeChannels}/{totalChannels}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>SNR:</span>
-              <span className="text-white/70">{avgSNR}</span>
-            </div>
-          </div>
-          
-          {/* Indicador de estado */}
-          <div className="mt-2 pt-2 border-t border-white/10">
-            <div className="flex items-center justify-center space-x-1">
-              <div className={`w-2 h-2 rounded-full ${
-                lastResult?.fingerDetected ? 
-                'bg-green-400 animate-pulse' : 
-                'bg-gray-500'
-              }`}></div>
-              <span className="text-xs text-white/60">
-                {lastResult?.fingerDetected ? 'Detectado' : 'Buscando...'}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
   };
 
   return (
@@ -563,6 +495,14 @@ const Index = () => {
       paddingTop: 'env(safe-area-inset-top)',
       paddingBottom: 'env(safe-area-inset-bottom)'
     }}>
+      {/* DEBUG ÚNICO */}
+      {rrIntervals.length > 0 && (
+        <div className="absolute top-4 left-4 text-white z-20 bg-black/50 p-2 rounded text-xs">
+          RR: {rrIntervals.map(i => i + 'ms').join(', ')}
+        </div>
+      )}
+
+      {/* OVERLAY PANTALLA COMPLETA */}
       {!isFullscreen && (
         <button 
           onClick={enterFullScreen}
@@ -580,51 +520,50 @@ const Index = () => {
       <div className="flex-1 relative">
         <div className="absolute inset-0">
           <CameraView 
-            onSample={handleCameraSample}
+            onStreamReady={handleStreamReady}
             isMonitoring={isCameraOn}
-            targetFps={30}
-            roiSize={320}
-            enableTorch={true}
-            coverageThresholdPixelBrightness={40}
+            isFingerDetected={lastSignal?.fingerDetected}
+            signalQuality={signalQuality}
           />
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* Sensor de Calidad REAL y Funcional */}
-          <SignalQualitySensor />
-          
-          <div className="flex-1 pt-12">
+          {/* HEADER DE ESTADO ÚNICO */}
+          <div className="px-4 py-2 flex justify-around items-center bg-black/20">
+            <div className="text-white text-lg">
+              Calidad: {signalQuality}
+            </div>
+            <div className="text-white text-lg">
+              {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
+            </div>
+            <div className="text-white text-lg">
+              Estado: {systemState.current}
+            </div>
+          </div>
+
+          {/* PANEL DE DEBUG ÚNICO */}
+          <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
+            <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
+            <div>Frames: {framesProcessed}</div>
+            <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
+            <div>Sesión: {sessionIdRef.current.slice(-8)}</div>
+          </div>
+
+          <div className="flex-1">
             <PPGSignalMeter 
-              value={heartbeatSignal}
-              quality={signalQuality}
-              isFingerDetected={lastResult?.fingerDetected || false}
+              value={beatMarker}
+              quality={lastSignal?.quality || 0}
+              isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
-              debug={{
-                snr: (lastResult?.channels.find(c => c.isFingerDetected)?.snr) ?? 0,
-                bandRatio: (typeof lastHeartbeatDebug?.bandRatio === 'number' ? lastHeartbeatDebug.bandRatio : undefined),
-                reasons: (() => {
-                  const r: string[] = [];
-                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedFinger) r.push('sin dedo');
-                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedQuality) r.push('calidad baja');
-                  if (lastHeartbeatDebug && !lastHeartbeatDebug.gatedSnr) r.push('SNR bajo');
-                  if (lastHeartbeatDebug && lastHeartbeatDebug.spectralOk === false) r.push('espectral bajo');
-                  return r;
-                })(),
-                gatedFinger: lastHeartbeatDebug?.gatedFinger,
-                gatedQuality: lastHeartbeatDebug?.gatedQuality,
-                gatedSnr: lastHeartbeatDebug?.gatedSnr,
-                spectralOk: lastHeartbeatDebug?.spectralOk
-              }}
-              unifiedMetrics={unifiedMetrics} // MÉTRICAS UNIFICADAS AVANZADAS
-              precisionMetrics={precisionMetrics} // MÉTRICAS DE PRECISIÓN CARDÍACA
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[50%] bottom-[60px] bg-black/10 px-4 py-6">
+          {/* DISPLAYS DE SIGNOS VITALES */}
+          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
                 label="FRECUENCIA CARDÍACA"
@@ -665,6 +604,7 @@ const Index = () => {
             </div>
           </div>
 
+          {/* BOTONERA ÚNICA */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 

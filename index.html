@@ -4,15 +4,10 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
-    <link rel="manifest" href="/manifest.json" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#000000" />
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="screen-orientation" content="portrait">
-    <meta name="x5-orientation" content="portrait">
-    <meta name="x5-fullscreen" content="true">
-    <meta name="x5-page-mode" content="app">
     <title>healthpulse-captain</title>
     <style>
       :root {
@@ -58,31 +53,6 @@
       @supports (height: 100dvh) {
         #root {
           height: 100dvh;
-        }
-      }
-      
-      /* Forzar orientación vertical */
-      @media screen and (orientation: landscape) {
-        body::before {
-          content: "Por favor, gire su dispositivo a posición vertical";
-          position: fixed;
-          top: 0;
-          left: 0;
-          width: 100vw;
-          height: 100vh;
-          background: #000;
-          color: #fff;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          text-align: center;
-          font-size: 18px;
-          z-index: 9999;
-          padding: 20px;
-        }
-        
-        #root {
-          display: none;
         }
       }
     </style>

@@ -17,7 +17,7 @@ export interface LogEntry {
 
 export interface SimulationAttempt {
   timestamp: number;
-  type: 'MATH_RANDOM' | 'HARDCODED_VALUE' | 'FORBIDDEN_DATA' | 'FORBIDDEN_FUNCTION';
+  type: 'MATH_RANDOM' | 'HARDCODED_VALUE' | 'FAKE_DATA' | 'MOCK_FUNCTION';
   location: string;
   context: string;
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
@@ -55,9 +55,7 @@ export class AdvancedLogger {
 
   private generateSessionId(): string {
     const timestamp = Date.now().toString(36);
-    const array = new Uint32Array(2);
-    crypto.getRandomValues(array);
-    const random = Array.from(array).map(n => n.toString(36)).join('');
+    const random = Math.random().toString(36).substring(2);
     return `${timestamp}-${random}`;
   }
 
@@ -89,8 +87,12 @@ export class AdvancedLogger {
   private detectSimulationInLogs(args: any[]): void {
     const logString = args.join(' ').toLowerCase();
     
-    if (logString.includes('simulation')) {
-      this.logSimulationAttempt('FORBIDDEN_DATA', 'Console Log', logString, 'HIGH', true);
+    if (logString.includes('simulation') || 
+        logString.includes('fake') || 
+        logString.includes('mock') ||
+        logString.includes('dummy')) {
+      
+      this.logSimulationAttempt('FAKE_DATA', 'Console Log', logString, 'HIGH', true);
     }
   }
 
@@ -130,10 +132,8 @@ export class AdvancedLogger {
   }
 
   private addLog(level: LogEntry['level'], category: LogEntry['category'], message: string, context?: Record<string, any>): void {
-    const randArr = new Uint32Array(1);
-    crypto.getRandomValues(randArr);
     const entry: LogEntry = {
-      id: `${Date.now()}-${randArr[0].toString(36)}`,
+      id: `${Date.now()}-${Math.random().toString(36).substring(2)}`,
       timestamp: Date.now(),
       level,
       category,

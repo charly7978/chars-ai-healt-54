@@ -1,4 +1,4 @@
-// Eliminado import de AdvancedMathematicalProcessor para evitar inicialización pesada no utilizada
+import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -27,9 +27,9 @@ export interface VitalSignsResult {
  * PROCESADOR CORREGIDO CON NÚMEROS PRECISOS Y PONDERADO FINAL
  */
 export class VitalSignsProcessor {
-  // Eliminada referencia a AdvancedMathematicalProcessor (no utilizada en este procesador)
+  private mathProcessor: AdvancedMathematicalProcessor;
   private calibrationSamples: number = 0;
-  private readonly CALIBRATION_REQUIRED = 30; // Muestras requeridas para calibración
+  private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
   
   // HISTORIAL PARA PONDERADO FINAL
@@ -44,13 +44,13 @@ export class VitalSignsProcessor {
     arrhythmiaEvents: [] as { count: number; timestamp: number }[]
   };
   
-  // ESTADO ACTUAL CON FORMATO CORRECTO - VALORES FISIOLÓGICOS
+  // ESTADO ACTUAL CON FORMATO CORRECTO
   private measurements = {
-    spo2: 98, // Valor fisiológico normal
-    glucose: 95, // Valor fisiológico normal (mg/dL)
-    hemoglobin: 15, // Valor fisiológico normal (corregido) (g/dL)
-    systolicPressure: 120, // Presión sistólica normal
-    diastolicPressure: 80, // Presión diastólica normal
+    spo2: 0,
+    glucose: 0,
+    hemoglobin: 0,
+    systolicPressure: 0,
+    diastolicPressure: 0,
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
     totalCholesterol: 0,
@@ -63,7 +63,7 @@ export class VitalSignsProcessor {
   
   constructor() {
     console.log("🚀 VitalSignsProcessor: Sistema CORREGIDO con números precisos");
-    // Eliminada inicialización de AdvancedMathematicalProcessor
+    this.mathProcessor = new AdvancedMathematicalProcessor();
   }
 
   startCalibration(): void {
@@ -71,17 +71,17 @@ export class VitalSignsProcessor {
     this.isCalibrating = true;
     this.calibrationSamples = 0;
     
-    // RESETEAR TODAS LAS MEDICIONES A VALORES FISIOLÓGICOS
+    // RESETEAR TODAS LAS MEDICIONES
     this.measurements = {
-      spo2: 98, // Reset a valor fisiológico
-      glucose: 95, // Reset a valor fisiológico
-      hemoglobin: 14, // Reset a valor fisiológico
-      systolicPressure: 120, // Reset a valor fisiológico
-      diastolicPressure: 80, // Reset a valor fisiológico
+      spo2: 0,
+      glucose: 0,
+      hemoglobin: 0,
+      systolicPressure: 0,
+      diastolicPressure: 0,
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",
-      totalCholesterol: 180, // Valor fisiológico normal
-      triglycerides: 120, // Valor fisiológico normal
+      totalCholesterol: 0,
+      triglycerides: 0,
       lastArrhythmiaData: null
     };
     
@@ -342,21 +342,21 @@ export class VitalSignsProcessor {
   }
 
   private calculateSpO2Real(signal: number[]): number {
-    if (signal.length < 10) return 98; // Valor fisiológico por defecto
+    if (signal.length < 10) return 0;
     
     const acComponent = this.calculateACComponent(signal);
     const dcComponent = this.calculateDCComponent(signal);
     
-    if (dcComponent === 0) return 98; // Valor fisiológico por defecto
+    if (dcComponent === 0) return 0;
     
     const ratio = acComponent / dcComponent;
-    const spo2 = 98 - (ratio * ratio * 30); // Fórmula fisiológica corregida
+    const spo2 = 110 - 25 * Math.abs(ratio);
     
-    return Math.max(85, Math.min(100, spo2)); // Rango fisiológico válido
+    return Math.max(85, Math.min(100, spo2));
   }
 
   private calculateGlucoseReal(signal: number[], currentValue: number): number {
-    if (signal.length < 20) return 95; // Valor fisiológico por defecto
+    if (signal.length < 20) return 0;
     
     const variance = this.calculateVariance(signal);
     const trend = this.calculateTrend(signal);
@@ -368,7 +368,7 @@ export class VitalSignsProcessor {
   }
 
   private calculateHemoglobinReal(signal: number[]): number {
-    if (signal.length < 15) return 15; // Valor fisiológico por defecto (corregido)
+    if (signal.length < 15) return 0;
     
     const amplitude = this.calculateAmplitude(signal);
     const frequency = this.calculateDominantFrequency(signal);
@@ -379,7 +379,7 @@ export class VitalSignsProcessor {
   }
 
   private calculateBloodPressureReal(intervals: number[], signal: number[]): { systolic: number; diastolic: number } {
-    if (intervals.length < 3) return { systolic: 120, diastolic: 80 }; // Valores fisiológicos por defecto
+    if (intervals.length < 3) return { systolic: 0, diastolic: 0 };
     
     const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
     const ptt = 60000 / avgInterval;
@@ -397,7 +397,7 @@ export class VitalSignsProcessor {
   }
 
   private calculateLipidsReal(signal: number[]): { totalCholesterol: number; triglycerides: number } {
-    if (signal.length < 20) return { totalCholesterol: 180, triglycerides: 120 }; // Valores fisiológicos por defecto
+    if (signal.length < 20) return { totalCholesterol: 0, triglycerides: 0 };
     
     const turbulence = this.calculateTurbulence(signal);
     const viscosity = this.calculateViscosity(signal);
@@ -459,7 +459,7 @@ export class VitalSignsProcessor {
   private calculatePulsatility(signal: number[]): number {
     const peaks = this.findPeaks(signal);
     const valleys = this.findValleys(signal);
-    if (peaks.length === 0 || valleys.length === 0) return 1.2; // Valor fisiológico por defecto
+    if (peaks.length === 0 || valleys.length === 0) return 0;
     
     const avgPeak = peaks.reduce((a, b) => a + b, 0) / peaks.length;
     const avgValley = valleys.reduce((a, b) => a + b, 0) / valleys.length;
@@ -567,15 +567,15 @@ export class VitalSignsProcessor {
     console.log("🗑️ VitalSignsProcessor: Reset COMPLETO");
     
     this.measurements = {
-      spo2: 98, // Valor fisiológico por defecto
-      glucose: 95, // Valor fisiológico por defecto
-      hemoglobin: 14, // Valor fisiológico por defecto
-      systolicPressure: 120, // Valor fisiológico por defecto
-      diastolicPressure: 80, // Valor fisiológico por defecto
+      spo2: 0,
+      glucose: 0,
+      hemoglobin: 0,
+      systolicPressure: 0,
+      diastolicPressure: 0,
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",
-      totalCholesterol: 180, // Valor fisiológico normal
-      triglycerides: 120, // Valor fisiológico normal
+      totalCholesterol: 0,
+      triglycerides: 0,
       lastArrhythmiaData: null
     };
     

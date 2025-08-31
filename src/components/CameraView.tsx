@@ -1,505 +1,280 @@
 
-import React, { useEffect, useRef, useState } from 'react';
-import { CameraSample } from '@/types';
+import React, { useRef, useEffect, useState } from 'react';
+import { toast } from "@/components/ui/use-toast";
 
 interface CameraViewProps {
-  onStreamReady?: (s: MediaStream) => void;
-  onSample?: (s: CameraSample) => void;
+  onStreamReady?: (stream: MediaStream) => void;
   isMonitoring: boolean;
-  targetFps?: number;
-  roiSize?: number;
-  enableTorch?: boolean;
-  coverageThresholdPixelBrightness?: number;
+  isFingerDetected?: boolean;
+  signalQuality?: number;
 }
 
-const CameraView: React.FC<CameraViewProps> = ({
-  onStreamReady,
-  onSample,
-  isMonitoring,
-  targetFps = 30,
-  roiSize = 200,
-  enableTorch = true,
-  coverageThresholdPixelBrightness = 25
-}) => {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const prevBrightnessRef = useRef<number | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [isStreamActive, setIsStreamActive] = useState(false);
+/**
+ * COMPONENTE CÁMARA COMPLETAMENTE UNIFICADO - ELIMINADAS TODAS LAS DUPLICIDADES
+ * Sistema matemático avanzado sin memory leaks ni procesamiento redundante
+ */
+const CameraView = ({ 
+  onStreamReady, 
+  isMonitoring, 
+  isFingerDetected = false, 
+  signalQuality = 0,
+}: CameraViewProps) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [stream, setStream] = useState<MediaStream | null>(null);
   const [torchEnabled, setTorchEnabled] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const captureStartedRef = useRef<boolean>(false);
+  const [deviceSupportsTorch, setDeviceSupportsTorch] = useState(false);
+  const cameraInitialized = useRef<boolean>(false);
+  const sessionIdRef = useRef<string>("");
 
+  // GENERAR SESSION ID ÚNICO
   useEffect(() => {
-    let mounted = true;
+    const randomBytes = new Uint32Array(1);
+    crypto.getRandomValues(randomBytes);
+    sessionIdRef.current = `camera_${randomBytes[0].toString(36)}`;
+  }, []);
 
-    const startCam = async () => {
-      try {
-        console.log('🎥 INICIANDO SISTEMA CÁMARA COMPLETO...');
-        
-        // CRÍTICO: Constraints optimizadas para PPG
-        const constraints: MediaStreamConstraints = {
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1920, min: 1280 },
-            height: { ideal: 1080, min: 720 },
-            frameRate: { ideal: 30, max: 60 },
-            aspectRatio: { ideal: 16/9 }
-          },
-          audio: false
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        
-        if (!mounted) {
-          stream.getTracks().forEach(t => t.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-        console.log('✅ Stream obtenido correctamente');
-
-        // CREAR VIDEO ELEMENT - CRÍTICO
-        const video = document.createElement('video');
-        video.autoplay = true;
-        video.playsInline = true;
-        video.muted = true;
-        video.style.width = '100%';
-        video.style.height = '100%';
-        video.style.objectFit = 'cover';
-        video.style.transform = 'scaleX(-1)'; // Mirror para mejor UX
-        
-        videoRef.current = video;
-
-        // CRÍTICO: AGREGAR AL DOM INMEDIATAMENTE
-        if (containerRef.current) {
-          // Limpiar contenedor primero
-          containerRef.current.innerHTML = '';
-          containerRef.current.appendChild(video);
-          console.log('✅ Video agregado al DOM exitosamente');
-        }
-
-        // Asignar stream
-        video.srcObject = stream;
-
-        // CREAR CANVAS PARA PROCESAMIENTO
-        const canvas = document.createElement('canvas');
-        canvas.style.display = 'none';
-        canvasRef.current = canvas;
-
-        // ESPERAR A QUE EL VIDEO ESTÉ LISTO ANTES DE CONFIGURAR LINTERNA
-        await new Promise<void>((resolve) => {
-          const checkVideo = () => {
-            if (video.readyState >= 2) {
-              resolve();
-            } else {
-              video.addEventListener('loadedmetadata', () => resolve(), { once: true });
-            }
-          };
-          checkVideo();
-        });
-
-        // CONFIGURAR LINTERNA DESPUÉS DE QUE EL VIDEO ESTÉ LISTO
-        if (enableTorch) {
-          const attempts = 3;
-          let torchActivated = false;
-          
-          for (let attempt = 0; attempt < attempts; attempt++) {
-            try {
-              const [videoTrack] = stream.getVideoTracks();
-              const capabilities = (videoTrack as any).getCapabilities?.();
-              
-              console.log(`🔦 Intento ${attempt + 1} - Capacidades:`, capabilities);
-              
-              if (capabilities?.torch) {
-                // Aplicar constraints con linterna activada
-                await (videoTrack as any).applyConstraints({
-                  advanced: [{
-                    torch: true
-                  }]
-                });
-                
-                // Esperar un momento para que se aplique
-                await new Promise(resolve => setTimeout(resolve, 200)); // Aumentado a 200ms
-                
-                // Verificar si se aplicó correctamente
-                const settings = (videoTrack as any).getSettings?.();
-                console.log('🔦 Settings después de aplicar:', settings);
-                
-                if (settings?.torch === true) {
-                  setTorchEnabled(true);
-                  torchActivated = true;
-                  console.log('🔦 ✅ LINTERNA ACTIVADA EXITOSAMENTE');
-                  break;
-                } else {
-                  console.log('🔦 ⚠️ Linterna no confirmada, reintentando...');
-                }
-              } else {
-                console.log('🔦 ❌ Dispositivo sin soporte de linterna');
-                break;
-              }
-            } catch (torchError) {
-              console.error(`🔦 Error intento ${attempt + 1}:`, torchError);
-              if (attempt === attempts - 1) {
-                console.error('🔦 ❌ No se pudo activar la linterna después de múltiples intentos');
-              }
-            }
-          }
-          
-          // Si no se pudo activar, mostrar advertencia
-          try {
-            const [videoTrack] = stream.getVideoTracks();
-            const caps = (videoTrack as any).getCapabilities?.();
-            if (!torchActivated && caps?.torch) {
-              console.warn('🔦 ⚠️ ADVERTENCIA: La linterna está soportada pero no se pudo activar');
-            }
-          } catch {}
-          
-        }
-
-        // ESPERAR VIDEO READY
-        const waitForVideo = () => {
-          if (video.readyState >= 2 && video.videoWidth > 0) {
-            console.log('✅ Video COMPLETAMENTE listo:', {
-              width: video.videoWidth,
-              height: video.videoHeight,
-              readyState: video.readyState
-            });
-            setIsStreamActive(true);
-            setError(null);
-            onStreamReady?.(stream);
-            
-            // INICIAR CAPTURA INMEDIATAMENTE
-            if (isMonitoring && !captureStartedRef.current) {
-              captureStartedRef.current = true;
-              startFrameCapture();
-            }
-          } else {
-            setTimeout(waitForVideo, 50);
-          }
-        };
-
-        video.addEventListener('loadedmetadata', waitForVideo);
-        waitForVideo();
-
-      } catch (err: any) {
-        console.error('❌ ERROR CRÍTICO CÁMARA:', err);
-        setError(err.message || 'Error desconocido');
-        setIsStreamActive(false);
+  // FUNCIÓN UNIFICADA DE PARADA DE CÁMARA
+  const stopCamera = async () => {
+    if (!stream) return;
+    
+    console.log(`📹 Deteniendo cámara unificada - ${sessionIdRef.current}`);
+    
+    stream.getTracks().forEach(track => {
+      if (track.kind === 'video' && track.getCapabilities()?.torch) {
+        track.applyConstraints({
+          advanced: [{ torch: false }]
+        }).catch(() => {});
       }
-    };
-
-    const startFrameCapture = () => {
-      if (!mounted || !isMonitoring) return;
-      
-      console.log('🎬 INICIANDO CAPTURA DE FRAMES PPG...');
-      
-      const captureLoop = () => {
-        if (!mounted || !isMonitoring || !videoRef.current || !canvasRef.current) {
-          return;
-        }
-        
-        try {
-          const sample = captureOptimizedFrame();
-          if (sample && onSample) {
-            onSample(sample);
-          }
-        } catch (captureError) {
-          console.error('Error en captura:', captureError);
-        }
-        
-        // Programar siguiente frame
-        const frameDelay = 1000 / targetFps;
-        const nextFrameTime = performance.now() + frameDelay;
-        
-        const scheduleNextFrame = () => {
-          const now = performance.now();
-          if (now >= nextFrameTime) {
-            captureLoop();
-          } else {
-            rafRef.current = requestAnimationFrame(scheduleNextFrame);
-          }
-        };
-        
-        rafRef.current = requestAnimationFrame(scheduleNextFrame);
-      };
-      
-      rafRef.current = requestAnimationFrame(captureLoop);
-    };
-
-    const captureOptimizedFrame = (): CameraSample | null => {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      
-      if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
-        return null;
-      }
-
-      // ROI CENTRADA Y OPTIMIZADA
-      const centerX = video.videoWidth / 2;
-      const centerY = video.videoHeight / 2;
-      // ROI equilibrada para buena SNR sin exceso de carga
-      const roiW = Math.min(roiSize, video.videoWidth * 0.3);
-      const roiH = Math.min(roiSize, video.videoHeight * 0.3);
-      const sx = centerX - roiW / 2;
-      const sy = centerY - roiH / 2;
-
-      canvas.width = roiW;
-      canvas.height = roiH;
-      
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return null;
-      
-      // CAPTURAR ROI ESPECÍFICA
-      ctx.drawImage(video, sx, sy, roiW, roiH, 0, 0, roiW, roiH);
-      const imageData = ctx.getImageData(0, 0, roiW, roiH);
-      const data = imageData.data;
-
-      // PROCESAMIENTO PPG ROBUSTO Y MEJORADO
-      let rSum = 0, gSum = 0, bSum = 0;
-      let rSum2 = 0, gSum2 = 0, bSum2 = 0;
-      let brightSum = 0;
-      let brightSum2 = 0;
-      let brightPixels = 0;
-      let redSaturated = 0;
-      let validPixels = 0;
-      
-      // Arrays para análisis robusto
-      const redValues: number[] = [];
-      const greenValues: number[] = [];
-      
-      const threshold = coverageThresholdPixelBrightness;
-      const totalPixels = data.length / 4;
-
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1]; 
-        const b = data[i + 2];
-        const brightness = (r + g + b) / 3;
-        
-        // Filtrar píxeles no válidos (muy oscuros o saturados)
-        if (r < 30 || r > 250 || g < 20 || g > 240 || b < 10 || b > 230) {
-          continue;
-        }
-        
-        // Verificar características de piel bajo iluminación
-        const rgRatio = g > 0 ? r / g : 0;
-        const rbRatio = b > 0 ? r / b : 0;
-        const isValidSkin = rgRatio > 1.1 && rgRatio < 3.5 && rbRatio > 1.2 && rbRatio < 4.0;
-        
-        if (isValidSkin && brightness >= threshold) {
-          validPixels++;
-          redValues.push(r);
-          greenValues.push(g);
-        }
-        
-        rSum += r;
-        gSum += g;
-        bSum += b;
-        rSum2 += r * r;
-        gSum2 += g * g;
-        bSum2 += b * b;
-        brightSum += brightness;
-        brightSum2 += brightness * brightness;
-        if (r > 250) redSaturated++;
-        
-        // Contar solo píxeles compatibles con piel iluminada (rojo predominante)
-        const isPhysioRed = (r >= 70) && (r > g + 10) && (r > b + 10) && (r / (g + 1) >= 1.2);
-        if (brightness >= threshold && isPhysioRed) brightPixels++;
-      }
-      
-      // Usar media robusta de píxeles válidos si hay suficientes
-      let robustRMean = rSum / totalPixels;
-      let robustGMean = gSum / totalPixels;
-      
-      if (validPixels > totalPixels * 0.1 && redValues.length > 100) {
-        // Calcular percentiles para robustez
-        redValues.sort((a, b) => a - b);
-        greenValues.sort((a, b) => a - b);
-        
-        // Media recortada del 50% central
-        const rTrimStart = Math.floor(redValues.length * 0.25);
-        const rTrimEnd = Math.floor(redValues.length * 0.75);
-        const gTrimStart = Math.floor(greenValues.length * 0.25);
-        const gTrimEnd = Math.floor(greenValues.length * 0.75);
-        
-        const rTrimmed = redValues.slice(rTrimStart, rTrimEnd);
-        const gTrimmed = greenValues.slice(gTrimStart, gTrimEnd);
-        
-        if (rTrimmed.length > 0 && gTrimmed.length > 0) {
-          robustRMean = rTrimmed.reduce((a, b) => a + b, 0) / rTrimmed.length;
-          robustGMean = gTrimmed.reduce((a, b) => a + b, 0) / gTrimmed.length;
-        }
-      }
-      
-      const rMean = robustRMean;
-      const gMean = robustGMean;
-      const bMean = bSum / totalPixels;
-      const brightnessMean = brightSum / totalPixels;
-      const brightnessVar = Math.max(0, brightSum2/totalPixels - brightnessMean*brightnessMean);
-      const brightnessStd = Math.sqrt(brightnessVar);
-      
-      // VARIANZAS CORRECTAS
-      const rVar = Math.max(0, rSum2/totalPixels - rMean*rMean);
-      const gVar = Math.max(0, gSum2/totalPixels - gMean*gMean);
-      const bVar = Math.max(0, bSum2/totalPixels - bMean*bMean);
-      
-      const rStd = Math.sqrt(rVar);
-      const gStd = Math.sqrt(gVar);
-      const bStd = Math.sqrt(bVar);
-      
-      // FRAME DIFF PARA MOVIMIENTO
-      const prevBrightness = prevBrightnessRef.current;
-      const frameDiff = prevBrightness !== null ? Math.abs(brightnessMean - prevBrightness) : 0;
-      
-      // DEBUG: Detectar saltos anormales en frameDiff
-      if (frameDiff > 20 && prevBrightness !== null) {
-        console.warn('⚠️ SALTO ANORMAL EN FRAMEDIFF:', {
-          frameDiff: frameDiff.toFixed(1),
-          brightnessMean: brightnessMean.toFixed(1),
-          prevBrightness: prevBrightness.toFixed(1),
-          timestamp: new Date().toISOString()
-        });
-      }
-      
-      prevBrightnessRef.current = brightnessMean;
-      
-      const coverageRatio = brightPixels / totalPixels;
-      const rgRatio = gMean > 1 ? rMean / gMean : 10;
-      const rgbSum = rMean + gMean + bMean;
-      const redFraction = rgbSum > 0 ? rMean / rgbSum : 0;
-      const saturationRatio = redSaturated / totalPixels;
-      
-      // Calcular confianza de dedo y estado de exposición
-      const coverageScore = Math.min(1, coverageRatio / 0.35);
-      const rgScore = rgRatio < 1.1 ? 0 : rgRatio > 4 ? 0.2 : 0.2 + 0.8 * ((rgRatio - 1.1) / (4 - 1.1));
-      const brightnessScore = Math.max(0, Math.min(1, (brightnessMean - 30) / 140));
-      const motionPenalty = frameDiff > 10 ? Math.max(0.3, 1 - (frameDiff - 10) / 30) : 1;
-      const satPenalty = saturationRatio > 0.2 ? Math.max(0.5, 1 - (saturationRatio - 0.2) / 0.3) : 1;
-      const fingerConfidence = Math.max(0, Math.min(1, (0.5 * coverageScore + 0.25 * rgScore + 0.25 * brightnessScore) * motionPenalty * satPenalty));
-
-      let exposureState: 'ok' | 'dark' | 'saturated' | 'low_coverage' | 'moving' = 'ok';
-      if (saturationRatio > 0.4 || rMean > 245 || brightnessMean > 230) {
-        exposureState = 'saturated';
-      } else if (brightnessMean < 35 || rMean < 45) {
-        exposureState = 'dark';
-      } else if (coverageRatio < 0.2) {
-        exposureState = 'low_coverage';
-      } else if (frameDiff > 25 || brightnessStd > 12) {
-        exposureState = 'moving';
-      }
-
-      return {
-        timestamp: Date.now(),
-        rMean,
-        gMean,
-        bMean,
-        brightnessMean,
-        brightnessStd,
-        rStd,
-        gStd,
-        bStd,
-        frameDiff,
-        coverageRatio,
-        rgRatio,
-        redFraction,
-        saturationRatio,
-        fingerConfidence,
-        exposureState
-      };
-    };
-
-    if (isMonitoring) {
-      startCam();
+      track.stop();
+    });
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
+    
+    setStream(null);
+    setTorchEnabled(false);
+    cameraInitialized.current = false;
+    
+    console.log(`✅ Cámara detenida - ${sessionIdRef.current}`);
+  };
 
-    // CLEANUP EFFECT
-    return () => {
-      mounted = false;
-      captureStartedRef.current = false;
+  // FUNCIÓN UNIFICADA DE INICIO DE CÁMARA - ELIMINADAS DUPLICIDADES
+  const startCamera = async () => {
+    if (stream || cameraInitialized.current) {
+      console.warn(`⚠️ Cámara ya inicializada - ${sessionIdRef.current}`);
+      return;
+    }
+    
+    try {
+      console.log(`📹 Iniciando cámara unificada avanzada - ${sessionIdRef.current}`);
       
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("getUserMedia no soportado en este navegador");
       }
-      
-      const stream = streamRef.current;
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        streamRef.current = null;
+
+      // DETECCIÓN UNIFICADA DE PLATAFORMA
+      const isAndroid = /android/i.test(navigator.userAgent);
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+      // CONFIGURACIÓN MATEMÁTICAMENTE OPTIMIZADA PARA PPG
+      const baseVideoConstraints: MediaTrackConstraints = {
+        facingMode: { exact: 'environment' },
+        width: { ideal: 1280, min: 640 },
+        height: { ideal: 720, min: 480 },
+        frameRate: { ideal: 30, min: 15 },
+        aspectRatio: { ideal: 16/9 }
+      };
+
+      // OPTIMIZACIONES ESPECÍFICAS POR PLATAFORMA
+      if (isAndroid) {
+        Object.assign(baseVideoConstraints, {
+          resizeMode: 'crop-and-scale',
+          latency: { ideal: 0.1 }
+        });
       }
-      
+
+      const constraints: MediaStreamConstraints = {
+        video: baseVideoConstraints,
+        audio: false
+      };
+
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const videoTrack = newStream.getVideoTracks()[0];
+
+      if (videoTrack) {
+        try {
+          const capabilities = videoTrack.getCapabilities();
+          const advancedConstraints: MediaTrackConstraintSet[] = [];
+          
+          // CONFIGURACIÓN MATEMÁTICA AVANZADA PARA MEDICIONES PPG PRECISAS
+          
+          // 1. Control de exposición manual para estabilidad óptica
+          if (capabilities.exposureMode) {
+            advancedConstraints.push({ exposureMode: 'manual' });
+            if (capabilities.exposureTime) {
+              const optimalExposureTime = Math.min(
+                capabilities.exposureTime.max || 1000,
+                800 // Tiempo óptimo para captura PPG
+              );
+              advancedConstraints.push({ exposureTime: optimalExposureTime });
+            }
+          }
+          
+          // 2. Configuración de ganancia automática (reemplaza ISO no estándar)
+          if (capabilities.autoGainControl !== undefined) {
+            advancedConstraints.push({ autoGainControl: false });
+          }
+          
+          // 3. Enfoque continuo para mantener nitidez constante
+          if (capabilities.focusMode) {
+            advancedConstraints.push({ focusMode: 'continuous' });
+          }
+          
+          // 4. Balance de blancos automático continuo
+          if (capabilities.whiteBalanceMode) {
+            advancedConstraints.push({ whiteBalanceMode: 'continuous' });
+          }
+          
+          // 5. Reducción de ruido para mejorar SNR
+          if (capabilities.noiseSuppression) {
+            advancedConstraints.push({ noiseSuppression: true });
+          }
+
+          // APLICAR CONFIGURACIONES AVANZADAS
+          if (advancedConstraints.length > 0) {
+            await videoTrack.applyConstraints({
+              advanced: advancedConstraints
+            });
+            console.log(`📹 Configuraciones avanzadas aplicadas: ${advancedConstraints.length} - ${sessionIdRef.current}`);
+          }
+
+          // CONFIGURACIÓN UNIFICADA DE LINTERNA PARA PPG
+          if (capabilities.torch) {
+            setDeviceSupportsTorch(true);
+            try {
+              await videoTrack.applyConstraints({
+                advanced: [{ torch: true }]
+              });
+              setTorchEnabled(true);
+              console.log(`🔦 Linterna PPG activada - ${sessionIdRef.current}`);
+            } catch (torchErr) {
+              console.error(`❌ Error activando linterna: ${torchErr} - ${sessionIdRef.current}`);
+              setTorchEnabled(false);
+            }
+          } else {
+            console.warn(`⚠️ Dispositivo sin linterna - calidad PPG puede ser inferior - ${sessionIdRef.current}`);
+          }
+        } catch (configErr) {
+          console.log(`⚠️ Algunas configuraciones avanzadas no aplicadas: ${configErr} - ${sessionIdRef.current}`);
+        }
+      }
+
+      // ASIGNACIÓN UNIFICADA DEL STREAM AL ELEMENTO VIDEO
       if (videoRef.current) {
-        videoRef.current = null;
+        videoRef.current.srcObject = newStream;
+        
+        // OPTIMIZACIONES DE RENDIMIENTO ESPECÍFICAS
+        if (isAndroid) {
+          videoRef.current.style.willChange = 'transform';
+          videoRef.current.style.transform = 'translateZ(0)';
+          videoRef.current.style.backfaceVisibility = 'hidden';
+        }
+      }
+
+      setStream(newStream);
+      cameraInitialized.current = true;
+      
+      // CALLBACK UNIFICADO DE STREAM LISTO
+      if (onStreamReady) {
+        console.log(`✅ Stream PPG listo - ${sessionIdRef.current}`);
+        onStreamReady(newStream);
       }
       
-      if (canvasRef.current) {
-        canvasRef.current = null;
-      }
+    } catch (err) {
+      console.error(`❌ Error crítico inicializando cámara: ${err} - ${sessionIdRef.current}`);
+      cameraInitialized.current = false;
       
-      setIsStreamActive(false);
-      setTorchEnabled(false);
-      setError(null);
+      toast({
+        title: "Error de Cámara Crítico",
+        description: `No se pudo acceder a la cámara trasera: ${err}`,
+        variant: "destructive",
+        duration: 5000
+      });
+    }
+  };
+
+  // CONTROL UNIFICADO DEL CICLO DE VIDA DE LA CÁMARA
+  useEffect(() => {
+    if (isMonitoring && !stream && !cameraInitialized.current) {
+      startCamera();
+    } else if (!isMonitoring && stream) {
+      stopCamera();
+    }
+    
+    return () => {
+      stopCamera();
     };
-  }, [isMonitoring, targetFps, roiSize, enableTorch, coverageThresholdPixelBrightness]);
+  }, [isMonitoring]);
 
-  // EFECTO PARA INICIAR CAPTURA CUANDO CAMBIA isMonitoring - ELIMINADO CÓDIGO DUPLICADO
+  // MANTENIMIENTO UNIFICADO DE LINTERNA - ELIMINA DUPLICIDADES
+  useEffect(() => {
+    if (!stream || !deviceSupportsTorch || !isMonitoring) return;
+    
+    const maintainTorchStability = async () => {
+      if (!isMonitoring || !stream) return;
 
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) return;
+      
+      try {
+        const settings = videoTrack.getSettings && (videoTrack.getSettings() as any);
+        const currentTorchState = settings?.torch;
+
+        // VERIFICACIÓN Y CORRECCIÓN AUTOMÁTICA DEL ESTADO DE LINTERNA
+        if (!currentTorchState && deviceSupportsTorch) {
+          console.log(`🔦 Reactivando linterna PPG - ${sessionIdRef.current}`);
+          await videoTrack.applyConstraints({
+            advanced: [{ torch: true }]
+          });
+          setTorchEnabled(true);
+        } else if (currentTorchState) {
+          setTorchEnabled(true);
+        }
+      } catch (maintainErr) {
+        console.warn(`⚠️ Error manteniendo linterna: ${maintainErr} - ${sessionIdRef.current}`);
+        setTorchEnabled(false);
+      }
+    };
+    
+    // INTERVALO UNIFICADO DE MANTENIMIENTO
+    maintainTorchStability(); // Ejecución inicial inmediata
+    const maintenanceInterval = setInterval(maintainTorchStability, 3000);
+    
+    return () => clearInterval(maintenanceInterval);
+  }, [stream, isMonitoring, deviceSupportsTorch]);
+
+  // ELEMENTO VIDEO UNIFICADO CON OPTIMIZACIONES COMPLETAS
   return (
-    <div className="absolute inset-0 bg-black">
-      {/* CONTENEDOR PRINCIPAL PARA VIDEO */}
-      <div 
-        ref={containerRef}
-        className="w-full h-full"
-        style={{ overflow: 'hidden' }}
-      />
-      
-      {/* OVERLAY DE ESTADOS */}
-      {!isStreamActive && isMonitoring && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/90">
-          <div className="text-white text-center p-6">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mx-auto mb-4"></div>
-            <p className="text-lg font-medium">Iniciando cámara PPG...</p>
-            {enableTorch && (
-              <p className="text-sm text-white/70 mt-2">Configurando linterna...</p>
-            )}
-            {error && (
-              <p className="text-sm text-red-400 mt-2">Error: {error}</p>
-            )}
-          </div>
-        </div>
-      )}
-      
-      {!isMonitoring && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-          <div className="text-white text-center p-6">
-            <div className="h-12 w-12 bg-gray-600 rounded-full mx-auto mb-4 flex items-center justify-center text-2xl">
-              📷
-            </div>
-            <p className="text-lg">Sistema PPG Desactivado</p>
-            <p className="text-sm text-white/60 mt-2">Presiona iniciar para comenzar</p>
-          </div>
-        </div>
-      )}
-      
-      {/* INDICADORES DE ESTADO */}
-      {torchEnabled && (
-        <div className="absolute top-4 left-4 bg-black/70 rounded-full p-2">
-          <div className="text-yellow-400 text-xl animate-pulse">🔦</div>
-        </div>
-      )}
-      
-      {isStreamActive && isMonitoring && (
-        <div className="absolute bottom-4 left-4 bg-black/70 rounded-full px-3 py-1">
-          <div className="text-green-400 text-sm flex items-center">
-            <div className="w-2 h-2 bg-green-400 rounded-full mr-2 animate-pulse"></div>
-            CAPTURANDO PPG
-          </div>
-        </div>
-      )}
-    </div>
+    <video
+      ref={videoRef}
+      autoPlay
+      playsInline
+      muted
+      className="absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover"
+      style={{
+        willChange: 'transform',
+        transform: 'translateZ(0)',
+        backfaceVisibility: 'hidden',
+        imageRendering: 'auto'
+      }}
+      onLoadedMetadata={() => {
+        console.log(`📹 Metadatos de video cargados - ${sessionIdRef.current}`);
+      }}
+      onError={(err) => {
+        console.error(`❌ Error en elemento video: ${err} - ${sessionIdRef.current}`);
+      }}
+    />
   );
 };
 

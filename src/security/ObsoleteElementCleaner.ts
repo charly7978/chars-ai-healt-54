@@ -20,7 +20,7 @@ export class ObsoleteElementCleaner {
   // Elementos obsoletos identificados
   private readonly OBSOLETE_PATTERNS = [
     {
-      pattern: /ComponenteObsoleto/g,
+      pattern: /HeartRateDisplay/g,
       type: 'FILE' as const,
       severity: 'CRITICAL' as const,
       reason: 'Deprecated component - Use HeartRate from @/components/HeartRate instead',
@@ -122,19 +122,19 @@ export class ObsoleteElementCleaner {
   public replaceObsoleteElements(code: string): string {
     let cleanCode = code;
 
-    // Reemplazar ComponenteObsoleto con HeartRate
+    // Reemplazar HeartRateDisplay con HeartRate
     cleanCode = cleanCode.replace(
-      /import.*ComponenteObsoleto.*from.*["'].*ComponenteObsoleto.*["'];?/g,
+      /import.*HeartRateDisplay.*from.*["'].*HeartRateDisplay.*["'];?/g,
       "import { HeartRate } from '@/components/HeartRate';"
     );
 
     cleanCode = cleanCode.replace(
-      /<ComponenteObsoleto/g,
+      /<HeartRateDisplay/g,
       '<HeartRate'
     );
 
     cleanCode = cleanCode.replace(
-      /ComponenteObsoleto/g,
+      /HeartRateDisplay/g,
       'HeartRate'
     );
 

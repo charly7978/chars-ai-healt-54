@@ -36,7 +36,7 @@ interface AdvancedSpectralAnalysis {
 
 export class SimulationEradicator {
   private static instance: SimulationEradicator;
-  private readonly SIMULATION_DETECTION_THRESHOLD = 0.99; // Aumentado de 0.95 para reducir falsos positivos
+  private readonly SIMULATION_DETECTION_THRESHOLD = 0.95;
   private readonly FFT_SIZE = 4096;
   private readonly WAVELET_LEVELS = 8;
   private readonly CHAOS_EMBEDDING_DIMENSION = 10;
@@ -442,7 +442,7 @@ export class SimulationEradicator {
     
     // Generar señales sustitutas con misma distribución pero dinámicas lineales
     const surrogateCount = 10;
-    const surrogateComplexities: number[] = [];
+    let surrogateComplexities: number[] = [];
     
     for (let i = 0; i < surrogateCount; i++) {
       const surrogate = this.generatePhaseSurrogate(signal);
@@ -999,21 +999,19 @@ export class SimulationEradicator {
     // Checks rápidos para detección inmediata de simulaciones obvias
     
     // 1. Verificar si el valor es demasiado perfecto (múltiplo exacto)
-    // OPTIMIZACIÓN: Solo rechazar valores que son exactamente enteros
-    if (Number.isInteger(value) && value % 10 === 0) return true;
+    if (Number.isInteger(value * 1000)) return true;
     
     // 2. Verificar patrones temporales sospechosos
-    if (this.timeSeriesBuffer.length > 20) {
-      const lastValues = Array.from(this.timeSeriesBuffer.slice(-20));
+    if (this.timeSeriesBuffer.length > 10) {
+      const lastValues = Array.from(this.timeSeriesBuffer.slice(-10));
       const differences = [];
       for (let i = 1; i < lastValues.length; i++) {
         differences.push(Math.abs(lastValues[i] - lastValues[i-1]));
       }
       
       // Si todas las diferencias son idénticas = señal artificial
-      // OPTIMIZACIÓN: Ser menos estricto, permitir más variación
-      const uniqueDiffs = new Set(differences.map(d => Math.round(d * 100)));
-      if (uniqueDiffs.size === 1 && differences[0] > 0) return true;
+      const uniqueDiffs = new Set(differences.map(d => Math.round(d * 10000)));
+      if (uniqueDiffs.size <= 2) return true;
     }
     
     // 3. Actualizar buffer

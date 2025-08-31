@@ -1,5 +1,0 @@
-[33md87fe791[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Actualizar el botón de pantalla completa en Index para iniciar el monitoreo simultáneamente. Se modifica el texto del botón para reflejar la nueva funcionalidad.
-[33me96ef8f5[m Mejorar la estabilidad y el rendimiento del procesamiento de latidos y la captura de imágenes
-[33mc378b593[m Optimizar parámetros de detección en CameraView y MultiChannelManager
-[33m48e8c378[m Agregar espacio en blanco para mejorar la legibilidad del código en CameraView.tsx
-[33m4233678a[m mejoras
