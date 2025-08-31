@@ -45,6 +45,7 @@ const Index = () => {
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
+  const lastToggleTimeRef = useRef<number>(0);
   
   const { 
     handleSample,
@@ -181,6 +182,12 @@ const Index = () => {
   }, [lastValidResults, isMonitoring]);
 
   const startMonitoring = () => {
+    const now = Date.now();
+    if (now - lastToggleTimeRef.current < 1000) {
+      console.log('⏱️ Ignorando inicio rápido sucesivo');
+      return;
+    }
+    lastToggleTimeRef.current = now;
     if (systemState.current !== 'IDLE') {
       console.log('⚠️ PREVINIENDO INICIO MÚLTIPLE - Estado actual:', systemState.current);
       return;
@@ -237,6 +244,12 @@ const Index = () => {
   };
 
   const finalizeMeasurement = () => {
+    const now = Date.now();
+    if (now - lastToggleTimeRef.current < 1000) {
+      console.log('⏱️ Ignorando detención rápida sucesiva');
+      return;
+    }
+    lastToggleTimeRef.current = now;
     if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') return;
     
     systemState.current = 'STOPPING';
@@ -406,6 +419,10 @@ const Index = () => {
   }, [isCalibrating, getCalibrationProgress]);
 
   const handleToggleMonitoring = () => {
+    // Debounce adicional a nivel de UI
+    const now = Date.now();
+    if (now - lastToggleTimeRef.current < 1000) return;
+    lastToggleTimeRef.current = now;
     if (isMonitoring) {
       finalizeMeasurement();
     } else {

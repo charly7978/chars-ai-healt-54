@@ -56,7 +56,9 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     }
 
     // CRÍTICO: Enviar muestra al MultiChannelManager
-    mgrRef.current!.pushSample(inputSignal, s.timestamp);
+    // Evitar push si el manager no existe aún (montaje/desmontaje rápido)
+    if (!mgrRef.current) return;
+    mgrRef.current.pushSample(inputSignal, s.timestamp);
     
     // CRÍTICO: Analizar con métricas globales correctas
     // Ajuste de cobertura y movimiento usando métricas adicionales y confianza
@@ -81,7 +83,8 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     const now = performance.now();
     let result: MultiChannelResult | null = null;
     if (now - lastAnalyzeTimeRef.current >= analyzeIntervalMsRef.current || !lastResult) {
-      result = mgrRef.current!.analyzeAll(adjustedCoverage, adjustedMotion);
+      if (!mgrRef.current) return;
+      result = mgrRef.current.analyzeAll(adjustedCoverage, adjustedMotion);
       lastAnalyzeTimeRef.current = now;
       
       // Log resultado muy ocasional o cuando hay detección

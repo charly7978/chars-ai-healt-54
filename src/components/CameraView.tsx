@@ -181,7 +181,7 @@ const CameraView: React.FC<CameraViewProps> = ({
           }
         };
 
-        video.addEventListener('loadedmetadata', waitForVideo);
+        video.addEventListener('loadedmetadata', waitForVideo, { once: true } as any);
         waitForVideo();
 
       } catch (err: any) {
@@ -355,7 +355,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       };
     };
 
-    if (isMonitoring) {
+    if (isMonitoring && !captureStartedRef.current) {
       startCam();
     }
 
