@@ -23,21 +23,8 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
 
   const handleSample = (s: CameraSample) => {
     sampleCountRef.current++;
-    
-    // Log cada 30 muestras
-    if (sampleCountRef.current % 30 === 0) {
-      console.log('🎯 handleSample recibiendo:', {
-        muestra: sampleCountRef.current,
-        rMean: s.rMean.toFixed(1),
-        gMean: s.gMean.toFixed(1),
-        bMean: s.bMean.toFixed(1),
-        coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%'
-      });
-    }
-    
     // Protección contra muestras inválidas o NaN
     if (!isFinite(s.rMean) || !isFinite(s.gMean) || !isFinite(s.bMean)) {
-      console.warn('⚠️ Muestra inválida:', s);
       return;
     }
     
@@ -47,16 +34,17 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       exposureState: s.exposureState
     };
     
-    // Extracción PROFESIONAL de señal PPG
-    // Método basado en literatura: maximizar componente pulsátil
-    const rNorm = s.rMean / Math.max(s.rMean + s.gMean + s.bMean, 1);
-    const gNorm = s.gMean / Math.max(s.rMean + s.gMean + s.bMean, 1);
+    // Refinamiento de señal MEJORADO: usar componente AC puro
+    // Extraer componente pulsátil (AC) eliminando componente DC
+    const dcComponent = s.rMean * 0.7 + s.gMean * 0.3; // Componente DC estimado
+    const acRed = s.rMean - dcComponent;
+    const acGreen = s.gMean - dcComponent * 0.8; // Verde tiene menos componente DC
     
-    // Señal PPG óptima: enfatizar cambios en absorción de hemoglobina
-    const ppgSignal = s.rMean - 0.7 * s.gMean; // Verde ayuda a eliminar artefactos
+    // Señal PPG óptima: maximizar componente AC
+    const ppgSignal = acRed - 0.5 * acGreen; // Resta verde para eliminar artefactos
     
-    // Normalizar manteniendo rango dinámico
-    const inputSignal = Math.max(0, Math.min(255, 128 + (ppgSignal - 128) * 1.2));
+    // Normalizar a escala 0-255 manteniendo el componente AC
+    const inputSignal = Math.max(0, Math.min(255, 128 + ppgSignal * 2));
     
     // Log detallado MUY ocasional para debug
     if (sampleCountRef.current % 600 === 0) {
@@ -107,9 +95,9 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // CRÍTICO: Siempre ejecutar el análisis para mantener sincronización
     // El problema era que si no se ejecutaba el análisis, los buffers internos
     // seguían actualizándose pero el resultado mostrado quedaba desactualizado
-    const coverageForAnalysis = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
-    const motionForAnalysis = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
-    const result = mgrRef.current!.analyzeAll(coverageForAnalysis, motionForAnalysis);
+    const coverage = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
+    const motionValue = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
+    const result = mgrRef.current!.analyzeAll(coverage, motionValue);
     
     // Solo actualizar el estado de React con throttling para evitar re-renders excesivos
     const now = performance.now();
