@@ -57,10 +57,10 @@ export class FederatedLearningService {
     
     if (!clientId) {
       // Generate a new client ID and store it
-      // PROHIBIDO Math.random() en aplicaciones médicas - usar crypto
-      const randomBytes = new Uint32Array(2);
-      crypto.getRandomValues(randomBytes);
-      clientId = `client_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}`;
+      // Sin aleatoriedad: derivar ID de tiempo y rendimiento
+      const t = Date.now().toString(36);
+      const p = (performance.now() | 0).toString(36);
+      clientId = `client_${t}_${p}`;
       localStorage.setItem(STORAGE_KEY, clientId);
     }
     

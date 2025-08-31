@@ -1033,11 +1033,9 @@ export class BloodPressureProcessor {
     // Factor de variabilidad (más variabilidad = mejor perfusión)
     const variabilityFactor = Math.min(stdDev / 20, 1.5); // Normalizado a 0-1.5
 
-    // Generar variación natural usando crypto.getRandomValues()
-    const randomValues = new Uint32Array(2);
-    crypto.getRandomValues(randomValues);
-    const systolicVariation = (randomValues[0] / 0xFFFFFFFF) * 10 - 5; // -5 a +5
-    const diastolicVariation = (randomValues[1] / 0xFFFFFFFF) * 8 - 4; // -4 a +4
+    // Eliminar variación aleatoria: usar solo métricas derivadas de señal
+    const systolicVariation = 0;
+    const diastolicVariation = 0;
 
     // Cálculo de presión sistólica
     const systolic = baseSystemicPressure + 

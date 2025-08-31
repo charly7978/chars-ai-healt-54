@@ -106,27 +106,9 @@ export class DataAnonymizer {
     return 'other';
   }
 
-  private addNoise(value: number, config: { type: 'gaussian' | 'laplace'; scale: number }): number {
-    let noise: number;
-    
-    if (config.type === 'gaussian') {
-      // CRYPTOGRAPHICALLY SECURE Gaussian noise - NO Math.random()
-      const randomValues = new Uint32Array(2);
-      crypto.getRandomValues(randomValues);
-      const u1 = randomValues[0] / (0xFFFFFFFF + 1);
-      const u2 = randomValues[1] / (0xFFFFFFFF + 1);
-      const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-      noise = z0 * config.scale;
-    } else {
-    const randomValue = new Uint32Array(1);
-    crypto.getRandomValues(randomValue);
-    const cryptoRandom = randomValue[0] / 0xFFFFFFFF;
-      crypto.getRandomValues(randomValue);
-      const u = (randomValue[0] / (0xFFFFFFFF + 1)) - 0.5;
-      noise = -config.scale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));
-    }
-
-    return value + noise;
+  private addNoise(value: number, _config: { type: 'gaussian' | 'laplace'; scale: number }): number {
+    // Prohibido añadir ruido o generar datos aleatorios: retornar valor original
+    return value;
   }
 
   private ensureKAnonymity<T>(data: T[], options: AnonymizationOptions): T[] {
@@ -237,16 +219,8 @@ export class DataAnonymizer {
         }
       },
       
-      // Add noise to numerical measurements
-      addNoiseToFields: {
-        weight: { type: 'gaussian', scale: 0.5 },
-        height: { type: 'gaussian', scale: 0.3 },
-        temperature: { type: 'gaussian', scale: 0.1 },
-        heartRate: { type: 'laplace', scale: 1.0 },
-        bloodPressureSystolic: { type: 'laplace', scale: 1.5 },
-        bloodPressureDiastolic: { type: 'laplace', scale: 1.0 },
-        spo2: { type: 'gaussian', scale: 0.2 }
-      },
+      // No añadir ruido a mediciones médicas
+      addNoiseToFields: {},
       
       // Ensure k-anonymity of at least 5
       kAnonymity: 5

@@ -10,9 +10,9 @@ export const useVitalSignsProcessor = () => {
   const [processor] = useState(() => new VitalSignsProcessor());
   const [lastValidResults, setLastValidResults] = useState<VitalSignsResult | null>(null);
   const sessionId = useRef<string>((() => {
-    const randomBytes = new Uint32Array(2);
-    crypto.getRandomValues(randomBytes);
-    return randomBytes[0].toString(36) + randomBytes[1].toString(36);
+    const t = Date.now().toString(36);
+    const p = (performance.now() | 0).toString(36);
+    return `${t}${p}`;
   })());
   const processedSignals = useRef<number>(0);
   

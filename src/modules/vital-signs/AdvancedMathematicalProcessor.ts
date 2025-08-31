@@ -82,17 +82,11 @@ export class AdvancedMathematicalProcessor {
     // Buffer circular para procesamiento continuo
     this.circularBuffer = new Float64Array(this.PROCESSING_WINDOW);
     
-    // Inicializar matrices de covarianza con ruido quantum
+    // Inicializar matrices de covarianza sin aleatoriedad
     for (let i = 0; i < this.PROCESSING_WINDOW; i++) {
       const eigenVector = new Float64Array(this.PROCESSING_WINDOW);
       for (let j = 0; j < this.PROCESSING_WINDOW; j++) {
-        // Usar crypto para evitar Math.random (prohibido en aplicaciones médicas)
-        const randomBytes = new Uint32Array(1);
-        crypto.getRandomValues(randomBytes);
-        const cryptoRandom = randomBytes[0] / 0xFFFFFFFF;
-        
-        eigenVector[j] = Math.cos(2 * Math.PI * i * j / this.PROCESSING_WINDOW) * 
-                        (0.5 + cryptoRandom * 0.1); // Pequeña perturbación aleatoria
+        eigenVector[j] = Math.cos(2 * Math.PI * i * j / this.PROCESSING_WINDOW) * 0.5;
       }
       this.eigenVectors.push(eigenVector);
     }
@@ -130,15 +124,9 @@ export class AdvancedMathematicalProcessor {
   }
 
   private initializeWeights(weights: Float64Array): void {
-    // Inicialización Xavier/Glorot para evitar gradientes que desaparecen
-    const limit = Math.sqrt(6.0 / weights.length);
-    
+    // Inicialización determinista: todos a cero (sin aleatoriedad)
     for (let i = 0; i < weights.length; i++) {
-      const randomBytes = new Uint32Array(1);
-      crypto.getRandomValues(randomBytes);
-      const cryptoRandom = randomBytes[0] / 0xFFFFFFFF;
-      
-      weights[i] = (cryptoRandom * 2 - 1) * limit;
+      weights[i] = 0;
     }
   }
 
@@ -1436,7 +1424,7 @@ export class AdvancedMathematicalProcessor {
     
     // Rellenar el resto con características derivadas
     for (let i = idx; i < 512; i++) {
-      features[i] = Math.sin(i * ptt * 0.001) * pwv * 0.01; // Características sintéticas
+      features[i] = 0;
     }
     
     return features;

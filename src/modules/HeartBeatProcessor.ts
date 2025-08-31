@@ -680,11 +680,8 @@ export class HeartBeatProcessor {
           const rrInterval = 60000 / bpm;
           // Aplicar variabilidad realista basada en calidad de señal
           const variability = this.currentSignalQuality > 70 ? 0.02 : 0.05;
-          // Usar crypto.getRandomValues() en lugar de Math.random() para aplicaciones médicas
-          const randomBytes = new Uint32Array(1);
-          crypto.getRandomValues(randomBytes);
-          const randomValue = randomBytes[0] / (0xFFFFFFFF + 1);
-          const adjustedRR = rrInterval * (1 + (randomValue - 0.5) * variability);
+          // Eliminar cualquier aleatoriedad: respetar rrInterval tal cual
+          const adjustedRR = rrInterval;
           rrIntervals.push(Math.max(300, Math.min(2000, adjustedRR)));
         }
       }

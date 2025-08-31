@@ -32,10 +32,10 @@ export const useHeartBeatProcessor = () => {
 
   // INICIALIZACIÓN UNIFICADA - UNA SOLA VEZ
   useEffect(() => {
-    // GENERAR SESSION ID ÚNICO
-    const randomBytes = new Uint32Array(2);
-    crypto.getRandomValues(randomBytes);
-    sessionIdRef.current = `heartbeat_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}`;
+    // GENERAR SESSION ID sin aleatoriedad
+    const t = Date.now().toString(36);
+    const p = (performance.now() | 0).toString(36);
+    sessionIdRef.current = `heartbeat_${t}_${p}`;
 
     console.log(`💓 CREANDO PROCESADOR CARDÍACO UNIFICADO - ${sessionIdRef.current}`);
     

@@ -30,9 +30,9 @@ export const useSignalProcessor = () => {
     initializationState.current = 'INITIALIZING';
     
     // SESSION ID ÚNICO
-    const randomBytes = new Uint32Array(3);
-    crypto.getRandomValues(randomBytes);
-    sessionIdRef.current = `unified_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
+    const t = Date.now().toString(36);
+    const p = (performance.now() | 0).toString(36);
+    sessionIdRef.current = `unified_${t}_${p}`;
 
     console.log(`🔬 INICIALIZACIÓN ÚNICA Y DEFINITIVA - ${sessionIdRef.current}`);
 

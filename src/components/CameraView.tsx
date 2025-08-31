@@ -28,9 +28,9 @@ const CameraView = ({
 
   // GENERAR SESSION ID ÚNICO
   useEffect(() => {
-    const randomBytes = new Uint32Array(1);
-    crypto.getRandomValues(randomBytes);
-    sessionIdRef.current = `camera_${randomBytes[0].toString(36)}`;
+    const t = Date.now().toString(36);
+    const p = (performance.now() | 0).toString(36);
+    sessionIdRef.current = `camera_${t}_${p}`;
   }, []);
 
   // FUNCIÓN UNIFICADA DE PARADA DE CÁMARA

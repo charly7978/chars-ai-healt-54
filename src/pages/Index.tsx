@@ -85,9 +85,10 @@ const Index = () => {
     if (initializationLock.current) return;
     
     initializationLock.current = true;
-    const randomBytes = new Uint32Array(3);
-    crypto.getRandomValues(randomBytes);
-    sessionIdRef.current = `main_${randomBytes[0].toString(36)}_${randomBytes[1].toString(36)}_${randomBytes[2].toString(36)}`;
+    // Generar ID determinista basado en tiempo y contadores (sin aleatoriedad)
+    const t = Date.now().toString(36);
+    const c1 = (performance.now() | 0).toString(36);
+    sessionIdRef.current = `main_${t}_${c1}`;
     
     console.log(`🚀 INICIALIZACIÓN ÚNICA GARANTIZADA: ${sessionIdRef.current}`);
     console.log(`📊 Debug Info - Signal: ${JSON.stringify(signalDebugInfo)}, Heart: ${JSON.stringify(heartDebugInfo)}`);
@@ -449,9 +450,21 @@ const Index = () => {
     pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
     const channelOutputs = compute();
 
+<<<<<<< Current (Your changes)
     // Feedback básico desde arrhythmia/heart si la calidad es baja
     if (channelOutputs && channelOutputs.heart && channelOutputs.heart.quality < 55) {
       pushFeedback('heart', channelOutputs.heart.feedback || { desiredGain: 1.1, confidence: 0.3 });
+=======
+    // Feedback multicanal cuando calidad baja
+    if (channelOutputs) {
+      const channels: Array<keyof typeof channelOutputs> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
+      channels.forEach((ch) => {
+        const out = channelOutputs[ch];
+        if (out && out.quality < 55) {
+          pushFeedback(ch as any, out.feedback || { desiredGain: 1.05, confidence: 0.3 });
+        }
+      });
+>>>>>>> Incoming (Background Agent changes)
     }
 
     // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)

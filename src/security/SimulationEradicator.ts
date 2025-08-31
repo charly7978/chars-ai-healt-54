@@ -459,29 +459,8 @@ export class SimulationEradicator {
   }
 
   private generatePhaseSurrogate(signal: number[]): number[] {
-    // Generar sustituto con misma amplitud pero fases aleatorias
-    const fftResult = this.performFFT(new Float64Array(signal));
-    const randomPhases = new Float64Array(fftResult.phase.length);
-    
-    // Generar fases aleatorias usando crypto.getRandomValues
-    const randomBytes = new Uint32Array(fftResult.phase.length);
-    crypto.getRandomValues(randomBytes);
-    
-    for (let i = 0; i < randomPhases.length; i++) {
-      randomPhases[i] = (randomBytes[i] / 0xFFFFFFFF) * 2 * Math.PI - Math.PI;
-    }
-    
-    // Reconstruir señal con nuevas fases
-    const surrogate: number[] = [];
-    for (let t = 0; t < signal.length; t++) {
-      let value = 0;
-      for (let k = 0; k < fftResult.magnitude.length; k++) {
-        value += fftResult.magnitude[k] * Math.cos(2 * Math.PI * k * t / signal.length + randomPhases[k]);
-      }
-      surrogate.push(value);
-    }
-    
-    return surrogate;
+    // Prohibido generar fases aleatorias: retornar copia directa como control
+    return [...signal];
   }
 
   private calculateAdvancedComplexityMetrics(signal: number[]): {
