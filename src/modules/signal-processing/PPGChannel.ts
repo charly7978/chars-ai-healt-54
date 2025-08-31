@@ -213,22 +213,6 @@ export default class PPGChannel {
       if (this.detectionState) {
         const sinceToggle = Date.now() - this.lastToggleMs;
         if (sinceToggle >= this.HOLD_MS && this.consecutiveFalse >= this.MIN_FALSE_FRAMES) {
-          // DEBUG: Log cuando se pierde la detección
-          console.warn(`❌ Canal ${this.channelId} PERDIENDO DETECCIÓN:`, {
-            sinceToggle: sinceToggle + 'ms',
-            consecutiveFalse: this.consecutiveFalse,
-            mean: mean.toFixed(1),
-            variance: variance.toFixed(2),
-            snr: snr.toFixed(2),
-            criterios: {
-              brightnessOk,
-              varianceOk,
-              snrOk,
-              bpmOk,
-              acOk,
-              rrConsistencyOk
-            }
-          });
           this.detectionState = false;
           this.lastToggleMs = Date.now();
         }
