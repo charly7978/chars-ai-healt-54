@@ -1,4 +1,3 @@
-
 /**
  * MultiChannelManager COMPLETAMENTE OPTIMIZADO:
  * - Lógica de consenso arreglada y balanceada
@@ -22,11 +21,7 @@ export default class MultiChannelManager {
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
   private lastGlobalToggle = 0;
-<<<<<<< Current (Your changes)
-  private readonly GLOBAL_HOLD_MS = 300; // Reducido de 900ms para mejor respuesta
-=======
   private readonly GLOBAL_HOLD_MS = 100; // Reducido para respuesta inmediata
->>>>>>> Incoming (Background Agent changes)
   private coverageEma: number | null = null;
   private motionEma: number | null = null;
   
