@@ -566,14 +566,14 @@ const Index = () => {
     }}>
       {!isFullscreen && (
         <button 
-          onClick={enterFullScreen}
+          onClick={() => { enterFullScreen(); startMonitoring(); }}
           className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/90 text-white"
         >
           <div className="text-center p-4 bg-primary/20 rounded-lg backdrop-blur-sm">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
             </svg>
-            <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
+            <p className="text-lg font-semibold">Toca para pantalla completa e iniciar</p>
           </div>
         </button>
       )}
