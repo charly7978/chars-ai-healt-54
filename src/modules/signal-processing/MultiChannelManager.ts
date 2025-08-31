@@ -22,7 +22,11 @@ export default class MultiChannelManager {
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
   private lastGlobalToggle = 0;
+<<<<<<< Current (Your changes)
   private readonly GLOBAL_HOLD_MS = 300; // Reducido de 900ms para mejor respuesta
+=======
+  private readonly GLOBAL_HOLD_MS = 100; // Reducido para respuesta inmediata
+>>>>>>> Incoming (Background Agent changes)
   private coverageEma: number | null = null;
   private motionEma: number | null = null;
   
@@ -170,7 +174,7 @@ export default class MultiChannelManager {
       this.fingerUnstableCount = 0;
       
       if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER) {
-        if (!this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
+        if (!this.fingerState) {
           console.log('✅ DEDO DETECTADO CONFIRMADO - Estado: FALSE → TRUE');
           console.log('📊 Métricas en el momento de detección:', {
             detectedChannels,
@@ -180,23 +184,19 @@ export default class MultiChannelManager {
             validBPMs
           });
         }
-        if ((now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
-          this.fingerState = true;
-          this.lastGlobalToggle = now2;
-        }
+        this.fingerState = true;
+        this.lastGlobalToggle = now2;
       }
     } else if (preCondition) {
       // Pre-detección: cobertura y estabilidad suficientes, aún sin consenso/BPM
       this.fingerStableCount++;
       this.fingerUnstableCount = 0;
       if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 3) {
-        if (!this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
+        if (!this.fingerState) {
           console.log('✅ DEDO PRESENTE (PRE-DETECCIÓN) - cobertura y estabilidad OK');
         }
-        if ((now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
-          this.fingerState = true;
-          this.lastGlobalToggle = now2;
-        }
+        this.fingerState = true;
+        this.lastGlobalToggle = now2;
       }
     } else {
       this.fingerUnstableCount++;
@@ -206,7 +206,7 @@ export default class MultiChannelManager {
       }
       
       if (this.fingerUnstableCount >= this.FRAMES_TO_LOSE_FINGER) {
-        if (this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
+        if (this.fingerState) {
           console.log('❌ DEDO PERDIDO CONFIRMADO - Estado: TRUE → FALSE');
           console.log('📊 Razones de pérdida:', {
             coverageOk,
@@ -217,11 +217,9 @@ export default class MultiChannelManager {
             unstableFrames: this.fingerUnstableCount
           });
         }
-        if ((now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
-          this.fingerState = false;
-          this.fingerStableCount = 0;
-          this.lastGlobalToggle = now2;
-        }
+        this.fingerState = false;
+        this.fingerStableCount = 0;
+        this.lastGlobalToggle = now2;
       }
     }
 

@@ -12,7 +12,7 @@ import { savitzkyGolay } from './SavitzkyGolayFilter';
 import { Biquad } from './Biquad';
 import { goertzelPower } from './Goertzel';
 import { computeSNR } from './SignalQualityAnalyzer';
-import { detectPeaks } from './TimeDomainPeak';
+import { improvedDetectPeaks } from './ImprovedPeakDetector';
 
 type Sample = { t: number; v: number };
 
@@ -21,6 +21,7 @@ export default class PPGChannel {
   private buffer: Sample[] = [];
   private windowSec: number;
   private gain: number;
+  private bufferStartTime: number = 0;
   
   // Histéresis por canal para evitar flapping
   private detectionState: boolean = false;
@@ -49,6 +50,9 @@ export default class PPGChannel {
     this.windowSec = windowSec;
     this.gain = initialGain;
     
+    // Buffer circular para evitar problemas con shift()
+    this.bufferStartTime = 0;
+    
     console.log(`🔬 PPGChannel ${channelId} creado:`, {
       windowSec,
       initialGain,
@@ -64,10 +68,17 @@ export default class PPGChannel {
     const v = rawValue * this.gain;
     this.buffer.push({ t, v });
     
-    // Mantener ventana temporal
+    // Mantener ventana temporal con suavizado
     const t0 = t - this.windowSec;
-    while (this.buffer.length && this.buffer[0].t < t0) {
-      this.buffer.shift();
+    
+    // Solo hacer shift si hay suficientes muestras y el buffer es muy grande
+    if (this.buffer.length > 300 && this.buffer[0].t < t0) {
+      // Mantener al menos 20% de muestras antiguas para continuidad
+      const keepTime = t - this.windowSec * 1.2;
+      while (this.buffer.length > 250 && this.buffer[0].t < keepTime) {
+        this.buffer.shift();
+      }
+      this.bufferStartTime = this.buffer[0].t;
     }
     
     // Debug logging cada 300 muestras para no saturar (aumentado de 100)
@@ -172,8 +183,8 @@ export default class PPGChannel {
     // BPM del pico espectral con validación
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
-    // Detección de picos temporales para RR intervals
-    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 350, 0.10); // Ajustado a 350ms y umbral 0.10
+    // Detección de picos mejorada para latidos reales
+    const { peaks, peakTimesMs, rr, confidence } = improvedDetectPeaks(smooth, fs, 350, 0.10);
     const bpmTemporal = rr.length >= 2 ? 
       Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
 
@@ -188,16 +199,27 @@ export default class PPGChannel {
       rrConsistencyOk = cvRR <= this.maxRRCoeffVar;
     }
 
-    // CRITERIOS DE DETECCIÓN DE DEDO ESTRICTOS (sin falsos positivos)
+    // CRITERIOS DE DETECCIÓN MEJORADOS - Más tolerantes pero realistas
     const brightnessOk = mean >= this.minRMeanForFinger && mean <= this.maxRMeanForFinger;
     const varianceOk = variance >= this.minVarianceForPulse;
     const snrOk = snr >= this.minSNRForFinger;
     const bpmOk = (bpmSpectral && bpmSpectral >= 45 && bpmSpectral <= 180) || 
                   (bpmTemporal && bpmTemporal >= 45 && bpmTemporal <= 180);
-    // Detección temprana (sin exigir SNR/BPM) si hay brillo y amplitud AC suficientes en los primeros segundos
-    const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
-    const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
-    const rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk);
+    
+    // Detección basada en confianza del detector de picos
+    const peakConfidence = (confidence ?? 0) > 0.5;
+    
+    // Si ya estamos detectando, ser más tolerante para mantener la detección
+    if (this.detectionState) {
+      // Mantener detección si tenemos al menos señal básica
+      const maintainDetection = brightnessOk && (varianceOk || peakConfidence || (snr > 0.8));
+      var rawDetected = maintainDetection;
+    } else {
+      // Para nueva detección, ser más estricto
+      const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
+      const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
+      var rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk || peakConfidence);
+    }
 
     // Aplicar histéresis por canal
     if (rawDetected) {
