@@ -16,22 +16,22 @@ export default class MultiChannelManager {
   private n: number;
   private windowSec: number;
   private lastTimestamp = Date.now();
-  private readonly STALE_MS = 1600; // tolerar pausas más largas sin perder detección
+  private readonly STALE_MS = 900; // tolerar pausas breves sin perder detección
   
   // Estado de detección con debounce MEJORADO
   private fingerState = false;
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
   private lastGlobalToggle = 0;
-  private readonly GLOBAL_HOLD_MS = 4000;
+  private readonly GLOBAL_HOLD_MS = 900;
   private coverageEma: number | null = null;
   private motionEma: number | null = null;
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
   private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // robusto para confirmar
-  private readonly FRAMES_TO_LOSE_FINGER = 35;      // perder dedo tras ~1.7s inestable
-  private readonly MIN_COVERAGE_RATIO = 0.10;       // permitir luz más baja
-  private readonly MAX_FRAME_DIFF = 32;             // tolerar más autoexposición/micro-mov
+  private readonly FRAMES_TO_LOSE_FINGER = 20;      // perder dedo sólo tras ~1s inestable
+  private readonly MIN_COVERAGE_RATIO = 0.14;       // permitir luz más baja
+  private readonly MAX_FRAME_DIFF = 28;             // tolerar más autoexposición/micro-mov
   private readonly MIN_CONSENSUS_RATIO = 0.32;      // igual
   private readonly MIN_QUALITY_THRESHOLD = 20;      // más permisivo para estabilidad
 
@@ -138,11 +138,9 @@ export default class MultiChannelManager {
     const avgQuality = detectedChannels > 0 ? (totalQuality / detectedChannels) : 0;
     const qualityOk = detectedChannels > 0 && avgQuality >= this.MIN_QUALITY_THRESHOLD;
     const strongDetection = consensusOk && qualityOk && coverageOk && motionOk;
-    // Mantener detección si ya estaba activa y se conserva consenso+calidad, aunque cobertura/movimiento fluctúen
-    const stickyDetection = this.fingerState && consensusOk && qualityOk;
     
     // Condición global mejorada: todos los criterios principales + calidad
-    const globalCondition = strongDetection || stickyDetection;
+    const globalCondition = strongDetection;
     // Condición de pre-detección basada solo en cobertura y movimiento estables
     const preCondition = coverageOk && motionOk;
 
@@ -194,7 +192,7 @@ export default class MultiChannelManager {
       // Pre-detección: cobertura y estabilidad suficientes, aún sin consenso/BPM
       this.fingerStableCount++;
       this.fingerUnstableCount = 0;
-      if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 5) {
+      if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 3) {
         if (!this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
           console.log('✅ DEDO PRESENTE (PRE-DETECCIÓN) - cobertura y estabilidad OK');
         }
