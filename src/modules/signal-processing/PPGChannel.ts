@@ -31,17 +31,10 @@ export default class PPGChannel {
   private detectionState: boolean = false;
   private consecutiveTrue: number = 0;
   private consecutiveFalse: number = 0;
-<<<<<<< Current (Your changes)
-  private readonly MIN_TRUE_FRAMES = 3;  // Reducido para detección más rápida
-  private readonly MIN_FALSE_FRAMES = 10; // Aumentado para evitar pérdidas falsas
-  private lastToggleMs: number = 0;
-  private readonly HOLD_MS = 400; // Reducido para mejor sincronización
-=======
   private readonly MIN_TRUE_FRAMES = 2;  // Más rápido
   private readonly MIN_FALSE_FRAMES = 15; // Más resistente
   private lastToggleMs: number = 0;
   private readonly HOLD_MS = 200; // Respuesta más rápida
->>>>>>> Incoming (Background Agent changes)
   private qualityEma: number | null = null;
   
   // CRÍTICO: Umbrales OPTIMIZADOS para <3% error
@@ -194,9 +187,6 @@ export default class PPGChannel {
     
     const localQuality = qualitySpectral + qualityVariance + qualityStability + qualitySignalStrength;
     
-    // Combinar con calidad robusta (dar más peso a la robusta)
-    const quality = robustQuality ? (robustQuality * 100 * 0.7 + localQuality * 0.3) : localQuality;
-
     // BPM del pico espectral con validación
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
@@ -210,6 +200,9 @@ export default class PPGChannel {
     }
     
     const bpmTemporal = robustBPM;
+
+    // Combinar con calidad robusta (dar más peso a la robusta)
+    const quality = robustQuality ? (robustQuality * 100 * 0.7 + localQuality * 0.3) : localQuality;
 
     // Chequeos adicionales: amplitud AC y regularidad RR
     const stdSmooth = this.stdArray(smooth);
@@ -235,14 +228,17 @@ export default class PPGChannel {
       peakConfidences.reduce((a, b) => a + b, 0) / peakConfidences.length : 0) > 0.6;
     
     // Si ya estamos detectando, ser más tolerante para mantener la detección
+    let inEarlyWindow = false;
+    let earlyOk = false;
+    
     if (this.detectionState) {
       // Mantener detección si tenemos al menos señal básica
       const maintainDetection = brightnessOk && (varianceOk || peakConfidence || (snr > 0.8));
       var rawDetected = maintainDetection;
     } else {
       // Para nueva detección, ser más estricto
-      const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
-      const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
+      inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
+      earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
       var rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk || peakConfidence);
     }
 
