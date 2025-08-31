@@ -460,7 +460,6 @@ const Index = () => {
         }
       });
     }
-    }
 
     // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)
     const vitals = channelOutputs
