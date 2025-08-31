@@ -354,8 +354,7 @@ const Index = () => {
     }
     
     // ✅ UNIFICAR FUENTE DE BPM: HeartBeatProcessor es autoridad
-    const finalBpm = heartBeatResult.bpm;
-    setHeartRate(finalBpm);
+    setHeartRate(heartBeatResult.bpm);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
@@ -424,7 +423,6 @@ const Index = () => {
     };
 
     const getQualityText = () => {
-      if (!lastResult?.fingerDetected) return 'Sin detección';
       if (!lastResult?.fingerDetected) return 'Sin detección';
       if (signalQuality >= 85) return 'Excelente';
       if (signalQuality >= 65) return 'Buena';
@@ -509,7 +507,7 @@ const Index = () => {
           <div className="space-y-1 text-xs text-white/50">
             <div className="flex justify-between">
               <span>BPM:</span>
-              <span className="text-white/70 font-medium">{currentBPM}</span>
+              <span className="text-white/70 font-medium">{heartRate || '--'}</span>
             </div>
             <div className="flex justify-between">
               <span>Canales:</span>
