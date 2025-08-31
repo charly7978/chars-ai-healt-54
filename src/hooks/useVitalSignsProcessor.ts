@@ -1,6 +1,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
+import type { MultiChannelOutputs } from '../types/multichannel';
 
 /**
  * HOOK ÚNICO DE SIGNOS VITALES - ELIMINADAS TODAS LAS DUPLICIDADES
@@ -78,6 +79,15 @@ export const useVitalSignsProcessor = () => {
     return result;
   }, [processor]);
 
+  const processChannels = useCallback((channels: MultiChannelOutputs, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+    processedSignals.current++;
+    const result = processor.processChannels(channels, rrData);
+    if (result.spo2 > 0 && result.glucose > 0) {
+      setLastValidResults(result);
+    }
+    return result;
+  }, [processor]);
+
   const reset = useCallback(() => {
     console.log("🔄 useVitalSignsProcessor: Reset ÚNICO", {
       timestamp: new Date().toISOString()
@@ -103,6 +113,7 @@ export const useVitalSignsProcessor = () => {
 
   return {
     processSignal,
+    processChannels,
     reset,
     fullReset,
     startCalibration,

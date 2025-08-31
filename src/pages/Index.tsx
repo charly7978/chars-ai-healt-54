@@ -4,6 +4,7 @@ import CameraView from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { useMultiChannelOptimizer } from "@/hooks/useMultiChannelOptimizer";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -67,6 +68,7 @@ const Index = () => {
   
   const { 
     processSignal: processVitalSigns, 
+    processChannels: processVitalChannels,
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
     lastValidResults,
@@ -74,6 +76,9 @@ const Index = () => {
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
+
+  // Optimizer multicanal (uso pasivo; se alimenta desde lastSignal)
+  const { pushRawSample, compute, pushFeedback, reset: resetOptimizer } = useMultiChannelOptimizer();
 
   // INICIALIZACIÓN ÚNICA CON BLOQUEO ABSOLUTO
   useEffect(() => {
@@ -420,6 +425,8 @@ const Index = () => {
         setHeartbeatSignal(0);
         setBeatMarker(0);
       }
+      // Alimentar igualmente al optimizador para mantener estado, aunque degradado
+      pushRawSample(lastSignal.timestamp, lastSignal.filteredValue * 0.5, lastSignal.quality);
       return;
     }
 
@@ -438,8 +445,19 @@ const Index = () => {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES
-    const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    // Alimentar optimizador multicanal y calcular salidas por canal
+    pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
+    const channelOutputs = compute();
+
+    // Feedback básico desde arrhythmia/heart si la calidad es baja
+    if (channelOutputs && channelOutputs.heart && channelOutputs.heart.quality < 55) {
+      pushFeedback('heart', channelOutputs.heart.feedback || { desiredGain: 1.1, confidence: 0.3 });
+    }
+
+    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)
+    const vitals = channelOutputs
+      ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
+      : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
     if (vitals) {
       setVitalSigns(vitals);
       

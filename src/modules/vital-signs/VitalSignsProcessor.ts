@@ -1,4 +1,5 @@
 import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
+import type { MultiChannelOutputs } from '../../types/multichannel';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -60,6 +61,15 @@ export class VitalSignsProcessor {
   
   private signalHistory: number[] = [];
   private readonly HISTORY_SIZE = 50;
+  private channelHistories: Record<string, number[]> = {
+    heart: [],
+    spo2: [],
+    bloodPressure: [],
+    hemoglobin: [],
+    glucose: [],
+    lipids: []
+  };
+  private readonly CHANNEL_HISTORY_SIZE = 50;
   
   constructor() {
     console.log("🚀 VitalSignsProcessor: Sistema CORREGIDO con números precisos");
@@ -150,6 +160,103 @@ export class VitalSignsProcessor {
       calibrationProgress: Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100),
       lastArrhythmiaData: this.measurements.lastArrhythmiaData
     };
+  }
+
+  /**
+   * Nuevo flujo: procesamiento por canales optimizados con feedback bidireccional
+   */
+  processChannels(
+    channels: MultiChannelOutputs,
+    rrData?: { intervals: number[], lastPeakTime: number | null }
+  ): VitalSignsResult {
+    // Ingresar cada canal a su historial dedicado
+    for (const key of Object.keys(this.channelHistories)) {
+      const ch = key as keyof typeof this.channelHistories;
+      const val = channels[ch as keyof MultiChannelOutputs]?.output;
+      if (typeof val === 'number') {
+        this.channelHistories[ch].push(val);
+        if (this.channelHistories[ch].length > this.CHANNEL_HISTORY_SIZE) {
+          this.channelHistories[ch].shift();
+        }
+      }
+    }
+
+    // Mantener compatibilidad: base morfológica desde canal cardíaco
+    const heartValue = channels.heart?.output ?? 0;
+    this.signalHistory.push(heartValue);
+    if (this.signalHistory.length > this.HISTORY_SIZE) {
+      this.signalHistory.shift();
+    }
+
+    // Control de calibración
+    if (this.isCalibrating) {
+      this.calibrationSamples++;
+      if (this.calibrationSamples >= this.CALIBRATION_REQUIRED) {
+        this.isCalibrating = false;
+        console.log("✅ VitalSignsProcessor: Calibración completada");
+      }
+    }
+
+    if (!this.isCalibrating && this.channelHistories.heart.length >= 10) {
+      this.calculateVitalSignsFromChannels(channels, rrData);
+    }
+
+    return {
+      spo2: this.formatSpO2(this.measurements.spo2),
+      glucose: this.formatGlucose(this.measurements.glucose),
+      hemoglobin: this.formatHemoglobin(this.measurements.hemoglobin),
+      pressure: {
+        systolic: this.formatPressure(this.measurements.systolicPressure),
+        diastolic: this.formatPressure(this.measurements.diastolicPressure)
+      },
+      arrhythmiaCount: Math.round(this.measurements.arrhythmiaCount),
+      arrhythmiaStatus: this.measurements.arrhythmiaStatus,
+      lipids: {
+        totalCholesterol: this.formatCholesterol(this.measurements.totalCholesterol),
+        triglycerides: this.formatTriglycerides(this.measurements.triglycerides)
+      },
+      isCalibrating: this.isCalibrating,
+      calibrationProgress: Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100),
+      lastArrhythmiaData: this.measurements.lastArrhythmiaData
+    };
+  }
+
+  private calculateVitalSignsFromChannels(
+    channels: MultiChannelOutputs,
+    rrData?: { intervals: number[], lastPeakTime: number | null }
+  ): void {
+    // Historias por canal (fallback a base cardíaca)
+    const heartHist = this.channelHistories.heart.length > 0 ? this.channelHistories.heart : this.signalHistory;
+    const spo2Hist = this.channelHistories.spo2.length > 0 ? this.channelHistories.spo2 : heartHist;
+    const glucoseHist = this.channelHistories.glucose.length > 0 ? this.channelHistories.glucose : heartHist;
+    const hemoHist = this.channelHistories.hemoglobin.length > 0 ? this.channelHistories.hemoglobin : heartHist;
+    const bpHist = this.channelHistories.bloodPressure.length > 0 ? this.channelHistories.bloodPressure : heartHist;
+    const lipidHist = this.channelHistories.lipids.length > 0 ? this.channelHistories.lipids : heartHist;
+
+    // 1. SpO2 desde morfología estable
+    const newSpo2 = this.calculateSpO2Real(spo2Hist);
+    this.measurements.spo2 = this.clampAndStore('spo2', newSpo2, 85, 100);
+
+    // 2. Glucosa con histograma canalizado y valor actual
+    const glucoseCurrent = channels.glucose?.output ?? 0;
+    const newGlucose = this.calculateGlucoseReal(glucoseHist, glucoseCurrent);
+    this.measurements.glucose = this.clampAndStore('glucose', newGlucose, 70, 400);
+
+    // 3. Hemoglobina desde amplitud/frecuencia del canal dedicado
+    const newHemoglobin = this.calculateHemoglobinReal(hemoHist);
+    this.measurements.hemoglobin = this.clampAndStore('hemoglobin', newHemoglobin, 8.0, 20.0);
+
+    // 4. Presión arterial usando RR + morfología del canal BP
+    if (rrData && rrData.intervals.length >= 3) {
+      const pressureResult = this.calculateBloodPressureReal(rrData.intervals, bpHist);
+      this.measurements.systolicPressure = this.clampAndStore('systolic', pressureResult.systolic, 90, 200);
+      this.measurements.diastolicPressure = this.clampAndStore('diastolic', pressureResult.diastolic, 60, 120);
+    }
+
+    // 5. Lípidos desde turbulencia/viscosidad del canal
+    const lipidResult = this.calculateLipidsReal(lipidHist);
+    this.measurements.totalCholesterol = this.clampAndStore('cholesterol', lipidResult.totalCholesterol, 120, 300);
+    this.measurements.triglycerides = this.clampAndStore('triglycerides', lipidResult.triglycerides, 50, 400);
   }
 
   private calculateVitalSignsWithCorrectFormat(
