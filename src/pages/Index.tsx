@@ -452,15 +452,14 @@ const Index = () => {
 
     // Feedback multicanal cuando calidad baja
     if (channelOutputs) {
-      const channels: Array<keyof typeof channelOutputs> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
+      const channels = Object.keys(channelOutputs) as Array<keyof typeof channelOutputs>;
       channels.forEach((ch) => {
-        const out = channelOutputs[ch];
-        if (out && out.quality < 55) {
-          pushFeedback(ch as any, out.feedback || { desiredGain: 1.05, confidence: 0.3 });
+        const out = channelOutputs[ch] as { quality?: number; feedback?: any } | undefined;
+        if (out && typeof out.quality === "number" && out.quality < 55) {
+          pushFeedback(ch, out.feedback || { desiredGain: 1.05, confidence: 0.3 });
         }
       });
     }
-
     // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)
     const vitals = channelOutputs
       ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
