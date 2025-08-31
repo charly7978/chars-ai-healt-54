@@ -450,11 +450,6 @@ const Index = () => {
     pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
     const channelOutputs = compute();
 
-<<<<<<< Current (Your changes)
-    // Feedback básico desde arrhythmia/heart si la calidad es baja
-    if (channelOutputs && channelOutputs.heart && channelOutputs.heart.quality < 55) {
-      pushFeedback('heart', channelOutputs.heart.feedback || { desiredGain: 1.1, confidence: 0.3 });
-=======
     // Feedback multicanal cuando calidad baja
     if (channelOutputs) {
       const channels: Array<keyof typeof channelOutputs> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
@@ -464,7 +459,7 @@ const Index = () => {
           pushFeedback(ch as any, out.feedback || { desiredGain: 1.05, confidence: 0.3 });
         }
       });
->>>>>>> Incoming (Background Agent changes)
+    }
     }
 
     // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)
