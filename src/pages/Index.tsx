@@ -341,14 +341,14 @@ const Index = () => {
     // ✅ SOLO PROCESAR SI ESTAMOS EN ESTADO ACTIVO DE MONITOREO
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 20;
+    const MIN_SIGNAL_QUALITY = 15;
     
     if (!bestChannel?.isFingerDetected || (bestChannel?.quality || 0) < MIN_SIGNAL_QUALITY) {
       return;
     }
 
     // ✅ PROCESAMIENTO ÚNICO DE LATIDOS REALES - SIN DUPLICACIONES
-    const signalValue = bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] || 0;
+    const signalValue = bestChannel.calibratedSignal[bestChannel.calibratedSignal.length - 1] ?? 0;
     const heartBeatResult = processHeartBeat(
       signalValue,
       bestChannel.isFingerDetected, 

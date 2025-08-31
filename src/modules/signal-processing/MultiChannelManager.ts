@@ -29,9 +29,9 @@ export default class MultiChannelManager {
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
   private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // robusto para confirmar
-  private readonly FRAMES_TO_LOSE_FINGER = 20;      // perder dedo sólo tras ~1s inestable
-  private readonly MIN_COVERAGE_RATIO = 0.14;       // permitir luz más baja
-  private readonly MAX_FRAME_DIFF = 28;             // tolerar más autoexposición/micro-mov
+  private readonly FRAMES_TO_LOSE_FINGER = 35;      // perder dedo tras ~1.7s inestable
+  private readonly MIN_COVERAGE_RATIO = 0.10;       // permitir luz más baja
+  private readonly MAX_FRAME_DIFF = 32;             // tolerar más autoexposición/micro-mov
   private readonly MIN_CONSENSUS_RATIO = 0.32;      // igual
   private readonly MIN_QUALITY_THRESHOLD = 20;      // más permisivo para estabilidad
 
@@ -192,7 +192,7 @@ export default class MultiChannelManager {
       // Pre-detección: cobertura y estabilidad suficientes, aún sin consenso/BPM
       this.fingerStableCount++;
       this.fingerUnstableCount = 0;
-      if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 3) {
+      if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 5) {
         if (!this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
           console.log('✅ DEDO PRESENTE (PRE-DETECCIÓN) - cobertura y estabilidad OK');
         }
