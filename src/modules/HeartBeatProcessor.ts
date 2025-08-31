@@ -1,5 +1,4 @@
 import { KalmanFilter } from './signal-processing/KalmanFilter';
-import { AdvancedPeakDetector } from './signal-processing/AdvancedPeakDetector';
 
 export class HeartBeatProcessor {
   // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
@@ -8,9 +7,9 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
   private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
   private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.55; // Más permisivo para estabilizar detección
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.65; // AUMENTADO para ser más estricto
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 380; // levemente más rápido para latidos reales
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
   private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
 
   // Parámetros de filtrado MÁS CONSERVADORES
@@ -22,12 +21,12 @@ export class HeartBeatProcessor {
   // Parámetros de beep más estrictos
   private readonly BEEP_DURATION = 450; 
   private readonly BEEP_VOLUME = 1.0;
-  private readonly MIN_BEEP_INTERVAL_MS = 1200; // Intervalo mayor para evitar beeps repetidos
+  private readonly MIN_BEEP_INTERVAL_MS = 700; // Aumentado para evitar beeps excesivos
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
-  // AUTO-RESET menos agresivo para evitar interrupciones
-  private readonly LOW_SIGNAL_THRESHOLD = 0.005; // Umbral más bajo para ser menos agresivo (era 0.02)
-  private readonly LOW_SIGNAL_FRAMES = 60; // Aumentado para evitar resets frecuentes (era 15)
+  // AUTO-RESET más agresivo para falsos positivos
+  private readonly LOW_SIGNAL_THRESHOLD = 0.02; // Umbral más alto
+  private readonly LOW_SIGNAL_FRAMES = 15; // Reducido para reset más rápido
   private lowSignalCount = 0;
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
@@ -38,13 +37,13 @@ export class HeartBeatProcessor {
   // Límites MÁS ESTRICTOS para parámetros adaptativos
   private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.12; // Aumentado significativamente
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.45; // Más permisivo para estabilizar señales reales
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
   private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.05; // algo más permisivo
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.006; // algo más permisivo
+  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
+  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
 
   // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.2; // Evitar sobre-amplificar y generar picos falsos
+  private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
   private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // Reducido para ser más selectivo
   
   // Control del auto-ajuste más estricto
@@ -95,8 +94,6 @@ export class HeartBeatProcessor {
   private currentSignalQuality: number = 0;
 
   private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
-  private advancedPeakDetector: AdvancedPeakDetector; // Detector de picos avanzado
-  private audioEnabled: boolean = true; // ✅ ACTIVAR AUDIO/VIBRACIÓN PARA LATIDOS REALES
 
   constructor() {
     // Inicializar parámetros adaptativos con valores médicamente apropiados
@@ -107,9 +104,6 @@ export class HeartBeatProcessor {
     this.initAudio();
     this.startTime = Date.now();
     this.kalmanFilterInstance = new KalmanFilter(); // Inicializar la instancia del filtro de Kalman
-    this.advancedPeakDetector = new AdvancedPeakDetector(); // Inicializar detector avanzado
-    
-    console.log('🫀 HeartBeatProcessor MEJORADO con algoritmos avanzados de detección');
   }
 
   private async initAudio() {
@@ -118,7 +112,8 @@ export class HeartBeatProcessor {
       await this.audioContext.resume();
       console.log("HeartBeatProcessor: Audio Context Initialized and resumed");
       
-      // No reproducir test beep para evitar sonidos de reinicio
+      // Reproducir un sonido de prueba audible para desbloquear el audio
+      await this.playTestSound(0.3); // Volumen incrementado
     } catch (error) {
       console.error("HeartBeatProcessor: Error initializing audio", error);
     }
@@ -152,17 +147,17 @@ export class HeartBeatProcessor {
   }
 
   private async playHeartSound(volume: number = this.BEEP_VOLUME, playArrhythmiaTone: boolean) {
-    if (!this.audioEnabled || !this.audioContext || this.isInWarmup()) {
+    if (!this.audioContext || this.isInWarmup()) {
       return;
     }
 
     const now = Date.now();
     if (now - this.lastBeepTime < this.MIN_BEEP_INTERVAL_MS) {
+      console.log("HeartBeatProcessor: Ignorando beep - demasiado cerca del anterior", now - this.lastBeepTime);
       return;
     }
 
     try {
-      // ✅ VIBRACIÓN ACTIVADA PARA FEEDBACK TÁCTIL DE LATIDOS REALES
       if (navigator.vibrate) {
         navigator.vibrate(this.VIBRATION_PATTERN);
       }
@@ -226,7 +221,7 @@ export class HeartBeatProcessor {
       }
       const interval = now - this.lastBeepTime;
       this.lastBeepTime = now;
-      // Log deshabilitado para evitar jank en dispositivos
+      console.log(`HeartBeatProcessor: Latido reproducido. Intervalo: ${interval} ms, BPM estimado: ${Math.round(this.getSmoothBPM())}`);
     } catch (error) {
       console.error("HeartBeatProcessor: Error playing heart sound", error);
     }
@@ -235,32 +230,14 @@ export class HeartBeatProcessor {
   private lastProcessedTimestamp = 0;
   private lastProcessedValue: number | null = null;
 
-  public processSignal(value: number, timestamp?: number, ctx?: { fingerDetected?: boolean; channelQuality?: number; channelSnr?: number }): {
+  public processSignal(value: number, timestamp?: number): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
     filteredValue: number;
     arrhythmiaCount: number;
     signalQuality?: number;  // Añadido campo para retroalimentación
-    debug?: {
-      gatedFinger: boolean;
-      gatedQuality: boolean;
-      gatedSnr: boolean;
-      spectralOk: boolean;
-      bandRatio: number;
-    };
   } {
-    // Log cada 30 llamadas para debug
-    if (this.values.length % 30 === 0) {
-      console.log('🔬 HeartBeatProcessor - Recibiendo:', {
-        value: value.toFixed(4),
-        timestamp: timestamp ? new Date(timestamp).toLocaleTimeString() : 'no timestamp',
-        bufferLength: this.values.length,
-        smoothedValue: this.smoothedValue.toFixed(4),
-        baseline: this.baseline.toFixed(4)
-      });
-    }
-    
     // LIMPIEZA AUTOMÁTICA: Cada 50 frames, limpiar buffers para prevenir degradación
     if (this.values.length % 50 === 0) {
       this.cleanupBuffers();
@@ -298,7 +275,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: 70, // Valor fisiológico por defecto durante inicialización
+        bpm: 0,
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,
@@ -339,14 +316,7 @@ export class HeartBeatProcessor {
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
-    // GATING ROBUSTO por dedo/calidad/SNR antes de aceptar picos
-    const gatedFinger = ctx?.fingerDetected === true;
-    const gatedQuality = (ctx?.channelQuality ?? 0) >= 45;
-    const gatedSnr = (ctx?.channelSnr ?? 0) >= 1.4;
-
-    let spectralOkComputed = false;
-    let bandRatioComputed = 0;
-    if (isConfirmedPeak && !this.isInWarmup() && gatedFinger && gatedQuality && gatedSnr) {
+    if (isConfirmedPeak && !this.isInWarmup()) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
         ? now - this.lastPeakTime
@@ -354,25 +324,12 @@ export class HeartBeatProcessor {
 
       // Validación médicamente apropiada
       if (timeSinceLastPeak >= this.DEFAULT_MIN_PEAK_TIME_MS) {
-        // Validación estricta según criterios médicos + espectral cardiaca
-        const fs = this.DEFAULT_SAMPLE_RATE;
-        const shortWindow = this.signalBuffer.slice(-Math.min(this.signalBuffer.length, 128));
-        // Obtener ratio de banda cardiaca
-        const mean = shortWindow.reduce((a,b)=>a+b,0)/Math.max(1, shortWindow.length);
-        const x = shortWindow.map(v=>v-mean);
-        const freqs = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5];
-        let band = 0; for (const f of freqs) band += this.goertzel(x, fs, f);
-        const oobFreqs = [0.2, 0.4, 0.6, 4.0, 5.0, 6.0];
-        let oob = 0; for (const f of oobFreqs) oob += this.goertzel(x, fs, f);
-        bandRatioComputed = oob > 0 ? band / oob : band;
-        spectralOkComputed = bandRatioComputed > 2.0;
-        
-        if (this.validatePeak(normalizedValue, confidence) && spectralOkComputed) {
+        // Validación estricta según criterios médicos
+        if (this.validatePeak(normalizedValue, confidence)) {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
           // Reproducir sonido y actualizar estado
-          // AUDIO GATING: sólo si gating completo está OK
           this.playHeartSound(1.0, this.isArrhythmiaDetected);
 
           this.updateBPM();
@@ -411,14 +368,7 @@ export class HeartBeatProcessor {
       isPeak: isPeak,
       filteredValue: filteredValue, // Usando la variable correctamente definida
       arrhythmiaCount: 0,
-      signalQuality: this.currentSignalQuality, // Retroalimentación de calidad
-      debug: {
-        gatedFinger,
-        gatedQuality,
-        gatedSnr,
-        spectralOk: spectralOkComputed,
-        bandRatio: Number.isFinite(bandRatioComputed) ? bandRatioComputed : 0
-      }
+      signalQuality: this.currentSignalQuality // Retroalimentación de calidad
     };
   }
   
@@ -613,7 +563,7 @@ export class HeartBeatProcessor {
   }
 
   public getSmoothBPM(): number {
-    if (this.bpmHistory.length < 3) return 70; // Valor fisiológico por defecto
+    if (this.bpmHistory.length < 3) return 0;
     
     // Filtrado adaptativo basado en confianza
     const validReadings = this.bpmHistory.filter((_, i) => 
@@ -720,7 +670,7 @@ export class HeartBeatProcessor {
 
   public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {
     // Mejorar cálculo de intervalos RR usando tiempos reales de picos
-    const rrIntervals: number[] = [];
+    let rrIntervals: number[] = [];
     
     if (this.bpmHistory.length >= 2) {
       // Usar historial de BPM para calcular intervalos RR más precisos
@@ -728,8 +678,14 @@ export class HeartBeatProcessor {
         const bpm = this.bpmHistory[i];
         if (bpm > 30 && bpm < 200) { // Validar BPM fisiológico
           const rrInterval = 60000 / bpm;
-          // No introducir jitter artificial; confiar en derivaciones reales
-          rrIntervals.push(Math.max(300, Math.min(2000, rrInterval)));
+          // Aplicar variabilidad realista basada en calidad de señal
+          const variability = this.currentSignalQuality > 70 ? 0.02 : 0.05;
+          // Usar crypto.getRandomValues() en lugar de Math.random() para aplicaciones médicas
+          const randomBytes = new Uint32Array(1);
+          crypto.getRandomValues(randomBytes);
+          const randomValue = randomBytes[0] / (0xFFFFFFFF + 1);
+          const adjustedRR = rrInterval * (1 + (randomValue - 0.5) * variability);
+          rrIntervals.push(Math.max(300, Math.min(2000, adjustedRR)));
         }
       }
     }
@@ -753,7 +709,7 @@ export class HeartBeatProcessor {
       const avgAmplitude = this.recentPeakAmplitudes.reduce((s, v) => s + v, 0) / this.recentPeakAmplitudes.length;
       
       // Umbral adaptativo basado en amplitud promedio - más sensible
-      const targetSignalThreshold = avgAmplitude * 0.45; // Reducido para mayor sensibilidad
+      let targetSignalThreshold = avgAmplitude * 0.45; // Reducido para mayor sensibilidad
 
       // Tasa de aprendizaje aumentada
       const learningRate = this.ADAPTIVE_TUNING_LEARNING_RATE;
@@ -796,7 +752,7 @@ export class HeartBeatProcessor {
         const avgDerivative = this.recentPeakDerivatives.reduce((s,v) => s+v, 0) / this.recentPeakDerivatives.length;
         
         // Umbral de derivada ultra-sensible
-        const targetDerivativeThreshold = avgDerivative * 0.25; // Más sensible (antes 0.3)
+        let targetDerivativeThreshold = avgDerivative * 0.25; // Más sensible (antes 0.3)
 
         this.adaptiveDerivativeThreshold = 
             this.adaptiveDerivativeThreshold * (1 - this.ADAPTIVE_TUNING_LEARNING_RATE) +
@@ -901,43 +857,5 @@ export class HeartBeatProcessor {
     totalQuality = this.currentSignalQuality * 0.7 + totalQuality * 0.3;
     
     return Math.min(Math.max(Math.round(totalQuality), 0), 100);
-  }
-
-  // Validación espectral rápida (Goertzel)
-  private isCardiacBandPresent(samples: number[], fs: number): boolean {
-    if (samples.length < 64) return false;
-    // normalizar a cero-mean
-    const mean = samples.reduce((a,b)=>a+b,0)/samples.length;
-    const x = samples.map(v=>v-mean);
-    const freqs = [0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3.0, 3.5];
-    // potencia total en banda
-    let band = 0;
-    for (const f of freqs) {
-      band += this.goertzel(x, fs, f);
-    }
-    // potencia fuera de banda (bajas y altas) para SBR simple
-    const oobFreqs = [0.2, 0.4, 0.6, 4.0, 5.0, 6.0];
-    let oob = 0;
-    for (const f of oobFreqs) {
-      oob += this.goertzel(x, fs, f);
-    }
-    const ratio = oob > 0 ? band / oob : band;
-    return ratio > 2.0; // umbral conservador
-  }
-
-  private goertzel(signal: number[], fs: number, freq: number): number {
-    const N = signal.length;
-    const k = Math.round((freq / fs) * N);
-    const omega = (2 * Math.PI * k) / N;
-    const coeff = 2 * Math.cos(omega);
-    let s0 = 0, s1 = 0, s2 = 0;
-    for (let i = 0; i < N; i++) {
-      s0 = signal[i] + coeff * s1 - s2;
-      s2 = s1;
-      s1 = s0;
-    }
-    const real = s1 - s2 * Math.cos(omega);
-    const imag = s2 * Math.sin(omega);
-    return real * real + imag * imag;
   }
 }

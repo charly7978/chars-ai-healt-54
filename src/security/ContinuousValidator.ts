@@ -41,12 +41,12 @@ export class ContinuousValidator {
       name: 'NO_MATH_RANDOM',
       pattern: /Math\.random\(\)/g,
       severity: 'CRITICAL',
-      message: 'Random API prohibited in medical applications - use crypto.getRandomValues()',
+      message: 'Math.random() prohibited in medical applications - use crypto.getRandomValues()',
       autoFix: (code) => code.replace(/Math\.random\(\)/g, 'crypto.getRandomValues(new Uint32Array(1))[0] / (0xFFFFFFFF + 1)')
     },
     {
       name: 'NO_SIMULATION_KEYWORDS',
-      pattern: /\bsimulation\b/gi,
+      pattern: /(?:fake|mock|dummy|simulate)(?:_|\s|[A-Z])/gi,
       severity: 'CRITICAL',
       message: 'Simulation keywords prohibited in medical data processing'
     },

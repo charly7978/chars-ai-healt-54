@@ -1,10 +1,8 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Fingerprint, AlertCircle, Heart, Activity, BarChart3 } from 'lucide-react';
+import { Fingerprint, AlertCircle } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
-import { UnifiedCardiacResult } from '@/modules/signal-processing/UnifiedCardiacAnalyzer';
-import { PrecisionHeartbeatResult } from '@/modules/signal-processing/PrecisionHeartbeatDetector';
 
 interface PPGSignalMeterProps {
   value: number;
@@ -19,18 +17,6 @@ interface PPGSignalMeterProps {
     rrVariation: number;
   } | null;
   preserveResults?: boolean;
-  debug?: {
-    snr?: number;
-    bandRatio?: number;
-    reasons?: string[];
-    gatedFinger?: boolean;
-    gatedQuality?: boolean;
-    gatedSnr?: boolean;
-    spectralOk?: boolean;
-  };
-  // NUEVAS MÉTRICAS AVANZADAS INTEGRADAS
-  unifiedMetrics?: UnifiedCardiacResult;
-  precisionMetrics?: PrecisionHeartbeatResult;
 }
 
 const PPGSignalMeter = ({ 
@@ -41,10 +27,7 @@ const PPGSignalMeter = ({
   onReset,
   arrhythmiaStatus,
   rawArrhythmiaData,
-  preserveResults = false,
-  debug,
-  unifiedMetrics, // MÉTRICAS UNIFICADAS AVANZADAS
-  precisionMetrics // MÉTRICAS DE PRECISIÓN CARDÍACA
+  preserveResults = false
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -58,20 +41,20 @@ const PPGSignalMeter = ({
   const [showArrhythmiaAlert, setShowArrhythmiaAlert] = useState(false);
   const gridCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const WINDOW_WIDTH_MS = 3500;
-  const CANVAS_WIDTH = 1200; // Mantener alta resolución horizontal pero optimizada
-  const CANVAS_HEIGHT = 900; // Reducir altura para disminuir operaciones de dibujo
-  const GRID_SIZE_X = 22;
+  const WINDOW_WIDTH_MS = 2300;
+  const CANVAS_WIDTH = 1000;
+  const CANVAS_HEIGHT = 800;
+  const GRID_SIZE_X = 45;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 225.0;
+  const verticalScale = 95.0;
   const SMOOTHING_FACTOR = 1.5;
-  const TARGET_FPS = 30; // Reducir FPS para aliviar el render en main thread
+  const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600;
   const PEAK_DETECTION_WINDOW = 8;
-  const PEAK_THRESHOLD = 2;
-  const MIN_PEAK_DISTANCE_MS = 300;
-  const IMMEDIATE_RENDERING = false; // Honrar FRAME_TIME para evitar overdraw
+  const PEAK_THRESHOLD = 3;
+  const MIN_PEAK_DISTANCE_MS = 400;
+  const IMMEDIATE_RENDERING = true;
   const MAX_PEAKS_TO_DISPLAY = 25;
 
   useEffect(() => {
@@ -233,12 +216,7 @@ const PPGSignalMeter = ({
     
     const now = Date.now();
     
-    // Usar grilla prerenderizada si está disponible para reducir carga
-    if (gridCanvasRef.current) {
-      ctx.drawImage(gridCanvasRef.current, 0, 0, canvas.width, canvas.height);
-    } else {
-      drawGrid(ctx);
-    }
+    drawGrid(ctx);
     
     if (preserveResults && !isFingerDetected) {
       lastRenderTimeRef.current = currentTime;
@@ -279,8 +257,8 @@ const PPGSignalMeter = ({
     
     if (points.length > 1) {
       ctx.beginPath();
-      ctx.strokeStyle = '#10b981';
-      ctx.lineWidth = 2; // Reducir ancho para menos overdraw
+      ctx.strokeStyle = '#10b981'; // emerald-500 - verde brillante para onda cardíaca sobre azul
+      ctx.lineWidth = 3; // Más gruesa para mejor visibilidad
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       
@@ -319,29 +297,37 @@ const PPGSignalMeter = ({
       
       ctx.stroke();
       
-      // Dibujar picos con estilo ligero
       peaksRef.current.forEach(peak => {
         const x = canvas.width - ((now - peak.time) * canvas.width / WINDOW_WIDTH_MS);
         const y = canvas.height / 2 - peak.value;
         
         if (x >= 0 && x <= canvas.width) {
           ctx.beginPath();
-          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
           ctx.fillStyle = peak.isArrhythmia ? '#DC2626' : '#0EA5E9';
           ctx.fill();
           
           if (peak.isArrhythmia) {
             ctx.beginPath();
-            ctx.arc(x, y, 8, 0, Math.PI * 2);
+            ctx.arc(x, y, 10, 0, Math.PI * 2);
             ctx.strokeStyle = '#FEF7CD';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 3;
             ctx.stroke();
+            
+            ctx.font = 'bold 18px Inter'; 
+            ctx.fillStyle = '#F97316';
+            ctx.textAlign = 'center';
+            ctx.fillText('ARRITMIA', x, y - 25);
           }
+          
+          ctx.font = 'bold 16px Inter'; 
+          ctx.fillStyle = '#000000';
+          ctx.textAlign = 'center';
+          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 15);
         }
       });
     }
     
-    // Limitar a TARGET_FPS usando timestamp
     lastRenderTimeRef.current = currentTime;
     animationFrameRef.current = requestAnimationFrame(renderSignal);
   }, [value, quality, isFingerDetected, rawArrhythmiaData, arrhythmiaStatus, drawGrid, detectPeaks, smoothValue, preserveResults]);
@@ -383,50 +369,6 @@ const PPGSignalMeter = ({
         className="w-full h-[100vh] absolute inset-0 z-0"
       />
 
-      {/* Panel de diagnóstico (sobre la botonera) */}
-      <div className="absolute left-0 right-0 bottom-[60px] z-10 px-3 pb-2">
-        <div className="mx-3 rounded-lg border border-white/10 bg-black/40 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
-          <div>
-            <div className="opacity-70">Dedo</div>
-            <div className={isFingerDetected ? 'text-green-300 font-bold' : 'text-red-300 font-bold'}>
-              {isFingerDetected ? 'Detectado' : 'No detectado'}
-            </div>
-          </div>
-          <div>
-            <div className="opacity-70">Calidad</div>
-            <div className="font-bold">{Math.round(quality)}%</div>
-          </div>
-          <div>
-            <div className="opacity-70">FPS aprox.</div>
-            <div>{Math.round(1000 / Math.max(1, (performance.now() - lastRenderTimeRef.current)))} </div>
-          </div>
-        </div>
-        <div className="mx-3 mt-1 rounded-lg border border-white/10 bg-black/30 backdrop-blur px-3 py-2 text-[10px] text-blue-100 grid grid-cols-3 gap-2">
-          <div>
-            <div className="opacity-70">SNR</div>
-            <div className="font-bold">{debug?.snr !== undefined ? debug.snr.toFixed(2) : '--'}</div>
-          </div>
-          <div>
-            <div className="opacity-70">Band</div>
-            <div className="font-bold">{debug?.bandRatio !== undefined ? debug.bandRatio.toFixed(2) : '--'}</div>
-          </div>
-          <div>
-            <div className="opacity-70">Gates</div>
-            <div className="font-bold">
-              {debug ? (
-                <>
-                  {debug.gatedFinger ? '✓' : '✗'} dedo · {debug.gatedQuality ? '✓' : '✗'} cal · {debug.gatedSnr ? '✓' : '✗'} snr · {debug.spectralOk ? '✓' : '✗'} spec
-                </>
-              ) : '--'}
-            </div>
-          </div>
-          <div className="col-span-3">
-            <div className="opacity-70">Motivos</div>
-            <div className="font-bold truncate">{debug?.reasons && debug.reasons.length ? debug.reasons.join(', ') : '—'}</div>
-          </div>
-        </div>
-      </div>
-
       <div className="absolute top-0 left-0 right-0 p-1 flex justify-between items-center bg-transparent z-10 pt-3">
         <div className="flex items-center gap-2">
           <span className="text-lg font-bold text-blue-100">PPG</span> {/* Texto claro sobre azul */}
@@ -458,104 +400,6 @@ const PPGSignalMeter = ({
           </span>
         </div>
       </div>
-
-      {/* PANEL DE MÉTRICAS CARDÍACAS AVANZADAS CON PRECISIÓN MÉDICA */}
-      {(unifiedMetrics || precisionMetrics) && isFingerDetected && (unifiedMetrics?.confidence > 0.3 || precisionMetrics?.confidence > 0.3) && (
-        <div className="fixed bottom-[60px] left-0 right-0 bg-gray-900/95 backdrop-blur-sm border-t border-blue-500/30 p-2 z-10">
-          
-          {/* Indicador de precisión médica */}
-          {precisionMetrics && (
-            <div className="text-center mb-2 text-xs text-emerald-400 font-medium">
-              🔬 PRECISIÓN MÉDICA ACTIVA - BPM: {precisionMetrics.bpm} (Confianza: {(precisionMetrics.confidence * 100).toFixed(0)}%)
-            </div>
-          )}
-          
-          <div className="grid grid-cols-4 gap-2 text-xs">
-            {/* HRV Métricas - Usar precisión si está disponible */}
-            <div className="bg-blue-900/30 rounded p-2">
-              <div className="flex items-center gap-1 mb-1">
-                <Heart className="w-3 h-3 text-red-400" />
-                <span className="text-blue-200 font-medium">HRV</span>
-                {precisionMetrics && <span className="text-emerald-400 text-xs">★</span>}
-              </div>
-              <div className="text-white">
-                <div>RMSSD: {(precisionMetrics?.hrvMetrics.rmssd || unifiedMetrics?.advancedMetrics.rmssd || 35).toFixed(1)}</div>
-                <div>pNN50: {(precisionMetrics?.hrvMetrics.pnn50 || unifiedMetrics?.advancedMetrics.pnn50 || 12).toFixed(1)}%</div>
-              </div>
-            </div>
-            
-            {/* Análisis Espectral */}
-            <div className="bg-green-900/30 rounded p-2">
-              <div className="flex items-center gap-1 mb-1">
-                <BarChart3 className="w-3 h-3 text-green-400" />
-                <span className="text-blue-200 font-medium">Espectral</span>
-              </div>
-              <div className="text-white">
-                <div>LF/HF: {unifiedMetrics.advancedMetrics.lfHfRatio.toFixed(2)}</div>
-                <div>SNR: {unifiedMetrics.advancedMetrics.snrDb.toFixed(1)}dB</div>
-              </div>
-            </div>
-            
-            {/* Detección de Arritmias */}
-            <div className={`rounded p-2 ${
-              unifiedMetrics.arrhythmiaDetected ? 'bg-red-900/50 border border-red-500/50' : 'bg-emerald-900/30'
-            }`}>
-              <div className="flex items-center gap-1 mb-1">
-                <Activity className={`w-3 h-3 ${
-                  unifiedMetrics.arrhythmiaDetected ? 'text-red-400 animate-pulse' : 'text-emerald-400'
-                }`} />
-                <span className="text-blue-200 font-medium">Arritmia</span>
-              </div>
-              <div className="text-white">
-                <div>Riesgo: {unifiedMetrics.arrhythmiaRisk.toFixed(0)}%</div>
-                <div className="text-xs opacity-75">
-                  {unifiedMetrics.arrhythmiaDetected ? unifiedMetrics.arrhythmiaType : 'Normal'}
-                </div>
-              </div>
-            </div>
-            
-            {/* Validación Médica */}
-            <div className="bg-purple-900/30 rounded p-2">
-              <div className="flex items-center gap-1 mb-1">
-                <Fingerprint className="w-3 h-3 text-purple-400" />
-                <span className="text-blue-200 font-medium">Médico</span>
-              </div>
-              <div className="text-white">
-                <div>Confianza: {(unifiedMetrics.medicalValidation.signalReliability * 100).toFixed(0)}%</div>
-                <div className="text-xs opacity-75">
-                  {unifiedMetrics.medicalValidation.physiologyValid ? '✅ Válido' : '⚠️ Revisar'}
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          {/* Barra de consistencia hemodinámica mejorada */}
-          <div className="mt-2">
-            <div className="flex justify-between text-xs text-blue-200 mb-1">
-              <span>Consistencia Hemodinámica</span>
-              <span>{(unifiedMetrics.medicalValidation.hemodynamicConsistency * 100).toFixed(0)}%</span>
-            </div>
-            <div className="w-full bg-gray-700 rounded-full h-1.5">
-              <div 
-                className={`h-1.5 rounded-full transition-all duration-500 ${
-                  unifiedMetrics.medicalValidation.hemodynamicConsistency > 0.8 
-                    ? 'bg-gradient-to-r from-emerald-500 to-green-400'
-                    : unifiedMetrics.medicalValidation.hemodynamicConsistency > 0.6
-                    ? 'bg-gradient-to-r from-yellow-500 to-amber-400' 
-                    : 'bg-gradient-to-r from-red-500 to-orange-400'
-                }`}
-                style={{ width: `${unifiedMetrics.medicalValidation.hemodynamicConsistency * 100}%` }}
-              />
-            </div>
-            
-            {/* Indicador de algoritmos activos */}
-            <div className="flex justify-between text-xs text-blue-300 mt-1 opacity-75">
-              <span>Algoritmos: {unifiedMetrics.debug.algorithmsUsed.length}</span>
-              <span>Tiempo: {unifiedMetrics.debug.processingTime.toFixed(1)}ms</span>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="fixed bottom-0 left-0 right-0 h-[60px] grid grid-cols-2 bg-transparent z-10">
         <button 

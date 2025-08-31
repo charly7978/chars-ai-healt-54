@@ -96,9 +96,9 @@ export class GlucoseProcessor {
     const peaks = this.findPeaks(ppgValues);
     
     // Calculate rise and fall times
-    const riseTimes = [];
-    const fallTimes = [];
-    const peakWidths = [];
+    let riseTimes = [];
+    let fallTimes = [];
+    let peakWidths = [];
     
     if (peaks.length >= 2) {
       for (let i = 0; i < peaks.length - 1; i++) {

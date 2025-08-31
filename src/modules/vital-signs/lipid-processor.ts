@@ -132,8 +132,8 @@ export class LipidProcessor {
     const dicroticNotches = this.findDicroticNotches(ppgValues, peaks, troughs);
     
     // Calculate rise and fall times
-    const riseTimes = [];
-    const fallTimes = [];
+    let riseTimes = [];
+    let fallTimes = [];
     
     for (let i = 0; i < Math.min(peaks.length, troughs.length); i++) {
       if (peaks[i] > troughs[i]) {
