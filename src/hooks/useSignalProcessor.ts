@@ -1,109 +1,170 @@
+
+import { useMemo, useRef, useState } from 'react';
+import MultiChannelManager from '@/modules/signal-processing/MultiChannelManager';
+import { CameraSample, MultiChannelResult } from '@/types';
+
 /**
- * useSignalProcessor - Hook principal para procesamiento de señales PPG
- * COMPLETAMENTE OPTIMIZADO para evitar pérdidas de detección
+ * Hook CORREGIDO que maneja el flujo completo CameraView -> MultiChannelManager
+ * ARREGLADO: Transporte correcto de valores, escalado adecuado, logging detallado
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
-import MultiChannelManager from '@/modules/signal-processing/MultiChannelManager';
-import { MultiChannelResult } from '@/types';
-
-export function useSignalProcessor() {
-  const [lastResult, setLastResult] = useState<MultiChannelResult | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+export function useSignalProcessor(windowSec = 8, channels = 6) {
   const mgrRef = useRef<MultiChannelManager | null>(null);
-  const lastEnvRef = useRef<{
-    coverage: number;
-    motion: number;
-    lastCoverage: number;
-    lastMotion: number;
-  }>({ coverage: 0, motion: 0, lastCoverage: 0, lastMotion: 0 });
+  const [lastResult, setLastResult] = useState<MultiChannelResult | null>(null);
+  const sampleCountRef = useRef(0);
+  const lastEnvRef = useRef<{ fingerConfidence: number; exposureState: CameraSample['exposureState'] } | null>(null);
+  const lastAnalyzeTimeRef = useRef<number>(0);
+  const analyzeIntervalMsRef = useRef<number>(33); // ~30 Hz para mejor sincronización con la cámara
 
-  // Inicializar MultiChannelManager
-  useEffect(() => {
-    if (!mgrRef.current) {
-      mgrRef.current = new MultiChannelManager(6, 8);
-      console.log('🚀 useSignalProcessor: MultiChannelManager inicializado');
-    }
-  }, []);
+  if (!mgrRef.current) {
+    mgrRef.current = new MultiChannelManager(channels, windowSec);
+    console.log('🏭 MultiChannelManager CREADO:', { channels, windowSec });
+  }
 
-  // Función principal para procesar muestras de cámara
-  const pushSample = useCallback((
-    rMean: number,
-    gMean: number,
-    bMean: number,
-    frameDiff: number,
-    coverageRatio: number,
-    fingerConfidence: number,
-    exposureState: string
-  ) => {
-    if (!mgrRef.current) return;
-
-    // CRÍTICO: Siempre ejecutar análisis con cada muestra
-    // Esto asegura que los buffers internos estén siempre actualizados
-    mgrRef.current.pushSample(rMean, Date.now());
-    
-    // Usar cobertura y movimiento ajustados para análisis
-    const adjustedCoverage = Math.max(0, Math.min(1, coverageRatio));
-    const adjustedMotion = Math.max(0, Math.min(100, frameDiff));
-    
-    // CRÍTICO: El análisis SIEMPRE se ejecuta, solo se throttlea la actualización de UI
-    const result = mgrRef.current.analyzeAll(adjustedCoverage, adjustedMotion);
-    
-    // Throttle solo para la actualización de React state (evita re-renders excesivos)
-    const now = Date.now();
-    if (!lastResult || now - (lastResult.timestamp || 0) >= 33) { // ~30 FPS
-      setLastResult(result);
-      setIsProcessing(false);
+  const handleSample = (s: CameraSample) => {
+    sampleCountRef.current++;
+    // Protección contra muestras inválidas o NaN
+    if (!isFinite(s.rMean) || !isFinite(s.gMean) || !isFinite(s.bMean)) {
+      return;
     }
     
-    // Persistir métricas globales para referencia
-    lastEnvRef.current.lastCoverage = lastEnvRef.current.coverage;
-    lastEnvRef.current.lastMotion = lastEnvRef.current.motion;
-    lastEnvRef.current.coverage = adjustedCoverage;
-    lastEnvRef.current.motion = adjustedMotion;
+    // Guardar estado de captura para UI/ajustes globales
+    lastEnvRef.current = {
+      fingerConfidence: typeof s.fingerConfidence === 'number' ? s.fingerConfidence : 0,
+      exposureState: s.exposureState
+    };
     
-    // Debug: Log si hay saltos anormales en frameDiff
-    if (frameDiff > 20) {
-      console.warn('⚠️ SALTO ANORMAL en frameDiff:', {
-        frameDiff,
-        timestamp: new Date().toISOString(),
-        exposureState
+    // Refinamiento de señal: fusión ROJO + crominancia (r - 0.5 g)
+    // Mantener escala 0-255 para no romper los umbrales en canales
+    const chroma = s.rMean - 0.5 * s.gMean;
+    const fused = 0.8 * s.rMean + 0.2 * chroma; // más peso a R para estabilidad
+    const inputSignal = Math.max(0, Math.min(255, fused));
+    
+    // Log detallado MUY ocasional para debug
+    if (sampleCountRef.current % 600 === 0) {
+      console.log('📊 useSignalProcessor - Muestra #' + sampleCountRef.current + ':', {
+        timestamp: new Date(s.timestamp).toLocaleTimeString(),
+        inputSignal: inputSignal.toFixed(1),
+        rMean: s.rMean.toFixed(1),
+        gMean: s.gMean.toFixed(1),
+        bMean: s.bMean.toFixed(1),
+        rStd: s.rStd.toFixed(1),
+        coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%',
+        frameDiff: s.frameDiff.toFixed(1),
+        brightnessMean: s.brightnessMean.toFixed(1)
       });
     }
-  }, [lastResult]);
 
-  // Función para obtener estadísticas del sistema
-  const getSystemStats = useCallback(() => {
-    return mgrRef.current?.getSystemStats() || null;
-  }, []);
-
-  // Función para resetear el sistema
-  const resetSystem = useCallback(() => {
-    if (mgrRef.current) {
-      mgrRef.current.reset();
-      setLastResult(null);
-      setIsProcessing(false);
-      console.log('🔄 useSignalProcessor: Sistema reseteado');
+    // CRÍTICO: Enviar muestra al MultiChannelManager
+    mgrRef.current!.pushSample(inputSignal, s.timestamp);
+    
+    // CRÍTICO: Analizar con métricas globales correctas
+    // Ajuste de cobertura y movimiento usando métricas adicionales y confianza
+    const confidence = lastEnvRef.current?.fingerConfidence ?? 0;
+    const exposure = lastEnvRef.current?.exposureState;
+    
+    let coverageBoost = (s.redFraction > 0.42 && s.rgRatio > 1.1 && s.rgRatio < 4.0) ? 1.2 : 0.85;
+    coverageBoost *= (s.saturationRatio < 0.15) ? 1.0 : 0.75;
+    coverageBoost *= 0.8 + 0.4 * confidence; // 0.8..1.2
+    
+    if (exposure === 'dark') coverageBoost *= 0.75;
+    if (exposure === 'saturated') coverageBoost *= 0.7;
+    if (exposure === 'low_coverage') coverageBoost *= 0.6;
+    
+    const adjustedCoverage = Math.max(0, Math.min(1, s.coverageRatio * coverageBoost));
+    
+    // Suavizar el movimiento derivado del brillo
+    let motion = s.frameDiff + (s.brightnessStd > 8 ? 6 : 0);
+    if (exposure === 'moving') motion += 8;
+    const adjustedMotion = motion;
+    
+    // Guardar métricas globales para uso continuo
+    lastEnvRef.current = {
+      ...lastEnvRef.current,
+      fingerConfidence: typeof s.fingerConfidence === 'number' ? s.fingerConfidence : 0,
+      exposureState: s.exposureState,
+      lastCoverage: adjustedCoverage,
+      lastMotion: adjustedMotion
+    } as any;
+    // CRÍTICO: Siempre ejecutar el análisis para mantener sincronización
+    // El problema era que si no se ejecutaba el análisis, los buffers internos
+    // seguían actualizándose pero el resultado mostrado quedaba desactualizado
+    const coverage = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
+    const finalMotion = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
+    const result = mgrRef.current!.analyzeAll(coverage, finalMotion);
+    
+    // Solo actualizar el estado de React con throttling para evitar re-renders excesivos
+    const now = performance.now();
+    if (now - lastAnalyzeTimeRef.current >= analyzeIntervalMsRef.current || !lastResult) {
+      lastAnalyzeTimeRef.current = now;
+      
+      // Log resultado muy ocasional o cuando hay detección
+      if (result.fingerDetected || sampleCountRef.current % 600 === 0) {
+        const activeChannels = result.channels.filter(c => c.isFingerDetected).length;
+        const bestChannel = result.channels.reduce((best, current) => 
+          current.quality > best.quality ? current : best, result.channels[0]);
+        
+        console.log('🔍 useSignalProcessor - Resultado:', {
+          fingerDetected: result.fingerDetected,
+          aggregatedBPM: result.aggregatedBPM,
+          aggregatedQuality: result.aggregatedQuality,
+          activeChannels: `${activeChannels}/${result.channels.length}`,
+          bestChannelId: bestChannel.channelId,
+          bestChannelQuality: bestChannel.quality.toFixed(1),
+          bestChannelSNR: bestChannel.snr.toFixed(2),
+          bestChannelBPM: bestChannel.bpm || 'null'
+        });
+      }
+      setLastResult(result);
     }
-  }, []);
-
-  // Función para ajustar ganancia de canales
-  const adjustChannelGain = useCallback((channelId: number, deltaRel: number) => {
-    mgrRef.current?.adjustChannelGain(channelId, deltaRel);
-  }, []);
-
-  // Función para obtener ganancias actuales
-  const getChannelGains = useCallback(() => {
-    return mgrRef.current?.getGains() || [];
-  }, []);
-
-  return {
-    lastResult,
-    isProcessing,
-    pushSample,
-    getSystemStats,
-    resetSystem,
-    adjustChannelGain,
-    getChannelGains
   };
+
+  const adjustChannelGain = (channelId: number, deltaRel: number) => {
+    if (!mgrRef.current) return;
+    
+    console.log(`🔧 Ajustando ganancia canal ${channelId}: ${deltaRel > 0 ? '+' : ''}${(deltaRel * 100).toFixed(1)}%`);
+    
+    mgrRef.current.adjustChannelGain(channelId, deltaRel);
+    
+    // Re-analizar después del ajuste
+    const result = mgrRef.current.analyzeAll(0, 0);
+    setLastResult(result);
+  };
+
+  const reset = () => {
+    if (!mgrRef.current) return;
+    
+    console.log('🔄 useSignalProcessor - RESET completo');
+    mgrRef.current.reset();
+    setLastResult(null);
+    sampleCountRef.current = 0;
+  };
+
+  const getStats = () => {
+    if (!lastResult) return null;
+    
+    const activeChannels = lastResult.channels.filter(c => c.isFingerDetected).length;
+    const avgSNR = lastResult.channels.reduce((sum, c) => sum + c.snr, 0) / lastResult.channels.length;
+    const avgQuality = lastResult.channels.reduce((sum, c) => sum + c.quality, 0) / lastResult.channels.length;
+    
+    return {
+      totalSamples: sampleCountRef.current,
+      activeChannels,
+      totalChannels: lastResult.channels.length,
+      avgSNR: avgSNR.toFixed(2),
+      avgQuality: avgQuality.toFixed(1),
+      fingerDetected: lastResult.fingerDetected,
+      aggregatedBPM: lastResult.aggregatedBPM,
+      fingerConfidence: lastEnvRef.current?.fingerConfidence ?? 0,
+      exposureState: lastEnvRef.current?.exposureState ?? 'ok'
+    };
+  };
+
+  return useMemo(() => ({ 
+    handleSample, 
+    lastResult, 
+    adjustChannelGain,
+    reset,
+    getStats
+  }), [lastResult]);
 }
