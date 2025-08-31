@@ -1,7 +1,4 @@
-
 # 🚀 SCRIPT DE AUTOCORRECCIÓN DEFINITIVA PARA COMMITS EN POWERSHELL
-# Se ejecuta automáticamente para resolver problemas comunes antes del commit
-
 Write-Host "🔧 EJECUTANDO AUTOCORRECCIÓN DEFINITIVA..." -ForegroundColor Cyan
 
 # 1. RESOLVER CONFLICTOS DE MERGE AUTOMÁTICAMENTE
