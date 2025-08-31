@@ -118,8 +118,9 @@ export class DataAnonymizer {
       const z0 = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
       noise = z0 * config.scale;
     } else {
-      // CRYPTOGRAPHICALLY SECURE Laplace noise - NO Math.random()
-      const randomValue = new Uint32Array(1);
+    const randomValue = new Uint32Array(1);
+    crypto.getRandomValues(randomValue);
+    const cryptoRandom = randomValue[0] / 0xFFFFFFFF;
       crypto.getRandomValues(randomValue);
       const u = (randomValue[0] / (0xFFFFFFFF + 1)) - 0.5;
       noise = -config.scale * Math.sign(u) * Math.log(1 - 2 * Math.abs(u));

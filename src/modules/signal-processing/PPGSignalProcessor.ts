@@ -6,6 +6,8 @@ import { BiophysicalValidator } from './BiophysicalValidator';
 import { FrameProcessor } from './FrameProcessor';
 import { CalibrationHandler } from './CalibrationHandler';
 import { SignalAnalyzer } from './SignalAnalyzer';
+import { HumanFingerDetector, HumanFingerValidation } from './HumanFingerDetector';
+import { DetectionLogger } from '../../utils/DetectionLogger';
 
 /**
  * PROCESADOR PPG OPTIMIZADO - DETECCIÓN PERFECTA SIN FALSOS POSITIVOS
@@ -19,6 +21,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameProcessor: FrameProcessor;
   private calibrationHandler: CalibrationHandler;
   private signalAnalyzer: SignalAnalyzer;
+  private humanFingerDetector: HumanFingerDetector;
+  private detectionLogger: DetectionLogger;
   
   // SISTEMA OPTIMIZADO DE DETECCIÓN
   private fingerDetectionState = {
@@ -92,6 +96,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION,
       MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS
     });
+    this.humanFingerDetector = new HumanFingerDetector();
+    this.detectionLogger = new DetectionLogger();
   }
 
   async initialize(): Promise<void> {
@@ -173,9 +179,38 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const { redValue, textureScore, rToGRatio, rToBRatio, avgGreen, avgBlue } = extractionResult;
       const roi = this.frameProcessor.detectROI(redValue, imageData);
 
-      // 2. DETECCIÓN OPTIMIZADA EQUILIBRADA
-      const fingerDetectionResult = this.detectFingerOptimized(
-        redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, rToGRatio, rToBRatio, imageData
+      // 2. DETECCIÓN AVANZADA DE DEDO HUMANO - Sistema robusto anti-falsos positivos
+      const humanFingerValidation = this.humanFingerDetector.detectHumanFinger(
+        redValue, avgGreen ?? 0, avgBlue ?? 0, textureScore, imageData.width, imageData.height
+      );
+
+      // Solo procesar si es un dedo humano real detectado
+      const fingerDetectionResult = {
+        isDetected: humanFingerValidation.isHumanFinger,
+        detectionScore: humanFingerValidation.confidence,
+        opticalCoherence: humanFingerValidation.opticalCoherence
+      };
+
+      // LOGGING TRANSPARENTE DE DETECCIÓN
+      this.detectionLogger.logDetectionAttempt(
+        humanFingerValidation.isHumanFinger,
+        humanFingerValidation.validationDetails,
+        {
+          biophysicalScore: humanFingerValidation.biophysicalScore,
+          opticalCoherence: humanFingerValidation.opticalCoherence,
+          bloodFlowIndicator: humanFingerValidation.bloodFlowIndicator,
+          tissueConsistency: humanFingerValidation.tissueConsistency,
+          overallConfidence: humanFingerValidation.confidence
+        },
+        {
+          redValue: redValue,
+          signalStrength: redValue / 255,
+          noiseLevel: 0, // Se calculará en el contexto apropiado
+          snrRatio: this.fingerDetectionState.signalToNoiseRatio
+        },
+        !humanFingerValidation.isHumanFinger ? 
+          `Fallo: skin=${humanFingerValidation.validationDetails.skinColorValid}, perfusion=${humanFingerValidation.validationDetails.perfusionValid}` : 
+          undefined
       );
 
       // 3. Procesamiento mejorado
@@ -468,6 +503,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.trendAnalyzer.reset();
     this.biophysicalValidator.reset();
     this.signalAnalyzer.reset();
+    this.humanFingerDetector.reset();
+    this.detectionLogger.reset();
   }
 
   private handleError(code: string, message: string): void {
