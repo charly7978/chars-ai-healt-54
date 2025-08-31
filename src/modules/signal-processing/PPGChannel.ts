@@ -12,7 +12,7 @@ import { savitzkyGolay } from './SavitzkyGolayFilter';
 import { Biquad } from './Biquad';
 import { goertzelPower } from './Goertzel';
 import { computeSNR } from './SignalQualityAnalyzer';
-import { RobustPPGProcessor } from './RobustPPGProcessor';
+import { improvedDetectPeaks } from './ImprovedPeakDetector';
 
 type Sample = { t: number; v: number };
 
@@ -23,29 +23,28 @@ export default class PPGChannel {
   private gain: number;
   private bufferStartTime: number = 0;
   
-  // Procesador robusto de PPG
-  private ppgProcessor: RobustPPGProcessor;
+  // Historia de RR para validación
   private rrHistory: number[] = [];
   
   // Histéresis por canal para evitar flapping
   private detectionState: boolean = false;
   private consecutiveTrue: number = 0;
   private consecutiveFalse: number = 0;
-  private readonly MIN_TRUE_FRAMES = 2;  // Más rápido
-  private readonly MIN_FALSE_FRAMES = 15; // Más resistente
+  private readonly MIN_TRUE_FRAMES = 3;  // Balance entre velocidad y confiabilidad
+  private readonly MIN_FALSE_FRAMES = 12; // Evitar pérdidas prematuras
   private lastToggleMs: number = 0;
   private readonly HOLD_MS = 200; // Respuesta más rápida
   private qualityEma: number | null = null;
   
-  // CRÍTICO: Umbrales OPTIMIZADOS para <3% error
-  private minRMeanForFinger = 60;   // Más estricto para evitar falsos positivos
-  private maxRMeanForFinger = 240;  // Evitar saturación
-  private minVarianceForPulse = 2.5; // Requiere señal AC clara
-  private minSNRForFinger = 1.8;    // SNR más alto para confiabilidad
-  private maxFrameDiffForStability = 12; // Menos tolerancia a movimiento
+  // CRÍTICO: Umbrales PROFESIONALES para detección precisa
+  private minRMeanForFinger = 70;   // Balance entre sensibilidad y precisión
+  private maxRMeanForFinger = 245;  // Evitar saturación
+  private minVarianceForPulse = 1.2; // Señal AC mínima clara
+  private minSNRForFinger = 1.5;    // SNR razonable
+  private maxFrameDiffForStability = 15; // Movimiento moderado
   // Umbrales adicionales para robustecer gating
-  private readonly minStdSmoothForPulse = 0.25; // Amplitud mínima más estricta
-  private readonly maxRRCoeffVar = 0.15;        // Máximo 15% variación RR para <3% error
+  private readonly minStdSmoothForPulse = 0.15; // Amplitud mínima en señal filtrada
+  private readonly maxRRCoeffVar = 0.20;        // Máximo 20% variación RR
   private readonly EARLY_DETECT_MIN_SAMPLES = 60; // ~2s con 30FPS
   private readonly EARLY_DETECT_MAX_SAMPLES = 120; // ~4s ventana temprana
 
@@ -54,8 +53,7 @@ export default class PPGChannel {
     this.windowSec = windowSec;
     this.gain = initialGain;
     
-    // Inicializar procesador robusto
-    this.ppgProcessor = new RobustPPGProcessor();
+    // Sin inicialización adicional necesaria
     
     // Buffer circular para evitar problemas con shift()
     this.bufferStartTime = 0;
@@ -149,14 +147,14 @@ export default class PPGChannel {
       sampled.map(x => (x - mean) / std) : 
       sampled.map(x => x - mean);
 
-    // Filtrado pasabanda OPTIMIZADO (0.7-3.0 Hz para rango cardíaco típico)
+    // Filtrado PROFESIONAL - pasabanda optimizado para señal cardíaca
     const fs = N / this.windowSec;
     const biquad = new Biquad();
-    biquad.setBandpass(1.6, 1.0, fs); // Centro 1.6Hz (96 bpm), ancho 1.0Hz
+    biquad.setBandpass(1.2, 1.5, fs); // Centro 1.2Hz (72 bpm), ancho 1.5Hz para rango 45-150 BPM
     const filtered = biquad.processArray(normalized);
 
-    // Suavizado Savitzky-Golay con ventana optimizada
-    const smooth = savitzkyGolay(filtered, 13); // Ajustado a 13
+    // Suavizado Savitzky-Golay para preservar picos
+    const smooth = savitzkyGolay(filtered, 9); // Ventana optimizada
 
     // Análisis espectral MEJORADO con Goertzel
     const freqs = this.linspace(0.8, 4.0, 120); // Resolución suficiente con menor costo
@@ -187,22 +185,31 @@ export default class PPGChannel {
     
     const localQuality = qualitySpectral + qualityVariance + qualityStability + qualitySignalStrength;
     
+    // Combinar con calidad robusta (dar más peso a la robusta)
+    const quality = robustQuality ? (robustQuality * 100 * 0.7 + localQuality * 0.3) : localQuality;
+
     // BPM del pico espectral con validación
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
-    // Procesamiento ROBUSTO de señal PPG
-    const robustResult = this.ppgProcessor.processSignal(smooth, fs, this.rrHistory);
-    const { peaks, confidence: peakConfidences, rrIntervals: rr, bpm: robustBPM, signalQuality: robustQuality, noiseLevel } = robustResult;
+    // Detección PROFESIONAL de picos PPG mejorada
+    const { peaks, peakTimesMs, rr, confidence } = improvedDetectPeaks(smooth, fs, 300, 0.15);
     
-    // Actualizar historia de RR si hay nuevos intervalos válidos
+    // Calcular BPM temporal con validación
+    const bpmTemporal = rr.length >= 2 ? 
+      Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
+    
+    // Actualizar historia de RR para análisis de tendencias
     if (rr.length > 0) {
-      this.rrHistory = [...this.rrHistory, ...rr].slice(-10); // Mantener últimos 10
+      this.rrHistory = [...this.rrHistory, ...rr].slice(-20);
     }
     
-    const bpmTemporal = robustBPM;
-
-    // Combinar con calidad robusta (dar más peso a la robusta)
-    const quality = robustQuality ? (robustQuality * 100 * 0.7 + localQuality * 0.3) : localQuality;
+    // Calcular métricas de calidad avanzadas
+    const peakAmplitudes = peaks.map(idx => smooth[idx]);
+    const avgAmplitude = peakAmplitudes.length > 0 ? 
+      peakAmplitudes.reduce((a,b) => a+b, 0) / peakAmplitudes.length : 0;
+    
+    const robustQuality = confidence || 0.5;
+    const noiseLevel = 1 / (1 + snr);
 
     // Chequeos adicionales: amplitud AC y regularidad RR
     const stdSmooth = this.stdArray(smooth);
@@ -222,23 +229,21 @@ export default class PPGChannel {
     const bpmOk = (bpmSpectral && bpmSpectral >= 45 && bpmSpectral <= 180) || 
                   (bpmTemporal && bpmTemporal >= 45 && bpmTemporal <= 180);
     
-    // Detección basada en calidad robusta y nivel de ruido
-    const robustDetection = robustQuality > 0.4 && noiseLevel < 0.3 && rr.length >= 2;
-    const peakConfidence = robustDetection && (peakConfidences.length > 0 ? 
-      peakConfidences.reduce((a, b) => a + b, 0) / peakConfidences.length : 0) > 0.6;
+    // Detección basada en métricas profesionales
+    const hasValidPeaks = peaks.length >= 2 && rr.length >= 1;
+    const hasGoodConfidence = (confidence ?? 0) > 0.4;
+    const hasConsistentRR = rrConsistencyOk || this.rrHistory.length < 5;
+    const peakConfidence = hasValidPeaks && hasGoodConfidence && hasConsistentRR;
     
     // Si ya estamos detectando, ser más tolerante para mantener la detección
-    let inEarlyWindow = false;
-    let earlyOk = false;
-    
     if (this.detectionState) {
       // Mantener detección si tenemos al menos señal básica
       const maintainDetection = brightnessOk && (varianceOk || peakConfidence || (snr > 0.8));
       var rawDetected = maintainDetection;
     } else {
       // Para nueva detección, ser más estricto
-      inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
-      earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
+      const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
+      const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
       var rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk || peakConfidence);
     }
 
@@ -381,5 +386,20 @@ export default class PPGChannel {
     const mean = arr.reduce((a,b)=>a+b,0)/arr.length;
     const variance = arr.reduce((a,b)=>a+(b-mean)*(b-mean),0)/arr.length;
     return Math.sqrt(variance);
+  }
+
+  private simpleSmooth(signal: number[], windowSize: number): number[] {
+    const result = [...signal];
+    const halfWindow = Math.floor(windowSize / 2);
+    
+    for (let i = halfWindow; i < signal.length - halfWindow; i++) {
+      let sum = 0;
+      for (let j = -halfWindow; j <= halfWindow; j++) {
+        sum += signal[i + j];
+      }
+      result[i] = sum / windowSize;
+    }
+    
+    return result;
   }
 }
