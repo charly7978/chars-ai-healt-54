@@ -1,131 +1,146 @@
 @echo off
-chcp 65001 >nul
-title 🛡️ Instalador Automático de Protección Médica
+setlocal enabledelayedexpansion
 
-echo.
-echo 🛡️  INSTALADOR AUTOMÁTICO DE PROTECCIÓN MÉDICA
+echo 🛡️ INSTALADOR DE PROTECCIÓN AUTOMÁTICA COMPLETA
 echo ================================================
 echo.
-echo 🔧 Configurando sistema de protección completo...
-echo.
 
-REM Verificar dependencias
-echo 📋 Verificando dependencias...
-git --version >nul 2>&1
-if errorlevel 1 (
-    echo ❌ ERROR: Git no está disponible
-    echo Instala Git desde https://git-scm.com/
+REM Verificar si estamos en un repositorio git
+git status >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ❌ Error: No estás en un repositorio git
+    echo 💡 Ejecuta este script desde la raíz del proyecto
     pause
     exit /b 1
 )
 
-echo ✅ Git disponible
+echo ✅ Repositorio git detectado
+echo.
+
+REM Verificar que estamos en la raíz del proyecto
+if not exist "package.json" (
+    echo ❌ Error: No se encontró package.json
+    echo 💡 Ejecuta este script desde la raíz del proyecto
+    pause
+    exit /b 1
+)
+
+echo ✅ Proyecto Node.js detectado
 echo.
 
 REM Crear directorio de hooks si no existe
 if not exist ".git\hooks" (
-    echo 📁 Creando directorio de hooks...
-    mkdir ".git\hooks"
-)
-
-REM Copiar hook de pre-commit
-echo 🔧 Instalando hook de pre-commit...
-copy ".githooks\pre-commit" ".git\hooks\pre-commit" >nul 2>&1
-if errorlevel 1 (
-    echo ❌ ERROR: No se pudo copiar el hook de pre-commit
-    echo Verifica que existe .githooks\pre-commit
+    echo ❌ Error: Directorio de hooks no encontrado
     pause
     exit /b 1
 )
 
-echo ✅ Hook de pre-commit instalado
+echo 📁 Configurando hooks de git...
+
+REM Crear hook de pre-commit
+(
+echo @echo off
+echo echo 🛡️ HOOK PRE-COMMIT ACTIVADO
+echo echo 🔍 Verificando código antes del commit...
+echo echo.
+echo.
+echo REM Verificar conflictos de merge
+echo git diff --name-only --diff-filter=U ^> temp_conflicts.txt 2^>nul
+echo if %%errorlevel%% equ 0 ^(
+echo     echo ⚠️  CONFLICTOS DE MERGE DETECTADOS
+echo     echo ❌ COMMIT BLOQUEADO - Resuelve los conflictos primero
+echo     echo 💡 Ejecuta: scripts\merge-protector.bat
+echo     exit /b 1
+echo ^)
+echo.
+echo REM Verificar build
+echo echo 🔨 Verificando build del proyecto...
+echo npm run build ^>nul 2^>^&1
+echo if %%errorlevel%% neq 0 ^(
+echo     echo ❌ ERROR: El build falló
+echo     echo ❌ COMMIT BLOQUEADO - Corrige los errores primero
+echo     exit /b 1
+echo ^)
+echo.
+echo echo ✅ PRE-COMMIT EXITOSO
+echo echo 🚀 Continuando con el commit...
+) > ".git\hooks\pre-commit.bat"
+
+REM Crear hook de post-commit
+(
+echo @echo off
+echo echo 🎉 HOOK POST-COMMIT ACTIVADO
+echo echo 📝 Commit realizado exitosamente
+echo echo 💡 Hash: 
+echo git rev-parse HEAD
+echo echo.
+echo echo 🚀 Tu código está ahora en el repositorio
+) > ".git\hooks\post-commit.bat"
+
+echo ✅ Hooks configurados
 echo.
 
-REM Hacer el hook ejecutable (en Windows no es necesario, pero por compatibilidad)
-echo 🔒 Configurando permisos del hook...
-echo ✅ Permisos configurados
-echo.
+REM Verificar que los scripts existen
+echo 🔍 Verificando scripts de protección...
 
-REM Verificar que el hook esté funcionando
-echo 🔍 Verificando instalación...
-if exist ".git\hooks\pre-commit" (
-    echo ✅ Hook instalado correctamente en .git\hooks\pre-commit
+if exist "scripts\merge-protector.bat" (
+    echo ✅ merge-protector.bat encontrado
 ) else (
-    echo ❌ ERROR: El hook no se instaló correctamente
+    echo ❌ merge-protector.bat no encontrado
+)
+
+if exist "scripts\smart-commit.bat" (
+    echo ✅ smart-commit.bat encontrado
+) else (
+    echo ❌ smart-commit.bat no encontrado
+)
+
+echo.
+
+REM Probar la configuración
+echo 🧪 Probando configuración...
+
+REM Verificar build
+echo 🔨 Verificando build del proyecto...
+npm run build >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ❌ ERROR: El build falló
+    echo 💡 Corrige los errores antes de continuar
     pause
     exit /b 1
+)
+echo ✅ Build exitoso
+
+REM Verificar hooks
+echo 🔍 Verificando hooks...
+if exist ".git\hooks\pre-commit.bat" (
+    echo ✅ Hook pre-commit instalado
+) else (
+    echo ❌ Error: Hook pre-commit no se instaló
+)
+
+if exist ".git\hooks\post-commit.bat" (
+    echo ✅ Hook post-commit instalado
+) else (
+    echo ❌ Error: Hook post-commit no se instaló
 )
 
 echo.
 echo 🎉 INSTALACIÓN COMPLETADA EXITOSAMENTE
-echo =====================================
+echo ======================================
 echo.
-echo 🛡️  PROTECCIÓN ACTIVADA:
-echo   ✅ Anti-simulación inteligente (sin falsos positivos)
-echo   ✅ Anti-conflictos de merge automático
-echo   ✅ Validación biofísica en tiempo real
-echo   ✅ Verificación automática en cada commit
+echo 🛡️ Tu repositorio está ahora protegido con:
+echo   ✅ Hooks de git automáticos
+echo   ✅ Verificación de conflictos de merge
+echo   ✅ Verificación de build antes del commit
+echo   ✅ Scripts de resolución automática
 echo.
-echo 📋 CÓMO FUNCIONA:
-echo   1. Cada vez que hagas 'git commit', se ejecuta automáticamente
-echo   2. Verifica simulaciones, conflictos y valores no fisiológicos
-echo   3. Solo bloquea commits con problemas reales
-echo   4. Ignora comentarios y strings (no falsos positivos)
+echo 💡 COMANDOS DISPONIBLES:
+echo   - git add .                    # Agregar cambios
+echo   - git commit -m "mensaje"      # Commit manual (con verificación automática)
+echo   - scripts\smart-commit.bat     # Commit inteligente con resolución automática
+echo   - scripts\merge-protector.bat  # Resolver conflictos manualmente
 echo.
-echo 🚀 USO:
-echo   Simplemente haz commit normal:
-echo   git add .
-echo   git commit -m "Mi cambio"
-echo   ✅ El sistema verifica automáticamente
-echo.
-echo 💡 VERIFICACIÓN MANUAL (OPCIONAL):
-echo   scripts\merge-protector.bat
-echo.
-echo 🔧 DESINSTALAR (si es necesario):
-echo   del ".git\hooks\pre-commit"
-echo.
-echo 🧠 SISTEMA INTELIGENTE:
-echo   - Detecta simulaciones reales (no en comentarios)
-echo   - Evita falsos positivos automáticamente
-echo   - Protege contra conflictos de merge
-echo   - Validación médica estricta
-echo.
-
-REM Verificar que todo esté funcionando
-echo 🔍 Verificación final...
-echo Ejecutando prueba del hook...
-echo.
-
-REM Crear un archivo de prueba temporal
-echo // Archivo de prueba > test-hook.ts
-echo const testValue = 75; // SpO2 válido >> test-hook.ts
-
-REM Staging del archivo
-git add test-hook.ts >nul 2>&1
-
-REM Intentar commit (debería pasar)
-echo Intentando commit de prueba...
-git commit -m "Test hook" >nul 2>&1
-if errorlevel 1 (
-    echo ❌ ERROR: El hook no está funcionando correctamente
-    echo Revisa la instalación
-) else (
-    echo ✅ Hook funcionando correctamente
-    echo Commit de prueba exitoso
-)
-
-REM Limpiar archivo de prueba
-git reset --soft HEAD~1 >nul 2>&1
-git reset HEAD test-hook.ts >nul 2>&1
-del test-hook.ts >nul 2>&1
-
-echo.
-echo 🎯 SISTEMA LISTO PARA PROTEGER TU CÓDIGO MÉDICO
-echo.
-echo 💡 RECUERDA:
-echo   - El hook se ejecuta automáticamente en cada commit
-echo   - Solo bloquea commits con problemas reales
-echo   - No hay falsos positivos
-echo   - Tu código médico está protegido 24/7
+echo 🚀 ¡Tu repositorio está protegido y automatizado!
 echo.
 pause

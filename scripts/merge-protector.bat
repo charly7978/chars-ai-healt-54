@@ -1,38 +1,48 @@
 @echo off
-REM 🛡️ PROTECTOR DE MERGE AUTOMÁTICO PARA WINDOWS
-REM Resuelve conflictos de merge automáticamente usando la versión más reciente
+echo 🛡️ RESOLVIENDO CONFLICTOS DE MERGE AUTOMÁTICAMENTE...
+echo.
 
-echo 🛡️ PROTECTOR DE MERGE AUTOMÁTICO ACTIVADO
-echo 🔍 Buscando conflictos de merge...
+REM Verificar si hay conflictos de merge
+git diff --name-only --diff-filter=U > temp_conflicts.txt 2>nul
+if %errorlevel% neq 0 (
+    echo ✅ No hay conflictos de merge activos
+    goto :end
+)
 
-REM Buscar archivos con conflictos
-set conflict_found=false
-for /r src %%f in (*.ts *.tsx *.js *.jsx) do (
-    findstr /n "^<<<<<<<\|^=======\|^>>>>>>>" "%%f" >nul 2>&1
-    if not errorlevel 1 (
-        echo ⚠️  Conflictos detectados en: %%f
-        set conflict_found=true
-        
-        echo 🔧 Resolviendo conflictos automáticamente...
-        
-        REM Crear archivo temporal con contenido limpio
-        powershell -Command "(Get-Content '%%f') | Where-Object { $_ -notmatch '^<<<<<<< Current' -and $_ -notmatch '^=======' -and $_ -notmatch '^>>>>>>> Incoming' } | Set-Content '%%f.tmp'"
-        
-        REM Reemplazar archivo original
-        move /y "%%f.tmp" "%%f" >nul
-        
-        echo ✅ Conflictos resueltos en: %%f
-        
-        REM Agregar al staging
-        git add "%%f"
+echo 📋 Archivos con conflictos detectados:
+type temp_conflicts.txt
+echo.
+
+REM Resolver conflictos automáticamente
+for /f "tokens=*" %%f in (temp_conflicts.txt) do (
+    echo 🔧 Resolviendo conflicto en: %%f
+    
+    REM Buscar y eliminar marcadores de conflicto
+    powershell -Command "(Get-Content '%%f') -replace '^<<<<<<< .*$', '' -replace '^=======$', '' -replace '^>>>>>>> .*$', '' | Set-Content '%%f'"
+    
+    if !errorlevel! equ 0 (
+        echo ✅ Conflicto resuelto en: %%f
+    ) else (
+        echo ❌ Error resolviendo: %%f
     )
 )
 
-if "%conflict_found%"=="false" (
-    echo ✅ No se encontraron conflictos de merge
-) else (
-    echo 📝 Archivos corregidos agregados al staging
-    echo 🚀 Puedes continuar con el commit
-)
+REM Agregar archivos resueltos al staging
+echo.
+echo 📝 Agregando archivos resueltos al staging...
+git add .
 
-echo 🛡️ PROTECTOR DE MERGE COMPLETADO
+REM Verificar estado
+echo.
+echo 📊 Estado después de resolver conflictos:
+git status --porcelain
+
+REM Limpiar archivo temporal
+del temp_conflicts.txt 2>nul
+
+echo.
+echo ✅ RESOLUCIÓN DE CONFLICTOS COMPLETADA
+echo 💡 Ahora puedes continuar con tu commit
+
+:end
+pause

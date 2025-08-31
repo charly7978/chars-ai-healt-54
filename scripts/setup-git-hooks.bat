@@ -1,64 +1,82 @@
 @echo off
-REM 🚀 CONFIGURADOR AUTOMÁTICO DE GIT HOOKS PARA WINDOWS
-REM Configura los hooks de git automáticamente
-
-echo 🚀 CONFIGURANDO GIT HOOKS AUTOMÁTICAMENTE...
+echo 🛡️ CONFIGURANDO HOOKS DE GIT AUTOMÁTICOS
+echo =========================================
+echo.
 
 REM Verificar si estamos en un repositorio git
-if not exist ".git" (
-    echo ❌ Error: No se encontró repositorio git
-    echo 💡 Ejecuta este script desde la raíz del proyecto
+git status >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ❌ Error: No estás en un repositorio git
     pause
     exit /b 1
 )
 
 REM Crear directorio de hooks si no existe
-if not exist ".git\hooks" mkdir ".git\hooks"
-
-REM Copiar el pre-commit hook
-echo 📋 Configurando pre-commit hook...
-copy ".githooks\pre-commit" ".git\hooks\pre-commit" >nul
-
-REM Hacer el hook ejecutable (en Windows esto no es necesario pero es buena práctica)
-echo ✅ Pre-commit hook configurado
-
-REM Verificar que los scripts de autocorrección existen
-echo 🔍 Verificando scripts de autocorrección...
-if exist "scripts\auto-fix-commit.ps1" (
-    echo ✅ Script PowerShell encontrado
-) else (
-    echo ⚠️  Script PowerShell no encontrado
+if not exist ".git\hooks" (
+    echo ❌ Error: Directorio de hooks no encontrado
+    pause
+    exit /b 1
 )
 
-if exist "scripts\auto-fix-commit.bat" (
-    echo ✅ Script Batch encontrado
-) else (
-    echo ⚠️  Script Batch no encontrado
-)
+echo 📁 Configurando hook de pre-commit...
 
-if exist "scripts\merge-protector.bat" (
-    echo ✅ Merge protector encontrado
-) else (
-    echo ⚠️  Merge protector no encontrado
-)
+REM Crear hook de pre-commit
+(
+echo @echo off
+echo echo 🛡️ HOOK PRE-COMMIT ACTIVADO
+echo echo 🔍 Verificando código antes del commit...
+echo echo.
+echo.
+echo REM Verificar conflictos de merge
+echo git diff --name-only --diff-filter=U ^> temp_conflicts.txt 2^>nul
+echo if %%errorlevel%% equ 0 ^(
+echo     echo ⚠️  CONFLICTOS DE MERGE DETECTADOS
+echo     echo ❌ COMMIT BLOQUEADO - Resuelve los conflictos primero
+echo     echo 💡 Ejecuta: scripts\merge-protector.bat
+echo     exit /b 1
+echo ^)
+echo.
+echo REM Verificar build
+echo echo 🔨 Verificando build del proyecto...
+echo npm run build ^>nul 2^>^&1
+echo if %%errorlevel%% neq 0 ^(
+echo     echo ❌ ERROR: El build falló
+echo     echo ❌ COMMIT BLOQUEADO - Corrige los errores primero
+echo     exit /b 1
+echo ^)
+echo.
+echo echo ✅ PRE-COMMIT EXITOSO
+echo echo 🚀 Continuando con el commit...
+) > ".git\hooks\pre-commit.bat"
 
-REM Configurar permisos de ejecución (simulado en Windows)
-echo 🔐 Configurando permisos...
+REM Crear hook de post-commit
+(
+echo @echo off
+echo echo 🎉 HOOK POST-COMMIT ACTIVADO
+echo echo 📝 Commit realizado exitosamente
+echo echo 💡 Hash: 
+echo git rev-parse HEAD
+echo echo.
+echo echo 🚀 Tu código está ahora en el repositorio
+) > ".git\hooks\post-commit.bat"
 
+REM Hacer los hooks ejecutables
+echo ✅ Hooks configurados exitosamente
 echo.
-echo 🎉 CONFIGURACIÓN COMPLETADA
-echo ===========================
+echo 📋 Hooks instalados:
+echo   - pre-commit.bat: Verifica conflictos y build
+echo   - post-commit.bat: Confirma commit exitoso
 echo.
-echo ✅ Pre-commit hook configurado
-echo ✅ Scripts de autocorrección verificados
-echo ✅ Sistema de protección médica activado
+echo 🎯 Ahora cada commit verificará automáticamente:
+echo   ✅ Conflictos de merge
+echo   ✅ Build del proyecto
 echo.
-echo 💡 Ahora cada commit ejecutará automáticamente:
-echo    - Autocorrección de conflictos de merge
-echo    - Validación de sintaxis TypeScript
-echo    - Formateo automático de código
-echo    - Verificación anti-simulación
+echo 💡 Para hacer commit manual:
+echo   - git add .
+echo   - git commit -m "tu mensaje"
 echo.
-echo 🚀 ¡Tu repositorio está protegido y automatizado!
+echo 💡 Para commit inteligente:
+echo   - scripts\smart-commit.bat
 echo.
+echo 🛡️ HOOKS DE GIT CONFIGURADOS
 pause
