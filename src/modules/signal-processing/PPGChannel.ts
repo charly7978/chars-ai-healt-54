@@ -26,10 +26,10 @@ export default class PPGChannel {
   private detectionState: boolean = false;
   private consecutiveTrue: number = 0;
   private consecutiveFalse: number = 0;
-  private readonly MIN_TRUE_FRAMES = 4;
-  private readonly MIN_FALSE_FRAMES = 6;
+  private readonly MIN_TRUE_FRAMES = 3;  // Reducido para detección más rápida
+  private readonly MIN_FALSE_FRAMES = 10; // Aumentado para evitar pérdidas falsas
   private lastToggleMs: number = 0;
-  private readonly HOLD_MS = 700;
+  private readonly HOLD_MS = 400; // Reducido para mejor sincronización
   private qualityEma: number | null = null;
   
   // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)

@@ -14,7 +14,7 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
   const sampleCountRef = useRef(0);
   const lastEnvRef = useRef<{ fingerConfidence: number; exposureState: CameraSample['exposureState'] } | null>(null);
   const lastAnalyzeTimeRef = useRef<number>(0);
-  const analyzeIntervalMsRef = useRef<number>(50); // ~20 Hz para mejor latencia
+  const analyzeIntervalMsRef = useRef<number>(33); // ~30 Hz para mejor sincronización con la cámara
 
   if (!mgrRef.current) {
     mgrRef.current = new MultiChannelManager(channels, windowSec);
@@ -79,12 +79,28 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     let motion = s.frameDiff + (s.brightnessStd > 8 ? 6 : 0);
     if (exposure === 'moving') motion += 8;
     const adjustedMotion = motion;
-    // Decimar análisis pesado a ~12 Hz para evitar bloquear el hilo principal
+    
+    // Guardar métricas globales para uso continuo
+    lastEnvRef.current = {
+      ...lastEnvRef.current,
+      fingerConfidence: typeof s.fingerConfidence === 'number' ? s.fingerConfidence : 0,
+      exposureState: s.exposureState,
+      lastCoverage: adjustedCoverage,
+      lastMotion: adjustedMotion
+    } as any;
+    // Análisis más frecuente y con métricas actualizadas
     const now = performance.now();
     let result: MultiChannelResult | null = null;
     if (now - lastAnalyzeTimeRef.current >= analyzeIntervalMsRef.current || !lastResult) {
+<<<<<<< Current (Your changes)
       if (!mgrRef.current) return;
       result = mgrRef.current.analyzeAll(adjustedCoverage, adjustedMotion);
+=======
+      // Usar las últimas métricas conocidas si están disponibles
+      const coverage = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
+      const motion = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
+      result = mgrRef.current!.analyzeAll(coverage, motion);
+>>>>>>> Incoming (Background Agent changes)
       lastAnalyzeTimeRef.current = now;
       
       // Log resultado muy ocasional o cuando hay detección
