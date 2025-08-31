@@ -442,7 +442,7 @@ export class AdvancedMathematicalProcessor {
     // Polinomio de grado 5 calibrado con datos clínicos
     const coefficients = [110.0, -25.0, 15.0, -8.0, 2.0, -0.3];
     
-    let spo2 = 0;
+    let spo2 = Number.NaN;
     for (let i = 0; i < coefficients.length; i++) {
       spo2 += coefficients[i] * Math.pow(ratio, i);
     }

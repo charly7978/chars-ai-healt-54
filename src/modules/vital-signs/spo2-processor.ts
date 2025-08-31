@@ -189,7 +189,7 @@ export class SpO2Processor {
    */
   private convertRatioToSpO2(ratio: number, perfusion: number): number {
     // Algoritmo calibrado con pulsioximetría clínica
-    const baseSpO2 = 110 - (25 * ratio);
+    const baseSpO2 = Math.max(70, Math.min(97.5, 110 - (25 * ratio)));
     
     // Corrección por perfusión (mejor perfusión = mayor SpO2)
     const perfusionBonus = Math.tanh(perfusion * 12) * 3;
