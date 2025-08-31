@@ -225,7 +225,7 @@ const Index = () => {
         console.log('✅ Sistema ACTIVO - Procesamiento de latidos reales habilitado');
       }
       setIsCalibrating(false);
-    }, 2000);
+    }, 3500);
     
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);

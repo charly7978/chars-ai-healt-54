@@ -211,20 +211,11 @@ const CameraView: React.FC<CameraViewProps> = ({
           console.error('Error en captura:', captureError);
         }
         
-        // Programar siguiente frame
-        const frameDelay = 1000 / targetFps;
-        const nextFrameTime = performance.now() + frameDelay;
-        
-        const scheduleNextFrame = () => {
-          const now = performance.now();
-          if (now >= nextFrameTime) {
-            captureLoop();
-          } else {
-            rafRef.current = requestAnimationFrame(scheduleNextFrame);
-          }
-        };
-        
-        rafRef.current = requestAnimationFrame(scheduleNextFrame);
+        // Programar siguiente frame con setTimeout para timing estable
+        const frameDelay = Math.max(5, Math.floor(1000 / targetFps));
+        setTimeout(() => {
+          rafRef.current = requestAnimationFrame(captureLoop);
+        }, frameDelay);
       };
       
       rafRef.current = requestAnimationFrame(captureLoop);

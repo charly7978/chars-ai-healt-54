@@ -10,7 +10,7 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_MIN_CONFIDENCE = 0.55; // Más permisivo para estabilizar detección
   private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 380; // levemente más rápido para latidos reales
-  private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
+  private readonly WARMUP_TIME_MS = 3000; // Más estabilización inicial
 
   // Parámetros de filtrado MÁS CONSERVADORES
   private readonly MEDIAN_FILTER_WINDOW = 3;

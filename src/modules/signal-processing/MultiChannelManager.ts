@@ -23,7 +23,7 @@ export default class MultiChannelManager {
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
   private lastGlobalToggle = 0;
-  private readonly GLOBAL_HOLD_MS = 900;
+  private readonly GLOBAL_HOLD_MS = 4000;
   private coverageEma: number | null = null;
   private motionEma: number | null = null;
   
@@ -138,9 +138,11 @@ export default class MultiChannelManager {
     const avgQuality = detectedChannels > 0 ? (totalQuality / detectedChannels) : 0;
     const qualityOk = detectedChannels > 0 && avgQuality >= this.MIN_QUALITY_THRESHOLD;
     const strongDetection = consensusOk && qualityOk && coverageOk && motionOk;
+    // Mantener detección si ya estaba activa y se conserva consenso+calidad, aunque cobertura/movimiento fluctúen
+    const stickyDetection = this.fingerState && consensusOk && qualityOk;
     
     // Condición global mejorada: todos los criterios principales + calidad
-    const globalCondition = strongDetection;
+    const globalCondition = strongDetection || stickyDetection;
     // Condición de pre-detección basada solo en cobertura y movimiento estables
     const preCondition = coverageOk && motionOk;
 
