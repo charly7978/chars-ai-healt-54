@@ -29,7 +29,11 @@ export default class MultiChannelManager {
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
   private readonly FRAMES_TO_CONFIRM_FINGER = 5;    // más rápido para confirmar
   private readonly FRAMES_TO_LOSE_FINGER = 30;      // perder dedo sólo tras ~1.5s inestable (más tolerancia)
+<<<<<<< Current (Your changes)
   private readonly MIN_COVERAGE_RATIO = 0.14;       // permitir luz más baja
+=======
+  private readonly MIN_COVERAGE_RATIO = 0.05;       // MUY bajo para debugging
+>>>>>>> Incoming (Background Agent changes)
   private readonly MAX_FRAME_DIFF = 28;             // tolerar más autoexposición/micro-mov
   private readonly MIN_CONSENSUS_RATIO = 0.25;      // Requiere solo 25% de canales (2 de 6)
   private readonly MIN_QUALITY_THRESHOLD = 15;      // Más permisivo para detección inicial

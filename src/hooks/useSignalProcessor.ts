@@ -23,8 +23,21 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
 
   const handleSample = (s: CameraSample) => {
     sampleCountRef.current++;
+    
+    // Log cada 30 muestras
+    if (sampleCountRef.current % 30 === 0) {
+      console.log('🎯 handleSample recibiendo:', {
+        muestra: sampleCountRef.current,
+        rMean: s.rMean.toFixed(1),
+        gMean: s.gMean.toFixed(1),
+        bMean: s.bMean.toFixed(1),
+        coverageRatio: (s.coverageRatio * 100).toFixed(1) + '%'
+      });
+    }
+    
     // Protección contra muestras inválidas o NaN
     if (!isFinite(s.rMean) || !isFinite(s.gMean) || !isFinite(s.bMean)) {
+      console.warn('⚠️ Muestra inválida:', s);
       return;
     }
     

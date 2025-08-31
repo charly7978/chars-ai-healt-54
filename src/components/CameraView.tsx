@@ -19,7 +19,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   targetFps = 30,
   roiSize = 200,
   enableTorch = true,
-  coverageThresholdPixelBrightness = 25
+  coverageThresholdPixelBrightness = 10 // MUY bajo para debugging
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -27,6 +27,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   const rafRef = useRef<number | null>(null);
   const prevBrightnessRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const frameCountRef = useRef<number>(0);
   const [isStreamActive, setIsStreamActive] = useState(false);
   const [torchEnabled, setTorchEnabled] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -363,6 +364,23 @@ const CameraView: React.FC<CameraViewProps> = ({
           timestamp: new Date().toISOString()
         });
       }
+      // DEBUG: Logging detallado de valores de cámara
+      const frameCount = frameCountRef.current || 0;
+      if (frameCount % 30 === 0) { // Cada segundo aprox
+        console.log('📷 VALORES DE CÁMARA:', {
+          frame: frameCount,
+          rMean: rMean.toFixed(1),
+          gMean: gMean.toFixed(1),
+          bMean: bMean.toFixed(1),
+          brightnessMean: brightnessMean.toFixed(1),
+          coverageRatio: (coverageRatio * 100).toFixed(1) + '%',
+          validPixels: validPixels,
+          totalPixels: totalPixels,
+          brightPixels: brightPixels,
+          fingerConfidence: (fingerConfidence * 100).toFixed(1) + '%'
+        });
+      }
+      frameCountRef.current = (frameCount + 1) % 1000;
       
       prevBrightnessRef.current = brightnessMean;
       

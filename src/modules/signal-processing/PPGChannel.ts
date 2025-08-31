@@ -36,12 +36,12 @@ export default class PPGChannel {
   private readonly HOLD_MS = 200; // Respuesta más rápida
   private qualityEma: number | null = null;
   
-  // CRÍTICO: Umbrales BALANCEADOS para detección robusta
-  private minRMeanForFinger = 55;   // Más permisivo para diferentes condiciones de luz
-  private maxRMeanForFinger = 250;  // Rango amplio
-  private minVarianceForPulse = 0.8; // Permitir señales más débiles
-  private minSNRForFinger = 1.0;    // SNR mínimo viable
-  private maxFrameDiffForStability = 20; // Tolerar más movimiento
+  // CRÍTICO: Umbrales MUY PERMISIVOS para debugging
+  private minRMeanForFinger = 30;   // MUY bajo para debugging
+  private maxRMeanForFinger = 255;  // Máximo posible
+  private minVarianceForPulse = 0.1; // Casi cualquier variación
+  private minSNRForFinger = 0.5;    // SNR muy bajo
+  private maxFrameDiffForStability = 50; // Muy tolerante
   // Umbrales adicionales para robustecer gating
   private readonly minStdSmoothForPulse = 0.10; // Más permisivo
   private readonly maxRRCoeffVar = 0.25;        // Permitir más variación inicial
@@ -121,6 +121,15 @@ export default class PPGChannel {
   }
 
   analyze() {
+    // Log para debugging
+    if (this.channelId === 0 && this.buffer.length % 30 === 0) {
+      console.log(`📊 Canal ${this.channelId} - Estado del buffer:`, {
+        bufferLength: this.buffer.length,
+        primerosValores: this.buffer.slice(0, 5).map(s => s.v.toFixed(1)),
+        ultimosValores: this.buffer.slice(-5).map(s => s.v.toFixed(1))
+      });
+    }
+    
     if (this.buffer.length < 50) { // Aumentado para análisis más confiable
       return { 
         calibratedSignal: [], 
@@ -241,12 +250,23 @@ export default class PPGChannel {
       const maintainDetection = brightnessOk && (varianceOk || peakConfidence || (snr > 0.8));
       var rawDetected = maintainDetection;
     } else {
-      // Para nueva detección, ser más permisivo inicialmente
-      const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES;
-      const basicSignal = brightnessOk && varianceOk;
-      const earlyOk = inEarlyWindow && brightnessOk && (acOk || varianceOk);
-      const fullDetection = brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk;
-      var rawDetected = Boolean(basicSignal || earlyOk || fullDetection || peakConfidence);
+      // SIMPLIFICADO para debugging - solo verificar brillo
+      var rawDetected = brightnessOk;
+      
+      // Log TODOS los criterios para debugging
+      console.log(`🔍 Canal ${this.channelId} - TODOS LOS CRITERIOS:`, {
+        brightnessOk,
+        mean: mean.toFixed(1),
+        minRequired: this.minRMeanForFinger,
+        maxRequired: this.maxRMeanForFinger,
+        varianceOk,
+        variance: variance.toFixed(2),
+        minVarianceRequired: this.minVarianceForPulse,
+        snrOk,
+        snr: snr.toFixed(2),
+        minSNRRequired: this.minSNRForFinger,
+        bufferLength: this.buffer.length
+      });
       
       // Debug detección inicial
       if (this.channelId === 0 && this.buffer.length % 30 === 0) {
