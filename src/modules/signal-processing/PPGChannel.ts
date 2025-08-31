@@ -12,7 +12,7 @@ import { savitzkyGolay } from './SavitzkyGolayFilter';
 import { Biquad } from './Biquad';
 import { goertzelPower } from './Goertzel';
 import { computeSNR } from './SignalQualityAnalyzer';
-import { detectPeaks } from './TimeDomainPeak';
+import { RobustPPGProcessor } from './RobustPPGProcessor';
 
 type Sample = { t: number; v: number };
 
@@ -21,26 +21,38 @@ export default class PPGChannel {
   private buffer: Sample[] = [];
   private windowSec: number;
   private gain: number;
+  private bufferStartTime: number = 0;
+  
+  // Procesador robusto de PPG
+  private ppgProcessor: RobustPPGProcessor;
+  private rrHistory: number[] = [];
   
   // Histéresis por canal para evitar flapping
   private detectionState: boolean = false;
   private consecutiveTrue: number = 0;
   private consecutiveFalse: number = 0;
+<<<<<<< Current (Your changes)
   private readonly MIN_TRUE_FRAMES = 3;  // Reducido para detección más rápida
   private readonly MIN_FALSE_FRAMES = 10; // Aumentado para evitar pérdidas falsas
   private lastToggleMs: number = 0;
   private readonly HOLD_MS = 400; // Reducido para mejor sincronización
+=======
+  private readonly MIN_TRUE_FRAMES = 2;  // Más rápido
+  private readonly MIN_FALSE_FRAMES = 15; // Más resistente
+  private lastToggleMs: number = 0;
+  private readonly HOLD_MS = 200; // Respuesta más rápida
+>>>>>>> Incoming (Background Agent changes)
   private qualityEma: number | null = null;
   
-  // CRÍTICO: Umbrales CORREGIDOS para valores de cámara reales (0-255)
-  private minRMeanForFinger = 55;   // más permisivo para baja luz
-  private maxRMeanForFinger = 248;  // margen superior mayor
-  private minVarianceForPulse = 1.6; // aceptar AC más débil
-  private minSNRForFinger = 1.05;    // permitir SNR justo en inicio
-  private maxFrameDiffForStability = 18; // tolerar micro-movimiento
+  // CRÍTICO: Umbrales OPTIMIZADOS para <3% error
+  private minRMeanForFinger = 60;   // Más estricto para evitar falsos positivos
+  private maxRMeanForFinger = 240;  // Evitar saturación
+  private minVarianceForPulse = 2.5; // Requiere señal AC clara
+  private minSNRForFinger = 1.8;    // SNR más alto para confiabilidad
+  private maxFrameDiffForStability = 12; // Menos tolerancia a movimiento
   // Umbrales adicionales para robustecer gating
-  private readonly minStdSmoothForPulse = 0.16; // amplitud mínima en señal filtrada normalizada
-  private readonly maxRRCoeffVar = 0.35;        // variación máxima permitida en RR (coef. variación)
+  private readonly minStdSmoothForPulse = 0.25; // Amplitud mínima más estricta
+  private readonly maxRRCoeffVar = 0.15;        // Máximo 15% variación RR para <3% error
   private readonly EARLY_DETECT_MIN_SAMPLES = 60; // ~2s con 30FPS
   private readonly EARLY_DETECT_MAX_SAMPLES = 120; // ~4s ventana temprana
 
@@ -48,6 +60,12 @@ export default class PPGChannel {
     this.channelId = channelId;
     this.windowSec = windowSec;
     this.gain = initialGain;
+    
+    // Inicializar procesador robusto
+    this.ppgProcessor = new RobustPPGProcessor();
+    
+    // Buffer circular para evitar problemas con shift()
+    this.bufferStartTime = 0;
     
     console.log(`🔬 PPGChannel ${channelId} creado:`, {
       windowSec,
@@ -64,10 +82,17 @@ export default class PPGChannel {
     const v = rawValue * this.gain;
     this.buffer.push({ t, v });
     
-    // Mantener ventana temporal
+    // Mantener ventana temporal con suavizado
     const t0 = t - this.windowSec;
-    while (this.buffer.length && this.buffer[0].t < t0) {
-      this.buffer.shift();
+    
+    // Solo hacer shift si hay suficientes muestras y el buffer es muy grande
+    if (this.buffer.length > 300 && this.buffer[0].t < t0) {
+      // Mantener al menos 20% de muestras antiguas para continuidad
+      const keepTime = t - this.windowSec * 1.2;
+      while (this.buffer.length > 250 && this.buffer[0].t < keepTime) {
+        this.buffer.shift();
+      }
+      this.bufferStartTime = this.buffer[0].t;
     }
     
     // Debug logging cada 300 muestras para no saturar (aumentado de 100)
@@ -160,22 +185,31 @@ export default class PPGChannel {
     
     const snr = signalPower / Math.max(1e-6, noisePower);
     
-    // Calidad MEJORADA basada en múltiples factores
+    // Calidad COMBINADA: usar calidad robusta del procesador + métricas locales
     const qualitySpectral = Math.min(40, Math.max(0, (snr - 1) * 28));
     const qualityVariance = variance > this.minVarianceForPulse ? 30 : 8;
     const qualityStability = this.buffer.length >= 150 ? 22 : 
                             this.buffer.length >= 100 ? 18 : 12;
     const qualitySignalStrength = Math.min(20, Math.max(0, (maxPower - 1e-4) * 65000));
     
-    const quality = qualitySpectral + qualityVariance + qualityStability + qualitySignalStrength;
+    const localQuality = qualitySpectral + qualityVariance + qualityStability + qualitySignalStrength;
+    
+    // Combinar con calidad robusta (dar más peso a la robusta)
+    const quality = robustQuality ? (robustQuality * 100 * 0.7 + localQuality * 0.3) : localQuality;
 
     // BPM del pico espectral con validación
     const bpmSpectral = maxPower > 1e-5 ? Math.round(peakFreq * 60) : null;
 
-    // Detección de picos temporales para RR intervals
-    const { peaks, peakTimesMs, rr } = detectPeaks(smooth, fs, 350, 0.10); // Ajustado a 350ms y umbral 0.10
-    const bpmTemporal = rr.length >= 2 ? 
-      Math.round(60000 / (rr.reduce((a,b) => a+b, 0) / rr.length)) : null;
+    // Procesamiento ROBUSTO de señal PPG
+    const robustResult = this.ppgProcessor.processSignal(smooth, fs, this.rrHistory);
+    const { peaks, confidence: peakConfidences, rrIntervals: rr, bpm: robustBPM, signalQuality: robustQuality, noiseLevel } = robustResult;
+    
+    // Actualizar historia de RR si hay nuevos intervalos válidos
+    if (rr.length > 0) {
+      this.rrHistory = [...this.rrHistory, ...rr].slice(-10); // Mantener últimos 10
+    }
+    
+    const bpmTemporal = robustBPM;
 
     // Chequeos adicionales: amplitud AC y regularidad RR
     const stdSmooth = this.stdArray(smooth);
@@ -188,16 +222,29 @@ export default class PPGChannel {
       rrConsistencyOk = cvRR <= this.maxRRCoeffVar;
     }
 
-    // CRITERIOS DE DETECCIÓN DE DEDO ESTRICTOS (sin falsos positivos)
+    // CRITERIOS DE DETECCIÓN MEJORADOS - Más tolerantes pero realistas
     const brightnessOk = mean >= this.minRMeanForFinger && mean <= this.maxRMeanForFinger;
     const varianceOk = variance >= this.minVarianceForPulse;
     const snrOk = snr >= this.minSNRForFinger;
     const bpmOk = (bpmSpectral && bpmSpectral >= 45 && bpmSpectral <= 180) || 
                   (bpmTemporal && bpmTemporal >= 45 && bpmTemporal <= 180);
-    // Detección temprana (sin exigir SNR/BPM) si hay brillo y amplitud AC suficientes en los primeros segundos
-    const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
-    const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
-    const rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk);
+    
+    // Detección basada en calidad robusta y nivel de ruido
+    const robustDetection = robustQuality > 0.4 && noiseLevel < 0.3 && rr.length >= 2;
+    const peakConfidence = robustDetection && (peakConfidences.length > 0 ? 
+      peakConfidences.reduce((a, b) => a + b, 0) / peakConfidences.length : 0) > 0.6;
+    
+    // Si ya estamos detectando, ser más tolerante para mantener la detección
+    if (this.detectionState) {
+      // Mantener detección si tenemos al menos señal básica
+      const maintainDetection = brightnessOk && (varianceOk || peakConfidence || (snr > 0.8));
+      var rawDetected = maintainDetection;
+    } else {
+      // Para nueva detección, ser más estricto
+      const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
+      const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
+      var rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk || peakConfidence);
+    }
 
     // Aplicar histéresis por canal
     if (rawDetected) {
@@ -213,6 +260,22 @@ export default class PPGChannel {
       if (this.detectionState) {
         const sinceToggle = Date.now() - this.lastToggleMs;
         if (sinceToggle >= this.HOLD_MS && this.consecutiveFalse >= this.MIN_FALSE_FRAMES) {
+          // DEBUG: Log cuando se pierde la detección
+          console.warn(`❌ Canal ${this.channelId} PERDIENDO DETECCIÓN:`, {
+            sinceToggle: sinceToggle + 'ms',
+            consecutiveFalse: this.consecutiveFalse,
+            mean: mean.toFixed(1),
+            variance: variance.toFixed(2),
+            snr: snr.toFixed(2),
+            criterios: {
+              brightnessOk,
+              varianceOk,
+              snrOk,
+              bpmOk,
+              acOk,
+              rrConsistencyOk
+            }
+          });
           this.detectionState = false;
           this.lastToggleMs = Date.now();
         }

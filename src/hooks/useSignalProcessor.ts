@@ -34,11 +34,17 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       exposureState: s.exposureState
     };
     
-    // Refinamiento de señal: fusión ROJO + crominancia (r - 0.5 g)
-    // Mantener escala 0-255 para no romper los umbrales en canales
-    const chroma = s.rMean - 0.5 * s.gMean;
-    const fused = 0.8 * s.rMean + 0.2 * chroma; // más peso a R para estabilidad
-    const inputSignal = Math.max(0, Math.min(255, fused));
+    // Refinamiento de señal MEJORADO: usar componente AC puro
+    // Extraer componente pulsátil (AC) eliminando componente DC
+    const dcComponent = s.rMean * 0.7 + s.gMean * 0.3; // Componente DC estimado
+    const acRed = s.rMean - dcComponent;
+    const acGreen = s.gMean - dcComponent * 0.8; // Verde tiene menos componente DC
+    
+    // Señal PPG óptima: maximizar componente AC
+    const ppgSignal = acRed - 0.5 * acGreen; // Resta verde para eliminar artefactos
+    
+    // Normalizar a escala 0-255 manteniendo el componente AC
+    const inputSignal = Math.max(0, Math.min(255, 128 + ppgSignal * 2));
     
     // Log detallado MUY ocasional para debug
     if (sampleCountRef.current % 600 === 0) {
@@ -86,14 +92,16 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
       lastCoverage: adjustedCoverage,
       lastMotion: adjustedMotion
     } as any;
-    // Análisis más frecuente y con métricas actualizadas
+    // CRÍTICO: Siempre ejecutar el análisis para mantener sincronización
+    // El problema era que si no se ejecutaba el análisis, los buffers internos
+    // seguían actualizándose pero el resultado mostrado quedaba desactualizado
+    const coverage = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
+    const motion = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
+    const result = mgrRef.current!.analyzeAll(coverage, motion);
+    
+    // Solo actualizar el estado de React con throttling para evitar re-renders excesivos
     const now = performance.now();
-    let result: MultiChannelResult | null = null;
     if (now - lastAnalyzeTimeRef.current >= analyzeIntervalMsRef.current || !lastResult) {
-      // Usar las últimas métricas conocidas si están disponibles
-      const coverage = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
-      const motion = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
-      result = mgrRef.current!.analyzeAll(coverage, motion);
       lastAnalyzeTimeRef.current = now;
       
       // Log resultado muy ocasional o cuando hay detección

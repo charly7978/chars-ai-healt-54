@@ -257,15 +257,20 @@ const CameraView: React.FC<CameraViewProps> = ({
       const imageData = ctx.getImageData(0, 0, roiW, roiH);
       const data = imageData.data;
 
-      // PROCESAMIENTO PPG OPTIMIZADO
+      // PROCESAMIENTO PPG ROBUSTO Y MEJORADO
       let rSum = 0, gSum = 0, bSum = 0;
       let rSum2 = 0, gSum2 = 0, bSum2 = 0;
       let brightSum = 0;
       let brightSum2 = 0;
       let brightPixels = 0;
       let redSaturated = 0;
+      let validPixels = 0;
+      
+      // Arrays para análisis robusto
+      const redValues: number[] = [];
+      const greenValues: number[] = [];
+      
       const threshold = coverageThresholdPixelBrightness;
-
       const totalPixels = data.length / 4;
 
       for (let i = 0; i < data.length; i += 4) {
@@ -273,6 +278,22 @@ const CameraView: React.FC<CameraViewProps> = ({
         const g = data[i + 1]; 
         const b = data[i + 2];
         const brightness = (r + g + b) / 3;
+        
+        // Filtrar píxeles no válidos (muy oscuros o saturados)
+        if (r < 30 || r > 250 || g < 20 || g > 240 || b < 10 || b > 230) {
+          continue;
+        }
+        
+        // Verificar características de piel bajo iluminación
+        const rgRatio = g > 0 ? r / g : 0;
+        const rbRatio = b > 0 ? r / b : 0;
+        const isValidSkin = rgRatio > 1.1 && rgRatio < 3.5 && rbRatio > 1.2 && rbRatio < 4.0;
+        
+        if (isValidSkin && brightness >= threshold) {
+          validPixels++;
+          redValues.push(r);
+          greenValues.push(g);
+        }
         
         rSum += r;
         gSum += g;
@@ -289,8 +310,32 @@ const CameraView: React.FC<CameraViewProps> = ({
         if (brightness >= threshold && isPhysioRed) brightPixels++;
       }
       
-      const rMean = rSum / totalPixels;
-      const gMean = gSum / totalPixels;
+      // Usar media robusta de píxeles válidos si hay suficientes
+      let robustRMean = rSum / totalPixels;
+      let robustGMean = gSum / totalPixels;
+      
+      if (validPixels > totalPixels * 0.1 && redValues.length > 100) {
+        // Calcular percentiles para robustez
+        redValues.sort((a, b) => a - b);
+        greenValues.sort((a, b) => a - b);
+        
+        // Media recortada del 50% central
+        const rTrimStart = Math.floor(redValues.length * 0.25);
+        const rTrimEnd = Math.floor(redValues.length * 0.75);
+        const gTrimStart = Math.floor(greenValues.length * 0.25);
+        const gTrimEnd = Math.floor(greenValues.length * 0.75);
+        
+        const rTrimmed = redValues.slice(rTrimStart, rTrimEnd);
+        const gTrimmed = greenValues.slice(gTrimStart, gTrimEnd);
+        
+        if (rTrimmed.length > 0 && gTrimmed.length > 0) {
+          robustRMean = rTrimmed.reduce((a, b) => a + b, 0) / rTrimmed.length;
+          robustGMean = gTrimmed.reduce((a, b) => a + b, 0) / gTrimmed.length;
+        }
+      }
+      
+      const rMean = robustRMean;
+      const gMean = robustGMean;
       const bMean = bSum / totalPixels;
       const brightnessMean = brightSum / totalPixels;
       const brightnessVar = Math.max(0, brightSum2/totalPixels - brightnessMean*brightnessMean);
@@ -308,6 +353,17 @@ const CameraView: React.FC<CameraViewProps> = ({
       // FRAME DIFF PARA MOVIMIENTO
       const prevBrightness = prevBrightnessRef.current;
       const frameDiff = prevBrightness !== null ? Math.abs(brightnessMean - prevBrightness) : 0;
+      
+      // DEBUG: Detectar saltos anormales en frameDiff
+      if (frameDiff > 20 && prevBrightness !== null) {
+        console.warn('⚠️ SALTO ANORMAL EN FRAMEDIFF:', {
+          frameDiff: frameDiff.toFixed(1),
+          brightnessMean: brightnessMean.toFixed(1),
+          prevBrightness: prevBrightness.toFixed(1),
+          timestamp: new Date().toISOString()
+        });
+      }
+      
       prevBrightnessRef.current = brightnessMean;
       
       const coverageRatio = brightPixels / totalPixels;
