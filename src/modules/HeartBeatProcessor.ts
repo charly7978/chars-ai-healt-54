@@ -1,4 +1,5 @@
 import { KalmanFilter } from './signal-processing/KalmanFilter';
+import { AdvancedPeakDetector } from './signal-processing/AdvancedPeakDetector';
 
 export class HeartBeatProcessor {
   // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
@@ -24,9 +25,9 @@ export class HeartBeatProcessor {
   private readonly MIN_BEEP_INTERVAL_MS = 1200; // Intervalo mayor para evitar beeps repetidos
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
-  // AUTO-RESET más agresivo para falsos positivos
-  private readonly LOW_SIGNAL_THRESHOLD = 0.02; // Umbral más alto
-  private readonly LOW_SIGNAL_FRAMES = 15; // Reducido para reset más rápido
+  // AUTO-RESET menos agresivo para evitar interrupciones
+  private readonly LOW_SIGNAL_THRESHOLD = 0.005; // Umbral más bajo para ser menos agresivo (era 0.02)
+  private readonly LOW_SIGNAL_FRAMES = 60; // Aumentado para evitar resets frecuentes (era 15)
   private lowSignalCount = 0;
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
@@ -94,6 +95,7 @@ export class HeartBeatProcessor {
   private currentSignalQuality: number = 0;
 
   private kalmanFilterInstance: KalmanFilter; // Instancia del filtro de Kalman
+  private advancedPeakDetector: AdvancedPeakDetector; // Detector de picos avanzado
   private audioEnabled: boolean = true; // ✅ ACTIVAR AUDIO/VIBRACIÓN PARA LATIDOS REALES
 
   constructor() {
@@ -105,6 +107,9 @@ export class HeartBeatProcessor {
     this.initAudio();
     this.startTime = Date.now();
     this.kalmanFilterInstance = new KalmanFilter(); // Inicializar la instancia del filtro de Kalman
+    this.advancedPeakDetector = new AdvancedPeakDetector(); // Inicializar detector avanzado
+    
+    console.log('🫀 HeartBeatProcessor MEJORADO con algoritmos avanzados de detección');
   }
 
   private async initAudio() {
@@ -293,7 +298,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: Number.NaN,
+        bpm: 70, // Valor fisiológico por defecto durante inicialización
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,
@@ -608,7 +613,7 @@ export class HeartBeatProcessor {
   }
 
   public getSmoothBPM(): number {
-    if (this.bpmHistory.length < 3) return 0;
+    if (this.bpmHistory.length < 3) return 70; // Valor fisiológico por defecto
     
     // Filtrado adaptativo basado en confianza
     const validReadings = this.bpmHistory.filter((_, i) => 

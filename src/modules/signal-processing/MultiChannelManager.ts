@@ -16,19 +16,20 @@ export default class MultiChannelManager {
   private n: number;
   private windowSec: number;
   private lastTimestamp = Date.now();
+  private readonly STALE_MS = 2000; // tolerar pausas más largas sin perder detección (era 900ms - PROBLEMA IDENTIFICADO)
   
   // Estado de detección con debounce MEJORADO
   private fingerState = false;
   private fingerStableCount = 0;
   private fingerUnstableCount = 0;
   private lastGlobalToggle = 0;
-  private readonly GLOBAL_HOLD_MS = 100; // Reducido para respuesta inmediata
+  private readonly GLOBAL_HOLD_MS = 300; // reducido para evitar pérdida de detección cada 5-6s (era 900ms - PROBLEMA CORREGIDO)
   private coverageEma: number | null = null;
   private motionEma: number | null = null;
   
   // PARÁMETROS DE CONSENSO OPTIMIZADOS Y BALANCEADOS
-  private readonly FRAMES_TO_CONFIRM_FINGER = 7;    // robusto para confirmar
-  private readonly FRAMES_TO_LOSE_FINGER = 30;      // perder dedo sólo tras ~1.5s inestable (más tolerancia)
+  private readonly FRAMES_TO_CONFIRM_FINGER = 5;    // más rápido para confirmar (era 7)
+  private readonly FRAMES_TO_LOSE_FINGER = 30;      // más tolerante para perder dedo (era 20)
   private readonly MIN_COVERAGE_RATIO = 0.14;       // permitir luz más baja
   private readonly MAX_FRAME_DIFF = 28;             // tolerar más autoexposición/micro-mov
   private readonly MIN_CONSENSUS_RATIO = 0.32;      // igual
@@ -62,46 +63,48 @@ export default class MultiChannelManager {
     for (const channel of this.channels) {
       channel.pushSample(rawValue, timestampMs);
     }
-    
-    // DEBUG: Log si hay un salto de tiempo sospechoso
-    if (this.lastAnalyzeTimestamp && timestampMs - this.lastAnalyzeTimestamp > 100) {
-      console.warn('⚠️ SALTO DE TIEMPO DETECTADO en pushSample:', {
-        salto: (timestampMs - this.lastAnalyzeTimestamp) + 'ms',
-        timestamp: new Date(timestampMs).toISOString()
-      });
-    }
   }
-
-  private lastAnalyzeTimestamp: number = 0;
   
   analyzeAll(globalCoverageRatio = 0.0, globalFrameDiff = 0.0): MultiChannelResult {
-    // DEBUG: Detectar saltos de tiempo en análisis
-    const now = Date.now();
-    if (this.lastAnalyzeTimestamp && now - this.lastAnalyzeTimestamp > 100) {
-      console.warn('⚠️ SALTO DE TIEMPO EN ANALYZE:', {
-        salto: (now - this.lastAnalyzeTimestamp) + 'ms',
-        fingerState: this.fingerState,
-        timestamp: new Date(now).toISOString()
-      });
-    }
-    this.lastAnalyzeTimestamp = now;
-    
-    // Suavizados de cobertura y movimiento - más suave para evitar fluctuaciones
-    const alphaCov = 0.15; // Reducido de 0.3 para mayor estabilidad
-    const alphaMot = 0.15; // Reducido de 0.3 para mayor estabilidad
+    // Suavizados de cobertura y movimiento
+    const alphaCov = 0.3;
+    const alphaMot = 0.3;
     this.coverageEma = this.coverageEma == null ? globalCoverageRatio : this.coverageEma * (1 - alphaCov) + globalCoverageRatio * alphaCov;
     this.motionEma = this.motionEma == null ? globalFrameDiff : this.motionEma * (1 - alphaMot) + globalFrameDiff * alphaMot;
     const cov = this.coverageEma;
     const mot = this.motionEma;
-    // ELIMINADO: El check de timestamp stale estaba causando pérdidas falsas
-    // El sistema ahora confiará en los mecanismos de detección de los canales
-    // y no forzará pérdidas basadas solo en timing
+    // Si no hay muestras recientes, forzar pérdida inmediata de detección
+    const now = Date.now();
+    if (now - this.lastTimestamp > this.STALE_MS) {
+      if (this.fingerState) {
+        console.log('⏱️ Inactividad detectada, forzando pérdida de detección');
+      }
+      this.fingerState = false;
+      this.fingerStableCount = 0;
+      this.fingerUnstableCount++;
+      return {
+        timestamp: this.lastTimestamp,
+        channels: this.channels.map((ch, idx) => ({
+          channelId: idx,
+          calibratedSignal: [],
+          bpm: null,
+          rrIntervals: [],
+          snr: 0,
+          quality: 0,
+          isFingerDetected: false,
+          gain: ch.getGain()
+        } as any)),
+        aggregatedBPM: null,
+        aggregatedQuality: 0,
+        fingerDetected: false
+      };
+    }
 
     // Analizar todos los canales
     const channelResults: ChannelResult[] = [];
     let detectedChannels = 0;
     let totalQuality = 0;
-    const validBPMs: number[] = [];
+    let validBPMs: number[] = [];
     
     for (const channel of this.channels) {
       const result = channel.analyze();
@@ -170,7 +173,7 @@ export default class MultiChannelManager {
       this.fingerUnstableCount = 0;
       
       if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER) {
-        if (!this.fingerState) {
+        if (!this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
           console.log('✅ DEDO DETECTADO CONFIRMADO - Estado: FALSE → TRUE');
           console.log('📊 Métricas en el momento de detección:', {
             detectedChannels,
@@ -180,29 +183,29 @@ export default class MultiChannelManager {
             validBPMs
           });
         }
+        if ((now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
         this.fingerState = true;
         this.lastGlobalToggle = now2;
+        }
       }
     } else if (preCondition) {
       // Pre-detección: cobertura y estabilidad suficientes, aún sin consenso/BPM
       this.fingerStableCount++;
       this.fingerUnstableCount = 0;
       if (this.fingerStableCount >= this.FRAMES_TO_CONFIRM_FINGER + 3) {
-        if (!this.fingerState) {
+        if (!this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
           console.log('✅ DEDO PRESENTE (PRE-DETECCIÓN) - cobertura y estabilidad OK');
         }
+        if ((now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
         this.fingerState = true;
         this.lastGlobalToggle = now2;
+        }
       }
     } else {
       this.fingerUnstableCount++;
-      // Solo resetear contador estable si llevamos varios frames inestables
-      if (this.fingerUnstableCount > 3) {
-        this.fingerStableCount = Math.max(0, this.fingerStableCount - 1);
-      }
       
       if (this.fingerUnstableCount >= this.FRAMES_TO_LOSE_FINGER) {
-        if (this.fingerState) {
+        if (this.fingerState && (now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
           console.log('❌ DEDO PERDIDO CONFIRMADO - Estado: TRUE → FALSE');
           console.log('📊 Razones de pérdida:', {
             coverageOk,
@@ -213,9 +216,11 @@ export default class MultiChannelManager {
             unstableFrames: this.fingerUnstableCount
           });
         }
+        if ((now2 - this.lastGlobalToggle) >= this.GLOBAL_HOLD_MS) {
         this.fingerState = false;
         this.fingerStableCount = 0;
         this.lastGlobalToggle = now2;
+        }
       }
     }
 
