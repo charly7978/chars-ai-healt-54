@@ -94,9 +94,9 @@ export function useSignalProcessor(windowSec = 8, channels = 6) {
     // CRÍTICO: Siempre ejecutar el análisis para mantener sincronización
     // El problema era que si no se ejecutaba el análisis, los buffers internos
     // seguían actualizándose pero el resultado mostrado quedaba desactualizado
-    const coverage = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
-    const motion = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
-    const result = mgrRef.current!.analyzeAll(coverage, motion);
+    const coverageForAnalysis = (lastEnvRef.current as any)?.lastCoverage ?? adjustedCoverage;
+    const motionForAnalysis = (lastEnvRef.current as any)?.lastMotion ?? adjustedMotion;
+    const result = mgrRef.current!.analyzeAll(coverageForAnalysis, motionForAnalysis);
     
     // Solo actualizar el estado de React con throttling para evitar re-renders excesivos
     const now = performance.now();
