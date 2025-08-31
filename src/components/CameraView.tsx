@@ -161,7 +161,6 @@ const CameraView: React.FC<CameraViewProps> = ({
 
         // ESPERAR VIDEO READY
         const waitForVideo = () => {
-          if (!mounted) return;
           if (video.readyState >= 2 && video.videoWidth > 0) {
             console.log('✅ Video COMPLETAMENTE listo:', {
               width: video.videoWidth,
@@ -178,12 +177,11 @@ const CameraView: React.FC<CameraViewProps> = ({
               startFrameCapture();
             }
           } else {
-            if (!mounted) return;
             setTimeout(waitForVideo, 50);
           }
         };
 
-        video.addEventListener('loadedmetadata', waitForVideo, { once: true } as any);
+        video.addEventListener('loadedmetadata', waitForVideo);
         waitForVideo();
 
       } catch (err: any) {
