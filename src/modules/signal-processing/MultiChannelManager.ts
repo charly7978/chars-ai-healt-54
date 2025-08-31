@@ -16,7 +16,7 @@ export default class MultiChannelManager {
   private n: number;
   private windowSec: number;
   private lastTimestamp = Date.now();
-  private readonly STALE_MS = 900; // tolerar pausas breves sin perder detección
+  private readonly STALE_MS = 1600; // tolerar pausas más largas sin perder detección
   
   // Estado de detección con debounce MEJORADO
   private fingerState = false;

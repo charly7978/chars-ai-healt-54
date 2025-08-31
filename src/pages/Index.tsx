@@ -586,7 +586,7 @@ const Index = () => {
             targetFps={30}
             roiSize={320}
             enableTorch={true}
-            coverageThresholdPixelBrightness={40}
+            coverageThresholdPixelBrightness={25}
           />
         </div>
 
