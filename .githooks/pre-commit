@@ -1,11 +1,32 @@
 #!/bin/bash
 
 # 🛡️ PRE-COMMIT HOOK INTELIGENTE - PROTECCIÓN MÉDICA COMPLETA
-# Combina anti-simulación + anti-conflictos + validación inteligente
+# Combina anti-simulación + anti-conflictos + validación inteligente + AUTOCORRECCIÓN
 # SIN FALSOS POSITIVOS - SOLO DETECCIÓN REAL
 
 echo "🛡️ VERIFICANDO CÓDIGO MÉDICO - SISTEMA INTELIGENTE ACTIVADO"
-echo "🔍 ANTI-SIMULACIÓN + ANTI-CONFLICTOS + VALIDACIÓN BIOFÍSICA"
+echo "🔍 ANTI-SIMULACIÓN + ANTI-CONFLICTOS + VALIDACIÓN BIOFÍSICA + AUTOCORRECCIÓN"
+
+# 🚀 EJECUTAR AUTOCORRECCIÓN DEFINITIVA ANTES DE LA VALIDACIÓN
+echo "🚀 EJECUTANDO AUTOCORRECCIÓN DEFINITIVA AUTOMÁTICA..."
+
+# Detectar el sistema operativo
+if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
+    # Windows - usar script batch
+    if [ -f "scripts/auto-fix-commit.bat" ]; then
+        echo "🔧 Ejecutando autocorrección para Windows..."
+        cmd //c scripts\\auto-fix-commit.bat
+    fi
+else
+    # Unix/Linux/Mac - usar script bash
+    if [ -f "scripts/auto-fix-commit.sh" ]; then
+        echo "🔧 Ejecutando autocorrección para Unix..."
+        chmod +x scripts/auto-fix-commit.sh
+        ./scripts/auto-fix-commit.sh
+    fi
+fi
+
+echo "✅ AUTOCORRECCIÓN COMPLETADA - Continuando con validación..."
 
 # Verificar si hay archivos staged
 staged_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|js|jsx)$')

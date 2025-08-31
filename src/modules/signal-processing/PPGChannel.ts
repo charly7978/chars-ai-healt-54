@@ -30,21 +30,21 @@ export default class PPGChannel {
   private detectionState: boolean = false;
   private consecutiveTrue: number = 0;
   private consecutiveFalse: number = 0;
-  private readonly MIN_TRUE_FRAMES = 3;  // Balance entre velocidad y confiabilidad
-  private readonly MIN_FALSE_FRAMES = 12; // Evitar pérdidas prematuras
+  private readonly MIN_TRUE_FRAMES = 2;  // Detección más rápida
+  private readonly MIN_FALSE_FRAMES = 15; // Mantener estabilidad una vez detectado
   private lastToggleMs: number = 0;
   private readonly HOLD_MS = 200; // Respuesta más rápida
   private qualityEma: number | null = null;
   
-  // CRÍTICO: Umbrales PROFESIONALES para detección precisa
-  private minRMeanForFinger = 70;   // Balance entre sensibilidad y precisión
-  private maxRMeanForFinger = 245;  // Evitar saturación
-  private minVarianceForPulse = 1.2; // Señal AC mínima clara
-  private minSNRForFinger = 1.5;    // SNR razonable
-  private maxFrameDiffForStability = 15; // Movimiento moderado
+  // CRÍTICO: Umbrales BALANCEADOS para detección robusta
+  private minRMeanForFinger = 55;   // Más permisivo para diferentes condiciones de luz
+  private maxRMeanForFinger = 250;  // Rango amplio
+  private minVarianceForPulse = 0.8; // Permitir señales más débiles
+  private minSNRForFinger = 1.0;    // SNR mínimo viable
+  private maxFrameDiffForStability = 20; // Tolerar más movimiento
   // Umbrales adicionales para robustecer gating
-  private readonly minStdSmoothForPulse = 0.15; // Amplitud mínima en señal filtrada
-  private readonly maxRRCoeffVar = 0.20;        // Máximo 20% variación RR
+  private readonly minStdSmoothForPulse = 0.10; // Más permisivo
+  private readonly maxRRCoeffVar = 0.25;        // Permitir más variación inicial
   private readonly EARLY_DETECT_MIN_SAMPLES = 60; // ~2s con 30FPS
   private readonly EARLY_DETECT_MAX_SAMPLES = 120; // ~4s ventana temprana
 
@@ -241,10 +241,27 @@ export default class PPGChannel {
       const maintainDetection = brightnessOk && (varianceOk || peakConfidence || (snr > 0.8));
       var rawDetected = maintainDetection;
     } else {
-      // Para nueva detección, ser más estricto
-      const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
-      const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
-      var rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk || peakConfidence);
+      // Para nueva detección, ser más permisivo inicialmente
+      const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES;
+      const basicSignal = brightnessOk && varianceOk;
+      const earlyOk = inEarlyWindow && brightnessOk && (acOk || varianceOk);
+      const fullDetection = brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk;
+      var rawDetected = Boolean(basicSignal || earlyOk || fullDetection || peakConfidence);
+      
+      // Debug detección inicial
+      if (this.channelId === 0 && this.buffer.length % 30 === 0) {
+        console.log(`🎯 Canal ${this.channelId} - Detección inicial:`, {
+          brightnessOk,
+          varianceOk,
+          basicSignal,
+          earlyOk,
+          inEarlyWindow,
+          bufferLength: this.buffer.length,
+          mean: mean.toFixed(1),
+          variance: variance.toFixed(2),
+          rawDetected
+        });
+      }
     }
 
     // Aplicar histéresis por canal
@@ -290,8 +307,8 @@ export default class PPGChannel {
 
     const isFingerDetected = this.detectionState;
 
-    // Debug detección COMPLETA solo para canal 0 o cuando hay detección
-    if ((this.channelId === 0 && this.buffer.length % 120 === 0) || isFingerDetected) {
+    // Debug detección COMPLETA para canal 0 más frecuente
+    if (this.channelId === 0 && this.buffer.length % 60 === 0) {
       console.log(`🔍 Canal ${this.channelId} Análisis Completo:`, {
         // Estadísticas básicas
         mean: mean.toFixed(1),
