@@ -308,6 +308,17 @@ const CameraView: React.FC<CameraViewProps> = ({
       // FRAME DIFF PARA MOVIMIENTO
       const prevBrightness = prevBrightnessRef.current;
       const frameDiff = prevBrightness !== null ? Math.abs(brightnessMean - prevBrightness) : 0;
+      
+      // DEBUG: Detectar saltos anormales en frameDiff
+      if (frameDiff > 20 && prevBrightness !== null) {
+        console.warn('⚠️ SALTO ANORMAL EN FRAMEDIFF:', {
+          frameDiff: frameDiff.toFixed(1),
+          brightnessMean: brightnessMean.toFixed(1),
+          prevBrightness: prevBrightness.toFixed(1),
+          timestamp: new Date().toISOString()
+        });
+      }
+      
       prevBrightnessRef.current = brightnessMean;
       
       const coverageRatio = brightPixels / totalPixels;
