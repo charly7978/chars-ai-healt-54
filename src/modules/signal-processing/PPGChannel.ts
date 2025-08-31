@@ -43,10 +43,6 @@ export default class PPGChannel {
   private readonly maxRRCoeffVar = 0.35;        // variación máxima permitida en RR (coef. variación)
   private readonly EARLY_DETECT_MIN_SAMPLES = 60; // ~2s con 30FPS
   private readonly EARLY_DETECT_MAX_SAMPLES = 120; // ~4s ventana temprana
-  // Período de gracia al salir de ventana temprana para evitar caída abrupta
-  private wasInEarlyWindow: boolean = false;
-  private transitionGraceUntilMs: number = 0;
-  private readonly TRANSITION_GRACE_MS = 6000; // ~6s de continuidad suave
 
   constructor(channelId = 0, windowSec = 8, initialGain = 1) {
     this.channelId = channelId;
@@ -201,16 +197,7 @@ export default class PPGChannel {
     // Detección temprana (sin exigir SNR/BPM) si hay brillo y amplitud AC suficientes en los primeros segundos
     const inEarlyWindow = this.buffer.length >= this.EARLY_DETECT_MIN_SAMPLES && this.buffer.length <= this.EARLY_DETECT_MAX_SAMPLES;
     const earlyOk = inEarlyWindow && brightnessOk && acOk && varianceOk;
-    // Detectar transición de salida de ventana temprana
-    const nowMs = Date.now();
-    if (this.wasInEarlyWindow && !inEarlyWindow) {
-      this.transitionGraceUntilMs = nowMs + this.TRANSITION_GRACE_MS;
-    }
-    this.wasInEarlyWindow = inEarlyWindow;
-    const inTransitionGrace = nowMs <= this.transitionGraceUntilMs;
-    const detectionCore = (brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk);
-    const graceOk = inTransitionGrace && brightnessOk && acOk && varianceOk; // sin exigir SNR/BPM por breve período
-    const rawDetected = Boolean(detectionCore || earlyOk || graceOk);
+    const rawDetected = Boolean((brightnessOk && varianceOk && snrOk && bpmOk && acOk && rrConsistencyOk) || earlyOk);
 
     // Aplicar histéresis por canal
     if (rawDetected) {
@@ -261,7 +248,6 @@ export default class PPGChannel {
         rrConsistencyOk,
         earlyWindow: inEarlyWindow,
         earlyOk,
-        inTransitionGrace,
         
         // Criterios individuales
         brightnessOk: `${brightnessOk} (${this.minRMeanForFinger}-${this.maxRMeanForFinger})`,

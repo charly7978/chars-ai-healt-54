@@ -35,7 +35,6 @@ const CameraView: React.FC<CameraViewProps> = ({
   useEffect(() => {
     let mounted = true;
 
-
     const startCam = async () => {
       try {
         console.log('🎥 INICIANDO SISTEMA CÁMARA COMPLETO...');
@@ -182,7 +181,7 @@ const CameraView: React.FC<CameraViewProps> = ({
           }
         };
 
-        video.addEventListener('loadedmetadata', waitForVideo, { once: true } as any);
+        video.addEventListener('loadedmetadata', waitForVideo);
         waitForVideo();
 
       } catch (err: any) {
@@ -211,11 +210,20 @@ const CameraView: React.FC<CameraViewProps> = ({
           console.error('Error en captura:', captureError);
         }
         
-        // Programar siguiente frame con setTimeout para timing estable
-        const frameDelay = Math.max(5, Math.floor(1000 / targetFps));
-        setTimeout(() => {
-          rafRef.current = requestAnimationFrame(captureLoop);
-        }, frameDelay);
+        // Programar siguiente frame
+        const frameDelay = 1000 / targetFps;
+        const nextFrameTime = performance.now() + frameDelay;
+        
+        const scheduleNextFrame = () => {
+          const now = performance.now();
+          if (now >= nextFrameTime) {
+            captureLoop();
+          } else {
+            rafRef.current = requestAnimationFrame(scheduleNextFrame);
+          }
+        };
+        
+        rafRef.current = requestAnimationFrame(scheduleNextFrame);
       };
       
       rafRef.current = requestAnimationFrame(captureLoop);
@@ -277,7 +285,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         if (r > 250) redSaturated++;
         
         // Contar solo píxeles compatibles con piel iluminada (rojo predominante)
-        const isPhysioRed = (r >= 55) && (r > g + 6) && (r > b + 6) && (r / (g + 1) >= 1.12);
+        const isPhysioRed = (r >= 70) && (r > g + 10) && (r > b + 10) && (r / (g + 1) >= 1.2);
         if (brightness >= threshold && isPhysioRed) brightPixels++;
       }
       
@@ -309,15 +317,15 @@ const CameraView: React.FC<CameraViewProps> = ({
       const saturationRatio = redSaturated / totalPixels;
       
       // Calcular confianza de dedo y estado de exposición
-      const coverageScore = Math.min(1, coverageRatio / 0.28);
-      const rgScore = rgRatio < 1.05 ? 0 : rgRatio > 4 ? 0.2 : 0.2 + 0.8 * ((rgRatio - 1.05) / (4 - 1.05));
-      const brightnessScore = Math.max(0, Math.min(1, (brightnessMean - 25) / 140));
+      const coverageScore = Math.min(1, coverageRatio / 0.35);
+      const rgScore = rgRatio < 1.1 ? 0 : rgRatio > 4 ? 0.2 : 0.2 + 0.8 * ((rgRatio - 1.1) / (4 - 1.1));
+      const brightnessScore = Math.max(0, Math.min(1, (brightnessMean - 30) / 140));
       const motionPenalty = frameDiff > 10 ? Math.max(0.3, 1 - (frameDiff - 10) / 30) : 1;
       const satPenalty = saturationRatio > 0.2 ? Math.max(0.5, 1 - (saturationRatio - 0.2) / 0.3) : 1;
       const fingerConfidence = Math.max(0, Math.min(1, (0.5 * coverageScore + 0.25 * rgScore + 0.25 * brightnessScore) * motionPenalty * satPenalty));
 
       let exposureState: 'ok' | 'dark' | 'saturated' | 'low_coverage' | 'moving' = 'ok';
-      if (saturationRatio > 0.45 || rMean > 245 || brightnessMean > 235) {
+      if (saturationRatio > 0.4 || rMean > 245 || brightnessMean > 230) {
         exposureState = 'saturated';
       } else if (brightnessMean < 35 || rMean < 45) {
         exposureState = 'dark';
@@ -347,7 +355,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       };
     };
 
-    if (isMonitoring && !captureStartedRef.current) {
+    if (isMonitoring) {
       startCam();
     }
 
