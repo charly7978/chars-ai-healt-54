@@ -1,4 +1,4 @@
-# 🛡️ SISTEMA DE ESCUDO ANTI-ERRORES AUTOMATIZADO AVANZADO
+nm,# 🛡️ SISTEMA DE ESCUDO ANTI-ERRORES AUTOMATIZADO AVANZADO
 # ========================================================
 
 param(
