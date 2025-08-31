@@ -16,7 +16,7 @@ const Index = () => {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
-    spo2: 0,
+    spo2: Number.NaN as unknown as number,
     glucose: 0,
     hemoglobin: 0,
     pressure: { systolic: 0, diastolic: 0 },
@@ -313,7 +313,7 @@ const Index = () => {
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setVitalSigns({ 
-      spo2: 0,
+      spo2: Number.NaN as unknown as number,
       glucose: 0,
       hemoglobin: 0,
       pressure: { systolic: 0, diastolic: 0 },

@@ -47,7 +47,7 @@ export class VitalSignsProcessor {
   
   // ESTADO ACTUAL CON FORMATO CORRECTO
   private measurements = {
-    spo2: 0,
+    spo2: Number.NaN,
     glucose: 0,
     hemoglobin: 0,
     systolicPressure: 0,
@@ -83,7 +83,7 @@ export class VitalSignsProcessor {
     
     // RESETEAR TODAS LAS MEDICIONES
     this.measurements = {
-      spo2: 0,
+      spo2: Number.NaN,
       glucose: 0,
       hemoglobin: 0,
       systolicPressure: 0,
@@ -453,13 +453,17 @@ export class VitalSignsProcessor {
     
     const acComponent = this.calculateACComponent(signal);
     const dcComponent = this.calculateDCComponent(signal);
-    
     if (dcComponent === 0) return 0;
-    
-    const ratio = acComponent / dcComponent;
-    const spo2 = 110 - 25 * Math.abs(ratio);
-    
-    return Math.max(85, Math.min(100, spo2));
+
+    // Normalizar relación AC/DC y limitar rango
+    const ratio = Math.abs(acComponent / dcComponent);
+    const normRatio = Math.max(0, Math.min(1, ratio));
+
+    // SpO2 máximo 98% para evitar saturación visual
+    // Disminuye con mayor relación pulsátil
+    const spo2 = 97.5 - 18.5 * normRatio; // evitar 98 exacto y valores no fisiológicos
+
+    return Math.max(85, Math.min(98, spo2));
   }
 
   private calculateGlucoseReal(signal: number[], currentValue: number): number {
@@ -520,23 +524,33 @@ export class VitalSignsProcessor {
 
   private detectArrhythmiasReal(intervals: number[]): { count: number; status: string; data: any } {
     if (intervals.length < 5) return { count: 0, status: "SIN ARRITMIAS|0", data: null };
-    
+
     const rmssd = this.calculateRMSSD(intervals);
     const sdnn = this.calculateSDNN(intervals);
     const variation = this.calculateRRVariation(intervals);
-    
-    const arrhythmiaThreshold = 50;
-    const isArrhythmia = rmssd > arrhythmiaThreshold || variation > 0.3;
-    
-    const count = isArrhythmia ? Math.floor(variation * 10) : 0;
+
+    // Métrica adicional: pNN50 (porcentaje de diferencias sucesivas > 50 ms)
+    let nn50 = 0;
+    for (let i = 1; i < intervals.length; i++) {
+      if (Math.abs(intervals[i] - intervals[i - 1]) > 50) nn50++;
+    }
+    const pnn50 = (nn50 / (intervals.length - 1)) * 100;
+
+    // Umbrales más sensibles y robustos
+    const rmssdThreshold = 35; // ms
+    const cvThreshold = 0.12; // coeficiente de variación aproximado
+    const pnn50Threshold = 20; // %
+
+    const isArrhythmia =
+      rmssd > rmssdThreshold || variation > cvThreshold || pnn50 >= pnn50Threshold;
+
+    const count = isArrhythmia ? Math.max(1, Math.round((pnn50 / 10) + (variation * 10))) : 0;
     const status = isArrhythmia ? `ARRITMIA DETECTADA|${count}` : `SIN ARRITMIAS|0`;
-    
-    const data = isArrhythmia ? {
-      timestamp: Date.now(),
-      rmssd,
-      rrVariation: variation
-    } : null;
-    
+
+    const data = isArrhythmia
+      ? { timestamp: Date.now(), rmssd, rrVariation: variation, pnn50 }
+      : null;
+
     return { count, status, data };
   }
 
@@ -674,7 +688,7 @@ export class VitalSignsProcessor {
     console.log("🗑️ VitalSignsProcessor: Reset COMPLETO");
     
     this.measurements = {
-      spo2: 0,
+      spo2: Number.NaN,
       glucose: 0,
       hemoglobin: 0,
       systolicPressure: 0,

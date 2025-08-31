@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 
 interface VitalMeasurements {
   heartRate: number;
-  spo2: number;
+  spo2: number | null;
   pressure: string;
   arrhythmiaCount: string | number;
 }
@@ -11,7 +11,7 @@ interface VitalMeasurements {
 export const useVitalMeasurement = (isMeasuring: boolean) => {
   const [measurements, setMeasurements] = useState<VitalMeasurements>({
     heartRate: 0,
-    spo2: 0,
+    spo2: null,
     pressure: "--/--",
     arrhythmiaCount: 0
   });
@@ -30,7 +30,7 @@ export const useVitalMeasurement = (isMeasuring: boolean) => {
       
       setMeasurements({
         heartRate: 0,
-        spo2: 0,
+        spo2: null,
         pressure: "--/--",
         arrhythmiaCount: 0
       });
@@ -57,7 +57,8 @@ export const useVitalMeasurement = (isMeasuring: boolean) => {
 
       // OBTENER DATOS DIRECTAMENTE DEL PROCESADOR PRINCIPAL
       const bpm = Math.round(heartProcessor.getFinalBPM() || 0);
-      const spo2 = Math.round(heartProcessor.getSpo2?.() || 0);
+      const spo2Value = heartProcessor.getSpo2?.();
+      const spo2 = typeof spo2Value === 'number' ? Math.round(spo2Value) : null;
       const systolic = Math.round(heartProcessor.getSystolicPressure?.() || 0);
       const diastolic = Math.round(heartProcessor.getDiastolicPressure?.() || 0);
       const arrhythmias = heartProcessor.getArrhythmiaCount?.() || 0;
@@ -74,7 +75,7 @@ export const useVitalMeasurement = (isMeasuring: boolean) => {
       setMeasurements(prev => {
         const newMeasurements = {
           heartRate: bpm,
-          spo2: Math.max(0, spo2), // Asegurar que SpO2 no sea negativo
+          spo2: spo2,
           pressure: (systolic > 0 && diastolic > 0) ? `${systolic}/${diastolic}` : "--/--",
           arrhythmiaCount: arrhythmias
         };
