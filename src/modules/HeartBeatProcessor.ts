@@ -715,7 +715,7 @@ export class HeartBeatProcessor {
 
   public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {
     // Mejorar cálculo de intervalos RR usando tiempos reales de picos
-    let rrIntervals: number[] = [];
+    const rrIntervals: number[] = [];
     
     if (this.bpmHistory.length >= 2) {
       // Usar historial de BPM para calcular intervalos RR más precisos
@@ -748,7 +748,7 @@ export class HeartBeatProcessor {
       const avgAmplitude = this.recentPeakAmplitudes.reduce((s, v) => s + v, 0) / this.recentPeakAmplitudes.length;
       
       // Umbral adaptativo basado en amplitud promedio - más sensible
-      let targetSignalThreshold = avgAmplitude * 0.45; // Reducido para mayor sensibilidad
+      const targetSignalThreshold = avgAmplitude * 0.45; // Reducido para mayor sensibilidad
 
       // Tasa de aprendizaje aumentada
       const learningRate = this.ADAPTIVE_TUNING_LEARNING_RATE;
@@ -791,7 +791,7 @@ export class HeartBeatProcessor {
         const avgDerivative = this.recentPeakDerivatives.reduce((s,v) => s+v, 0) / this.recentPeakDerivatives.length;
         
         // Umbral de derivada ultra-sensible
-        let targetDerivativeThreshold = avgDerivative * 0.25; // Más sensible (antes 0.3)
+        const targetDerivativeThreshold = avgDerivative * 0.25; // Más sensible (antes 0.3)
 
         this.adaptiveDerivativeThreshold = 
             this.adaptiveDerivativeThreshold * (1 - this.ADAPTIVE_TUNING_LEARNING_RATE) +

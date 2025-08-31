@@ -101,7 +101,7 @@ export default class MultiChannelManager {
     const channelResults: ChannelResult[] = [];
     let detectedChannels = 0;
     let totalQuality = 0;
-    let validBPMs: number[] = [];
+    const validBPMs: number[] = [];
     
     for (const channel of this.channels) {
       const result = channel.analyze();

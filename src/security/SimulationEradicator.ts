@@ -442,7 +442,7 @@ export class SimulationEradicator {
     
     // Generar señales sustitutas con misma distribución pero dinámicas lineales
     const surrogateCount = 10;
-    let surrogateComplexities: number[] = [];
+    const surrogateComplexities: number[] = [];
     
     for (let i = 0; i < surrogateCount; i++) {
       const surrogate = this.generatePhaseSurrogate(signal);
