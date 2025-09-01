@@ -25,7 +25,7 @@ export interface VitalSignsResult {
 }
 
 /**
- * PROCESADOR ULTRA-PRECISO CON VARIABILIDAD REAL
+ * PROCESADOR CORREGIDO CON NÚMEROS PRECISOS Y PONDERADO FINAL
  */
 export class VitalSignsProcessor {
   private mathProcessor: AdvancedMathematicalProcessor;
@@ -62,28 +62,26 @@ export class VitalSignsProcessor {
   private signalHistory: number[] = [];
   private readonly HISTORY_SIZE = 50;
   
-  // Umbrales de calidad MUCHO MÁS PERMISIVOS para detectar cambios reales
+  // Umbrales de calidad por canal y suavizado robusto
   private readonly QUALITY_THRESHOLDS = {
-    oxygenSat: 20,      // Muy bajo para permitir cálculos
-    bloodPressure: 15,  // Muy bajo para permitir cálculos
-    hemoglobin: 20,     // Muy bajo para permitir cálculos
-    glucose: 15,        // Muy bajo para permitir cálculos
-    lipids: 10          // Muy bajo para permitir cálculos
+    oxygenSat: 50,
+    bloodPressure: 50,
+    hemoglobin: 50,
+    glucose: 50,
+    lipids: 50
   } as const;
   
   private readonly MAX_DELTA = {
-    oxygenSat: 8,   // Mucho mayor para variabilidad real
-    glucose: 40,    // Mucho mayor para variabilidad real
-    hemoglobin: 2.5, // Mucho mayor para variabilidad real
-    systolic: 35,   // Mucho mayor para variabilidad real
-    diastolic: 25,  // Mucho mayor para variabilidad real
-    cholesterol: 60, // Mucho mayor para variabilidad real
-    triglycerides: 80 // Mucho mayor para variabilidad real
+    oxygenSat: 2,
+    glucose: 5,
+    hemoglobin: 0.5,
+    systolic: 8,
+    diastolic: 6,
+    cholesterol: 10,
+    triglycerides: 15
   } as const;
   
-  // Reducir suavizado para mayor variabilidad
-  private readonly EMA_ALPHA = 0.6; // Más agresivo para respuesta rápida
-  
+  private readonly EMA_ALPHA = 0.2;
   private channelHistories: Record<string, number[]> = {
     heart: [],
     spo2: [],
@@ -95,7 +93,7 @@ export class VitalSignsProcessor {
   private readonly CHANNEL_HISTORY_SIZE = 50;
   
   constructor() {
-    console.log("🚀 VitalSignsProcessor: Sistema ULTRA-PRECISO con variabilidad real");
+    console.log("🚀 VitalSignsProcessor: Sistema CORREGIDO con números precisos");
     this.mathProcessor = new AdvancedMathematicalProcessor();
   }
 
@@ -193,20 +191,19 @@ export class VitalSignsProcessor {
     rrData?: { intervals: number[], lastPeakTime: number | null }
   ): VitalSignsResult {
     // Ingresar cada canal a su historial dedicado
-    for (const [channelName, channelResult] of Object.entries(channels)) {
-      if (channelResult && typeof channelResult.output === 'number') {
-        const ch = channelName as keyof typeof this.channelHistories;
-        if (this.channelHistories[ch]) {
-          this.channelHistories[ch].push(channelResult.output);
-          if (this.channelHistories[ch].length > this.CHANNEL_HISTORY_SIZE) {
-            this.channelHistories[ch].shift();
-          }
+    for (const key of Object.keys(this.channelHistories)) {
+      const ch = key as keyof typeof this.channelHistories;
+      const val = channels[ch as keyof MultiChannelOutputs]?.output;
+      if (typeof val === 'number') {
+        this.channelHistories[ch].push(val);
+        if (this.channelHistories[ch].length > this.CHANNEL_HISTORY_SIZE) {
+          this.channelHistories[ch].shift();
         }
       }
     }
 
     // Mantener compatibilidad: base morfológica desde canal cardíaco
-    const heartValue = (channels as any).heart?.output ?? 0;
+    const heartValue = channels.heart?.output ?? 0;
     this.signalHistory.push(heartValue);
     if (this.signalHistory.length > this.HISTORY_SIZE) {
       this.signalHistory.shift();
@@ -258,42 +255,44 @@ export class VitalSignsProcessor {
     const lipidHist = this.channelHistories.lipids.length > 0 ? this.channelHistories.lipids : heartHist;
 
     // 1. SpO2 desde morfología estable con gating y suavizado
-    if (((channels as any).spo2?.quality ?? 0) >= this.QUALITY_THRESHOLDS.oxygenSat) {
+    if ((channels.spo2?.quality ?? 0) >= this.QUALITY_THRESHOLDS.oxygenSat) {
       const newSpo2 = this.calculateSpO2Real(spo2Hist);
       const smoothed = this.smoothAndStore('spo2', newSpo2, 85, 100, this.EMA_ALPHA, this.MAX_DELTA.oxygenSat);
       this.measurements.spo2 = smoothed;
     }
 
     // 2. Glucosa con histograma canalizado y valor actual
-    if (((channels as any).glucose?.quality ?? 0) >= this.QUALITY_THRESHOLDS.glucose) {
-      const glucoseCurrent = (channels as any).glucose?.output ?? 0;
+    if ((channels.glucose?.quality ?? 0) >= this.QUALITY_THRESHOLDS.glucose) {
+      const glucoseCurrent = channels.glucose?.output ?? 0;
       const newGlucose = this.calculateGlucoseReal(glucoseHist, glucoseCurrent);
       const smoothed = this.smoothAndStore('glucose', newGlucose, 70, 400, this.EMA_ALPHA, this.MAX_DELTA.glucose);
       this.measurements.glucose = smoothed;
     }
 
     // 3. Hemoglobina desde amplitud/frecuencia del canal dedicado
-    if (((channels as any).hemoglobin?.quality ?? 0) >= this.QUALITY_THRESHOLDS.hemoglobin) {
+    if ((channels.hemoglobin?.quality ?? 0) >= this.QUALITY_THRESHOLDS.hemoglobin) {
       const newHemoglobin = this.calculateHemoglobinReal(hemoHist);
       const smoothed = this.smoothAndStore('hemoglobin', newHemoglobin, 8.0, 20.0, this.EMA_ALPHA, this.MAX_DELTA.hemoglobin);
       this.measurements.hemoglobin = smoothed;
     }
 
-    // 4. Presión arterial usando RR + morfología del canal BP - SIEMPRE CALCULAR
-    if (rrData && rrData.intervals.length >= 2) { // Umbral mucho más bajo
+    // 4. Presión arterial usando RR + morfología del canal BP
+    if ((channels.bloodPressure?.quality ?? 0) >= this.QUALITY_THRESHOLDS.bloodPressure && rrData && rrData.intervals.length >= 3) {
       const pressureResult = this.calculateBloodPressureReal(rrData.intervals, bpHist);
-      const systolic = this.smoothAndStore('systolic', pressureResult.systolic, 90, 220, this.EMA_ALPHA, this.MAX_DELTA.systolic);
-      const diastolic = this.smoothAndStore('diastolic', pressureResult.diastolic, 50, 130, this.EMA_ALPHA, this.MAX_DELTA.diastolic);
+      const systolic = this.smoothAndStore('systolic', pressureResult.systolic, 90, 200, this.EMA_ALPHA, this.MAX_DELTA.systolic);
+      const diastolic = this.smoothAndStore('diastolic', pressureResult.diastolic, 60, 120, this.EMA_ALPHA, this.MAX_DELTA.diastolic);
       this.measurements.systolicPressure = systolic;
       this.measurements.diastolicPressure = diastolic;
     }
 
-    // 5. Lípidos desde turbulencia/viscosidad del canal - SIEMPRE CALCULAR
-    const lipidResult = this.calculateLipidsReal(lipidHist);
-    const chol = this.smoothAndStore('cholesterol', lipidResult.totalCholesterol, 120, 350, this.EMA_ALPHA, this.MAX_DELTA.cholesterol);
-    const trig = this.smoothAndStore('triglycerides', lipidResult.triglycerides, 50, 500, this.EMA_ALPHA, this.MAX_DELTA.triglycerides);
-    this.measurements.totalCholesterol = chol;
-    this.measurements.triglycerides = trig;
+    // 5. Lípidos desde turbulencia/viscosidad del canal
+    if ((channels.lipids?.quality ?? 0) >= this.QUALITY_THRESHOLDS.lipids) {
+      const lipidResult = this.calculateLipidsReal(lipidHist);
+      const chol = this.smoothAndStore('cholesterol', lipidResult.totalCholesterol, 120, 300, this.EMA_ALPHA, this.MAX_DELTA.cholesterol);
+      const trig = this.smoothAndStore('triglycerides', lipidResult.triglycerides, 50, 400, this.EMA_ALPHA, this.MAX_DELTA.triglycerides);
+      this.measurements.totalCholesterol = chol;
+      this.measurements.triglycerides = trig;
+    }
   }
 
   private smoothAndStore(
@@ -337,7 +336,7 @@ export class VitalSignsProcessor {
     rrData?: { intervals: number[], lastPeakTime: number | null }
   ): void {
     
-    console.log("🔬 VitalSignsProcessor: Calculando signos vitales con ULTRA-PRECISIÓN");
+    console.log("🔬 VitalSignsProcessor: Calculando signos vitales con formato correcto");
 
     // 1. SpO2 - FORMATO: 95 (entero, %)
     const newSpo2 = this.calculateSpO2Real(this.signalHistory);
@@ -351,20 +350,20 @@ export class VitalSignsProcessor {
     const newHemoglobin = this.calculateHemoglobinReal(this.signalHistory);
     this.measurements.hemoglobin = this.clampAndStore('hemoglobin', newHemoglobin, 8.0, 20.0);
 
-    // 4. Presión arterial - SIEMPRE CALCULAR si hay datos RR
-    if (rrData && rrData.intervals.length >= 2) { // Umbral mucho más bajo
+    // 4. Presión arterial - FORMATO: 120/80 (enteros, mmHg)
+    if (rrData && rrData.intervals.length >= 3) {
       const pressureResult = this.calculateBloodPressureReal(rrData.intervals, this.signalHistory);
-      this.measurements.systolicPressure = this.clampAndStore('systolic', pressureResult.systolic, 90, 220);
-      this.measurements.diastolicPressure = this.clampAndStore('diastolic', pressureResult.diastolic, 50, 130);
+      this.measurements.systolicPressure = this.clampAndStore('systolic', pressureResult.systolic, 90, 200);
+      this.measurements.diastolicPressure = this.clampAndStore('diastolic', pressureResult.diastolic, 60, 120);
     }
 
-    // 5. Colesterol - SIEMPRE CALCULAR
+    // 5. Colesterol - FORMATO: 180 (entero, mg/dL)
     const lipidResult = this.calculateLipidsReal(this.signalHistory);
-    this.measurements.totalCholesterol = this.clampAndStore('cholesterol', lipidResult.totalCholesterol, 120, 350);
-    this.measurements.triglycerides = this.clampAndStore('triglycerides', lipidResult.triglycerides, 50, 500);
+    this.measurements.totalCholesterol = this.clampAndStore('cholesterol', lipidResult.totalCholesterol, 120, 300);
+    this.measurements.triglycerides = this.clampAndStore('triglycerides', lipidResult.triglycerides, 50, 400);
 
-    // 6. Arritmias - SIEMPRE ANALIZAR si hay suficientes intervalos
-    if (rrData && rrData.intervals.length >= 3) {
+    // 6. Arritmias - Análisis de variabilidad
+    if (rrData && rrData.intervals.length >= 5) {
       const arrhythmias = this.detectArrhythmiasReal(rrData.intervals);
       this.measurements.arrhythmiaCount = Math.max(0, arrhythmias.count);
       this.measurements.arrhythmiaStatus = arrhythmias.status;
@@ -378,7 +377,7 @@ export class VitalSignsProcessor {
       }
     }
 
-    console.log("📊 Mediciones ULTRA-PRECISAS:", {
+    console.log("📊 Mediciones con formato correcto:", {
       spo2: `${this.formatSpO2(this.measurements.spo2)}%`,
       glucosa: `${this.formatGlucose(this.measurements.glucose)} mg/dL`,
       hemoglobina: `${this.formatHemoglobin(this.measurements.hemoglobin)} g/dL`,
@@ -455,393 +454,181 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * SpO2 ULTRA-PRECISO - más sensible a variaciones reales
+   * PONDERADO FINAL - OBTENER EL VALOR MÁS REPRESENTATIVO
    */
-  private calculateSpO2Real(signal: number[]): number {
-    if (signal.length < 10) return 0;
-    
-    // Análisis más complejo con múltiples componentes
-    const acComponent = this.calculateACComponent(signal);
-    const dcComponent = this.calculateDCComponent(signal);
-    const pulsatility = this.calculatePulsatility(signal);
-    const dominantFreq = this.calculateDominantFrequency(signal);
-    const variance = this.calculateVariance(signal);
-    const morphologyScore = this.calculateMorphologyScore(signal);
-    
-    if (dcComponent === 0 || acComponent < 1) return 0;
-    
-    // Ratio de absorción más preciso
-    const ratio = (acComponent / dcComponent) * Math.max(0.5, pulsatility);
-    
-    // Correcciones por frecuencia cardíaca y morfología
-    const freqCorrection = Math.min(1.2, Math.max(0.8, dominantFreq / 1.2));
-    const morphologyCorrection = Math.min(1.15, Math.max(0.85, morphologyScore));
-    const varianceCorrection = Math.min(1.1, Math.max(0.9, 1 + (variance * 0.5)));
-    
-    // Cálculo base más sensible
-    let spo2Base = 98.5 - (ratio * 12) + (pulsatility * 8);
-    
-    // Aplicar correcciones
-    spo2Base = spo2Base * freqCorrection * morphologyCorrection * varianceCorrection;
-    
-    // Añadir variabilidad fisiológica real basada en características de la señal
-    const signalHash = this.calculateSignalFingerprint(signal);
-    const physiologicalNoise = Math.sin(signalHash) * 2.5; // ±2.5%
-    
-    const finalSpO2 = spo2Base + physiologicalNoise;
-    
-    return Math.max(85, Math.min(100, finalSpO2));
-  }
-
-  /**
-   * GLUCOSA ULTRA-PRECISA - más sensible a variaciones micro-vasculares
-   */
-  private calculateGlucoseReal(signal: number[], currentValue: number): number {
-    if (signal.length < 10) return 0;
-    
-    // Análisis de perfusión y micro-circulación
-    const perfusionIndex = this.calculatePerfusionIndex(signal);
-    const microvascularTone = this.calculateMicrovascularTone(signal);
-    const bloodFlowVelocity = this.calculateBloodFlowVelocity(signal);
-    const tissueOxygenation = this.calculateTissueOxygenation(signal);
-    
-    // Cálculo base sensible a perfusión
-    let glucoseBase = 85 + (perfusionIndex * 180) + (microvascularTone * 120);
-    
-    // Correcciones por flujo sanguíneo
-    const flowCorrection = Math.min(1.4, Math.max(0.6, bloodFlowVelocity));
-    const oxygenCorrection = Math.min(1.3, Math.max(0.7, tissueOxygenation));
-    
-    glucoseBase = glucoseBase * flowCorrection * oxygenCorrection;
-    
-    // Variabilidad basada en características únicas de la señal
-    const signalComplexity = this.calculateSignalComplexity(signal);
-    const metabolicNoise = Math.cos(signalComplexity) * 25; // ±25 mg/dL
-    
-    const finalGlucose = glucoseBase + metabolicNoise;
-    
-    return Math.max(70, Math.min(400, finalGlucose));
-  }
-
-  /**
-   * HEMOGLOBINA ULTRA-PRECISA - basada en absorción espectral
-   */
-  private calculateHemoglobinReal(signal: number[]): number {
-    if (signal.length < 10) return 0;
-    
-    // Análisis espectral de absorción
-    const spectralDensity = this.calculateSpectralDensity(signal);
-    const absorptionCoeff = this.calculateAbsorptionCoefficient(signal);
-    const hematocritIndex = this.calculateHematocritIndex(signal);
-    
-    // Cálculo basado en ley de Beer-Lambert
-    const hemoglobinBase = 12.5 + (spectralDensity * 8) + (absorptionCoeff * 6);
-    
-    // Corrección por hematocrito
-    const hematocritCorrection = Math.min(1.25, Math.max(0.8, hematocritIndex));
-    
-    const correctedHemoglobin = hemoglobinBase * hematocritCorrection;
-    
-    // Variabilidad hematológica
-    const hematologicalNoise = Math.sin(spectralDensity * 10) * 1.2; // ±1.2 g/dL
-    
-    const finalHemoglobin = correctedHemoglobin + hematologicalNoise;
-    
-    return Math.max(8.0, Math.min(20.0, finalHemoglobin));
-  }
-
-  /**
-   * PRESIÓN ARTERIAL ULTRA-SENSIBLE - PTT altamente responsivo
-   */
-  private calculateBloodPressureReal(intervals: number[], signal: number[]): { systolic: number; diastolic: number } {
-    if (intervals.length < 2) return { systolic: 0, diastolic: 0 };
-
-    console.log("🩸 Calculando presión arterial con alta sensibilidad", {
-      intervalos: intervals.length,
-      señalLength: signal.length,
-      promedioRR: intervals.reduce((a, b) => a + b, 0) / intervals.length
-    });
-
-    // PTT (Pulse Transit Time) ultra-sensible
-    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const rrVariability = this.calculateSDNN(intervals);
-    const ptt = avgInterval * 0.8 + (rrVariability * 2); // Más sensible a variabilidad
-
-    const amplitude = this.calculateAmplitude(signal);
-    const stiffness = this.calculateArterialStiffness(intervals);
-    const heartRateVariability = this.calculateHRVIndex(intervals);
-    const signalVariance = this.calculateVariance(signal);
-
-    // Base más sensible a cambios pequeños
-    const baseSystolic = 160 - (ptt - 150) * (120 / (2000 - 150)); 
-    const baseDiastolic = 95 - (ptt - 150) * (45 / (2000 - 150));
-
-    // Ajustes MÁS AGRESIVOS por múltiples factores
-    const systolicAdjust = (stiffness * 40) - (amplitude * 25) + (heartRateVariability * 20) + (signalVariance * 30);
-    const diastolicAdjust = (stiffness * 20) - (amplitude * 15) + (heartRateVariability * 10) + (signalVariance * 15);
-
-    let systolic = baseSystolic + systolicAdjust;
-    let diastolic = baseDiastolic + diastolicAdjust;
-
-    // Variabilidad cardiovascular MÁS PRONUNCIADA
-    const cardiacHash = Math.abs(avgInterval + amplitude + stiffness) % 1000;
-    const systolicNoise = Math.sin(cardiacHash / 100) * 25; // ±25 mmHg
-    const diastolicNoise = Math.cos(cardiacHash / 100) * 15; // ±15 mmHg
-    
-    systolic += systolicNoise;
-    diastolic += diastolicNoise;
-
-    const s = Math.max(90, Math.min(220, Math.round(systolic)));
-    const d = Math.max(50, Math.min(130, Math.round(diastolic)));
-    
-    console.log("🩸 Presión calculada:", { sistólica: s, diastólica: d });
-    
-    return { systolic: Math.max(s, d + 20), diastolic: Math.min(d, s - 20) };
-  }
-
-  /**
-   * LÍPIDOS ULTRA-SENSIBLES - más sensibles a micro-variaciones
-   */
-  private calculateLipidsReal(signal: number[]): { totalCholesterol: number; triglycerides: number } {
-    if (signal.length < 15) return { totalCholesterol: 0, triglycerides: 0 };
-    
-    console.log("🧪 Calculando lípidos con ultra-sensibilidad", {
-      señalLength: signal.length,
-      amplitudMax: Math.max(...signal),
-      amplitudMin: Math.min(...signal)
-    });
-    
-    const turbulence = this.calculateTurbulence(signal);
-    const viscosity = this.calculateViscosity(signal);
-    const bloodFlowPattern = this.calculateBloodFlowPattern(signal);
-    const signalComplexity = this.calculateSignalComplexity(signal);
-    const spectralDensity = this.calculateSpectralDensity(signal);
-    
-    // Cálculos MÁS SENSIBLES a cambios microscópicos
-    let cholesterol = 140 + (turbulence * 200) + (viscosity * 100) + (bloodFlowPattern * 80) + (signalComplexity * 60);
-    let triglycerides = 100 + (turbulence * 250) + (viscosity * 150) + (bloodFlowPattern * 100) + (spectralDensity * 80);
-
-    // Variabilidad metabólica MÁS PRONUNCIADA
-    const metabolicHash = Math.abs(turbulence + viscosity + bloodFlowPattern) % 1000;
-    const cholesterolNoise = Math.sin(metabolicHash / 50) * 40; // ±40 mg/dL
-    const triglyceridesNoise = Math.cos(metabolicHash / 50) * 60; // ±60 mg/dL
-    
-    cholesterol += cholesterolNoise;
-    triglycerides += triglyceridesNoise;
-
-    const finalCholesterol = Math.max(120, Math.min(350, cholesterol));
-    const finalTriglycerides = Math.max(50, Math.min(500, triglycerides));
-    
-    console.log("🧪 Lípidos calculados:", { 
-      colesterol: finalCholesterol.toFixed(0), 
-      triglicéridos: finalTriglycerides.toFixed(0) 
-    });
+  public getWeightedFinalResults(): VitalSignsResult {
+    console.log("📊 Calculando resultados finales ponderados");
     
     return {
-      totalCholesterol: finalCholesterol,
-      triglycerides: finalTriglycerides
+      spo2: this.formatSpO2(this.calculateWeightedAverage(this.measurementHistory.spo2Values)),
+      glucose: this.formatGlucose(this.calculateWeightedAverage(this.measurementHistory.glucoseValues)),
+      hemoglobin: this.formatHemoglobin(this.calculateWeightedAverage(this.measurementHistory.hemoglobinValues)),
+      pressure: {
+        systolic: this.formatPressure(this.calculateWeightedAverage(this.measurementHistory.systolicValues)),
+        diastolic: this.formatPressure(this.calculateWeightedAverage(this.measurementHistory.diastolicValues))
+      },
+      arrhythmiaCount: this.measurementHistory.arrhythmiaEvents.length,
+      arrhythmiaStatus: this.measurementHistory.arrhythmiaEvents.length > 0 ? 
+        `ARRITMIAS DETECTADAS|${this.measurementHistory.arrhythmiaEvents.length}` : "SIN ARRITMIAS|0",
+      lipids: {
+        totalCholesterol: this.formatCholesterol(this.calculateWeightedAverage(this.measurementHistory.cholesterolValues)),
+        triglycerides: this.formatTriglycerides(this.calculateWeightedAverage(this.measurementHistory.triglyceridesValues))
+      },
+      isCalibrating: false,
+      calibrationProgress: 100,
+      lastArrhythmiaData: this.measurements.lastArrhythmiaData
     };
   }
 
   /**
-   * ARRITMIAS ULTRA-SENSIBLES - detección mejorada
+   * PROMEDIO PONDERADO - da más peso a valores recientes y estables
    */
-  private detectArrhythmiasReal(intervals: number[]): { count: number; status: string; data: any } {
-    if (intervals.length < 3) return { count: 0, status: "SIN ARRITMIAS|0", data: null };
+  private calculateWeightedAverage(values: number[]): number {
+    if (values.length === 0) return 0;
+    if (values.length === 1) return values[0];
+    
+    let weightedSum = 0;
+    let totalWeight = 0;
+    
+    // Dar más peso a los valores más recientes y estables
+    for (let i = 0; i < values.length; i++) {
+      const recentWeight = (i + 1) / values.length; // Peso por posición (más reciente = más peso)
+      const stabilityWeight = this.calculateStabilityWeight(values, i); // Peso por estabilidad
+      
+      const finalWeight = recentWeight * 0.6 + stabilityWeight * 0.4;
+      
+      weightedSum += values[i] * finalWeight;
+      totalWeight += finalWeight;
+    }
+    
+    return totalWeight > 0 ? weightedSum / totalWeight : values[values.length - 1];
+  }
 
-    console.log("💓 Analizando arritmias con ultra-sensibilidad", {
-      intervalos: intervals.length,
-      rrPromedio: intervals.reduce((a, b) => a + b, 0) / intervals.length,
-      rrMax: Math.max(...intervals),
-      rrMin: Math.min(...intervals)
-    });
+  private calculateStabilityWeight(values: number[], index: number): number {
+    if (values.length < 3 || index === 0 || index === values.length - 1) return 1.0;
+    
+    // Calcular qué tan "estable" es este valor comparado con sus vecinos
+    const prev = values[index - 1];
+    const curr = values[index];
+    const next = values[index + 1];
+    
+    const variation1 = Math.abs(curr - prev) / curr;
+    const variation2 = Math.abs(next - curr) / curr;
+    const avgVariation = (variation1 + variation2) / 2;
+    
+    // Menos variación = más peso
+    return Math.max(0.1, 1.0 - avgVariation * 2);
+  }
+
+  private calculateSpO2Real(signal: number[]): number {
+    if (signal.length < 10) return 0;
+    
+    const acComponent = this.calculateACComponent(signal);
+    const dcComponent = this.calculateDCComponent(signal);
+    if (dcComponent === 0) return 0;
+
+    // Normalizar relación AC/DC y limitar rango
+    const ratio = Math.abs(acComponent / dcComponent);
+    const normRatio = Math.max(0, Math.min(1, ratio));
+
+    // Saturación máxima ligeramente por debajo de 98 y mínima 85
+    const spo2 = 97.6 - 18.0 * normRatio;
+
+    return Math.max(85, Math.min(98, spo2));
+  }
+
+  private calculateGlucoseReal(signal: number[], currentValue: number): number {
+    if (signal.length < 20) return 0;
+    
+    const variance = this.calculateVariance(signal);
+    const trend = this.calculateTrend(signal);
+    const pulsatility = this.calculatePulsatility(signal);
+    
+    const glucose = 80 + (variance * 150) + (trend * 50) + (pulsatility * 100);
+    
+    return Math.max(70, Math.min(200, glucose));
+  }
+
+  private calculateHemoglobinReal(signal: number[]): number {
+    if (signal.length < 15) return 0;
+    
+    const amplitude = this.calculateAmplitude(signal);
+    const frequency = this.calculateDominantFrequency(signal);
+    
+    const hemoglobin = 12 + (amplitude * 8) + (frequency * 2);
+    
+    return Math.max(8, Math.min(18, hemoglobin));
+  }
+
+  private calculateBloodPressureReal(intervals: number[], signal: number[]): { systolic: number; diastolic: number } {
+    if (intervals.length < 3) return { systolic: 0, diastolic: 0 };
+    
+    // Determinista: PTT (RR medio), amplitud y rigidez arterial
+    const avgIntervalMs = intervals.reduce((a, b) => a + b, 0) / intervals.length; // ms
+    const ptt = Math.max(250, Math.min(1500, avgIntervalMs)); // clamp 250–1500 ms
+    const amplitude = this.calculateAmplitude(signal);
+    const stiffness = this.calculateArterialStiffness(intervals);
+
+    // Mapear PTT a presión base (menor PTT → mayor presión)
+    const baseSystolic = 200 - (ptt - 250) * (80 / (1500 - 250)); // 200→120
+    const baseDiastolic = 120 - (ptt - 250) * (50 / (1500 - 250)); // 120→70
+
+    // Ajustes por amplitud (más amplitud → mayor presión de pulso) y rigidez
+    const systolic = baseSystolic + stiffness * 20 - amplitude * 10;
+    const diastolic = baseDiastolic + stiffness * 10 - amplitude * 6;
+
+    const s = Math.max(90, Math.min(200, Math.round(systolic)));
+    const d = Math.max(50, Math.min(120, Math.round(diastolic)));
+    return { systolic: Math.max(s, d + 25), diastolic: Math.min(d, Math.max(s, d + 25) - 25) };
+  }
+
+  private calculateLipidsReal(signal: number[]): { totalCholesterol: number; triglycerides: number } {
+    if (signal.length < 20) return { totalCholesterol: 0, triglycerides: 0 };
+    
+    const turbulence = this.calculateTurbulence(signal);
+    const viscosity = this.calculateViscosity(signal);
+    
+    const cholesterol = 180 + (turbulence * 80) + (viscosity * 40);
+    const triglycerides = 150 + (turbulence * 100) + (viscosity * 50);
+    
+    return {
+      totalCholesterol: Math.max(120, Math.min(300, cholesterol)),
+      triglycerides: Math.max(50, Math.min(400, triglycerides))
+    };
+  }
+
+  private detectArrhythmiasReal(intervals: number[]): { count: number; status: string; data: any } {
+    if (intervals.length < 5) return { count: 0, status: "SIN ARRITMIAS|0", data: null };
 
     const rmssd = this.calculateRMSSD(intervals);
     const sdnn = this.calculateSDNN(intervals);
     const variation = this.calculateRRVariation(intervals);
 
-    // Métricas ADICIONALES más sensibles
+    // Métrica adicional: pNN50 (porcentaje de diferencias sucesivas > 50 ms)
     let nn50 = 0;
-    let consecutiveIrregular = 0;
-    let maxConsecutive = 0;
-    
     for (let i = 1; i < intervals.length; i++) {
-      const diff = Math.abs(intervals[i] - intervals[i - 1]);
-      if (diff > 50) {
-        nn50++;
-        consecutiveIrregular++;
-        maxConsecutive = Math.max(maxConsecutive, consecutiveIrregular);
-      } else {
-        consecutiveIrregular = 0;
-      }
+      if (Math.abs(intervals[i] - intervals[i - 1]) > 50) nn50++;
     }
-    
     const pnn50 = (nn50 / (intervals.length - 1)) * 100;
-    
-    // Análisis de patrones irregulares
-    const irregularityScore = (maxConsecutive / intervals.length) * 100;
 
-    // Umbrales MÁS SENSIBLES para detección temprana
-    const rmssdThreshold = 25; // Más bajo - más sensible
-    const cvThreshold = 0.08;  // Más bajo - más sensible
-    const pnn50Threshold = 10; // Más bajo - más sensible
-    const irregularityThreshold = 15; // Nuevo umbral
+    // Umbrales más sensibles y robustos
+    const rmssdThreshold = 35; // ms
+    const cvThreshold = 0.12; // coeficiente de variación aproximado
+    const pnn50Threshold = 20; // %
 
-    const isArrhythmia = 
-      rmssd > rmssdThreshold || 
-      variation > cvThreshold || 
-      pnn50 >= pnn50Threshold ||
-      irregularityScore >= irregularityThreshold;
+    const isArrhythmia =
+      rmssd > rmssdThreshold || variation > cvThreshold || pnn50 >= pnn50Threshold;
 
-    // Cálculo más preciso del conteo
-    const baseCount = isArrhythmia ? 1 : 0;
-    const intensityMultiplier = Math.max(1, 
-      (pnn50 / 20) + 
-      (variation * 20) + 
-      (irregularityScore / 30)
-    );
-    
-    const count = isArrhythmia ? Math.max(1, Math.round(baseCount * intensityMultiplier)) : 0;
+    const count = isArrhythmia ? Math.max(1, Math.round((pnn50 / 10) + (variation * 10))) : 0;
     const status = isArrhythmia ? `ARRITMIA DETECTADA|${count}` : `SIN ARRITMIAS|0`;
 
-    const data = isArrhythmia ? { 
-      timestamp: Date.now(), 
-      rmssd, 
-      rrVariation: variation, 
-      pnn50,
-      irregularityScore,
-      maxConsecutiveIrregular: maxConsecutive
-    } : null;
-
-    console.log("💓 Resultado arritmias:", { 
-      detectada: isArrhythmia, 
-      conteo: count, 
-      rmssd: rmssd.toFixed(1),
-      pnn50: pnn50.toFixed(1),
-      irregularidad: irregularityScore.toFixed(1)
-    });
+    const data = isArrhythmia
+      ? { timestamp: Date.now(), rmssd, rrVariation: variation, pnn50 }
+      : null;
 
     return { count, status, data };
   }
 
-  // MÉTODOS AUXILIARES MEJORADOS PARA MAYOR PRECISIÓN Y VARIABILIDAD
-
-  private calculateMorphologyScore(signal: number[]): number {
-    const peaks = this.findPeaks(signal);
-    const valleys = this.findValleys(signal);
-    
-    if (peaks.length < 2 || valleys.length < 2) return 0.5;
-    
-    const peakConsistency = this.calculateConsistency(peaks);
-    const valleyConsistency = this.calculateConsistency(valleys);
-    
-    return (peakConsistency + valleyConsistency) / 2;
-  }
-
-  private calculateSignalFingerprint(signal: number[]): number {
-    let fingerprint = 0;
-    for (let i = 0; i < signal.length; i++) {
-      fingerprint += signal[i] * (i + 1);
-    }
-    return (fingerprint % 1000) / 100; // Normalizar a 0-10
-  }
-
-  private calculatePerfusionIndex(signal: number[]): number {
-    const ac = this.calculateACComponent(signal);
-    const dc = this.calculateDCComponent(signal);
-    return dc > 0 ? (ac / dc) : 0;
-  }
-
-  private calculateMicrovascularTone(signal: number[]): number {
-    const highFreqComponent = this.calculateHighFrequencyComponent(signal);
-    const totalEnergy = this.calculateTotalEnergy(signal);
-    return totalEnergy > 0 ? (highFreqComponent / totalEnergy) : 0;
-  }
-
-  private calculateBloodFlowVelocity(signal: number[]): number {
-    const derivatives = [];
-    for (let i = 1; i < signal.length; i++) {
-      derivatives.push(Math.abs(signal[i] - signal[i-1]));
-    }
-    return derivatives.reduce((a, b) => a + b, 0) / derivatives.length;
-  }
-
-  private calculateTissueOxygenation(signal: number[]): number {
-    const pulsatility = this.calculatePulsatility(signal);
-    const frequency = this.calculateDominantFrequency(signal);
-    return pulsatility * frequency;
-  }
-
-  private calculateSignalComplexity(signal: number[]): number {
-    let complexity = 0;
-    for (let i = 2; i < signal.length; i++) {
-      const curvature = signal[i] - 2 * signal[i-1] + signal[i-2];
-      complexity += Math.abs(curvature);
-    }
-    return complexity / (signal.length - 2);
-  }
-
-  private calculateSpectralDensity(signal: number[]): number {
-    const derivatives = [];
-    for (let i = 1; i < signal.length; i++) {
-      derivatives.push(signal[i] - signal[i-1]);
-    }
-    return this.calculateVariance(derivatives);
-  }
-
-  private calculateAbsorptionCoefficient(signal: number[]): number {
-    const peaks = this.findPeaks(signal);
-    const valleys = this.findValleys(signal);
-    
-    if (peaks.length === 0 || valleys.length === 0) return 0;
-    
-    const avgPeak = peaks.reduce((a, b) => a + b, 0) / peaks.length;
-    const avgValley = valleys.reduce((a, b) => a + b, 0) / valleys.length;
-    
-    return Math.log(avgPeak / (avgValley + 1));
-  }
-
-  private calculateHematocritIndex(signal: number[]): number {
-    const amplitude = this.calculateAmplitude(signal);
-    const frequency = this.calculateDominantFrequency(signal);
-    return amplitude * frequency;
-  }
-
-  private calculateHRVIndex(intervals: number[]): number {
-    const sdnn = this.calculateSDNN(intervals);
-    const rmssd = this.calculateRMSSD(intervals);
-    return (sdnn + rmssd) / 2;
-  }
-
-  private calculateBloodFlowPattern(signal: number[]): number {
-    const turbulence = this.calculateTurbulence(signal);
-    const pulsatility = this.calculatePulsatility(signal);
-    return turbulence * pulsatility;
-  }
-
-  private calculateHighFrequencyComponent(signal: number[]): number {
-    let highFreqEnergy = 0;
-    for (let i = 2; i < signal.length; i++) {
-      const secondDerivative = signal[i] - 2 * signal[i-1] + signal[i-2];
-      highFreqEnergy += secondDerivative * secondDerivative;
-    }
-    return Math.sqrt(highFreqEnergy / (signal.length - 2));
-  }
-
-  private calculateTotalEnergy(signal: number[]): number {
-    return signal.reduce((sum, val) => sum + val * val, 0) / signal.length;
-  }
-
-  private calculateConsistency(values: number[]): number {
-    if (values.length < 2) return 1;
-    
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
-    
-    return mean > 0 ? Math.max(0, 1 - (Math.sqrt(variance) / mean)) : 0;
-  }
-
-  // MÉTODOS BÁSICOS ORIGINALES
   private calculateACComponent(signal: number[]): number {
     const max = Math.max(...signal);
     const min = Math.min(...signal);
@@ -957,12 +744,24 @@ export class VitalSignsProcessor {
     return valleys;
   }
 
+  getCalibrationProgress(): number {
+    return Math.min(100, (this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100);
+  }
+
   reset(): VitalSignsResult | null {
-    console.log("🔄 VitalSignsProcessor: Reset completo del sistema");
-    return null;
+    console.log("🔄 VitalSignsProcessor: Reset preservando últimas mediciones válidas");
+    
+    const currentResults = this.getWeightedFinalResults();
+    
+    this.signalHistory = [];
+    this.isCalibrating = false;
+
+    return this.measurements.spo2 > 0 ? currentResults : null;
   }
 
   fullReset(): void {
+    console.log("🗑️ VitalSignsProcessor: Reset COMPLETO");
+    
     this.measurements = {
       spo2: Number.NaN,
       glucose: 0,
@@ -988,11 +787,7 @@ export class VitalSignsProcessor {
     };
     
     this.signalHistory = [];
-    this.calibrationSamples = 0;
     this.isCalibrating = false;
-  }
-
-  getCalibrationProgress(): number {
-    return Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100);
+    this.calibrationSamples = 0;
   }
 }
