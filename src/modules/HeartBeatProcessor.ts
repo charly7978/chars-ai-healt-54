@@ -6,9 +6,9 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
   private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.06; // AUMENTADO significativamente
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.65; // AUMENTADO para ser más estricto
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.045; // Más sensible manteniendo precisión
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.6; // Leve relajación
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.007; // Un poco menos estricto
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
   private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
 
@@ -35,7 +35,7 @@ export class HeartBeatProcessor {
   private adaptiveDerivativeThreshold: number;
 
   // Límites MÁS ESTRICTOS para parámetros adaptativos
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.12; // Aumentado significativamente
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.08; // Permitir detección en señales más débiles
   private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
   private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
   private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
@@ -44,7 +44,7 @@ export class HeartBeatProcessor {
 
   // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.3; // Reducido para ser más selectivo
+  private readonly PEAK_DETECTION_SENSITIVITY = 0.35; // Ligeramente más sensible
   
   // Control del auto-ajuste más estricto
   private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 15; // Aumentado para más estabilidad
@@ -275,7 +275,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: 0,
+        bpm: 30,
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,
