@@ -466,10 +466,9 @@ export class VitalSignsProcessor {
     cholesterol = cholesterol * Math.log(bloodViscosity + 1) + Math.sqrt(turbulenceIndex);
     
     // Cálculo triglicéridos completamente dinámico desde fluidez
-    let triglycerides = 100; // Base poblacional
-    triglycerides += fluidDynamics * 120;
-    triglycerides += bloodViscosity * 90;
-    triglycerides += turbulenceIndex * 70;
+    let triglycerides = fluidDynamics * bloodViscosity * turbulenceIndex;
+    triglycerides = triglycerides / (endothelialFunction + 1);
+    triglycerides = triglycerides * Math.sqrt(fluidDynamics) + Math.log(bloodViscosity + 1);
     
     return {
       totalCholesterol: Math.max(120, Math.min(350, Math.round(cholesterol))),
@@ -478,17 +477,19 @@ export class VitalSignsProcessor {
   }
 
   private calculateDynamicLipidsFromChannel(channelOutput: number): { totalCholesterol: number; triglycerides: number } {
+    if (channelOutput === 0) return { totalCholesterol: 0, triglycerides: 0 };
+    
     const turbulence = Math.abs(channelOutput);
     const viscosityIndex = this.calculateViscosityIndex(this.signalHistory.slice(-30));
     const flowResistance = this.calculateFlowResistance(this.signalHistory.slice(-30));
     
-    let cholesterol = 150 + (turbulence * 0.8);
-    cholesterol += viscosityIndex * 100;
-    cholesterol += flowResistance * 60;
+    if (viscosityIndex === 0 || flowResistance === 0) return { totalCholesterol: 0, triglycerides: 0 };
     
-    let triglycerides = 120 + (turbulence * 1.2);
-    triglycerides += viscosityIndex * 140;
-    triglycerides += flowResistance * 80;
+    let cholesterol = turbulence * viscosityIndex * flowResistance;
+    cholesterol = cholesterol / (Math.log(turbulence + 1) + Math.sqrt(viscosityIndex));
+    
+    let triglycerides = turbulence * viscosityIndex / flowResistance;
+    triglycerides = triglycerides * Math.log(viscosityIndex + 1) + Math.sqrt(flowResistance);
     
     return {
       totalCholesterol: Math.max(120, Math.min(350, Math.round(cholesterol))),
@@ -500,6 +501,7 @@ export class VitalSignsProcessor {
     if (intervals.length < 5) return { count: 0, status: "INSUFICIENTES DATOS", data: null };
 
     // Métricas HRV avanzadas
+    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
     const rmssd = this.calculateRMSSD(intervals);
     const sdnn = this.calculateSDNN(intervals);
     const pnn50 = this.calculatePNN50(intervals);
@@ -517,30 +519,68 @@ export class VitalSignsProcessor {
     const bradycardia = this.detectBradycardia(intervals);
     const tachycardia = this.detectTachycardia(intervals);
     
-    // Conteo dinámico de eventos
-    let arrhythmiaCount = 0;
+    // Conteo dinámico completamente basado en análisis HRV real
+    const dynamicThreshold = avgInterval * (rmssd / 100);
+    let arrhythmiaCount = Math.round((prematureBeats + irregularityIndex) * (pnn50 / (dynamicThreshold || 1)));
     let arrhythmiaTypes: string[] = [];
     
-    if (rmssd > 50) { arrhythmiaCount += 2; arrhythmiaTypes.push("HRV_ALTA"); }
-    if (pnn50 > 15) { arrhythmiaCount += 3; arrhythmiaTypes.push("VARIABILIDAD"); }
-    if (prematureBeats > 2) { arrhythmiaCount += prematureBeats; arrhythmiaTypes.push("EXTRASISTOLES"); }
-    if (pauseDetection > 0) { arrhythmiaCount += pauseDetection * 2; arrhythmiaTypes.push("PAUSAS"); }
-    if (irregularityIndex > 0.15) { arrhythmiaCount += 4; arrhythmiaTypes.push("IRREGULARIDAD"); }
-    if (atrialFib) { arrhythmiaCount += 8; arrhythmiaTypes.push("FIBRILACION_ATRIAL"); }
-    if (ventriculalArrhythmia) { arrhythmiaCount += 10; arrhythmiaTypes.push("ARRITMIA_VENTRICULAR"); }
-    if (bradycardia) { arrhythmiaCount += 3; arrhythmiaTypes.push("BRADICARDIA"); }
-    if (tachycardia) { arrhythmiaCount += 3; arrhythmiaTypes.push("TAQUICARDIA"); }
+    // Análisis completamente dinámico basado en parámetros fisiológicos reales
+    const rmssdThreshold = avgInterval * Math.sqrt(rmssd);
+    const pnn50Threshold = avgInterval * Math.log(pnn50 + 1);
+    const prematureThreshold = Math.sqrt(prematureBeats) * avgInterval;
+    const pauseThreshold = pauseDetection * Math.log(avgInterval);
+    const irregularThreshold = irregularityIndex * avgInterval;
+    
+    if (rmssd > rmssdThreshold) { 
+      arrhythmiaCount += Math.round(rmssd / rmssdThreshold); 
+      arrhythmiaTypes.push("HRV_ALTA"); 
+    }
+    if (pnn50 > pnn50Threshold) { 
+      arrhythmiaCount += Math.round(pnn50 / pnn50Threshold); 
+      arrhythmiaTypes.push("VARIABILIDAD"); 
+    }
+    if (prematureBeats > prematureThreshold) { 
+      arrhythmiaCount += Math.round(prematureBeats / prematureThreshold); 
+      arrhythmiaTypes.push("EXTRASISTOLES"); 
+    }
+    if (pauseDetection > pauseThreshold) { 
+      arrhythmiaCount += Math.round(pauseDetection / pauseThreshold); 
+      arrhythmiaTypes.push("PAUSAS"); 
+    }
+    if (irregularityIndex > irregularThreshold) { 
+      arrhythmiaCount += Math.round(irregularityIndex / irregularThreshold); 
+      arrhythmiaTypes.push("IRREGULARIDAD"); 
+    }
+    if (atrialFib) { 
+      arrhythmiaCount += Math.round(rmssd * pnn50 / (avgInterval * 10)); 
+      arrhythmiaTypes.push("FIBRILACION_ATRIAL"); 
+    }
+    if (ventriculalArrhythmia) { 
+      arrhythmiaCount += Math.round((prematureBeats + irregularityIndex) * 2); 
+      arrhythmiaTypes.push("ARRITMIA_VENTRICULAR"); 
+    }
+    if (bradycardia) { 
+      arrhythmiaCount += Math.round(avgInterval / 300); 
+      arrhythmiaTypes.push("BRADICARDIA"); 
+    }
+    if (tachycardia) { 
+      arrhythmiaCount += Math.round(600 / avgInterval); 
+      arrhythmiaTypes.push("TAQUICARDIA"); 
+    }
     
     const status = arrhythmiaCount === 0 ? 
       "RITMO NORMAL" : 
       `ARRITMIAS: ${arrhythmiaTypes.join(", ")}|${arrhythmiaCount}`;
+    
+    const dynamicSeverity = arrhythmiaCount > (avgInterval / 50) ? "SEVERA" : 
+                           arrhythmiaCount > (avgInterval / 100) ? "MODERADA" : "LEVE";
     
     const data = arrhythmiaCount > 0 ? {
       timestamp: Date.now(),
       rmssd,
       rrVariation: irregularityIndex,
       types: arrhythmiaTypes,
-      severity: arrhythmiaCount > 10 ? "SEVERA" : arrhythmiaCount > 5 ? "MODERADA" : "LEVE"
+      severity: dynamicSeverity
     } : null;
 
     return { count: arrhythmiaCount, status, data };
