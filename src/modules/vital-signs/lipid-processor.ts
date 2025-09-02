@@ -16,8 +16,8 @@ export class LipidProcessor {
   private readonly CONFIDENCE_THRESHOLD = 0.60; // Minimum confidence for reporting
   private readonly TEMPORAL_SMOOTHING = 0.7; // Smoothing factor for consecutive measurements
   
-  private lastCholesterolEstimate: number = 180; // Baseline total cholesterol
-  private lastTriglyceridesEstimate: number = 120; // Baseline triglycerides
+  private lastCholesterolEstimate: number = 0; // No baseline fixed
+  private lastTriglyceridesEstimate: number = 0; // No baseline fixed
   private confidenceScore: number = 0;
   
   /**
@@ -46,19 +46,14 @@ export class LipidProcessor {
     // Calculate signal quality and measurement confidence
     this.confidenceScore = this.calculateConfidence(features, recentPPG);
     
-    // Multi-parameter regression model para la estimación lipídica
-    // Ajustes en los coeficientes para mejorar la sintonía fina:
-    const baseCholesterol = 180; // Se aumenta ligeramente la base
-    const baseTriglycerides = 110; // Se mantiene como base
-    
-    // Optimización adicional: nuevos coeficientes en el modelo de regresión para lipídicos
-    const cholesterolEstimate = baseCholesterol +
+    // Multi-parameter regression model sin baseline fijo
+    const cholesterolEstimate =
       (features.areaUnderCurve * 50) +             // Incrementado de 47 a 50
       (features.augmentationIndex * 34) -           // Incrementado de 32 a 34
       (features.riseFallRatio * 18) -               // Incrementado de 16 a 18
       (features.dicroticNotchPosition * 13);         // Incrementado de 12 a 13
     
-    const triglyceridesEstimate = baseTriglycerides +
+    const triglyceridesEstimate =
       (features.augmentationIndex * 24) +           // Disminuido ligeramente de 26 a 24
       (features.areaUnderCurve * 27) -              // Incrementado de 26 a 27
       (features.dicroticNotchHeight * 16);           // Disminuido de 18 a 16
@@ -66,14 +61,19 @@ export class LipidProcessor {
     // Apply temporal smoothing with previous estimates using confidence weighting
     let finalCholesterol, finalTriglycerides;
     
-    if (this.confidenceScore > this.CONFIDENCE_THRESHOLD) {
+    if (this.confidenceScore > this.CONFIDENCE_THRESHOLD && this.lastCholesterolEstimate > 0 && this.lastTriglyceridesEstimate > 0) {
       // Apply more weight to new measurements when confidence is high
       const confidenceWeight = Math.min(this.confidenceScore * 1.5, 0.9);
       finalCholesterol = this.lastCholesterolEstimate * (1 - confidenceWeight) + 
                           cholesterolEstimate * confidenceWeight;
       finalTriglycerides = this.lastTriglyceridesEstimate * (1 - confidenceWeight) + 
                            triglyceridesEstimate * confidenceWeight;
-    } else {
+    } else if (this.lastCholesterolEstimate > 0 && this.lastTriglyceridesEstimate > 0) {
+    // Si es la primera estimación válida, asignar directamente dentro de rango
+    if (this.lastCholesterolEstimate === 0 || this.lastTriglyceridesEstimate === 0) {
+      finalCholesterol = cholesterolEstimate;
+      finalTriglycerides = triglyceridesEstimate;
+    }
       // Strong weighting to previous measurements when confidence is low
       finalCholesterol = this.lastCholesterolEstimate * this.TEMPORAL_SMOOTHING + 
                          cholesterolEstimate * (1 - this.TEMPORAL_SMOOTHING);
@@ -326,8 +326,8 @@ export class LipidProcessor {
    * Reset processor state
    */
   public reset(): void {
-    this.lastCholesterolEstimate = 180;
-    this.lastTriglyceridesEstimate = 120;
+    this.lastCholesterolEstimate = 0;
+    this.lastTriglyceridesEstimate = 0;
     this.confidenceScore = 0;
   }
   

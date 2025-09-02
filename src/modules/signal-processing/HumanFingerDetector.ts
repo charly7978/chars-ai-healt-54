@@ -302,7 +302,8 @@ export class HumanFingerDetector {
     
     // Área mínima para dedo humano adulto
     const area = width * height;
-    const areaValid = area >= 150000; // ~400x375 píxeles mínimo
+    // Ajustado para soportar entradas 320x240 provenientes del canvas (76,800 px)
+    const areaValid = area >= 70000;
     
     return {
       spatialValid: textureValid && areaValid
@@ -378,19 +379,24 @@ export class HumanFingerDetector {
     hemodynamic: number
   ): number {
     
+    // Incluir coherencia espacial explícitamente en el score final
     const weights = {
-      biophysical: 0.25,
-      optical: 0.20,
+      biophysical: 0.22,
+      optical: 0.18,
       perfusion: 0.25,
       temporal: 0.15,
-      hemodynamic: 0.15
+      spatial: 0.10,
+      hemodynamic: 0.10
     };
+    
+    const spatialScore = spatial?.spatialValid ? 1.0 : 0.0;
     
     const weightedScore = 
       hemoglobin.biophysicalScore * weights.biophysical +
       hemoglobin.opticalCoherence * weights.optical +
       perfusion.bloodFlowIndicator * weights.perfusion +
       temporal.consistency * weights.temporal +
+      spatialScore * weights.spatial +
       hemodynamic * weights.hemodynamic;
     
     // Bonificación por detecciones consecutivas válidas
@@ -404,16 +410,16 @@ export class HumanFingerDetector {
    */
   private makeHumanFingerDecision(confidence: number): boolean {
     // Umbral más permisivo para mejor detección de dedos reales
-    let threshold = 0.45; // Base más permisiva
+    let threshold = 0.50; // Base equilibrada; reduce falsos positivos
     
     // Reducir umbral si hay detecciones previas válidas recientes
     if (Date.now() - this.lastValidHumanTime < 5000) {
-      threshold = 0.35;
+      threshold = 0.40;
     }
     
     // Aumentar umbral solo si hay muchas detecciones falsas
     if (this.consecutiveNonHumanDetections > 15) {
-      threshold = 0.60; // Menos restrictivo que antes
+      threshold = 0.65;
     }
     
     return confidence >= threshold;

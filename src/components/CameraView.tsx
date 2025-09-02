@@ -99,7 +99,31 @@ const CameraView = ({
         audio: false
       };
 
-      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      // Intento principal y fallbacks controlados para asegurar cámara trasera
+      let newStream: MediaStream | null = null;
+      try {
+        newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (primaryErr) {
+        console.warn(`⚠️ Fallback getUserMedia (ideal environment): ${primaryErr}`);
+        try {
+          newStream = await navigator.mediaDevices.getUserMedia({
+            video: { ...baseVideoConstraints, facingMode: { ideal: 'environment' } },
+            audio: false
+          });
+        } catch (secondaryErr) {
+          console.warn(`⚠️ Fallback getUserMedia (string environment): ${secondaryErr}`);
+          try {
+            newStream = await navigator.mediaDevices.getUserMedia({
+              video: { ...baseVideoConstraints, facingMode: 'environment' as any },
+              audio: false
+            } as any);
+          } catch (tertiaryErr) {
+            console.warn(`⚠️ Fallback getUserMedia (video:true): ${tertiaryErr}`);
+            newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          }
+        }
+      }
+      if (!newStream) throw new Error('No fue posible obtener stream de cámara');
       const videoTrack = newStream.getVideoTracks()[0];
 
       if (videoTrack) {

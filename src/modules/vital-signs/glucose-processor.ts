@@ -19,10 +19,7 @@ export class GlucoseProcessor {
   private lastEstimate: number = 0;
   private calibrationOffset: number = 0;
   
-  constructor() {
-    // Initialize with conservative baseline
-    this.lastEstimate = 100; // Start with normal baseline (100 mg/dL)
-  }
+  constructor() {}
   
   /**
    * Calculates glucose estimate from PPG values
@@ -37,33 +34,41 @@ export class GlucoseProcessor {
     // Use real-time PPG data for glucose estimation
     const recentPPG = ppgValues.slice(-180);
     
+    // Require sufficient peaks for meaningful estimation
+    const candidatePeaks = this.findPeaks(recentPPG);
+    if (candidatePeaks.length < 2) {
+      this.confidenceScore = 0;
+      return 0;
+    }
+    
     // Extract waveform features for glucose correlation
     const features = this.extractWaveformFeatures(recentPPG);
     
-    // Calculate glucose using validated model
-    const baseGlucose = 93; // Baseline en estudios
-    const glucoseEstimate = baseGlucose +
-      (features.derivativeRatio * 7.5) +     // antes: 7.2
-      (features.riseFallRatio * 8.5) -         // antes: 8.1 (se invierte el signo para ajustar la correlación)
-      (features.variabilityIndex * 5.0) +      // antes: -5.3, se invierte y ajusta el multiplicador
-      (features.peakWidth * 5.0) +             // antes: 4.7
+    // Calculate glucose without fixed baseline; rely on features and calibration
+    const glucoseRaw =
+      (features.derivativeRatio * 7.5) +
+      (features.riseFallRatio * 8.5) -
+      (features.variabilityIndex * 5.0) +
+      (features.peakWidth * 5.0) +
       this.calibrationOffset;
     
     // Calculate confidence based on signal quality
     this.confidenceScore = this.calculateConfidence(features, recentPPG);
+    if (this.confidenceScore <= this.CONFIDENCE_THRESHOLD) {
+      return 0;
+    }
     
-    // Apply physiological constraints
-    const maxAllowedChange = 15; // Maximum mg/dL change in short period
-    let constrainedEstimate = this.lastEstimate;
-    
-    if (this.confidenceScore > this.CONFIDENCE_THRESHOLD) {
-      const change = glucoseEstimate - this.lastEstimate;
+    // Apply bounded rate-of-change only after first valid estimate
+    let nextEstimate = glucoseRaw * this.CALIBRATION_FACTOR;
+    if (this.lastEstimate > 0) {
+      const maxAllowedChange = 15; // mg/dL
+      const change = nextEstimate - this.lastEstimate;
       const allowedChange = Math.min(Math.abs(change), maxAllowedChange) * Math.sign(change);
-      constrainedEstimate = this.lastEstimate + allowedChange;
+      nextEstimate = this.lastEstimate + allowedChange;
     }
     
     // Ensure result is within physiologically relevant range
-    const finalEstimate = Math.max(this.MIN_GLUCOSE, Math.min(this.MAX_GLUCOSE, constrainedEstimate));
+    const finalEstimate = Math.max(this.MIN_GLUCOSE, Math.min(this.MAX_GLUCOSE, nextEstimate));
     this.lastEstimate = finalEstimate;
     
     return Math.round(finalEstimate);
@@ -222,7 +227,7 @@ export class GlucoseProcessor {
    * Reset processor state
    */
   public reset(): void {
-    this.lastEstimate = 100;
+    this.lastEstimate = 0;
     this.confidenceScore = 0;
     this.calibrationOffset = 0;
   }

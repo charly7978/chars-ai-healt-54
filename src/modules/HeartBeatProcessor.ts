@@ -275,7 +275,7 @@ export class HeartBeatProcessor {
 
     if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
       return {
-        bpm: 30,
+        bpm: Math.round(this.getSmoothBPM()),
         confidence: 0,
         isPeak: false,
         filteredValue: filteredValue,
@@ -509,12 +509,22 @@ export class HeartBeatProcessor {
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
-    // Detectar pico en máximo local: derivada negativa
-    const isOverThreshold = derivative < 0;
-    // Confianza máxima en cada detección de pico
-    const confidence = 1;
 
-    return { isPeak: isOverThreshold, confidence, rawDerivative: derivative };
+    // Pico fisiológico: cruce de derivada de positivo a negativo
+    const isSlopeChangeToNegative = derivative < this.DERIVATIVE_STEEPNESS_THRESHOLD;
+
+    // Umbral de amplitud relativa respecto a baseline
+    const amplitude = Math.abs(normalizedValue);
+    const amplitudeOk = amplitude > this.adaptiveSignalThreshold;
+
+    const isPeak = isSlopeChangeToNegative && amplitudeOk;
+
+    // Confianza basada en amplitud y pendiente
+    const slopeScore = Math.min(1, Math.abs(derivative) / Math.abs(this.DERIVATIVE_STEEPNESS_THRESHOLD * 4));
+    const ampScore = Math.min(1, amplitude / (this.adaptiveSignalThreshold * 3));
+    const confidence = Math.max(0, Math.min(1, 0.55 * ampScore + 0.45 * slopeScore));
+
+    return { isPeak, confidence, rawDerivative: derivative };
   }
 
   private confirmPeak(

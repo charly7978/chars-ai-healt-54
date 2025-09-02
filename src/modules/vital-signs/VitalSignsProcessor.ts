@@ -523,18 +523,11 @@ export class VitalSignsProcessor {
   private calculateSpO2Real(signal: number[]): number {
     if (signal.length < 10) return 0;
     
-    const acComponent = this.calculateACComponent(signal);
-    const dcComponent = this.calculateDCComponent(signal);
-    if (dcComponent === 0) return 0;
-
-    // Normalizar relación AC/DC y limitar rango
-    const ratio = Math.abs(acComponent / dcComponent);
-    const normRatio = Math.max(0, Math.min(1, ratio));
-
-    // Saturación máxima ligeramente por debajo de 98 y mínima 85
-    const spo2 = 97.6 - 18.0 * normRatio;
-
-    return Math.max(85, Math.min(98, spo2));
+    // Usar procesador SpO2 dedicado para asegurar cálculo PPG real, sin await
+    const { SpO2Processor } = require('./spo2-processor');
+    const proc = new SpO2Processor();
+    const spo2 = proc.calculateSpO2(signal);
+    return Math.max(85, Math.min(100, spo2));
   }
 
   private calculateGlucoseReal(signal: number[], currentValue: number): number {

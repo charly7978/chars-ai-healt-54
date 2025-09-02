@@ -54,8 +54,13 @@ export const useHeartBeatProcessor = () => {
   // PROCESAMIENTO UNIFICADO DE SEÑAL - ELIMINADAS DUPLICIDADES
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
+      const fallbackBPM = Math.round(
+        (processorRef.current && typeof (processorRef.current as any).getSmoothBPM === 'function')
+          ? (processorRef.current as any).getSmoothBPM()
+          : 0
+      );
       return {
-        bpm: 0,
+        bpm: fallbackBPM,
         confidence: 0,
         isPeak: false,
         arrhythmiaCount: 0,

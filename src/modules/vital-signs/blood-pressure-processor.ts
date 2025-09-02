@@ -92,14 +92,7 @@ export class BloodPressureProcessor {
     if (peakIndices.length < 2) { // Reducido para funcionar con menos picos
       console.log('❌ BloodPressureProcessor: Insuficientes picos detectados:', peakIndices.length, 'mínimo requerido: 2');
       
-      // Si no hay suficientes picos, usar estimación básica
-      if (values.length >= 30) {
-        console.log('🔄 BloodPressureProcessor: Usando estimación básica sin picos');
-        const basicEstimate = this.calculateBasicBloodPressure(values);
-        console.log('🎯 BloodPressureProcessor: ESTIMACIÓN BÁSICA:', basicEstimate);
-        return basicEstimate;
-      }
-      
+      // Si no hay suficientes picos, retornar no disponible (0,0) sin bases fijas
       return { systolic: 0, diastolic: 0 };
     }
 
@@ -1000,6 +993,7 @@ export class BloodPressureProcessor {
    * CÁLCULO BÁSICO de presión arterial cuando no hay suficientes picos
    * Funciona con datos PPG simples sin requerir detección de picos
    */
+<<<<<<< Current (Your changes)
   private calculateBasicBloodPressure(values: number[]): {
     systolic: number;
     diastolic: number;
@@ -1069,4 +1063,7 @@ export class BloodPressureProcessor {
       diastolic: finalDiastolic
     };
   }
+=======
+  // Eliminado cálculo básico con bases fijas: sin simulaciones ni números fijos
+>>>>>>> Incoming (Background Agent changes)
 }
