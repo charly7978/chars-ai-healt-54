@@ -1,4 +1,5 @@
 import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
+import { SpO2Processor } from './spo2-processor';
 import type { MultiChannelOutputs } from '../../types/multichannel';
 
 export interface VitalSignsResult {
@@ -191,13 +192,15 @@ export class VitalSignsProcessor {
     rrData?: { intervals: number[], lastPeakTime: number | null }
   ): VitalSignsResult {
     // Ingresar cada canal a su historial dedicado
-    for (const key of Object.keys(this.channelHistories)) {
-      const ch = key as keyof typeof this.channelHistories;
-      const val = channels[ch as keyof MultiChannelOutputs]?.output;
+    const channelKeys = ['heart', 'spo2', 'bloodPressure', 'hemoglobin', 'glucose', 'lipids'] as const;
+    for (const key of channelKeys) {
+      const channelResult = channels[key];
+      const val = channelResult?.output;
       if (typeof val === 'number') {
-        this.channelHistories[ch].push(val);
-        if (this.channelHistories[ch].length > this.CHANNEL_HISTORY_SIZE) {
-          this.channelHistories[ch].shift();
+        if (!this.channelHistories[key]) this.channelHistories[key] = [];
+        this.channelHistories[key].push(val);
+        if (this.channelHistories[key].length > this.CHANNEL_HISTORY_SIZE) {
+          this.channelHistories[key].shift();
         }
       }
     }
@@ -523,8 +526,7 @@ export class VitalSignsProcessor {
   private calculateSpO2Real(signal: number[]): number {
     if (signal.length < 10) return 0;
     
-    // Usar procesador SpO2 dedicado para asegurar cálculo PPG real, sin await
-    const { SpO2Processor } = require('./spo2-processor');
+    // Usar procesador SpO2 dedicado para asegurar cálculo PPG real
     const proc = new SpO2Processor();
     const spo2 = proc.calculateSpO2(signal);
     return Math.max(85, Math.min(100, spo2));

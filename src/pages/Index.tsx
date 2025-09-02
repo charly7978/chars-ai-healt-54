@@ -452,7 +452,7 @@ const Index = () => {
 
     // Feedback multicanal cuando calidad baja
     if (channelOutputs) {
-      const channels: Array<keyof typeof channelOutputs> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
+      const channels: Array<'heart' | 'spo2' | 'bloodPressure' | 'hemoglobin' | 'glucose' | 'lipids'> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
       channels.forEach((ch) => {
         const out = channelOutputs[ch];
         if (out && out.quality < 55) {
