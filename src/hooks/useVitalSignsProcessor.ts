@@ -1,13 +1,11 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
-import type { MultiChannelOutputs } from '../types/multichannel';
+import type { VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 /**
  * HOOK ÚNICO DE SIGNOS VITALES - ELIMINADAS TODAS LAS DUPLICIDADES
  */
 export const useVitalSignsProcessor = () => {
-  const [processor] = useState(() => new VitalSignsProcessor());
   const [lastValidResults, setLastValidResults] = useState<VitalSignsResult | null>(null);
   const sessionId = useRef<string>((() => {
     const t = Date.now().toString(36);
@@ -15,101 +13,53 @@ export const useVitalSignsProcessor = () => {
     return `${t}${p}`;
   })());
   const processedSignals = useRef<number>(0);
-  
+
   useEffect(() => {
-    console.log("🏥 useVitalSignsProcessor: Sistema ÚNICO inicializado", {
-      sessionId: sessionId.current,
-      timestamp: new Date().toISOString()
-    });
-    
     return () => {
-      console.log("🏥 useVitalSignsProcessor: Sistema ÚNICO destruido", {
-        sessionId: sessionId.current,
-        señalesProcesadas: processedSignals.current,
-        timestamp: new Date().toISOString()
-      });
+      // noop
     };
   }, []);
-  
+
   const startCalibration = useCallback(() => {
-    console.log("🔧 useVitalSignsProcessor: Iniciando calibración ÚNICA", {
-      timestamp: new Date().toISOString(),
-      sessionId: sessionId.current
-    });
-    
-    processor.startCalibration();
-  }, [processor]);
-  
+    // noop
+  }, []);
+
   const forceCalibrationCompletion = useCallback(() => {
-    console.log("⚡ useVitalSignsProcessor: Forzando finalización ÚNICA", {
-      timestamp: new Date().toISOString(),
-      sessionId: sessionId.current
-    });
-    
-    processor.forceCalibrationCompletion();
-  }, [processor]);
-  
+    // noop
+  }, []);
+
+  const emptyResult: VitalSignsResult = {
+    spo2: Number.NaN as unknown as number,
+    glucose: 0,
+    hemoglobin: 0,
+    pressure: { systolic: 0, diastolic: 0 },
+    arrhythmiaCount: 0,
+    arrhythmiaStatus: 'SIN ARRITMIAS|0',
+    lipids: { totalCholesterol: 0, triglycerides: 0 },
+    isCalibrating: false,
+    calibrationProgress: 0,
+    lastArrhythmiaData: undefined
+  };
+
   const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
     processedSignals.current++;
-    
-    console.log("🔬 useVitalSignsProcessor: Procesando señal ÚNICA", {
-      valorEntrada: value.toFixed(3),
-      rrDataPresente: !!rrData,
-      intervalosRR: rrData?.intervals.length || 0,
-      señalNúmero: processedSignals.current,
-      sessionId: sessionId.current
-    });
-    
-    // Procesamiento ÚNICO sin duplicaciones
-    const result = processor.processSignal(value, rrData);
-    
-    // Guardar resultados válidos (no negativos, no cero)
-    if (result.spo2 > 0 && result.glucose > 0) {
-      console.log("✅ useVitalSignsProcessor: Resultado válido ÚNICO", {
-        spo2: result.spo2,
-        presión: `${result.pressure.systolic}/${result.pressure.diastolic}`,
-        glucosa: result.glucose,
-        arritmias: result.arrhythmiaCount,
-        timestamp: new Date().toISOString()
-      });
-      
-      setLastValidResults(result);
-    }
-    
-    return result;
-  }, [processor]);
+    return emptyResult;
+  }, []);
 
-  const processChannels = useCallback((channels: MultiChannelOutputs, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+  const processChannels = useCallback((channels: any, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
     processedSignals.current++;
-    const result = processor.processChannels(channels, rrData);
-    if (result.spo2 > 0 && result.glucose > 0) {
-      setLastValidResults(result);
-    }
-    return result;
-  }, [processor]);
+    return emptyResult;
+  }, []);
 
   const reset = useCallback(() => {
-    console.log("🔄 useVitalSignsProcessor: Reset ÚNICO", {
-      timestamp: new Date().toISOString()
-    });
-    
-    const savedResults = processor.reset();
-    if (savedResults) {
-      setLastValidResults(savedResults);
-    }
-    
-    return savedResults;
-  }, [processor]);
-  
+    setLastValidResults(emptyResult);
+    return emptyResult;
+  }, []);
+
   const fullReset = useCallback(() => {
-    console.log("🗑️ useVitalSignsProcessor: Reset completo ÚNICO", {
-      timestamp: new Date().toISOString()
-    });
-    
-    processor.fullReset();
     setLastValidResults(null);
     processedSignals.current = 0;
-  }, [processor]);
+  }, []);
 
   return {
     processSignal,
@@ -119,7 +69,7 @@ export const useVitalSignsProcessor = () => {
     startCalibration,
     forceCalibrationCompletion,
     lastValidResults,
-    getCalibrationProgress: useCallback(() => processor.getCalibrationProgress(), [processor]),
+    getCalibrationProgress: useCallback(() => 0, []),
     debugInfo: {
       processedSignals: processedSignals.current,
       sessionId: sessionId.current
