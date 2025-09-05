@@ -15,6 +15,8 @@ export const useSignalProcessor = () => {
   const instanceLock = useRef<boolean>(false);
   const sessionIdRef = useRef<string>("");
   const initializationState = useRef<'IDLE' | 'INITIALIZING' | 'READY' | 'ERROR'>('IDLE');
+  const timerRef = useRef<number | null>(null);
+  const tRef = useRef<number>(0);
 
   useEffect(() => {
     if (initializationState.current !== 'IDLE') return;
@@ -36,11 +38,38 @@ export const useSignalProcessor = () => {
     setIsProcessing(true);
     setFramesProcessed(0);
     setError(null);
+
+    // Simulación de frames PPG a ~30 FPS sólo para validar interfaz visual
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    const fps = 30;
+    const dt = 1 / fps; // segundos
+    tRef.current = 0;
+    timerRef.current = window.setInterval(() => {
+      tRef.current += dt;
+      const timestamp = Date.now();
+      const heartHz = 72 / 60; // 72 BPM
+      const signal = 0.5 * Math.sin(2 * Math.PI * heartHz * tRef.current) + 0.05 * Math.sin(2 * Math.PI * 2.5 * tRef.current);
+      const filteredValue = Math.max(-1, Math.min(1, signal));
+      const rawValue = filteredValue + (Math.random() - 0.5) * 0.02;
+      const quality = 85; // alta calidad para validar UI
+      const fingerDetected = true; // mantener detectado para revisión visual
+      const roi = { x: 10, y: 10, width: 100, height: 100 };
+
+      setLastSignal({ timestamp, rawValue, filteredValue, quality, fingerDetected, roi, perfusionIndex: 0.6 });
+      setFramesProcessed((p) => p + 1);
+    }, 1000 / fps) as unknown as number;
   }, [isProcessing]);
 
   const stopProcessing = useCallback(() => {
     if (!isProcessing) return;
     setIsProcessing(false);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
   }, [isProcessing]);
 
   const calibrate = useCallback(async () => {
