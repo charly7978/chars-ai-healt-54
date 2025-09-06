@@ -1,304 +1,137 @@
-
-import React, { useRef, useEffect, useState } from 'react';
-import { toast } from "@/components/ui/use-toast";
+import React, { useRef, useEffect, useState } from "react";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
+  onAuxStreamReady?: (stream: MediaStream) => void; // NUEVO: segundo stream
   isMonitoring: boolean;
   isFingerDetected?: boolean;
   signalQuality?: number;
 }
 
 /**
- * COMPONENTE CÁMARA COMPLETAMENTE UNIFICADO - ELIMINADAS TODAS LAS DUPLICIDADES
- * Sistema matemático avanzado sin memory leaks ni procesamiento redundante
+ * Cámara trasera + torch + posibilidad de 2 cámaras simultáneas si el dispositivo lo permite.
+ * No cambia estética: dos <video> invisibles, detrás del monitor.
  */
-const CameraView = ({ 
-  onStreamReady, 
-  isMonitoring, 
-  isFingerDetected = false, 
-  signalQuality = 0,
-}: CameraViewProps) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [torchEnabled, setTorchEnabled] = useState(false);
-  const [deviceSupportsTorch, setDeviceSupportsTorch] = useState(false);
-  const cameraInitialized = useRef<boolean>(false);
-  const sessionIdRef = useRef<string>("");
+const CameraView: React.FC<CameraViewProps> = ({
+  onStreamReady,
+  onAuxStreamReady,
+  isMonitoring,
+}) => {
+  const v1Ref = useRef<HTMLVideoElement | null>(null);
+  const v2Ref = useRef<HTMLVideoElement | null>(null);
+  const s1Ref = useRef<MediaStream | null>(null);
+  const s2Ref = useRef<MediaStream | null>(null);
+  const startedRef = useRef(false);
 
-  // GENERAR SESSION ID ÚNICO
-  useEffect(() => {
-    const t = Date.now().toString(36);
-    const p = (performance.now() | 0).toString(36);
-    sessionIdRef.current = `camera_${t}_${p}`;
-  }, []);
-
-  // FUNCIÓN UNIFICADA DE PARADA DE CÁMARA
-  const stopCamera = async () => {
-    if (!stream) return;
-    
-    console.log(`📹 Deteniendo cámara unificada - ${sessionIdRef.current}`);
-    
-    stream.getTracks().forEach(track => {
-      if (track.kind === 'video' && track.getCapabilities()?.torch) {
-        track.applyConstraints({
-          advanced: [{ torch: false }]
-        }).catch(() => {});
-      }
-      track.stop();
-    });
-    
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    
-    setStream(null);
-    setTorchEnabled(false);
-    cameraInitialized.current = false;
-    
-    console.log(`✅ Cámara detenida - ${sessionIdRef.current}`);
+  const stopTrack = (s: MediaStream | null) => {
+    if (!s) return;
+    for (const t of s.getTracks()) try { t.stop(); } catch {}
+  };
+  const stopAll = () => {
+    stopTrack(s1Ref.current);
+    stopTrack(s2Ref.current);
+    if (v1Ref.current) v1Ref.current.srcObject = null;
+    if (v2Ref.current) v2Ref.current.srcObject = null;
+    s1Ref.current = null; s2Ref.current = null;
+    startedRef.current = false;
   };
 
-  // FUNCIÓN UNIFICADA DE INICIO DE CÁMARA - ELIMINADAS DUPLICIDADES
-  const startCamera = async () => {
-    if (stream || cameraInitialized.current) {
-      console.warn(`⚠️ Cámara ya inicializada - ${sessionIdRef.current}`);
-      return;
+  const enableTorch = async (track: MediaStreamTrack) => {
+    const caps: any = track.getCapabilities?.() || {};
+    if (caps?.torch) {
+      try { await track.applyConstraints({ advanced: [{ torch: true }] } as any); } catch {}
     }
-    
+  };
+
+  const pickBackCameras = async () => {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const vids = devs.filter(d => d.kind === "videoinput");
+    // back/environ hints
+    const backs = vids.filter(d =>
+      /back|rear|environment/i.test(d.label || "") || /back|rear|environment/i.test(d.deviceId)
+    );
+    if (backs.length >= 2) return backs.slice(0,2);
+    if (backs.length === 1) return [backs[0]];
+    // fallback: cualquiera dos
+    return vids.slice(0,2);
+  };
+
+  const start = async () => {
+    if (startedRef.current) return;
+    startedRef.current = true;
     try {
-      console.log(`📹 Iniciando cámara unificada avanzada - ${sessionIdRef.current}`);
-      
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error("getUserMedia no soportado en este navegador");
-      }
-
-      // DETECCIÓN UNIFICADA DE PLATAFORMA
-      const isAndroid = /android/i.test(navigator.userAgent);
-      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
-      // CONFIGURACIÓN MATEMÁTICAMENTE OPTIMIZADA PARA PPG
-      const baseVideoConstraints: MediaTrackConstraints = {
-        facingMode: { exact: 'environment' },
-        width: { ideal: 1280, min: 640 },
-        height: { ideal: 720, min: 480 },
-        frameRate: { ideal: 30, min: 15 },
-        aspectRatio: { ideal: 16/9 }
-      };
-
-      // OPTIMIZACIONES ESPECÍFICAS POR PLATAFORMA
-      if (isAndroid) {
-        Object.assign(baseVideoConstraints, {
-          resizeMode: 'crop-and-scale',
-          latency: { ideal: 0.1 }
+      const cams = await pickBackCameras();
+      // stream 1
+      if (cams[0]) {
+        const s1 = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { deviceId: { exact: cams[0].deviceId }, width:{ideal:640}, height:{ideal:480}, frameRate:{ideal:30, max:60}, facingMode:"environment" as any }
         });
+        s1Ref.current = s1;
+        if (v1Ref.current) { v1Ref.current.srcObject = s1; await v1Ref.current.play().catch(()=>{}); }
+        const t1 = s1.getVideoTracks()[0]; if (t1) enableTorch(t1);
+        onStreamReady?.(s1);
       }
-
-      const constraints: MediaStreamConstraints = {
-        video: baseVideoConstraints,
-        audio: false
-      };
-
-      // Intento principal y fallbacks controlados para asegurar cámara trasera
-      let newStream: MediaStream | null = null;
+      // stream 2 (si existe)
+      if (cams[1]) {
+        const s2 = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { deviceId: { exact: cams[1].deviceId }, width:{ideal:640}, height:{ideal:480}, frameRate:{ideal:30, max:60}, facingMode:"environment" as any }
+        });
+        s2Ref.current = s2;
+        if (v2Ref.current) { v2Ref.current.srcObject = s2; await v2Ref.current.play().catch(()=>{}); }
+        const t2 = s2.getVideoTracks()[0]; if (t2) enableTorch(t2);
+        onAuxStreamReady?.(s2);
+      }
+    } catch (e) {
+      // último intento genérico
       try {
-        newStream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (primaryErr) {
-        console.warn(`⚠️ Fallback getUserMedia (ideal environment): ${primaryErr}`);
-        try {
-          newStream = await navigator.mediaDevices.getUserMedia({
-            video: { ...baseVideoConstraints, facingMode: { ideal: 'environment' } },
-            audio: false
-          });
-        } catch (secondaryErr) {
-          console.warn(`⚠️ Fallback getUserMedia (string environment): ${secondaryErr}`);
-          try {
-            newStream = await navigator.mediaDevices.getUserMedia({
-              video: { ...baseVideoConstraints, facingMode: 'environment' as any },
-              audio: false
-            } as any);
-          } catch (tertiaryErr) {
-            console.warn(`⚠️ Fallback getUserMedia (video:true): ${tertiaryErr}`);
-            newStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-          }
-        }
+        const s1 = await navigator.mediaDevices.getUserMedia({ audio:false, video:{ facingMode:"environment" } as any });
+        s1Ref.current = s1;
+        if (v1Ref.current) { v1Ref.current.srcObject = s1; await v1Ref.current.play().catch(()=>{}); }
+        const t1 = s1.getVideoTracks()[0]; if (t1) enableTorch(t1);
+        onStreamReady?.(s1);
+      } catch (err) {
+        startedRef.current = false;
+        stopAll();
+        console.error("No se pudo iniciar cámara:", err);
       }
-      if (!newStream) throw new Error('No fue posible obtener stream de cámara');
-      const videoTrack = newStream.getVideoTracks()[0];
-
-      if (videoTrack) {
-        try {
-          const capabilities = videoTrack.getCapabilities();
-          const advancedConstraints: MediaTrackConstraintSet[] = [];
-          
-          // CONFIGURACIÓN MATEMÁTICA AVANZADA PARA MEDICIONES PPG PRECISAS
-          
-          // 1. Control de exposición manual para estabilidad óptica
-          if (capabilities.exposureMode) {
-            advancedConstraints.push({ exposureMode: 'manual' });
-            if (capabilities.exposureTime) {
-              const optimalExposureTime = Math.min(
-                capabilities.exposureTime.max || 1000,
-                800 // Tiempo óptimo para captura PPG
-              );
-              advancedConstraints.push({ exposureTime: optimalExposureTime });
-            }
-          }
-          
-          // 2. Configuración de ganancia automática (reemplaza ISO no estándar)
-          if (capabilities.autoGainControl !== undefined) {
-            advancedConstraints.push({ autoGainControl: false });
-          }
-          
-          // 3. Enfoque continuo para mantener nitidez constante
-          if (capabilities.focusMode) {
-            advancedConstraints.push({ focusMode: 'continuous' });
-          }
-          
-          // 4. Balance de blancos automático continuo
-          if (capabilities.whiteBalanceMode) {
-            advancedConstraints.push({ whiteBalanceMode: 'continuous' });
-          }
-          
-          // 5. Reducción de ruido para mejorar SNR
-          if (capabilities.noiseSuppression) {
-            advancedConstraints.push({ noiseSuppression: true });
-          }
-
-          // APLICAR CONFIGURACIONES AVANZADAS
-          if (advancedConstraints.length > 0) {
-            await videoTrack.applyConstraints({
-              advanced: advancedConstraints
-            });
-            console.log(`📹 Configuraciones avanzadas aplicadas: ${advancedConstraints.length} - ${sessionIdRef.current}`);
-          }
-
-          // CONFIGURACIÓN UNIFICADA DE LINTERNA PARA PPG
-          if (capabilities.torch) {
-            setDeviceSupportsTorch(true);
-            try {
-              await videoTrack.applyConstraints({
-                advanced: [{ torch: true }]
-              });
-              setTorchEnabled(true);
-              console.log(`🔦 Linterna PPG activada - ${sessionIdRef.current}`);
-            } catch (torchErr) {
-              console.error(`❌ Error activando linterna: ${torchErr} - ${sessionIdRef.current}`);
-              setTorchEnabled(false);
-            }
-          } else {
-            console.warn(`⚠️ Dispositivo sin linterna - calidad PPG puede ser inferior - ${sessionIdRef.current}`);
-          }
-        } catch (configErr) {
-          console.log(`⚠️ Algunas configuraciones avanzadas no aplicadas: ${configErr} - ${sessionIdRef.current}`);
-        }
-      }
-
-      // ASIGNACIÓN UNIFICADA DEL STREAM AL ELEMENTO VIDEO
-      if (videoRef.current) {
-        videoRef.current.srcObject = newStream;
-        
-        // OPTIMIZACIONES DE RENDIMIENTO ESPECÍFICAS
-        if (isAndroid) {
-          videoRef.current.style.willChange = 'transform';
-          videoRef.current.style.transform = 'translateZ(0)';
-          videoRef.current.style.backfaceVisibility = 'hidden';
-        }
-      }
-
-      setStream(newStream);
-      cameraInitialized.current = true;
-      
-      // CALLBACK UNIFICADO DE STREAM LISTO
-      if (onStreamReady) {
-        console.log(`✅ Stream PPG listo - ${sessionIdRef.current}`);
-        onStreamReady(newStream);
-      }
-      
-    } catch (err) {
-      console.error(`❌ Error crítico inicializando cámara: ${err} - ${sessionIdRef.current}`);
-      cameraInitialized.current = false;
-      
-      toast({
-        title: "Error de Cámara Crítico",
-        description: `No se pudo acceder a la cámara trasera: ${err}`,
-        variant: "destructive",
-        duration: 5000
-      });
     }
   };
 
-  // CONTROL UNIFICADO DEL CICLO DE VIDA DE LA CÁMARA
   useEffect(() => {
-    if (isMonitoring && !stream && !cameraInitialized.current) {
-      startCamera();
-    } else if (!isMonitoring && stream) {
-      stopCamera();
-    }
-    
-    return () => {
-      stopCamera();
-    };
+    if (isMonitoring) start();
+    else stopAll();
+    return () => stopAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMonitoring]);
 
-  // MANTENIMIENTO UNIFICADO DE LINTERNA - ELIMINA DUPLICIDADES
+  // mantener torch activa periódicamente
   useEffect(() => {
-    if (!stream || !deviceSupportsTorch || !isMonitoring) return;
-    
-    const maintainTorchStability = async () => {
-      if (!isMonitoring || !stream) return;
+    const id = setInterval(() => {
+      [s1Ref.current, s2Ref.current].forEach(s => {
+        const t = s?.getVideoTracks?.()[0];
+        if (t) enableTorch(t);
+      });
+    }, 1500);
+    return () => clearInterval(id);
+  }, []);
 
-      const videoTrack = stream.getVideoTracks()[0];
-      if (!videoTrack) return;
-      
-      try {
-        const settings = videoTrack.getSettings && (videoTrack.getSettings() as any);
-        const currentTorchState = settings?.torch;
-
-        // VERIFICACIÓN Y CORRECCIÓN AUTOMÁTICA DEL ESTADO DE LINTERNA
-        if (!currentTorchState && deviceSupportsTorch) {
-          console.log(`🔦 Reactivando linterna PPG - ${sessionIdRef.current}`);
-          await videoTrack.applyConstraints({
-            advanced: [{ torch: true }]
-          });
-          setTorchEnabled(true);
-        } else if (currentTorchState) {
-          setTorchEnabled(true);
-        }
-      } catch (maintainErr) {
-        console.warn(`⚠️ Error manteniendo linterna: ${maintainErr} - ${sessionIdRef.current}`);
-        setTorchEnabled(false);
-      }
-    };
-    
-    // INTERVALO UNIFICADO DE MANTENIMIENTO
-    maintainTorchStability(); // Ejecución inicial inmediata
-    const maintenanceInterval = setInterval(maintainTorchStability, 3000);
-    
-    return () => clearInterval(maintenanceInterval);
-  }, [stream, isMonitoring, deviceSupportsTorch]);
-
-  // ELEMENTO VIDEO UNIFICADO CON OPTIMIZACIONES COMPLETAS
   return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted
-      className="absolute top-0 left-0 min-w-full min-h-full w-auto h-auto z-0 object-cover"
-      style={{
-        willChange: 'transform',
-        transform: 'translateZ(0)',
-        backfaceVisibility: 'hidden',
-        imageRendering: 'auto'
-      }}
-      onLoadedMetadata={() => {
-        console.log(`📹 Metadatos de video cargados - ${sessionIdRef.current}`);
-      }}
-      onError={(err) => {
-        console.error(`❌ Error en elemento video: ${err} - ${sessionIdRef.current}`);
-      }}
-    />
+    <>
+      <video
+        ref={v1Ref}
+        data-cam="primary"
+        playsInline muted autoPlay
+        style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity:0.0001, pointerEvents:"none" }}
+      />
+      <video
+        ref={v2Ref}
+        data-cam="aux"
+        playsInline muted autoPlay
+        style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", opacity:0.0001, pointerEvents:"none" }}
+      />
+    </>
   );
 };
 
