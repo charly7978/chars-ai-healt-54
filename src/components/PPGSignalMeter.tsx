@@ -118,14 +118,26 @@ const PPGSignalMeter = ({
     ctx.lineTo(CANVAS_WIDTH, CANVAS_HEIGHT / 2);
     ctx.stroke();
     
+    // VISUALIZACIÓN DE ARRITMIA EN GRID - MÁS PROMINENTE
     const status = arrhythmiaStatus ? parseArrhythmiaStatus(arrhythmiaStatus) : null;
     if (status?.status === 'DETECTED') {
-      ctx.fillStyle = '#ef4444'; // red-500 para alertas
-      ctx.font = 'bold 24px Inter';
+      // Fondo rojo parpadeante para arritmia
+      const alpha = (Math.sin(Date.now() / 200) + 1) / 4; // Parpadeo suave
+      ctx.fillStyle = `rgba(239, 68, 68, ${alpha})`; // red-500 con alpha variable
+      ctx.fillRect(0, 0, CANVAS_WIDTH, 120);
+      
+      // Texto de alerta grande y visible
+      ctx.fillStyle = '#fff'; // Blanco para contraste
+      ctx.font = 'bold 32px Inter';
       ctx.textAlign = 'left';
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 10;
       ctx.fillText(status.count > 1 
-        ? `Arritmias: ${status.count}` 
-        : '¡PRIMERA ARRITMIA DETECTADA!', 45, 95);
+        ? `⚠️ ARRITMIAS: ${status.count}` 
+        : '⚠️ ARRITMIA DETECTADA', 45, 80);
+      ctx.shadowBlur = 0;
+      
+      console.log("🫀 PPGSignalMeter: Renderizando alerta de arritmia", status);
     }
   }, [arrhythmiaStatus]);
 
@@ -236,12 +248,22 @@ const PPGSignalMeter = ({
     const normalizedValue = (baselineRef.current || 0) - smoothedValue;
     const scaledValue = normalizedValue * verticalScale;
     
+    // DETECCIÓN DE ARRITMIA MEJORADA - más sensible y persistente
     let isArrhythmia = false;
-    if (rawArrhythmiaData && 
-        arrhythmiaStatus?.includes("ARRITMIA") && 
-        now - rawArrhythmiaData.timestamp < 1000) {
+    if (arrhythmiaStatus && arrhythmiaStatus.includes("ARRITMIA DETECTADA")) {
       isArrhythmia = true;
       lastArrhythmiaTime.current = now;
+      console.log("🫀 PPGSignalMeter: Arritmia ACTIVA detectada", {
+        status: arrhythmiaStatus,
+        rawData: rawArrhythmiaData,
+        timestamp: now
+      });
+    } else if (rawArrhythmiaData && now - rawArrhythmiaData.timestamp < 2000) {
+      // Mantener arritmia visible por 2 segundos después de detección
+      isArrhythmia = true;
+      console.log("🫀 PPGSignalMeter: Arritmia RECIENTE visualizada", {
+        timeSinceDetection: now - rawArrhythmiaData.timestamp
+      });
     }
     
     const dataPoint: PPGDataPoint = {
@@ -281,17 +303,29 @@ const PPGSignalMeter = ({
         
         ctx.lineTo(x2, y2);
         
-        if (point.isArrhythmia) {
-          ctx.stroke();
+        // VISUALIZACIÓN DE SEGMENTO DE ARRITMIA - MÁS VISIBLE
+        if (point.isArrhythmia || prevPoint.isArrhythmia) {
+          ctx.stroke(); // Terminar segmento verde
           ctx.beginPath();
-          ctx.strokeStyle = '#DC2626'; // red-600 para arritmias
+          ctx.strokeStyle = '#EF4444'; // red-500 MÁS BRILLANTE para arritmias
+          ctx.lineWidth = 4; // MÁS GRUESO para arritmias
           ctx.moveTo(x1, y1);
           ctx.lineTo(x2, y2);
           ctx.stroke();
+          
+          // Agregar halo rojo alrededor del segmento
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+          ctx.lineWidth = 8;
+          ctx.stroke();
+          
+          // Volver a configuración normal
           ctx.beginPath();
           ctx.strokeStyle = '#10b981'; // volver a verde
+          ctx.lineWidth = 3;
           ctx.moveTo(x2, y2);
           firstPoint = true;
+          
+          console.log("🫀 PPGSignalMeter: Dibujando segmento de arritmia", { x1, y1, x2, y2 });
         }
       }
       
@@ -307,17 +341,33 @@ const PPGSignalMeter = ({
           ctx.fillStyle = peak.isArrhythmia ? '#DC2626' : '#0EA5E9';
           ctx.fill();
           
+          // MARCADOR DE ARRITMIA MÁS PROMINENTE
           if (peak.isArrhythmia) {
+            // Círculo exterior grande parpadeante
+            const alpha = (Math.sin(Date.now() / 150) + 1) / 2;
+            ctx.beginPath();
+            ctx.arc(x, y, 15, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            
+            // Círculo medio
             ctx.beginPath();
             ctx.arc(x, y, 10, 0, Math.PI * 2);
-            ctx.strokeStyle = '#FEF7CD';
+            ctx.strokeStyle = '#EF4444';
             ctx.lineWidth = 3;
             ctx.stroke();
             
-            ctx.font = 'bold 18px Inter'; 
-            ctx.fillStyle = '#F97316';
+            // Texto de ARRITMIA grande
+            ctx.font = 'bold 20px Inter'; 
+            ctx.fillStyle = '#EF4444';
+            ctx.strokeStyle = '#FFF';
+            ctx.lineWidth = 3;
             ctx.textAlign = 'center';
-            ctx.fillText('ARRITMIA', x, y - 25);
+            ctx.strokeText('⚠️ ARRITMIA', x, y - 30);
+            ctx.fillText('⚠️ ARRITMIA', x, y - 30);
+            
+            console.log("🫀 PPGSignalMeter: Marcando pico de arritmia", { x, y, value: peak.value });
           }
           
           ctx.font = 'bold 16px Inter'; 
