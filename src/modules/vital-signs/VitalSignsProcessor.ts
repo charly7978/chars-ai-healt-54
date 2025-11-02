@@ -1,5 +1,6 @@
 import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
 import { SpO2Processor } from './spo2-processor';
+import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import type { MultiChannelOutputs } from '../../types/multichannel';
 
 export interface VitalSignsResult {
@@ -30,6 +31,7 @@ export interface VitalSignsResult {
  */
 export class VitalSignsProcessor {
   private mathProcessor: AdvancedMathematicalProcessor;
+  private arrhythmiaProcessor: ArrhythmiaProcessor;
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
@@ -96,6 +98,12 @@ export class VitalSignsProcessor {
   constructor() {
     console.log("🚀 VitalSignsProcessor: Sistema CORREGIDO con números precisos");
     this.mathProcessor = new AdvancedMathematicalProcessor();
+    this.arrhythmiaProcessor = new ArrhythmiaProcessor();
+    
+    // Configurar callback de detección de arritmias
+    this.arrhythmiaProcessor.setArrhythmiaDetectionCallback((isDetected: boolean) => {
+      console.log(`🫀 VitalSignsProcessor: Arritmia ${isDetected ? 'DETECTADA' : 'normalizada'}`);
+    });
   }
 
   startCalibration(): void {
@@ -206,7 +214,8 @@ export class VitalSignsProcessor {
     }
 
     // Mantener compatibilidad: base morfológica desde canal cardíaco
-    const heartValue = channels.heart?.output ?? 0;
+    const heartChannel = channels['heart' as keyof MultiChannelOutputs];
+    const heartValue = (heartChannel as any)?.output ?? 0;
     this.signalHistory.push(heartValue);
     if (this.signalHistory.length > this.HISTORY_SIZE) {
       this.signalHistory.shift();
@@ -258,29 +267,33 @@ export class VitalSignsProcessor {
     const lipidHist = this.channelHistories.lipids.length > 0 ? this.channelHistories.lipids : heartHist;
 
     // 1. SpO2 desde morfología estable con gating y suavizado
-    if ((channels.spo2?.quality ?? 0) >= this.QUALITY_THRESHOLDS.oxygenSat) {
+    const spo2Channel = channels['spo2' as keyof MultiChannelOutputs];
+    if (((spo2Channel as any)?.quality ?? 0) >= this.QUALITY_THRESHOLDS.oxygenSat) {
       const newSpo2 = this.calculateSpO2Real(spo2Hist);
       const smoothed = this.smoothAndStore('spo2', newSpo2, 85, 100, this.EMA_ALPHA, this.MAX_DELTA.oxygenSat);
       this.measurements.spo2 = smoothed;
     }
 
     // 2. Glucosa con histograma canalizado y valor actual
-    if ((channels.glucose?.quality ?? 0) >= this.QUALITY_THRESHOLDS.glucose) {
-      const glucoseCurrent = channels.glucose?.output ?? 0;
+    const glucoseChannel = channels['glucose' as keyof MultiChannelOutputs];
+    if (((glucoseChannel as any)?.quality ?? 0) >= this.QUALITY_THRESHOLDS.glucose) {
+      const glucoseCurrent = (glucoseChannel as any)?.output ?? 0;
       const newGlucose = this.calculateGlucoseReal(glucoseHist, glucoseCurrent);
       const smoothed = this.smoothAndStore('glucose', newGlucose, 70, 400, this.EMA_ALPHA, this.MAX_DELTA.glucose);
       this.measurements.glucose = smoothed;
     }
 
     // 3. Hemoglobina desde amplitud/frecuencia del canal dedicado
-    if ((channels.hemoglobin?.quality ?? 0) >= this.QUALITY_THRESHOLDS.hemoglobin) {
+    const hemoglobinChannel = channels['hemoglobin' as keyof MultiChannelOutputs];
+    if (((hemoglobinChannel as any)?.quality ?? 0) >= this.QUALITY_THRESHOLDS.hemoglobin) {
       const newHemoglobin = this.calculateHemoglobinReal(hemoHist);
       const smoothed = this.smoothAndStore('hemoglobin', newHemoglobin, 8.0, 20.0, this.EMA_ALPHA, this.MAX_DELTA.hemoglobin);
       this.measurements.hemoglobin = smoothed;
     }
 
     // 4. Presión arterial usando RR + morfología del canal BP
-    if ((channels.bloodPressure?.quality ?? 0) >= this.QUALITY_THRESHOLDS.bloodPressure && rrData && rrData.intervals.length >= 3) {
+    const bpChannel = channels['bloodPressure' as keyof MultiChannelOutputs];
+    if (((bpChannel as any)?.quality ?? 0) >= this.QUALITY_THRESHOLDS.bloodPressure && rrData && rrData.intervals.length >= 3) {
       const pressureResult = this.calculateBloodPressureReal(rrData.intervals, bpHist);
       const systolic = this.smoothAndStore('systolic', pressureResult.systolic, 90, 200, this.EMA_ALPHA, this.MAX_DELTA.systolic);
       const diastolic = this.smoothAndStore('diastolic', pressureResult.diastolic, 60, 120, this.EMA_ALPHA, this.MAX_DELTA.diastolic);
@@ -289,12 +302,33 @@ export class VitalSignsProcessor {
     }
 
     // 5. Lípidos desde turbulencia/viscosidad del canal
-    if ((channels.lipids?.quality ?? 0) >= this.QUALITY_THRESHOLDS.lipids) {
+    const lipidsChannel = channels['lipids' as keyof MultiChannelOutputs];
+    if (((lipidsChannel as any)?.quality ?? 0) >= this.QUALITY_THRESHOLDS.lipids) {
       const lipidResult = this.calculateLipidsReal(lipidHist);
       const chol = this.smoothAndStore('cholesterol', lipidResult.totalCholesterol, 120, 300, this.EMA_ALPHA, this.MAX_DELTA.cholesterol);
       const trig = this.smoothAndStore('triglycerides', lipidResult.triglycerides, 50, 400, this.EMA_ALPHA, this.MAX_DELTA.triglycerides);
       this.measurements.totalCholesterol = chol;
       this.measurements.triglycerides = trig;
+    }
+
+    // 6. Arritmias usando ArrhythmiaProcessor avanzado
+    if (rrData && rrData.intervals.length >= 5) {
+      const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
+      this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
+      this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
+      
+      // Extraer contador de arritmias del status
+      const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
+      if (parts.length > 1) {
+        this.measurements.arrhythmiaCount = parseInt(parts[1]) || 0;
+      }
+      
+      if (arrhythmiaResult.lastArrhythmiaData) {
+        this.measurementHistory.arrhythmiaEvents.push({
+          count: this.measurements.arrhythmiaCount,
+          timestamp: Date.now()
+        });
+      }
     }
   }
 
@@ -365,16 +399,21 @@ export class VitalSignsProcessor {
     this.measurements.totalCholesterol = this.clampAndStore('cholesterol', lipidResult.totalCholesterol, 120, 300);
     this.measurements.triglycerides = this.clampAndStore('triglycerides', lipidResult.triglycerides, 50, 400);
 
-    // 6. Arritmias - Análisis de variabilidad
+    // 6. Arritmias usando ArrhythmiaProcessor avanzado
     if (rrData && rrData.intervals.length >= 5) {
-      const arrhythmias = this.detectArrhythmiasReal(rrData.intervals);
-      this.measurements.arrhythmiaCount = Math.max(0, arrhythmias.count);
-      this.measurements.arrhythmiaStatus = arrhythmias.status;
-      this.measurements.lastArrhythmiaData = arrhythmias.data;
+      const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
+      this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
+      this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
       
-      if (arrhythmias.count > 0) {
+      // Extraer contador de arritmias del status
+      const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
+      if (parts.length > 1) {
+        this.measurements.arrhythmiaCount = parseInt(parts[1]) || 0;
+      }
+      
+      if (arrhythmiaResult.lastArrhythmiaData) {
         this.measurementHistory.arrhythmiaEvents.push({
-          count: arrhythmias.count,
+          count: this.measurements.arrhythmiaCount,
           timestamp: Date.now()
         });
       }
@@ -592,37 +631,7 @@ export class VitalSignsProcessor {
     };
   }
 
-  private detectArrhythmiasReal(intervals: number[]): { count: number; status: string; data: any } {
-    if (intervals.length < 5) return { count: 0, status: "SIN ARRITMIAS|0", data: null };
-
-    const rmssd = this.calculateRMSSD(intervals);
-    const sdnn = this.calculateSDNN(intervals);
-    const variation = this.calculateRRVariation(intervals);
-
-    // Métrica adicional: pNN50 (porcentaje de diferencias sucesivas > 50 ms)
-    let nn50 = 0;
-    for (let i = 1; i < intervals.length; i++) {
-      if (Math.abs(intervals[i] - intervals[i - 1]) > 50) nn50++;
-    }
-    const pnn50 = (nn50 / (intervals.length - 1)) * 100;
-
-    // Umbrales más sensibles y robustos
-    const rmssdThreshold = 35; // ms
-    const cvThreshold = 0.12; // coeficiente de variación aproximado
-    const pnn50Threshold = 20; // %
-
-    const isArrhythmia =
-      rmssd > rmssdThreshold || variation > cvThreshold || pnn50 >= pnn50Threshold;
-
-    const count = isArrhythmia ? Math.max(1, Math.round((pnn50 / 10) + (variation * 10))) : 0;
-    const status = isArrhythmia ? `ARRITMIA DETECTADA|${count}` : `SIN ARRITMIAS|0`;
-
-    const data = isArrhythmia
-      ? { timestamp: Date.now(), rmssd, rrVariation: variation, pnn50 }
-      : null;
-
-    return { count, status, data };
-  }
+  // Método eliminado - ahora usamos ArrhythmiaProcessor directamente
 
   private calculateACComponent(signal: number[]): number {
     const max = Math.max(...signal);
@@ -750,6 +759,7 @@ export class VitalSignsProcessor {
     
     this.signalHistory = [];
     this.isCalibrating = false;
+    this.arrhythmiaProcessor.reset();
 
     return this.measurements.spo2 > 0 ? currentResults : null;
   }
@@ -784,5 +794,6 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.isCalibrating = false;
     this.calibrationSamples = 0;
+    this.arrhythmiaProcessor.reset();
   }
 }
