@@ -141,7 +141,7 @@ const PPGSignalMeter = ({
     }
   }, [arrhythmiaStatus]);
 
-  const detectPeaks = useCallback((points: PPGDataPoint[], now: number) => {
+  const detectPeaks = useCallback((points: PPGDataPoint[], now: number, isArrhythmiaActive: boolean) => {
     if (points.length < PEAK_DETECTION_WINDOW) return;
     
     const potentialPeaks: {index: number, value: number, time: number, isArrhythmia: boolean}[] = [];
@@ -174,11 +174,14 @@ const PPGSignalMeter = ({
       }
       
       if (isPeak && Math.abs(currentPoint.value) > PEAK_THRESHOLD) {
+        // MARCAR COMO ARRÍTMICO SOLO SI HAY ARRITMIA ACTIVA Y ES PICO R
+        const isPeakArrhythmic = isArrhythmiaActive && (now - currentPoint.time < 1500);
+        
         potentialPeaks.push({
           index: i,
           value: currentPoint.value,
           time: currentPoint.time,
-          isArrhythmia: currentPoint.isArrhythmia
+          isArrhythmia: isPeakArrhythmic
         });
       }
     }
@@ -248,34 +251,28 @@ const PPGSignalMeter = ({
     const normalizedValue = (baselineRef.current || 0) - smoothedValue;
     const scaledValue = normalizedValue * verticalScale;
     
-    // DETECCIÓN DE ARRITMIA MEJORADA - más sensible y persistente
-    let isArrhythmia = false;
-    if (arrhythmiaStatus && arrhythmiaStatus.includes("ARRITMIA DETECTADA")) {
-      isArrhythmia = true;
-      lastArrhythmiaTime.current = now;
-      console.log("🫀 PPGSignalMeter: Arritmia ACTIVA detectada", {
-        status: arrhythmiaStatus,
-        rawData: rawArrhythmiaData,
-        timestamp: now
-      });
-    } else if (rawArrhythmiaData && now - rawArrhythmiaData.timestamp < 2000) {
-      // Mantener arritmia visible por 2 segundos después de detección
-      isArrhythmia = true;
-      console.log("🫀 PPGSignalMeter: Arritmia RECIENTE visualizada", {
-        timeSinceDetection: now - rawArrhythmiaData.timestamp
-      });
-    }
-    
+    // DETECCIÓN DE ARRITMIA - NO MARCAR TODOS LOS PUNTOS, SOLO LATIDOS ESPECÍFICOS
+    // La arritmia se marca solo en los picos detectados, no en todos los puntos
     const dataPoint: PPGDataPoint = {
       time: now,
       value: scaledValue,
-      isArrhythmia
+      isArrhythmia: false // Los puntos normales no son arrítmicos por defecto
     };
+    
+    // Actualizar referencia si hay arritmia detectada
+    if (arrhythmiaStatus && arrhythmiaStatus.includes("ARRITMIA DETECTADA")) {
+      lastArrhythmiaTime.current = now;
+      console.log("🫀 PPGSignalMeter: Arritmia detectada - se marcará en picos R", {
+        status: arrhythmiaStatus,
+        timestamp: now
+      });
+    }
     
     dataBufferRef.current.push(dataPoint);
     
     const points = dataBufferRef.current.getPoints();
-    detectPeaks(points, now);
+    const isArrhythmiaActive = arrhythmiaStatus?.includes("ARRITMIA DETECTADA") || false;
+    detectPeaks(points, now, isArrhythmiaActive);
     
     if (points.length > 1) {
       ctx.beginPath();
@@ -302,31 +299,6 @@ const PPGSignalMeter = ({
         }
         
         ctx.lineTo(x2, y2);
-        
-        // VISUALIZACIÓN DE SEGMENTO DE ARRITMIA - MÁS VISIBLE
-        if (point.isArrhythmia || prevPoint.isArrhythmia) {
-          ctx.stroke(); // Terminar segmento verde
-          ctx.beginPath();
-          ctx.strokeStyle = '#EF4444'; // red-500 MÁS BRILLANTE para arritmias
-          ctx.lineWidth = 4; // MÁS GRUESO para arritmias
-          ctx.moveTo(x1, y1);
-          ctx.lineTo(x2, y2);
-          ctx.stroke();
-          
-          // Agregar halo rojo alrededor del segmento
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
-          ctx.lineWidth = 8;
-          ctx.stroke();
-          
-          // Volver a configuración normal
-          ctx.beginPath();
-          ctx.strokeStyle = '#10b981'; // volver a verde
-          ctx.lineWidth = 3;
-          ctx.moveTo(x2, y2);
-          firstPoint = true;
-          
-          console.log("🫀 PPGSignalMeter: Dibujando segmento de arritmia", { x1, y1, x2, y2 });
-        }
       }
       
       ctx.stroke();
@@ -336,14 +308,48 @@ const PPGSignalMeter = ({
         const y = canvas.height / 2 - peak.value;
         
         if (x >= 0 && x <= canvas.width) {
+          // DIBUJAR SEGMENTO ROJO SOLO ALREDEDOR DEL PICO ARRÍTMICO
+          if (peak.isArrhythmia) {
+            // Buscar puntos alrededor del pico para dibujar segmento rojo
+            const peakIndex = points.findIndex(p => Math.abs(p.time - peak.time) < 50);
+            if (peakIndex > 0 && peakIndex < points.length - 1) {
+              const startIndex = Math.max(0, peakIndex - 15);
+              const endIndex = Math.min(points.length - 1, peakIndex + 15);
+              
+              ctx.beginPath();
+              ctx.strokeStyle = '#EF4444';
+              ctx.lineWidth = 5;
+              ctx.lineJoin = 'round';
+              ctx.lineCap = 'round';
+              
+              for (let k = startIndex; k <= endIndex; k++) {
+                const pt = points[k];
+                const px = canvas.width - ((now - pt.time) * canvas.width / WINDOW_WIDTH_MS);
+                const py = canvas.height / 2 - pt.value;
+                
+                if (k === startIndex) {
+                  ctx.moveTo(px, py);
+                } else {
+                  ctx.lineTo(px, py);
+                }
+              }
+              ctx.stroke();
+              
+              // Halo rojo
+              ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
+              ctx.lineWidth = 10;
+              ctx.stroke();
+            }
+          }
+          
+          // Marcador del pico
           ctx.beginPath();
           ctx.arc(x, y, 5, 0, Math.PI * 2);
           ctx.fillStyle = peak.isArrhythmia ? '#DC2626' : '#0EA5E9';
           ctx.fill();
           
-          // MARCADOR DE ARRITMIA MÁS PROMINENTE
+          // Anillo exterior para arritmias
           if (peak.isArrhythmia) {
-            // Círculo exterior grande parpadeante
             const alpha = (Math.sin(Date.now() / 150) + 1) / 2;
             ctx.beginPath();
             ctx.arc(x, y, 15, 0, Math.PI * 2);
@@ -351,29 +357,23 @@ const PPGSignalMeter = ({
             ctx.lineWidth = 4;
             ctx.stroke();
             
-            // Círculo medio
-            ctx.beginPath();
-            ctx.arc(x, y, 10, 0, Math.PI * 2);
-            ctx.strokeStyle = '#EF4444';
-            ctx.lineWidth = 3;
-            ctx.stroke();
-            
-            // Texto de ARRITMIA grande
-            ctx.font = 'bold 20px Inter'; 
+            // Etiqueta de arritmia
+            ctx.font = 'bold 18px Inter'; 
             ctx.fillStyle = '#EF4444';
             ctx.strokeStyle = '#FFF';
             ctx.lineWidth = 3;
             ctx.textAlign = 'center';
-            ctx.strokeText('⚠️ ARRITMIA', x, y - 30);
-            ctx.fillText('⚠️ ARRITMIA', x, y - 30);
+            ctx.strokeText('⚠️', x, y - 25);
+            ctx.fillText('⚠️', x, y - 25);
             
-            console.log("🫀 PPGSignalMeter: Marcando pico de arritmia", { x, y, value: peak.value });
+            console.log("🫀 PPGSignalMeter: Marcando LATIDO arrítmico", { x, y, time: peak.time });
           }
           
-          ctx.font = 'bold 16px Inter'; 
-          ctx.fillStyle = '#000000';
+          // Valor del pico
+          ctx.font = 'bold 14px Inter'; 
+          ctx.fillStyle = peak.isArrhythmia ? '#EF4444' : '#fff';
           ctx.textAlign = 'center';
-          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 15);
+          ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 8);
         }
       });
     }

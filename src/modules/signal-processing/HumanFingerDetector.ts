@@ -127,23 +127,23 @@ export class HumanFingerDetector {
   }
   
   /**
-   * VALIDACIÓN FISIOLÓGICA PRIMARIA - Solo valores humanos posibles
+   * VALIDACIÓN FISIOLÓGICA PRIMARIA - OPTIMIZADA PARA DETECCIÓN ESTABLE
    */
   private isPhysiologicallyValid(r: number, g: number, b: number): boolean {
-    // Rangos fisiológicos humanos más permisivos para mejor detección
+    // Rangos muy permisivos para evitar pérdidas de detección
     const total = r + g + b;
-    if (total < 50 || total > 700) return false; // Más amplio
+    if (total < 30 || total > 800) return false;
     
-    // Ratio R/G más permisivo para diferentes tonos de piel
+    // Ratio R/G muy permisivo para todos los tonos de piel
     const rgRatio = r / (g + 1);
-    if (rgRatio < 0.6 || rgRatio > 3.5) return false; // Más amplio
+    if (rgRatio < 0.4 || rgRatio > 4.0) return false;
     
-    // Componente roja menos estricta
-    if (r < Math.max(g, b) * 0.7) return false; // Menos estricto
+    // Componente roja más permisiva
+    if (r < Math.max(g, b) * 0.5) return false;
     
-    // Varianza mínima reducida para mayor sensibilidad
+    // Varianza mínima muy reducida
     const variance = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
-    if (variance < 15) return false; // Más permisivo
+    if (variance < 8) return false;
     
     return true;
   }
@@ -406,20 +406,25 @@ export class HumanFingerDetector {
   }
   
   /**
-   * DECISIÓN FINAL DE DETECCIÓN HUMANA
+   * DECISIÓN FINAL DE DETECCIÓN HUMANA - OPTIMIZADA PARA ESTABILIDAD
    */
   private makeHumanFingerDecision(confidence: number): boolean {
-    // Umbral más permisivo para mejor detección de dedos reales
-    let threshold = 0.50; // Base equilibrada; reduce falsos positivos
+    // Umbral base más bajo para detección estable
+    let threshold = 0.35;
     
-    // Reducir umbral si hay detecciones previas válidas recientes
-    if (Date.now() - this.lastValidHumanTime < 5000) {
-      threshold = 0.40;
+    // Reducir aún más si hay detecciones previas
+    if (Date.now() - this.lastValidHumanTime < 8000) {
+      threshold = 0.28;
     }
     
-    // Aumentar umbral solo si hay muchas detecciones falsas
-    if (this.consecutiveNonHumanDetections > 15) {
-      threshold = 0.65;
+    // Bonificación por detecciones consecutivas
+    if (this.consecutiveHumanDetections > 5) {
+      threshold = 0.25;
+    }
+    
+    // Aumentar solo con muchas fallas
+    if (this.consecutiveNonHumanDetections > 20) {
+      threshold = 0.55;
     }
     
     return confidence >= threshold;
