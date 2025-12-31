@@ -127,23 +127,40 @@ export class HumanFingerDetector {
   }
   
   /**
-   * VALIDACIÓN FISIOLÓGICA PRIMARIA - OPTIMIZADA PARA DETECCIÓN ESTABLE
+   * VALIDACIÓN FISIOLÓGICA PRIMARIA - EQUILIBRADA PARA REDUCIR FALSOS POSITIVOS
+   * Ahora más estricta para evitar detecciones falsas pero aún permisiva para dedos reales
    */
   private isPhysiologicallyValid(r: number, g: number, b: number): boolean {
-    // Rangos muy permisivos para evitar pérdidas de detección
+    // 1. VALIDACIÓN BÁSICA DE INTENSIDAD
     const total = r + g + b;
-    if (total < 30 || total > 800) return false;
+    // Dedo sobre cámara con flash debe tener alta intensidad roja
+    if (total < 80 || total > 700) return false;
     
-    // Ratio R/G muy permisivo para todos los tonos de piel
+    // 2. RATIO R/G - CRÍTICO PARA DETECCIÓN DE PIEL CON SANGRE
+    // Sangre oxigenada absorbe verde, refleja rojo - ratio típico 1.2-2.5
     const rgRatio = r / (g + 1);
-    if (rgRatio < 0.4 || rgRatio > 4.0) return false;
+    if (rgRatio < 0.9 || rgRatio > 3.5) return false;
     
-    // Componente roja más permisiva
-    if (r < Math.max(g, b) * 0.5) return false;
+    // 3. DOMINANCIA DEL ROJO - ESENCIAL
+    // En dedo real con flash, rojo SIEMPRE domina significativamente
+    if (r < g * 1.1 || r < b * 1.5) return false;
     
-    // Varianza mínima muy reducida
+    // 4. VERDE DEBE SER MENOR QUE ROJO
+    // Absorción de hemoglobina causa esto
+    if (g >= r * 0.95) return false;
+    
+    // 5. AZUL DEBE SER EL MÁS BAJO
+    // Tejido humano absorbe mucho el azul
+    if (b > g * 1.2 || b > r * 0.7) return false;
+    
+    // 6. VARIANZA MÍNIMA - INDICA TEXTURA DE TEJIDO VIVO
     const variance = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
-    if (variance < 8) return false;
+    if (variance < 20) return false; // Más estricto para evitar superficies uniformes
+    
+    // 7. PATRÓN ESPECÍFICO DE TEJIDO HUMANO CON SANGRE
+    // La relación R > G > B es típica de piel iluminada
+    const hasBloodPattern = r > g && g > b * 0.8;
+    if (!hasBloodPattern) return false;
     
     return true;
   }
@@ -173,13 +190,24 @@ export class HumanFingerDetector {
     const biophysicalScore = Math.min(1.0, Math.max(0, absorptionPattern / 2.5));
     
     // Coherencia óptica - patrones característicos de tejido vivo
+    // Dedo real con flash: rojo domina 40-60% del total
     const redDominance = r / total;
-    const opticalCoherence = (redDominance >= 0.28 && redDominance <= 0.48) ? 1.0 : 
-                            Math.max(0, 1 - Math.abs(redDominance - 0.38) * 3);
+    const greenDominance = g / total;
+    const blueDominance = b / total;
     
-    // Validación de color de piel humana
-    const skinColorValid = redDominance >= 0.25 && redDominance <= 0.55 && 
-                          biophysicalScore >= 0.3 && opticalCoherence >= 0.4;
+    // Patrón esperado: R > G > B, con R entre 40-60%, G entre 25-40%, B entre 10-25%
+    const opticalCoherence = (
+      redDominance >= 0.35 && redDominance <= 0.65 &&
+      greenDominance >= 0.20 && greenDominance <= 0.45 &&
+      blueDominance >= 0.05 && blueDominance <= 0.30
+    ) ? 1.0 : Math.max(0, 1 - Math.abs(redDominance - 0.50) * 2);
+    
+    // Validación de color de piel humana - MÁS ESTRICTA
+    const skinColorValid = 
+      redDominance >= 0.38 && redDominance <= 0.62 && 
+      biophysicalScore >= 0.35 && 
+      opticalCoherence >= 0.5 &&
+      r > g && g >= b * 0.7; // Patrón R > G >= B
     
     return {
       biophysicalScore,
@@ -205,9 +233,11 @@ export class HumanFingerDetector {
     const pulsatility = this.calculatePulsatility();
     const bloodFlowIndicator = Math.min(1.0, pulsatility * perfusionIndex / 2);
     
-    // Validación de perfusión más permisiva para dedos reales
-    const perfusionValid = perfusionIndex >= 0.2 && perfusionIndex <= 20.0 && 
-                          bloodFlowIndicator >= 0.1; // Más permisivo
+    // Validación de perfusión - EQUILIBRADA
+    // Índice de perfusión normal: 0.5-8%, muy alto indica problema
+    const perfusionValid = perfusionIndex >= 0.3 && perfusionIndex <= 15.0 && 
+                          bloodFlowIndicator >= 0.15 &&
+                          pulsatility >= 0.1; // Debe haber pulsación detectable
     
     return {
       perfusionIndex: Math.max(0, perfusionIndex),
@@ -406,25 +436,29 @@ export class HumanFingerDetector {
   }
   
   /**
-   * DECISIÓN FINAL DE DETECCIÓN HUMANA - OPTIMIZADA PARA ESTABILIDAD
+   * DECISIÓN FINAL DE DETECCIÓN HUMANA - EQUILIBRADA PARA EVITAR FALSOS POSITIVOS
    */
   private makeHumanFingerDecision(confidence: number): boolean {
-    // Umbral base más bajo para detección estable
-    let threshold = 0.35;
+    // Umbral base EQUILIBRADO - ni muy bajo ni muy alto
+    let threshold = 0.45;
     
-    // Reducir aún más si hay detecciones previas
-    if (Date.now() - this.lastValidHumanTime < 8000) {
-      threshold = 0.28;
+    // Histéresis: si ya detectamos dedo, ser más permisivo para mantener estabilidad
+    if (Date.now() - this.lastValidHumanTime < 5000) {
+      threshold = 0.38;
     }
     
-    // Bonificación por detecciones consecutivas
-    if (this.consecutiveHumanDetections > 5) {
-      threshold = 0.25;
+    // Bonificación por detecciones consecutivas - indica dedo real estable
+    if (this.consecutiveHumanDetections >= 10) {
+      threshold = 0.35;
+    } else if (this.consecutiveHumanDetections >= 5) {
+      threshold = 0.40;
     }
     
-    // Aumentar solo con muchas fallas
-    if (this.consecutiveNonHumanDetections > 20) {
+    // Penalización por muchas fallas consecutivas - posible falso positivo previo
+    if (this.consecutiveNonHumanDetections > 15) {
       threshold = 0.55;
+    } else if (this.consecutiveNonHumanDetections > 8) {
+      threshold = 0.50;
     }
     
     return confidence >= threshold;
