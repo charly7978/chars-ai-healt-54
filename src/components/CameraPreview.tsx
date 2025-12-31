@@ -64,11 +64,11 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
   };
 
   return (
-    <div className="fixed bottom-28 left-3 z-40 flex flex-col items-start gap-1">
-      {/* Ventana de previsualización compacta */}
+    <div className="fixed top-20 right-2 z-30 flex flex-col items-end gap-1">
+      {/* Ventana de previsualización pequeña - esquina superior derecha */}
       <div 
-        className={`relative rounded-lg overflow-hidden shadow-xl transition-all duration-300 ${getStatusColor()} ${getStatusBg()} border-2`}
-        style={{ width: '80px', height: '80px' }}
+        className={`relative rounded-md overflow-hidden shadow-lg transition-all duration-300 ${getStatusColor()} ${getStatusBg()} border`}
+        style={{ width: '56px', height: '56px' }}
       >
         {/* Video de la cámara */}
         <video
@@ -76,20 +76,20 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
           playsInline
           muted
           autoPlay
-          className="w-full h-full object-cover opacity-80"
+          className="w-full h-full object-cover opacity-75"
         />
         
-        {/* Overlay de estado */}
+        {/* Overlay de estado minimalista */}
         {showGuide && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50">
-            <span className="text-white text-[8px] font-bold text-center px-1 leading-tight">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+            <span className="text-white text-[6px] font-semibold text-center leading-tight">
               {getStatusText()}
             </span>
           </div>
         )}
 
-        {/* Barra de calidad */}
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
+        {/* Barra de calidad mini */}
+        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-black/50">
           <div 
             className={`h-full transition-all duration-300 ${
               signalQuality >= 70 ? 'bg-green-400' :
@@ -98,20 +98,13 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
             style={{ width: `${Math.min(100, signalQuality)}%` }}
           />
         </div>
-
-        {/* Pulso indicador cuando detecta bien */}
-        {isFingerDetected && signalQuality > 50 && (
-          <div className="absolute top-1 right-1">
-            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          </div>
-        )}
       </div>
 
-      {/* Texto de ayuda breve */}
+      {/* Texto de ayuda breve solo si no hay dedo */}
       {!isFingerDetected && (
-        <div className="bg-black/70 rounded px-2 py-1 max-w-[90px]">
-          <p className="text-white text-[7px] leading-tight">
-            Cubra cámara con dedo
+        <div className="bg-black/60 rounded px-1.5 py-0.5">
+          <p className="text-white text-[6px] leading-tight">
+            Cubra cámara
           </p>
         </div>
       )}
