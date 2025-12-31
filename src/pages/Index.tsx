@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
+import CameraPreview from "@/components/CameraPreview";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
@@ -42,6 +43,7 @@ const Index = () => {
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   
   // CONTROL ÚNICO DE ESTADO - EVITA INICIALIZACIONES PARALELAS ABSOLUTAMENTE
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
@@ -337,6 +339,9 @@ const Index = () => {
 
   // MANEJO ÚNICO DEL STREAM
   const handleStreamReady = (stream: MediaStream) => {
+    // Guardar stream para previsualización
+    setCameraStream(stream);
+    
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
     console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
@@ -553,6 +558,14 @@ const Index = () => {
       )}
 
       <div className="flex-1 relative">
+        {/* VENTANA DE PREVISUALIZACIÓN DE CÁMARA */}
+        <CameraPreview 
+          stream={cameraStream}
+          isFingerDetected={lastSignal?.fingerDetected || false}
+          signalQuality={signalQuality}
+          isVisible={isCameraOn}
+        />
+
         <div className="absolute inset-0">
           <CameraView 
             onStreamReady={handleStreamReady}
