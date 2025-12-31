@@ -1,7 +1,7 @@
 /**
  * @file CameraPreview.tsx
  * @description Ventana pequeña de previsualización de cámara para guiar al usuario
- * Muestra el estado de detección de dedo en tiempo real
+ * Ubicada en esquina inferior izquierda para no tapar indicadores superiores
  */
 
 import React, { useRef, useEffect, useState } from "react";
@@ -29,10 +29,10 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
     }
   }, [stream]);
 
-  // Ocultar guía después de detección exitosa por 3 segundos
+  // Ocultar guía después de detección exitosa estable
   useEffect(() => {
-    if (isFingerDetected && signalQuality > 50) {
-      const timer = setTimeout(() => setShowGuide(false), 3000);
+    if (isFingerDetected && signalQuality > 60) {
+      const timer = setTimeout(() => setShowGuide(false), 4000);
       return () => clearTimeout(timer);
     } else {
       setShowGuide(true);
@@ -43,32 +43,32 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
 
   // Determinar estado visual
   const getStatusColor = () => {
-    if (!isFingerDetected) return "border-red-500 bg-red-500/20";
-    if (signalQuality < 40) return "border-yellow-500 bg-yellow-500/20";
-    if (signalQuality < 70) return "border-blue-500 bg-blue-500/20";
-    return "border-green-500 bg-green-500/20";
+    if (!isFingerDetected) return "border-red-500";
+    if (signalQuality < 40) return "border-yellow-500";
+    if (signalQuality < 70) return "border-blue-400";
+    return "border-green-500";
+  };
+
+  const getStatusBg = () => {
+    if (!isFingerDetected) return "bg-red-900/40";
+    if (signalQuality < 40) return "bg-yellow-900/40";
+    if (signalQuality < 70) return "bg-blue-900/40";
+    return "bg-green-900/40";
   };
 
   const getStatusText = () => {
-    if (!isFingerDetected) return "Coloque el dedo";
-    if (signalQuality < 40) return "Ajuste posición";
-    if (signalQuality < 70) return "Mejorando...";
-    return "¡Señal óptima!";
-  };
-
-  const getStatusIcon = () => {
-    if (!isFingerDetected) return "👆";
-    if (signalQuality < 40) return "⚠️";
-    if (signalQuality < 70) return "📶";
-    return "✅";
+    if (!isFingerDetected) return "SIN DEDO";
+    if (signalQuality < 40) return "AJUSTE";
+    if (signalQuality < 70) return "LEYENDO...";
+    return "ÓPTIMO";
   };
 
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col items-end gap-2">
-      {/* Ventana de previsualización */}
+    <div className="fixed bottom-28 left-3 z-40 flex flex-col items-start gap-1">
+      {/* Ventana de previsualización compacta */}
       <div 
-        className={`relative rounded-xl overflow-hidden shadow-2xl transition-all duration-300 ${getStatusColor()} border-4`}
-        style={{ width: '120px', height: '120px' }}
+        className={`relative rounded-lg overflow-hidden shadow-xl transition-all duration-300 ${getStatusColor()} ${getStatusBg()} border-2`}
+        style={{ width: '80px', height: '80px' }}
       >
         {/* Video de la cámara */}
         <video
@@ -76,47 +76,42 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
           playsInline
           muted
           autoPlay
-          className="w-full h-full object-cover"
-          style={{ transform: 'scaleX(-1)' }}
+          className="w-full h-full object-cover opacity-80"
         />
         
-        {/* Overlay de guía cuando no hay dedo detectado */}
+        {/* Overlay de estado */}
         {showGuide && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm">
-            <div className="text-3xl mb-1 animate-bounce">
-              {getStatusIcon()}
-            </div>
-            <span className="text-white text-[10px] font-bold text-center px-2 leading-tight">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50">
+            <span className="text-white text-[8px] font-bold text-center px-1 leading-tight">
               {getStatusText()}
             </span>
           </div>
         )}
 
-        {/* Indicador de calidad */}
-        <div className="absolute bottom-0 left-0 right-0 h-2 bg-black/50">
+        {/* Barra de calidad */}
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/60">
           <div 
             className={`h-full transition-all duration-300 ${
-              signalQuality >= 70 ? 'bg-green-500' :
-              signalQuality >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+              signalQuality >= 70 ? 'bg-green-400' :
+              signalQuality >= 40 ? 'bg-yellow-400' : 'bg-red-400'
             }`}
             style={{ width: `${Math.min(100, signalQuality)}%` }}
           />
         </div>
 
-        {/* Indicador de pulso cuando detecta */}
+        {/* Pulso indicador cuando detecta bien */}
         {isFingerDetected && signalQuality > 50 && (
           <div className="absolute top-1 right-1">
-            <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
           </div>
         )}
       </div>
 
-      {/* Instrucciones adicionales */}
+      {/* Texto de ayuda breve */}
       {!isFingerDetected && (
-        <div className="bg-black/80 backdrop-blur-sm rounded-lg px-3 py-2 max-w-[160px]">
-          <p className="text-white text-[9px] leading-tight text-center">
-            Cubra completamente la cámara trasera con su dedo índice. 
-            Active el flash para mejor detección.
+        <div className="bg-black/70 rounded px-2 py-1 max-w-[90px]">
+          <p className="text-white text-[7px] leading-tight">
+            Cubra cámara con dedo
           </p>
         </div>
       )}

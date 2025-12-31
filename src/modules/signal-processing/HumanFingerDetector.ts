@@ -127,40 +127,47 @@ export class HumanFingerDetector {
   }
   
   /**
-   * VALIDACIÓN FISIOLÓGICA PRIMARIA - EQUILIBRADA PARA REDUCIR FALSOS POSITIVOS
-   * Ahora más estricta para evitar detecciones falsas pero aún permisiva para dedos reales
+   * VALIDACIÓN FISIOLÓGICA PRIMARIA - MUY ROBUSTA ANTI FALSOS POSITIVOS
+   * Criterios estrictos basados en física de absorción de hemoglobina
    */
   private isPhysiologicallyValid(r: number, g: number, b: number): boolean {
-    // 1. VALIDACIÓN BÁSICA DE INTENSIDAD
+    // 1. INTENSIDAD TOTAL - Dedo con flash debe ser brillante
     const total = r + g + b;
-    // Dedo sobre cámara con flash debe tener alta intensidad roja
-    if (total < 80 || total > 700) return false;
+    if (total < 120 || total > 650) return false;
     
-    // 2. RATIO R/G - CRÍTICO PARA DETECCIÓN DE PIEL CON SANGRE
-    // Sangre oxigenada absorbe verde, refleja rojo - ratio típico 1.2-2.5
+    // 2. ROJO DEBE SER DOMINANTE - Ley de Beer-Lambert
+    // Hemoglobina absorbe verde/azul, transmite rojo
+    if (r < 60) return false; // Mínimo absoluto de rojo
+    
+    // 3. RATIO R/G ESTRICTO - Tejido con sangre: 1.3-2.8
     const rgRatio = r / (g + 1);
-    if (rgRatio < 0.9 || rgRatio > 3.5) return false;
+    if (rgRatio < 1.15 || rgRatio > 3.0) return false;
     
-    // 3. DOMINANCIA DEL ROJO - ESENCIAL
-    // En dedo real con flash, rojo SIEMPRE domina significativamente
-    if (r < g * 1.1 || r < b * 1.5) return false;
+    // 4. RATIO R/B ESTRICTO - Rojo muy superior a azul
+    const rbRatio = r / (b + 1);
+    if (rbRatio < 1.8 || rbRatio > 5.0) return false;
     
-    // 4. VERDE DEBE SER MENOR QUE ROJO
-    // Absorción de hemoglobina causa esto
-    if (g >= r * 0.95) return false;
+    // 5. PATRÓN OBLIGATORIO: R > G > B * 0.9
+    if (!(r > g && g > b * 0.85)) return false;
     
-    // 5. AZUL DEBE SER EL MÁS BAJO
-    // Tejido humano absorbe mucho el azul
-    if (b > g * 1.2 || b > r * 0.7) return false;
+    // 6. DIFERENCIA MÍNIMA R-G (indica absorción real de hemoglobina)
+    const rgDiff = r - g;
+    if (rgDiff < 15) return false;
     
-    // 6. VARIANZA MÍNIMA - INDICA TEXTURA DE TEJIDO VIVO
-    const variance = Math.abs(r - g) + Math.abs(g - b) + Math.abs(r - b);
-    if (variance < 20) return false; // Más estricto para evitar superficies uniformes
+    // 7. AZUL LIMITADO - Tejido absorbe mucho azul
+    if (b > g * 0.95) return false;
+    if (b > r * 0.55) return false;
     
-    // 7. PATRÓN ESPECÍFICO DE TEJIDO HUMANO CON SANGRE
-    // La relación R > G > B es típica de piel iluminada
-    const hasBloodPattern = r > g && g > b * 0.8;
-    if (!hasBloodPattern) return false;
+    // 8. PROPORCIÓN ROJA DEL TOTAL - Debe ser 42-62%
+    const redProportion = r / total;
+    if (redProportion < 0.40 || redProportion > 0.65) return false;
+    
+    // 9. COHERENCIA DE TEJIDO VIVO
+    const greenProportion = g / total;
+    const blueProportion = b / total;
+    // Verde: 25-40%, Azul: 8-25%
+    if (greenProportion < 0.22 || greenProportion > 0.42) return false;
+    if (blueProportion < 0.06 || blueProportion > 0.28) return false;
     
     return true;
   }
@@ -313,9 +320,10 @@ export class HumanFingerDetector {
     const redVariance = this.calculateVariance(recent.map(item => item.redValue));
     const perfusionVariance = this.calculateVariance(recent.map(item => item.perfusionIndex));
     
-    // Consistencia debe ser estable pero con variación fisiológica
-    const consistency = Math.max(0, 1 - (redVariance / 400) - (perfusionVariance / 4));
-    const temporalValid = consistency >= 0.4 && redVariance >= 10; // Mínima variación necesaria
+    // Consistencia debe ser estable pero con variación fisiológica mínima
+    const consistency = Math.max(0, 1 - (redVariance / 350) - (perfusionVariance / 3.5));
+    // Variación mínima necesaria indica pulsación real, no imagen estática
+    const temporalValid = consistency >= 0.45 && redVariance >= 15 && redVariance <= 800;
     
     return { consistency, temporalValid };
   }
