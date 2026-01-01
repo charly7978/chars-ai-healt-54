@@ -1,4 +1,3 @@
-import { AdvancedMathematicalProcessor } from './AdvancedMathematicalProcessor';
 import { SpO2Processor } from './spo2-processor';
 import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import type { MultiChannelOutputs } from '../../types/multichannel';
@@ -30,7 +29,6 @@ export interface VitalSignsResult {
  * PROCESADOR CORREGIDO CON NÚMEROS PRECISOS Y PONDERADO FINAL
  */
 export class VitalSignsProcessor {
-  private mathProcessor: AdvancedMathematicalProcessor;
   private arrhythmiaProcessor: ArrhythmiaProcessor;
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED = 25;
@@ -96,18 +94,19 @@ export class VitalSignsProcessor {
   private readonly CHANNEL_HISTORY_SIZE = 50;
   
   constructor() {
-    console.log("🚀 VitalSignsProcessor: Sistema CORREGIDO con números precisos");
-    this.mathProcessor = new AdvancedMathematicalProcessor();
+    console.log("🚀 VitalSignsProcessor: Inicializado");
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
     
     // Configurar callback de detección de arritmias
     this.arrhythmiaProcessor.setArrhythmiaDetectionCallback((isDetected: boolean) => {
-      console.log(`🫀 VitalSignsProcessor: Arritmia ${isDetected ? 'DETECTADA' : 'normalizada'}`);
+      if (isDetected) {
+        console.log('🫀 Arritmia detectada');
+      }
     });
   }
 
   startCalibration(): void {
-    console.log("🎯 VitalSignsProcessor: Iniciando calibración");
+    this.isCalibrating = true;
     this.isCalibrating = true;
     this.calibrationSamples = 0;
     
@@ -141,7 +140,6 @@ export class VitalSignsProcessor {
   }
 
   forceCalibrationCompletion(): void {
-    console.log("⚡ VitalSignsProcessor: Forzando finalización de calibración");
     this.isCalibrating = false;
     this.calibrationSamples = this.CALIBRATION_REQUIRED;
   }
@@ -372,9 +370,6 @@ export class VitalSignsProcessor {
     signalValue: number, 
     rrData?: { intervals: number[], lastPeakTime: number | null }
   ): void {
-    
-    console.log("🔬 VitalSignsProcessor: Calculando signos vitales con formato correcto");
-
     // 1. SpO2 - FORMATO: 95 (entero, %)
     const newSpo2 = this.calculateSpO2Real(this.signalHistory);
     this.measurements.spo2 = this.clampAndStore('spo2', newSpo2, 85, 100);
@@ -418,13 +413,6 @@ export class VitalSignsProcessor {
         });
       }
     }
-
-    console.log("📊 Mediciones con formato correcto:", {
-      spo2: `${this.formatSpO2(this.measurements.spo2)}%`,
-      glucosa: `${this.formatGlucose(this.measurements.glucose)} mg/dL`,
-      hemoglobina: `${this.formatHemoglobin(this.measurements.hemoglobin)} g/dL`,
-      presión: `${this.formatPressure(this.measurements.systolicPressure)}/${this.formatPressure(this.measurements.diastolicPressure)} mmHg`
-    });
   }
 
   /**
@@ -497,9 +485,10 @@ export class VitalSignsProcessor {
 
   /**
    * PONDERADO FINAL - OBTENER EL VALOR MÁS REPRESENTATIVO
+  /**
+   * PONDERADO FINAL - OBTENER EL VALOR MÁS REPRESENTATIVO
    */
   public getWeightedFinalResults(): VitalSignsResult {
-    console.log("📊 Calculando resultados finales ponderados");
     
     return {
       spo2: this.formatSpO2(this.calculateWeightedAverage(this.measurementHistory.spo2Values)),
@@ -806,8 +795,6 @@ export class VitalSignsProcessor {
   }
 
   reset(): VitalSignsResult | null {
-    console.log("🔄 VitalSignsProcessor: Reset preservando últimas mediciones válidas");
-    
     const currentResults = this.getWeightedFinalResults();
     
     this.signalHistory = [];
@@ -818,7 +805,6 @@ export class VitalSignsProcessor {
   }
 
   fullReset(): void {
-    console.log("🗑️ VitalSignsProcessor: Reset COMPLETO");
     
     this.measurements = {
       spo2: Number.NaN,
