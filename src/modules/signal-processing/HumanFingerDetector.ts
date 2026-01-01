@@ -127,53 +127,53 @@ export class HumanFingerDetector {
   }
   
   /**
-   * VALIDACIÓN FISIOLÓGICA ULTRA-ESTRICTA - SOLO DEDOS HUMANOS REALES
-   * Criterios basados en física de absorción de hemoglobina + anti falsos positivos
+   * VALIDACIÓN FISIOLÓGICA EQUILIBRADA - DETECTA DEDOS HUMANOS REALES
+   * Criterios basados en física de absorción de hemoglobina + equilibrio sensibilidad/especificidad
    */
   private isPhysiologicallyValid(r: number, g: number, b: number): boolean {
-    // 1. INTENSIDAD TOTAL - Dedo cubriendo cámara con flash debe ser MUY brillante
+    // 1. INTENSIDAD TOTAL - Dedo cubriendo cámara con flash
     const total = r + g + b;
-    if (total < 200 || total > 680) return false; // Más estricto
+    if (total < 120 || total > 720) return false; // Rango más amplio
     
-    // 2. ROJO DEBE SER DOMINANTE ABSOLUTO - Ley de Beer-Lambert
+    // 2. ROJO DEBE SER DOMINANTE - Ley de Beer-Lambert
     // Hemoglobina oxigenada absorbe verde/azul, transmite rojo
-    if (r < 100) return false; // Mínimo elevado para dedo real
+    if (r < 60) return false; // Mínimo reducido para mayor sensibilidad
     
-    // 3. RATIO R/G MUY ESTRICTO - Tejido humano con sangre: 1.35-2.5
+    // 3. RATIO R/G EQUILIBRADO - Tejido humano con sangre: 1.15-3.2
     const rgRatio = r / (g + 1);
-    if (rgRatio < 1.35 || rgRatio > 2.5) return false;
+    if (rgRatio < 1.15 || rgRatio > 3.2) return false;
     
-    // 4. RATIO R/B MUY ESTRICTO - Rojo muy superior a azul en dedo
+    // 4. RATIO R/B EQUILIBRADO - Rojo superior a azul en dedo
     const rbRatio = r / (b + 1);
-    if (rbRatio < 2.2 || rbRatio > 6.0) return false;
+    if (rbRatio < 1.8 || rbRatio > 8.0) return false;
     
-    // 5. PATRÓN OBLIGATORIO: R >> G > B (dedo humano real)
-    if (!(r > g * 1.25 && g > b * 1.1)) return false;
+    // 5. PATRÓN BÁSICO: R > G (dedo humano real)
+    if (!(r > g * 1.1)) return false;
     
-    // 6. DIFERENCIA MÍNIMA R-G AUMENTADA (indica perfusión real)
+    // 6. DIFERENCIA MÍNIMA R-G (indica perfusión real)
     const rgDiff = r - g;
-    if (rgDiff < 25) return false; // Aumentado para evitar objetos
+    if (rgDiff < 12) return false; // Reducido para mejor sensibilidad
     
-    // 7. AZUL MUY LIMITADO - Dedo absorbe casi todo el azul
-    if (b > g * 0.75) return false;
-    if (b > r * 0.40) return false;
+    // 7. AZUL LIMITADO - Dedo absorbe azul
+    if (b > g * 0.90) return false;
+    if (b > r * 0.55) return false;
     
-    // 8. PROPORCIÓN ROJA DEL TOTAL - Dedo humano: 45-60%
+    // 8. PROPORCIÓN ROJA DEL TOTAL - Dedo humano: 38-68%
     const redProportion = r / total;
-    if (redProportion < 0.45 || redProportion > 0.62) return false;
+    if (redProportion < 0.38 || redProportion > 0.68) return false;
     
-    // 9. COHERENCIA DE TEJIDO VIVO ESTRICTA
+    // 9. COHERENCIA DE TEJIDO VIVO
     const greenProportion = g / total;
     const blueProportion = b / total;
-    // Dedo humano: Verde: 26-38%, Azul: 8-20%
-    if (greenProportion < 0.26 || greenProportion > 0.38) return false;
-    if (blueProportion < 0.08 || blueProportion > 0.20) return false;
+    // Dedo humano: Verde: 20-42%, Azul: 5-25%
+    if (greenProportion < 0.20 || greenProportion > 0.42) return false;
+    if (blueProportion < 0.05 || blueProportion > 0.25) return false;
     
-    // 10. VERIFICACIÓN ADICIONAL DE SATURACIÓN (evita objetos planos)
+    // 10. VERIFICACIÓN DE SATURACIÓN (evita objetos planos)
     const maxChannel = Math.max(r, g, b);
     const minChannel = Math.min(r, g, b);
     const saturation = (maxChannel - minChannel) / (maxChannel + 1);
-    if (saturation < 0.25 || saturation > 0.70) return false;
+    if (saturation < 0.15 || saturation > 0.80) return false;
     
     return true;
   }
@@ -246,11 +246,11 @@ export class HumanFingerDetector {
     const pulsatility = this.calculatePulsatility();
     const bloodFlowIndicator = Math.min(1.0, pulsatility * perfusionIndex / 2);
     
-    // Validación de perfusión - MÁS ESTRICTA
-    // Índice de perfusión normal dedo humano: 0.5-10%
-    const perfusionValid = perfusionIndex >= 0.5 && perfusionIndex <= 12.0 && 
-                          bloodFlowIndicator >= 0.25 &&
-                          pulsatility >= 0.2; // Debe haber pulsación detectable clara
+    // Validación de perfusión - EQUILIBRADA
+    // Índice de perfusión normal dedo humano: 0.2-15%
+    const perfusionValid = perfusionIndex >= 0.2 && perfusionIndex <= 15.0 && 
+                          bloodFlowIndicator >= 0.10 &&
+                          pulsatility >= 0.08; // Pulsación mínima detectable
     
     return {
       perfusionIndex: Math.max(0, perfusionIndex),
@@ -327,9 +327,9 @@ export class HumanFingerDetector {
     const perfusionVariance = this.calculateVariance(recent.map(item => item.perfusionIndex));
     
     // Consistencia debe ser estable pero con variación fisiológica mínima
-    const consistency = Math.max(0, 1 - (redVariance / 350) - (perfusionVariance / 3.5));
+    const consistency = Math.max(0, 1 - (redVariance / 500) - (perfusionVariance / 5.0));
     // Variación mínima necesaria indica pulsación real, no imagen estática
-    const temporalValid = consistency >= 0.45 && redVariance >= 15 && redVariance <= 800;
+    const temporalValid = consistency >= 0.30 && redVariance >= 5 && redVariance <= 1200;
     
     return { consistency, temporalValid };
   }
@@ -450,29 +450,29 @@ export class HumanFingerDetector {
   }
   
   /**
-   * DECISIÓN FINAL DE DETECCIÓN HUMANA - MUY ESTRICTA ANTI FALSOS POSITIVOS
+   * DECISIÓN FINAL DE DETECCIÓN HUMANA - EQUILIBRADA
    */
   private makeHumanFingerDecision(confidence: number): boolean {
-    // Umbral base ELEVADO para evitar falsos positivos
-    let threshold = 0.55;
+    // Umbral base equilibrado
+    let threshold = 0.42;
     
-    // Histéresis moderada: si ya detectamos dedo estable, ser algo más permisivo
-    if (Date.now() - this.lastValidHumanTime < 3000 && this.consecutiveHumanDetections >= 15) {
+    // Histéresis: si ya detectamos dedo estable, ser más permisivo
+    if (Date.now() - this.lastValidHumanTime < 5000 && this.consecutiveHumanDetections >= 8) {
+      threshold = 0.35;
+    }
+    
+    // Bonificación con detecciones consecutivas estables
+    if (this.consecutiveHumanDetections >= 15) {
+      threshold = 0.32;
+    } else if (this.consecutiveHumanDetections >= 8) {
+      threshold = 0.38;
+    }
+    
+    // Penalización moderada por fallas consecutivas
+    if (this.consecutiveNonHumanDetections > 15) {
+      threshold = 0.55;
+    } else if (this.consecutiveNonHumanDetections > 8) {
       threshold = 0.48;
-    }
-    
-    // Bonificación solo con MUCHAS detecciones consecutivas estables
-    if (this.consecutiveHumanDetections >= 25) {
-      threshold = 0.45;
-    } else if (this.consecutiveHumanDetections >= 15) {
-      threshold = 0.50;
-    }
-    
-    // Penalización fuerte por fallas consecutivas
-    if (this.consecutiveNonHumanDetections > 10) {
-      threshold = 0.65;
-    } else if (this.consecutiveNonHumanDetections > 5) {
-      threshold = 0.60;
     }
     
     return confidence >= threshold;
