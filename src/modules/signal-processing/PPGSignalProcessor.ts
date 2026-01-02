@@ -83,7 +83,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.biophysicalValidator = new BiophysicalValidator();
     this.frameProcessor = new FrameProcessor({
       TEXTURE_GRID_SIZE: 16,
-      ROI_SIZE_FACTOR: 0.85
+      ROI_SIZE_FACTOR: 0.90 // ROI muy grande para capturar todo el dedo
     });
     this.calibrationHandler = new CalibrationHandler({
       CALIBRATION_SAMPLES: 30,

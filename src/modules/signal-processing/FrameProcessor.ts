@@ -26,10 +26,10 @@ export class FrameProcessor {
   private readonly ROI_HISTORY_SIZE = 10; // Aumentado para mayor estabilidad
   
   constructor(config: { TEXTURE_GRID_SIZE: number, ROI_SIZE_FACTOR: number }) {
-    // Aumentar tamaño de ROI para capturar más área
+    // Aumentar tamaño de ROI significativamente para capturar más área del dedo
     this.CONFIG = {
       ...config,
-      ROI_SIZE_FACTOR: Math.min(0.8, config.ROI_SIZE_FACTOR * 1.15) // Aumentar tamaño ROI sin exceder 0.8
+      ROI_SIZE_FACTOR: Math.min(0.92, Math.max(0.75, config.ROI_SIZE_FACTOR * 1.25)) // ROI mucho más grande
     };
   }
   
