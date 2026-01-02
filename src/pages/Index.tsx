@@ -413,19 +413,19 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 15; // Mucho más permisivo para detectar dedos reales
+    const MIN_SIGNAL_QUALITY = 8; // Muy permisivo para detectar dedos reales
     
     if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
-      // Procesamiento reducido pero no bloqueo total
-      if (lastSignal.quality >= 10) {
+      // Procesamiento reducido pero no bloqueo total - más permisivo
+      if (lastSignal.quality >= 5) {
         const reducedBeatResult = processHeartBeat(
-          lastSignal.filteredValue * 0.5, 
+          lastSignal.filteredValue * 0.6, 
           false, // finger not fully detected but processing signal
           lastSignal.timestamp
         );
-        setHeartRate(reducedBeatResult.bpm * 0.8); // Reducir confianza
-        setHeartbeatSignal(lastSignal.filteredValue * 0.7);
-        setBeatMarker(reducedBeatResult.isPeak ? 0.5 : 0);
+        setHeartRate(reducedBeatResult.bpm * 0.7); // Reducir confianza
+        setHeartbeatSignal(lastSignal.filteredValue * 0.8);
+        setBeatMarker(reducedBeatResult.isPeak ? 0.6 : 0);
       } else {
         setHeartRate(0);
         setHeartbeatSignal(0);
