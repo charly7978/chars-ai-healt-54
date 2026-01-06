@@ -7,24 +7,21 @@ export class HeartBeatProcessor {
   private lastPeakTime: number = 0;
   private peakBuffer: number[] = [];
   
-  // Configuración para detección real
   private readonly CONFIG = {
-    PEAK_THRESHOLD: 0.05,        // Umbral de amplitud mínima para un latido
-    MIN_RR_INTERVAL_MS: 300,    // Límite superior: 200 BPM
-    MAX_RR_INTERVAL_MS: 1500,   // Límite inferior: 40 BPM
-    HISTORY_SIZE: 8,            // Ventana pequeña para cambios rápidos
-    SMOOTHING_FACTOR: 0.7       // Prioriza el dato nuevo sobre el anterior
+    PEAK_THRESHOLD: 0.05,        
+    MIN_RR_INTERVAL_MS: 300,    
+    MAX_RR_INTERVAL_MS: 1500,   
+    HISTORY_SIZE: 8,            
+    SMOOTHING_FACTOR: 0.7       
   };
 
   /**
-   * Procesa cada muestra de la señal filtrada
+   * Método principal de procesamiento (Nombre restaurado para evitar errores de Runtime)
    */
-  public processSample(value: number, timestamp: number): number {
-    // Detectar pico: El valor debe ser mayor al umbral y mayor a sus vecinos (derivada)
+  public processSignal(value: number, timestamp: number): number {
     if (this.isPeak(value)) {
       const timeSinceLastPeak = timestamp - this.lastPeakTime;
 
-      // Validar intervalo fisiológico
       if (
         timeSinceLastPeak >= this.CONFIG.MIN_RR_INTERVAL_MS &&
         timeSinceLastPeak <= this.CONFIG.MAX_RR_INTERVAL_MS
@@ -35,7 +32,6 @@ export class HeartBeatProcessor {
       }
     }
 
-    // Si no hay pico nuevo, devolver el último valor calculado
     return this.bpmHistory.length > 0 ? this.bpmHistory[this.bpmHistory.length - 1] : 0;
   }
 
@@ -45,7 +41,6 @@ export class HeartBeatProcessor {
 
     if (this.peakBuffer.length < 3) return false;
 
-    // Local Maxima: El punto central es mayor que el anterior y el posterior
     return (
       this.peakBuffer[1] > this.peakBuffer[0] &&
       this.peakBuffer[1] > this.peakBuffer[2] &&
@@ -54,7 +49,6 @@ export class HeartBeatProcessor {
   }
 
   private calculateRollingBpm(instantBpm: number): number {
-    // Filtro de Outliers: Ignorar cambios súbitos imposibles (>30% de diferencia)
     if (this.bpmHistory.length > 0) {
       const lastBpm = this.bpmHistory[this.bpmHistory.length - 1];
       if (Math.abs(instantBpm - lastBpm) > lastBpm * 0.35) {
@@ -67,7 +61,6 @@ export class HeartBeatProcessor {
       this.bpmHistory.shift();
     }
 
-    // Promedio simple de la ventana para estabilidad visual sin "congelar" el dato
     const average = this.bpmHistory.reduce((a, b) => a + b, 0) / this.bpmHistory.length;
     return Math.round(average);
   }
