@@ -1,51 +1,54 @@
 /**
- * HEART BEAT PROCESSOR - COMPATIBILIDAD TOTAL
- * Incluye detección de picos, cálculo de BPM y exportación de intervalos R-R.
+ * HEART BEAT PROCESSOR - ALTA SENSIBILIDAD
+ * Procesa la señal PPG para detectar latidos y exportar intervalos R-R reales.
  */
 export class HeartBeatProcessor {
   private bpmHistory: number[] = [];
   private lastPeakTime: number = 0;
   private peakBuffer: number[] = [];
-  private rrIntervals: number[] = []; // Almacén de intervalos para análisis de arritmias
+  private rrIntervals: number[] = []; // Almacén para análisis de variabilidad
   
   private readonly CONFIG = {
-    PEAK_THRESHOLD: 0.05,        
-    MIN_RR_INTERVAL_MS: 300,    
-    MAX_RR_INTERVAL_MS: 1500,   
-    HISTORY_SIZE: 8,
-    RR_BUFFER_MAX: 30            // Cantidad de intervalos que guardamos
+    PEAK_THRESHOLD: 0.05,        // Umbral de detección de pico
+    MIN_RR_INTERVAL_MS: 300,    // Límite para 200 BPM
+    MAX_RR_INTERVAL_MS: 1500,   // Límite para 40 BPM
+    HISTORY_SIZE: 8,            // Ventana de suavizado de BPM
+    RR_BUFFER_MAX: 30           // Cantidad de intervalos para detectar arritmias
   };
 
   /**
-   * Procesa la señal y calcula el pulso
+   * Procesa la señal filtrada y retorna el BPM actual
    */
   public processSignal(value: number, timestamp: number): number {
     if (this.isPeak(value)) {
-      const timeSinceLastPeak = timestamp - this.lastPeakTime;
+      const currentTime = timestamp || Date.now();
+      
+      if (this.lastPeakTime !== 0) {
+        const timeSinceLastPeak = currentTime - this.lastPeakTime;
 
-      if (
-        timeSinceLastPeak >= this.CONFIG.MIN_RR_INTERVAL_MS &&
-        timeSinceLastPeak <= this.CONFIG.MAX_RR_INTERVAL_MS
-      ) {
-        // Guardar el intervalo R-R real para el análisis de arritmias
-        if (this.lastPeakTime !== 0) {
+        // Validación de intervalo fisiológico real
+        if (
+          timeSinceLastPeak >= this.CONFIG.MIN_RR_INTERVAL_MS &&
+          timeSinceLastPeak <= this.CONFIG.MAX_RR_INTERVAL_MS
+        ) {
+          // Guardar intervalo para getRRIntervals()
           this.rrIntervals.push(timeSinceLastPeak);
           if (this.rrIntervals.length > this.CONFIG.RR_BUFFER_MAX) {
             this.rrIntervals.shift();
           }
-        }
 
-        const instantBpm = 60000 / timeSinceLastPeak;
-        this.lastPeakTime = timestamp;
-        return this.calculateRollingBpm(instantBpm);
+          const instantBpm = 60000 / timeSinceLastPeak;
+          this.calculateRollingBpm(instantBpm);
+        }
       }
+      this.lastPeakTime = currentTime;
     }
 
     return this.bpmHistory.length > 0 ? this.bpmHistory[this.bpmHistory.length - 1] : 0;
   }
 
   /**
-   * MÉTODO REQUERIDO POR LA UI: Devuelve los intervalos R-R actuales
+   * MÉTODO REQUERIDO POR LA UI: Devuelve los intervalos R-R para el ArrhythmiaProcessor
    */
   public getRRIntervals(): number[] {
     return [...this.rrIntervals];
@@ -57,6 +60,7 @@ export class HeartBeatProcessor {
 
     if (this.peakBuffer.length < 3) return false;
 
+    // Algoritmo de máximo local: el punto central es mayor que sus vecinos
     return (
       this.peakBuffer[1] > this.peakBuffer[0] &&
       this.peakBuffer[1] > this.peakBuffer[2] &&
@@ -64,11 +68,12 @@ export class HeartBeatProcessor {
     );
   }
 
-  private calculateRollingBpm(instantBpm: number): number {
+  private calculateRollingBpm(instantBpm: number): void {
+    // Filtro de Outliers para evitar saltos erráticos
     if (this.bpmHistory.length > 0) {
       const lastBpm = this.bpmHistory[this.bpmHistory.length - 1];
-      if (Math.abs(instantBpm - lastBpm) > lastBpm * 0.35) {
-        return lastBpm;
+      if (Math.abs(instantBpm - lastBpm) > lastBpm * 0.4) {
+        return; // Ignorar latido si el cambio es > 40% (posible error de lectura)
       }
     }
 
@@ -76,11 +81,11 @@ export class HeartBeatProcessor {
     if (this.bpmHistory.length > this.CONFIG.HISTORY_SIZE) {
       this.bpmHistory.shift();
     }
-
-    const average = this.bpmHistory.reduce((a, b) => a + b, 0) / this.bpmHistory.length;
-    return Math.round(average);
   }
 
+  /**
+   * Reinicia el estado del procesador
+   */
   public reset(): void {
     this.bpmHistory = [];
     this.lastPeakTime = 0;
