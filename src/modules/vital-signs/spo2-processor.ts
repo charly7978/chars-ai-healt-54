@@ -169,11 +169,6 @@ export class SpO2Processor {
       // Usar rango intercuartílico para robustez
       this.baselineDC = (q1 + q3) / 2;
       this.calibrationComplete = true;
-      
-      console.log("🎯 SpO2Processor: Calibración óptica completada", {
-        baseline: this.baselineDC.toFixed(2),
-        samples: this.calibrationSamples.length
-      });
     }
   }
 
@@ -246,6 +241,5 @@ export class SpO2Processor {
     this.calibrationSamples = [];
     this.calibrationComplete = false;
     this.baselineDC = 0;
-    console.log("🔄 SpO2Processor: Reset matemático completo");
   }
 }
