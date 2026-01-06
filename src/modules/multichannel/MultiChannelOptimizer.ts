@@ -29,7 +29,7 @@ export class MultiChannelOptimizer implements OptimizerAPI {
       defaultBandpass: cfg?.defaultBandpass ?? [0.7, 4.0],
     };
 
-    // Inicialización CRÍTICA: Aseguramos que cada canal tenga un estado inicial
+    // Inicialización de cada canal para evitar errores de compilación
     for (const ch of this.channels) {
       this.channelFilters[ch] = {
         kalman: new KalmanFilter(),
@@ -43,13 +43,13 @@ export class MultiChannelOptimizer implements OptimizerAPI {
     }
   }
 
-  pushRawSample(timestamp: number, rawValue: number, quality: number): void {
+  public pushRawSample(timestamp: number, rawValue: number, quality: number): void {
     this.lastTimestamp = timestamp;
     this.lastRawValue = rawValue;
     this.lastQuality = quality;
   }
 
-  compute(): MultiChannelOutputs {
+  public compute(): MultiChannelOutputs {
     const outputs: MultiChannelOutputs = {} as any;
     for (const ch of this.channels) {
       outputs[ch] = this.computeChannel(ch);
@@ -62,34 +62,34 @@ export class MultiChannelOptimizer implements OptimizerAPI {
     const q = this.lastQuality || 0;
 
     const k = this.channelFilters[channel].kalman.filter(raw);
-    const shaped = this.channelFilters[channel].sg.filter(k);
+    const filtered = this.channelFilters[channel].sg.filter(k);
 
     this.channelStates[channel] = {
       lastInput: { timestamp: this.lastTimestamp, value: raw, quality: q },
-      lastOutput: shaped,
+      lastOutput: filtered,
       qualityTrend: q,
     };
 
     return {
-      output: shaped,
-      quality: q,
-      feedback: undefined
+      output: filtered,
+      quality: q
     };
   }
 
-  reset(): void {
+  public pushChannelFeedback(channel: VitalChannel, feedback: ChannelFeedback): void {
+    // Implementación vacía para cumplir con la interfaz
+  }
+
+  public snapshot(): Record<VitalChannel, ChannelState> {
+    return this.channelStates;
+  }
+
+  public reset(): void {
     for (const ch of this.channels) {
       this.channelFilters[ch].kalman.reset();
       this.channelFilters[ch].sg.reset();
-      this.channelStates[ch] = {
-        lastInput: { timestamp: 0, value: 0, quality: 0 },
-        lastOutput: 0,
-        qualityTrend: 0
-      };
     }
   }
-
-  // Métodos requeridos por la interfaz para evitar errores de "undefined"
-  pushChannelFeedback(channel: VitalChannel, feedback: ChannelFeedback): void {}
-  snapshot(): Record<VitalChannel, ChannelState> { return this.channelStates; }
 }
+
+export default MultiChannelOptimizer;
