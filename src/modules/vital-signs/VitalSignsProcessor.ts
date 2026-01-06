@@ -107,10 +107,8 @@ export class VitalSignsProcessor {
 
   startCalibration(): void {
     this.isCalibrating = true;
-    this.isCalibrating = true;
     this.calibrationSamples = 0;
     
-    // RESETEAR TODAS LAS MEDICIONES
     this.measurements = {
       spo2: Number.NaN,
       glucose: 0,
@@ -124,7 +122,6 @@ export class VitalSignsProcessor {
       lastArrhythmiaData: null
     };
     
-    // RESETEAR HISTORIAL
     this.measurementHistory = {
       spo2Values: [],
       glucoseValues: [],
@@ -484,9 +481,7 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * PONDERADO FINAL - OBTENER EL VALOR MÁS REPRESENTATIVO
-  /**
-   * PONDERADO FINAL - OBTENER EL VALOR MÁS REPRESENTATIVO
+   * Obtener resultados ponderados finales
    */
   public getWeightedFinalResults(): VitalSignsResult {
     
