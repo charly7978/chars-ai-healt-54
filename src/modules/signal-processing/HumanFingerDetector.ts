@@ -1,47 +1,95 @@
-export class HumanFingerDetector {
-  private temporalAnalysisBuffer: Array<{r: number, g: number, b: number}> = [];
-  private readonly BUFFER_MAX = 30;
+/**
+ * HUMAN FINGER DETECTOR - OPTIMIZADO PARA YEMA DEL DEDO
+ * Ajustado para alta sensibilidad con flash activo (luz roja intensa).
+ */
+export interface HumanFingerValidation {
+  isHumanFinger: boolean;
+  confidence: number;
+  validationDetails: {
+    skinColorValid: boolean;
+    perfusionValid: boolean;
+    hemodynamicValid: boolean;
+    spatialConsistency: boolean;
+    temporalConsistency: boolean;
+  };
+}
 
-  detectHumanFinger(r: number, g: number, b: number, texture: number): any {
-    // Análisis de absorción de hemoglobina REAL
-    // El tejido humano absorbe masivamente el verde (G) y refleja el rojo (R)
+export class HumanFingerDetector {
+  private temporalAnalysisBuffer: Array<{ r: number; g: number; b: number }> = [];
+  private readonly BUFFER_SIZE = 30;
+  private lastValidTime = 0;
+
+  /**
+   * Detecta si hay un dedo humano presente analizando la absorción de luz en la yema.
+   */
+  public detectHumanFinger(
+    r: number,
+    g: number,
+    b: number,
+    textureScore: number
+  ): HumanFingerValidation {
+    // 1. NORMALIZACIÓN Y RATIOS
     const total = r + g + b + 0.0001;
     const rRatio = r / total;
     const gRatio = g / total;
 
-    // 1. Criterio Biofísico: El rojo debe ser predominante pero el verde debe oscilar
-    const isRedDominant = rRatio > 0.45 && rRatio < 0.90;
-    const hasGreenAbsorption = gRatio < 0.35;
+    // 2. CRITERIOS DE COLOR DE PIEL (YEMA CON FLASH)
+    // El flash hace que el rojo domine masivamente (rRatio alto).
+    // Relajamos el límite superior para permitir saturación de la cámara.
+    const isRedDominant = rRatio > 0.40 && rRatio < 0.98;
+    
+    // La yema absorbe verde, pero con flash fuerte, el sensor capta algo de verde/amarillo.
+    const hasSkinSpectralPattern = gRatio < 0.45 && r > g;
 
-    // 2. Análisis de varianza (Detección de vida)
-    this.temporalAnalysisBuffer.push({r, g, b});
-    if (this.temporalAnalysisBuffer.length > this.BUFFER_MAX) this.temporalAnalysisBuffer.shift();
-
+    // 3. ANÁLISIS DE VIDA (PERFUSIÓN)
+    this.updateBuffer(r, g, b);
     const variance = this.calculateVariance(this.temporalAnalysisBuffer.map(d => d.r));
-    // Si la varianza es 0, es una imagen estática (simulación o error). 
-    // Un dedo real siempre tiene micro-vibraciones.
-    const isAlive = variance > 0.02; 
+    
+    // Un dedo real siempre tiene micro-oscilaciones (ruido térmico + pulso).
+    // Bajamos el umbral para detectar pulsos débiles en la yema.
+    const hasPerfusion = variance > 0.005; 
 
-    const confidence = (isRedDominant ? 0.5 : 0) + (hasGreenAbsorption ? 0.3 : 0) + (isAlive ? 0.2 : 0);
+    // 4. CÁLCULO DE CONFIANZA
+    let confidence = 0;
+    if (isRedDominant) confidence += 0.4;
+    if (hasSkinSpectralPattern) confidence += 0.3;
+    if (hasPerfusion) confidence += 0.3;
+
+    // 5. LÓGICA DE DECISIÓN
+    const isDetected = confidence > 0.45; // Umbral de entrada más bajo
+
+    if (isDetected) {
+      this.lastValidTime = Date.now();
+    }
 
     return {
-      isHumanFinger: confidence > 0.5,
+      isHumanFinger: isDetected,
       confidence: confidence,
       validationDetails: {
-        skinColorValid: isRedDominant,
-        perfusionValid: isAlive,
-        hemodynamicValid: variance > 0.1,
-        spatialConsistency: texture > 0.2,
+        skinColorValid: isRedDominant && hasSkinSpectralPattern,
+        perfusionValid: hasPerfusion,
+        hemodynamicValid: variance > 0.05,
+        spatialConsistency: textureScore > 0.15, // Umbral de textura reducido
         temporalConsistency: true
       }
     };
   }
 
+  private updateBuffer(r: number, g: number, b: number) {
+    this.temporalAnalysisBuffer.push({ r, g, b });
+    if (this.temporalAnalysisBuffer.length > this.BUFFER_SIZE) {
+      this.temporalAnalysisBuffer.shift();
+    }
+  }
+
   private calculateVariance(values: number[]): number {
-    if (values.length < 2) return 0;
+    if (values.length < 5) return 0.1; // Valor por defecto durante carga
     const mean = values.reduce((a, b) => a + b, 0) / values.length;
     return values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / values.length;
   }
 
-  reset() { this.temporalAnalysisBuffer = []; }
+  public reset(): void {
+    this.temporalAnalysisBuffer = [];
+    this.lastValidTime = 0;
+  }
 }
