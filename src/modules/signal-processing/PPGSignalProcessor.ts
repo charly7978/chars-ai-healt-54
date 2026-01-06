@@ -242,18 +242,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         redValue, fingerDetectionResult.isDetected, quality, fingerDetectionResult.detectionScore
       );
 
-      // Logging optimizado cada 30 frames
-      if (this.frameCount % 30 === 0) {
-        console.log("🎯 Detección optimizada:", {
-          red: redValue.toFixed(2),
-          detected: fingerDetectionResult.isDetected,
-          score: fingerDetectionResult.detectionScore.toFixed(3),
-          consecutivas: this.fingerDetectionState.consecutiveDetections,
-          snr: this.fingerDetectionState.signalToNoiseRatio.toFixed(1)
-        });
-      }
-
-      // 8. Señal procesada final
+      // Señal procesada final
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,

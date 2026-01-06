@@ -233,32 +233,8 @@ export class FrameProcessor {
     // Calculate color ratio indexes - MÁS ESTRICTOS para reducir falsos positivos
     const rToGRatio = avgGreen > 5 ? avgRed / avgGreen : 1.2; // Umbral más alto para validación
     const rToBRatio = avgBlue > 1 ? avgRed / avgBlue : 1.0; // Evitar división por valores muy pequeños
-    console.log('[DEBUG] FrameProcessor extractFrameData - avgRed:', avgRed, 'avgGreen:', avgGreen, 'avgBlue:', avgBlue, 'textureScore:', textureScore, 'rToGRatio:', rToGRatio, 'rToBRatio:', rToBRatio);
-    
     // Light level affects detection quality
     const lightLevelFactor = this.getLightLevelQualityFactor(this.lastLightLevel);
-    
-    // More detailed logging for diagnostics
-    console.log("FrameProcessor: Extracted data - MEJORAS APLICADAS:", {
-      avgRed: avgRed.toFixed(1), 
-      avgGreen: avgGreen.toFixed(1), 
-      avgBlue: avgBlue.toFixed(1),
-      textureScore: textureScore.toFixed(2),
-      rToGRatio: rToGRatio.toFixed(2), 
-      rToBRatio: rToBRatio.toFixed(2),
-      lightLevel: this.lastLightLevel.toFixed(1),
-      lightQuality: lightLevelFactor.toFixed(2),
-      dynamicGain: dynamicGain.toFixed(2),
-      pixelCount,
-      frameSize: `${imageData.width}x${imageData.height}`,
-      roiSize: `${roiSize.toFixed(1)}`,
-      config: {
-        RED_GAIN: this.RED_GAIN,
-        HISTORY_SIZE: this.HISTORY_SIZE,
-        ROI_HISTORY_SIZE: this.ROI_HISTORY_SIZE,
-        MIN_RED_THRESHOLD: this.MIN_RED_THRESHOLD
-      }
-    });
     
     return {
       redValue: avgRed,
@@ -303,8 +279,6 @@ export class FrameProcessor {
   }
   
   detectROI(redValue: number, imageData: ImageData): ProcessedSignal['roi'] {
-    console.log('[DEBUG] FrameProcessor detectROI - redValue:', redValue, 'imageSize:', imageData.width+'x'+imageData.height);
-    // Centered ROI by default with adaptive size
     const centerX = Math.floor(imageData.width / 2);
     const centerY = Math.floor(imageData.height / 2);
     
@@ -336,8 +310,7 @@ export class FrameProcessor {
       height: roiSize
     };
     
-    console.log('[DEBUG] FrameProcessor detectROI - newROI:', newROI);
-    // Guardar historia de ROIs para estabilidad con LIMPIEZA AUTOMÁTICA
+    // Guardar historia de ROIs para estabilidad
     this.roiHistory.push(newROI);
     
     // LIMPIEZA AUTOMÁTICA: Mantener solo el tamaño necesario
@@ -371,19 +344,11 @@ export class FrameProcessor {
   }
 
   /**
-   * LIMPIEZA AUTOMÁTICA de buffers auxiliares para prevenir degradación
+   * Limpieza automática de buffers
    */
   private cleanupAuxiliaryBuffers(): void {
-    // Limpiar buffers que pueden acumular datos innecesarios
     if (this.lastFrames.length > this.HISTORY_SIZE) {
       this.lastFrames = this.lastFrames.slice(-this.HISTORY_SIZE);
     }
-    
-    // Log de limpieza para debugging
-    console.log('🧹 FrameProcessor: Limpieza automática de buffers', {
-      roiHistoryLength: this.roiHistory.length,
-      lastFramesLength: this.lastFrames.length,
-      timestamp: new Date().toISOString()
-    });
   }
 }

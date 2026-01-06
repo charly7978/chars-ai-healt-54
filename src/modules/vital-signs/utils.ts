@@ -1,5 +1,9 @@
 /**
- * Calculates the AC component (peak-to-peak amplitude) of a signal
+ * Utilidades para procesamiento de señales PPG
+ */
+
+/**
+ * Calcula el componente AC (amplitud pico a pico) de una señal
  */
 export function calculateAC(values: number[]): number {
   if (values.length === 0) return 0;
@@ -7,7 +11,7 @@ export function calculateAC(values: number[]): number {
 }
 
 /**
- * Calculates the DC component (average value) of a signal
+ * Calcula el componente DC (valor promedio) de una señal
  */
 export function calculateDC(values: number[]): number {
   if (values.length === 0) return 0;
@@ -15,7 +19,7 @@ export function calculateDC(values: number[]): number {
 }
 
 /**
- * Calculates the standard deviation of a set of values
+ * Calcula la desviación estándar de un conjunto de valores
  */
 export function calculateStandardDeviation(values: number[]): number {
   const n = values.length;
@@ -27,15 +31,9 @@ export function calculateStandardDeviation(values: number[]): number {
 }
 
 /**
- * Finds peaks and valleys in a signal
+ * Encuentra picos y valles en una señal
  */
 export function findPeaksAndValleys(values: number[]): { peakIndices: number[]; valleyIndices: number[] } {
-  console.log('🔍 findPeaksAndValleys DEBUG:', {
-    valuesLength: values.length,
-    firstValues: values.slice(0, 10),
-    lastValues: values.slice(-10)
-  });
-
   const peakIndices: number[] = [];
   const valleyIndices: number[] = [];
 
@@ -48,50 +46,27 @@ export function findPeaksAndValleys(values: number[]): { peakIndices: number[]; 
     }
   }
 
-  console.log('🔍 findPeaksAndValleys: Picos y valles encontrados:', {
-    peakIndices: peakIndices.slice(0, 10),
-    valleyIndices: valleyIndices.slice(0, 10),
-    totalPeaks: peakIndices.length,
-    totalValleys: valleyIndices.length
-  });
-
   return { peakIndices, valleyIndices };
 }
 
 /**
- * Calculates the amplitude between peaks and valleys
+ * Calcula la amplitud entre picos y valles
  */
 export function calculateAmplitude(
   values: number[],
   peakIndices: number[],
   valleyIndices: number[]
 ): number {
-  console.log('🔍 calculateAmplitude DEBUG:', {
-    valuesLength: values.length,
-    peakCount: peakIndices.length,
-    valleyCount: valleyIndices.length,
-    firstPeakIndex: peakIndices[0],
-    firstValleyIndex: valleyIndices[0],
-    firstPeakValue: peakIndices[0] !== undefined ? values[peakIndices[0]] : 'N/A',
-    firstValleyValue: valleyIndices[0] !== undefined ? values[valleyIndices[0]] : 'N/A'
-  });
-
-  if (!peakIndices.length || !valleyIndices.length) {
-    console.log('❌ calculateAmplitude: Sin picos o valles');
-    return 0;
-  }
+  if (!peakIndices.length || !valleyIndices.length) return 0;
 
   let sum = 0;
   const len = Math.min(peakIndices.length, valleyIndices.length);
+  
   for (let i = 0; i < len; i++) {
     const peakValue = values[peakIndices[i]];
     const valleyValue = values[valleyIndices[i]];
-    const difference = peakValue - valleyValue;
-    sum += difference;
-    console.log(`🔍 calculateAmplitude: Pico ${i}: ${peakValue}, Valle ${i}: ${valleyValue}, Diferencia: ${difference}`);
+    sum += peakValue - valleyValue;
   }
   
-  const result = sum / len;
-  console.log('🔍 calculateAmplitude: Resultado final:', result);
-  return result;
+  return sum / len;
 }

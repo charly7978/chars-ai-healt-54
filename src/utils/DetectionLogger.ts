@@ -76,12 +76,7 @@ export class DetectionLogger {
       this.consecutiveSuccessfulDetections = 0;
     }
     
-    // Logging detallado cada 10 intentos
-    if (this.logHistory.length % 10 === 0) {
-      this.logDetailedStatus();
-    }
-    
-    // Alertas de problemas persistentes
+    // Status reducido: solo cuando hay problemas persistentes
     if (this.consecutiveFailedDetections >= 15) {
       console.warn("⚠️ DETECCIÓN PERSISTENTE FALLIDA - Revisar posicionamiento del dedo", {
         fallosConsecutivos: this.consecutiveFailedDetections,

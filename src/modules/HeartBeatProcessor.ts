@@ -153,7 +153,6 @@ export class HeartBeatProcessor {
 
     const now = Date.now();
     if (now - this.lastBeepTime < this.MIN_BEEP_INTERVAL_MS) {
-      console.log("HeartBeatProcessor: Ignorando beep - demasiado cerca del anterior", now - this.lastBeepTime);
       return;
     }
 
@@ -219,9 +218,7 @@ export class HeartBeatProcessor {
         // Reseteamos la bandera después de reproducir el sonido de arritmia
         this.isArrhythmiaDetected = false;
       }
-      const interval = now - this.lastBeepTime;
       this.lastBeepTime = now;
-      console.log(`HeartBeatProcessor: Latido reproducido. Intervalo: ${interval} ms, BPM estimado: ${Math.round(this.getSmoothBPM())}`);
     } catch (error) {
       console.error("HeartBeatProcessor: Error playing heart sound", error);
     }
@@ -355,7 +352,6 @@ export class HeartBeatProcessor {
             this.peaksSinceLastTuning = 0;
           }
         } else {
-          console.log(`HeartBeatProcessor: Pico rechazado - confianza insuficiente: ${confidence}`);
           isPeak = false;
         }
       }
@@ -466,7 +462,6 @@ export class HeartBeatProcessor {
 
   public setArrhythmiaDetected(isDetected: boolean): void {
     this.isArrhythmiaDetected = isDetected;
-    console.log(`HeartBeatProcessor: Estado de arritmia establecido a ${isDetected}`);
   }
 
   private autoResetIfSignalIsLow(amplitude: number) {
@@ -479,18 +474,15 @@ export class HeartBeatProcessor {
         this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
         this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
         this.isArrhythmiaDetected = false;
-        console.log("HeartBeatProcessor: auto-reset adaptative parameters and arrhythmia flag (low signal).");
       }
     } else {
-      this.lowSignalCount = Math.max(0, this.lowSignalCount - 1); // Reducción gradual
+      this.lowSignalCount = Math.max(0, this.lowSignalCount - 1);
     }
   }
 
   private resetDetectionStates() {
-    // No resetear lastPeakTime para mantener continuidad de detecciones
     this.lastConfirmedPeak = false;
     this.peakConfirmationBuffer = [];
-    console.log("HeartBeatProcessor: auto-reset detection states (low signal).");
   }
 
   /**
@@ -635,16 +627,6 @@ export class HeartBeatProcessor {
     if (this.recentSignalStrengths.length > this.SIGNAL_STRENGTH_HISTORY) {
       this.recentSignalStrengths = this.recentSignalStrengths.slice(-this.SIGNAL_STRENGTH_HISTORY);
     }
-    
-    // Log de limpieza para debugging
-    console.log('🧹 HeartBeatProcessor: Limpieza automática de buffers', {
-      bpmHistoryLength: this.bpmHistory.length,
-      recentPeakAmplitudesLength: this.recentPeakAmplitudes.length,
-      recentPeakConfidencesLength: this.recentPeakConfidences.length,
-      recentPeakDerivativesLength: this.recentPeakDerivatives.length,
-      recentSignalStrengthsLength: this.recentSignalStrengths.length,
-      timestamp: new Date().toISOString()
-    });
   }
 
   public reset() {
@@ -675,7 +657,6 @@ export class HeartBeatProcessor {
     
     this.isArrhythmiaDetected = false;
     this.peakValidationBuffer = [];
-    console.log("HeartBeatProcessor: Full reset including adaptive parameters and arrhythmia flag.");
   }
 
   public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {
@@ -768,16 +749,6 @@ export class HeartBeatProcessor {
         this.adaptiveDerivativeThreshold = Math.max(this.MIN_ADAPTIVE_DERIVATIVE_THRESHOLD, 
                                         Math.min(this.MAX_ADAPTIVE_DERIVATIVE_THRESHOLD, this.adaptiveDerivativeThreshold));
     }
-    
-    console.log("HeartBeatProcessor: Adaptive tuning updated", {
-      signalThreshold: this.adaptiveSignalThreshold.toFixed(3),
-      minConfidence: this.adaptiveMinConfidence.toFixed(3),
-      derivativeThreshold: this.adaptiveDerivativeThreshold.toFixed(3),
-      avgSignalStrength: this.recentSignalStrengths.length > 0 ? 
-                        (this.recentSignalStrengths.reduce((s,v) => s+v, 0) / 
-                         this.recentSignalStrengths.length).toFixed(3) : "N/A",
-      currentSignalQuality: this.currentSignalQuality
-    });
   }
   
   // Método público para obtener la calidad de señal actual

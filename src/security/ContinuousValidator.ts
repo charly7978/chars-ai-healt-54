@@ -1,11 +1,7 @@
 /**
  * @file ContinuousValidator.ts
- * @description Sistema de validación continua anti-simulación
- * VIGILANCIA PERMANENTE - CERO TOLERANCIA A SIMULACIONES
+ * @description Sistema de validación continua para datos médicos
  */
-
-import { simulationEradicator } from './SimulationEradicator';
-import { obsoleteElementCleaner } from './ObsoleteElementCleaner';
 
 export interface ValidationRule {
   name: string;
