@@ -1,22 +1,23 @@
 /**
- * HEART BEAT PROCESSOR - ALTA SENSIBILIDAD
- * Detecta picos en tiempo real y calcula BPM basándose en intervalos R-R.
+ * HEART BEAT PROCESSOR - COMPATIBILIDAD TOTAL
+ * Incluye detección de picos, cálculo de BPM y exportación de intervalos R-R.
  */
 export class HeartBeatProcessor {
   private bpmHistory: number[] = [];
   private lastPeakTime: number = 0;
   private peakBuffer: number[] = [];
+  private rrIntervals: number[] = []; // Almacén de intervalos para análisis de arritmias
   
   private readonly CONFIG = {
     PEAK_THRESHOLD: 0.05,        
     MIN_RR_INTERVAL_MS: 300,    
     MAX_RR_INTERVAL_MS: 1500,   
-    HISTORY_SIZE: 8,            
-    SMOOTHING_FACTOR: 0.7       
+    HISTORY_SIZE: 8,
+    RR_BUFFER_MAX: 30            // Cantidad de intervalos que guardamos
   };
 
   /**
-   * Método principal de procesamiento (Nombre restaurado para evitar errores de Runtime)
+   * Procesa la señal y calcula el pulso
    */
   public processSignal(value: number, timestamp: number): number {
     if (this.isPeak(value)) {
@@ -26,6 +27,14 @@ export class HeartBeatProcessor {
         timeSinceLastPeak >= this.CONFIG.MIN_RR_INTERVAL_MS &&
         timeSinceLastPeak <= this.CONFIG.MAX_RR_INTERVAL_MS
       ) {
+        // Guardar el intervalo R-R real para el análisis de arritmias
+        if (this.lastPeakTime !== 0) {
+          this.rrIntervals.push(timeSinceLastPeak);
+          if (this.rrIntervals.length > this.CONFIG.RR_BUFFER_MAX) {
+            this.rrIntervals.shift();
+          }
+        }
+
         const instantBpm = 60000 / timeSinceLastPeak;
         this.lastPeakTime = timestamp;
         return this.calculateRollingBpm(instantBpm);
@@ -33,6 +42,13 @@ export class HeartBeatProcessor {
     }
 
     return this.bpmHistory.length > 0 ? this.bpmHistory[this.bpmHistory.length - 1] : 0;
+  }
+
+  /**
+   * MÉTODO REQUERIDO POR LA UI: Devuelve los intervalos R-R actuales
+   */
+  public getRRIntervals(): number[] {
+    return [...this.rrIntervals];
   }
 
   private isPeak(value: number): boolean {
@@ -69,5 +85,6 @@ export class HeartBeatProcessor {
     this.bpmHistory = [];
     this.lastPeakTime = 0;
     this.peakBuffer = [];
+    this.rrIntervals = [];
   }
 }
