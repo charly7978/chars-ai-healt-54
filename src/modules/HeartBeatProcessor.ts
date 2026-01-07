@@ -233,64 +233,41 @@ export class HeartBeatProcessor {
   private lastProcessedValue: number | null = null;
 
   /**
-   * Reset SUAVE cuando el dedo vuelve - NO reinicia warmup ni buffers completos
-   * Solo limpia datos que podrían estar contaminados
+   * Reset MÍNIMO cuando el dedo vuelve - PRESERVAR TODO LO POSIBLE
+   * Solo limpia lo absolutamente necesario
    */
   public partialReset(): void {
-    // SOLO limpiar buffers que podrían tener datos viejos/contaminados
-    // MANTENER signalBuffer parcialmente para no perder contexto
-    if (this.signalBuffer.length > 10) {
-      this.signalBuffer = this.signalBuffer.slice(-10); // Mantener últimos 10
-    }
+    // NO limpiar signalBuffer - mantener todo para continuidad
+    // NO limpiar medianBuffer ni movingAverageBuffer - los filtros funcionan mejor con datos
     
-    this.medianBuffer = [];
-    this.movingAverageBuffer = [];
+    // Solo limpiar buffers de confirmación
     this.peakConfirmationBuffer = [];
     this.peakValidationBuffer = [];
     
     // NO resetear baseline ni lastValue - mantener contexto
     // NO resetear startTime - NO queremos reiniciar warmup
-    
-    // Solo resetear tiempos de pico si son muy viejos (>3s)
-    const now = Date.now();
-    if (this.lastPeakTime && now - this.lastPeakTime > 3000) {
-      this.lastPeakTime = null;
-      this.previousPeakTime = null;
-    }
+    // NO resetear lastPeakTime - queremos mantener timing
     
     this.lastConfirmedPeak = false;
     this.lowSignalCount = 0;
     
-    // CRÍTICO: No resetear lastBeepTime para evitar beeps duplicados inmediatos
-    // CRÍTICO: Mantener bpmHistory, smoothBPM, umbrales adaptativos
+    // CRÍTICO: Mantener TODOS los historiales y parámetros adaptativos
   }
 
   /**
-   * Notificar cambio de estado del dedo - SIMPLIFICADO
-   * Solo hace reset suave si el dedo estuvo ausente por mucho tiempo
+   * Notificar cambio de estado del dedo - ULTRA SIMPLIFICADO
+   * NO hacer resets - solo actualizar el estado
+   * El procesador es robusto y puede manejar señales fluctuantes
    */
   public setFingerDetected(detected: boolean): void {
     const now = Date.now();
     
-    if (detected && !this.wasFingerDetected) {
-      // Dedo acaba de ser RE-detectado
-      const timeSinceLost = now - this.fingerLostTimestamp;
-      
-      // Solo hacer reset si el dedo estuvo ausente por más de 2 segundos
-      // Esto evita resets innecesarios por cortes momentáneos
-      if (timeSinceLost > 2000) {
-        this.partialReset();
-        // Solo limpiar historial BPM si estuvo mucho tiempo sin dedo (>5s)
-        if (timeSinceLost > 5000 && this.bpmHistory.length > 3) {
-          this.bpmHistory = this.bpmHistory.slice(-3);
-        }
-      }
-      // Si el dedo volvió rápido (<2s), NO hacer nada, continuar normalmente
-      
-    } else if (!detected && this.wasFingerDetected) {
-      // Dedo acaba de perderse - registrar timestamp
+    if (!detected && this.wasFingerDetected) {
+      // Dedo acaba de perderse - solo registrar timestamp
       this.fingerLostTimestamp = now;
     }
+    // Ya NO hacemos partialReset cuando el dedo vuelve
+    // El procesador continúa normalmente con los buffers existentes
     
     this.wasFingerDetected = detected;
   }
@@ -560,18 +537,20 @@ export class HeartBeatProcessor {
   }
 
   private autoResetIfSignalIsLow(amplitude: number) {
+    // MODIFICADO: Umbral más alto y más frames necesarios para reset
+    // Evita resets innecesarios que bloquean la detección
     if (amplitude < this.LOW_SIGNAL_THRESHOLD) {
       this.lowSignalCount++;
-      if (this.lowSignalCount >= this.LOW_SIGNAL_FRAMES) {
+      // AUMENTADO: Necesitar 30 frames (1s) de señal baja para reset
+      if (this.lowSignalCount >= 30) {
         this.resetDetectionStates();
-        // También reseteamos los parámetros adaptativos a sus valores por defecto
-        this.adaptiveSignalThreshold = this.DEFAULT_SIGNAL_THRESHOLD;
-        this.adaptiveMinConfidence = this.DEFAULT_MIN_CONFIDENCE;
-        this.adaptiveDerivativeThreshold = this.DEFAULT_DERIVATIVE_THRESHOLD;
-        this.isArrhythmiaDetected = false;
+        // NO resetear parámetros adaptativos - pueden causar bloqueo
+        // Solo resetear contadores
+        this.lowSignalCount = 0;
       }
     } else {
-      this.lowSignalCount = Math.max(0, this.lowSignalCount - 1);
+      // Decrementar más rápido para evitar acumulación
+      this.lowSignalCount = Math.max(0, this.lowSignalCount - 2);
     }
   }
 
@@ -581,8 +560,9 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Detección de picos ULTRA SENSIBLE
+   * Detección de picos ULTRA SENSIBLE Y ROBUSTA
    * Basada en cambio de tendencia (derivada positiva -> negativa)
+   * MODIFICADO: Más permisivo para evitar bloqueos
    */
   private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
@@ -599,14 +579,18 @@ export class HeartBeatProcessor {
       return { isPeak: false, confidence: 0 };
     }
 
-    // Necesitamos suficientes muestras
-    if (this.signalBuffer.length < 8) {
+    // Necesitamos suficientes muestras - REDUCIDO
+    if (this.signalBuffer.length < 5) {
       return { isPeak: false, confidence: 0 };
     }
 
     // DETECCIÓN BASADA EN CAMBIO DE TENDENCIA
-    const recent = this.signalBuffer.slice(-10);
+    const recent = this.signalBuffer.slice(-8);
     const n = recent.length;
+    
+    if (n < 4) {
+      return { isPeak: false, confidence: 0 };
+    }
     
     // Calcular derivadas locales
     const deriv1 = recent[n-2] - recent[n-3]; // Hace 2 frames
@@ -614,28 +598,28 @@ export class HeartBeatProcessor {
     
     // CRITERIO PRINCIPAL: Cambio de tendencia positiva a negativa
     // (subía y ahora baja = pico)
-    const isPotentialPeak = deriv1 > 0 && deriv2 < 0;
+    const isPotentialPeak = deriv1 > 0 && deriv2 <= 0; // <= en vez de < para ser más permisivo
     
-    // CRITERIO SECUNDARIO MUY PERMISIVO: El valor debe tener algo de amplitud
-    const recentSamples = this.signalBuffer.slice(-20);
+    // CRITERIO SECUNDARIO MÁS PERMISIVO
+    const recentSamples = this.signalBuffer.slice(-15);
     const recentMax = Math.max(...recentSamples);
     const recentMin = Math.min(...recentSamples);
     const acRange = recentMax - recentMin;
     const currentVal = recent[n-2]; // El pico es el frame anterior
     
-    // Altura relativa (muy permisivo: > 40% del rango)
-    const relativeHeight = acRange > 0.1 ? (currentVal - recentMin) / acRange : 0.5;
-    const isNearTop = relativeHeight > 0.4;
+    // Altura relativa - MÁS PERMISIVO (> 30% del rango)
+    const relativeHeight = acRange > 0.05 ? (currentVal - recentMin) / acRange : 0.5;
+    const isNearTop = relativeHeight > 0.30; // Bajado de 0.40
     
-    // También aceptar si hay CUALQUIER señal AC visible
-    const hasSignificantAC = acRange > 0.3;
+    // También aceptar si hay CUALQUIER señal AC visible - umbral bajado
+    const hasSignificantAC = acRange > 0.1; // Bajado de 0.3
     
     const isPeak = isPotentialPeak && (isNearTop || hasSignificantAC);
 
-    // Calcular confianza
-    const heightScore = Math.min(1, relativeHeight);
-    const acScore = Math.min(1, acRange / 5);
-    const confidence = isPeak ? Math.max(0.4, 0.4 * heightScore + 0.6 * acScore) : 0;
+    // Calcular confianza - MÁS GENEROSA
+    const heightScore = Math.min(1, relativeHeight * 1.5);
+    const acScore = Math.min(1, acRange / 3); // Más generoso
+    const confidence = isPeak ? Math.max(0.35, 0.35 * heightScore + 0.65 * acScore) : 0;
 
     return { isPeak, confidence, rawDerivative: derivative };
   }
@@ -649,40 +633,62 @@ export class HeartBeatProcessor {
     if (this.peakConfirmationBuffer.length > this.PEAK_CONFIRMATION_BUFFER_SIZE) {
       this.peakConfirmationBuffer.shift();
     }
-    // Confirmación simplificada: cada pico marcado es confirmado
-    if (isPeak && !this.lastConfirmedPeak) {
-      this.lastConfirmedPeak = true;
-      return true;
-    } else if (!isPeak) {
+    
+    // SIMPLIFICADO: Si es pico con confianza suficiente, confirmar
+    // El lastConfirmedPeak solo sirve para evitar dobles detecciones INMEDIATAS
+    if (isPeak && confidence >= 0.3) {
+      if (!this.lastConfirmedPeak) {
+        this.lastConfirmedPeak = true;
+        return true;
+      }
+      // Ya había un pico confirmado recientemente - esperar
+      return false;
+    }
+    
+    // Reset del flag después de un no-pico
+    if (!isPeak) {
       this.lastConfirmedPeak = false;
     }
     return false;
   }
 
   /**
-   * Validación de picos con criterios fisiológicos reales
+   * Validación de picos MÁS PERMISIVA
+   * El objetivo es CAPTAR latidos, no rechazarlos
    */
   private validatePeak(peakValue: number, confidence: number): boolean {
-    // CRITERIO 1: Confianza mínima
-    const hasMinConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
+    // CRITERIO 1: Confianza mínima - MUY permisivo
+    const hasMinConfidence = confidence >= 0.2; // Bajado de 0.25
     
-    // CRITERIO 2: Amplitud significativa
-    const hasMinAmplitude = Math.abs(peakValue) > this.PEAK_AMPLITUDE_THRESHOLD;
+    // CRITERIO 2: Amplitud significativa - MUY permisivo
+    const hasMinAmplitude = Math.abs(peakValue) > 0.005; // Bajado de 0.008
     
-    // CRITERIO 3: Calidad de señal aceptable (más permisivo)
-    const hasAcceptableQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY || 
-                                  this.bpmHistory.length < 5; // Permisivo al inicio
-
-    // CRITERIO 4: Consistencia con historial (si hay suficientes datos)
+    // CRITERIO 3: ELIMINADO el chequeo de calidad de señal
+    // La calidad ya se verifica en otras partes del flujo
+    
+    // CRITERIO 4: Consistencia con historial - MÁS PERMISIVO
+    // Solo verificar si tenemos MUCHO historial confiable
     let isConsistentWithHistory = true;
-    if (this.bpmHistory.length >= 3 && this.lastPeakTime && this.previousPeakTime) {
-      const expectedInterval = 60000 / (this.getSmoothBPM() || 70);
-      const actualInterval = Date.now() - this.lastPeakTime;
-      const deviation = Math.abs(actualInterval - expectedInterval) / expectedInterval;
-      isConsistentWithHistory = deviation < 0.5; // 50% de tolerancia
+    if (this.bpmHistory.length >= 8 && this.lastPeakTime && this.previousPeakTime) {
+      const smoothBPM = this.getSmoothBPM();
+      // Solo verificar si tenemos un BPM razonable
+      if (smoothBPM >= 40 && smoothBPM <= 180) {
+        const expectedInterval = 60000 / smoothBPM;
+        const actualInterval = Date.now() - this.lastPeakTime;
+        const deviation = Math.abs(actualInterval - expectedInterval) / expectedInterval;
+        // 70% de tolerancia (antes 50%) - MUY permisivo
+        isConsistentWithHistory = deviation < 0.7;
+      }
+      // Si el BPM no es razonable, NO bloquear - permitir recalibración
     }
 
-    return hasMinConfidence && hasMinAmplitude && hasAcceptableQuality && isConsistentWithHistory;
+    // IMPORTANTE: Si la confianza es alta (>0.5), IGNORAR consistencia histórica
+    // Esto permite "romper" un historial corrupto con picos fuertes
+    if (confidence > 0.5) {
+      return hasMinConfidence && hasMinAmplitude;
+    }
+
+    return hasMinConfidence && hasMinAmplitude && isConsistentWithHistory;
   }
 
   private updateBPM() {
