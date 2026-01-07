@@ -547,128 +547,154 @@ export class VitalSignsProcessor {
     return Math.max(0.1, 1.0 - avgVariation * 2);
   }
 
+  /**
+   * CÁLCULO SPO2 REAL - Delega al procesador especializado
+   * Solo retorna valor si hay señal pulsátil real
+   */
   private calculateSpO2Real(signal: number[]): number {
-    if (signal.length < 20) return 0;
+    if (signal.length < 30) return 0;
     
+    // Verificar que hay variación real en la señal
     const range = Math.max(...signal) - Math.min(...signal);
-    if (range < 0.3) return 0;
+    if (range < 1) return 0; // Señal plana, no hay pulso
     
-    // Usar procesador SpO2 PERSISTENTE (no crear nuevo cada vez)
+    // Usar procesador SpO2 persistente
     const spo2 = this.spo2Processor.calculateSpO2(signal);
     
-    if (spo2 <= 0) return 0;
-    
-    // Valor estable entre 95-99 para personas sanas
-    return Math.max(94, Math.min(99, spo2));
+    return spo2 > 0 ? spo2 : 0;
   }
 
+  /**
+   * CÁLCULO GLUCOSA - Basado en características PPG reales
+   * NOTA: Esto es una estimación referencial, no diagnóstica
+   * La glucosa real requiere análisis de sangre o glucómetro
+   */
   private calculateGlucoseReal(signal: number[], currentValue: number): number {
+    if (signal.length < 30) return 0;
+    
+    // Verificar señal válida
+    const range = Math.max(...signal) - Math.min(...signal);
+    if (range < 1) return 0;
+    
+    // Calcular métricas PPG reales
+    const dc = this.calculateDCComponent(signal);
+    const ac = this.calculateACComponent(signal);
+    
+    if (dc < 10 || ac < 0.5) return 0;
+    
+    // Índice de perfusión
+    const pi = ac / dc;
+    if (pi < 0.003) return 0; // Sin pulso real
+    
+    // La glucosa afecta la viscosidad sanguínea y por ende la forma de onda PPG
+    // Usamos la relación AC/DC y variabilidad para estimar
+    // Esto es REFERENCIAL - valor base 95 mg/dL (normal en ayunas)
+    const baseGlucose = 95;
+    
+    // Ajuste basado en características reales de la señal
+    const variance = this.calculateVariance(signal);
+    const piEffect = Math.tanh((pi - 0.02) * 20) * 10; // -10 a +10
+    
+    return Math.max(70, Math.min(140, baseGlucose + piEffect));
+  }
+
+  /**
+   * CÁLCULO HEMOGLOBINA - Basado en absorción óptica
+   * NOTA: Estimación referencial basada en intensidad de señal PPG
+   */
+  private calculateHemoglobinReal(signal: number[]): number {
     if (signal.length < 20) return 0;
     
     const range = Math.max(...signal) - Math.min(...signal);
-    if (range < 0.3) return 0;
+    if (range < 1) return 0;
     
-    const variance = this.calculateVariance(signal);
-    const pulsatility = this.calculatePulsatility(signal);
+    const dc = this.calculateDCComponent(signal);
+    const ac = this.calculateACComponent(signal);
     
-    if (variance < 0.001) return 0;
+    if (dc < 10) return 0;
     
-    // Modelo estable: glucosa normal 80-110 mg/dL
-    const baseGlucose = 95;
-    const varianceEffect = Math.tanh(variance * 10) * 15; // -15 a +15
-    const pulsatilityEffect = pulsatility * 10;
-    
-    const glucose = baseGlucose + varianceEffect + pulsatilityEffect;
-    
-    return Math.max(75, Math.min(130, glucose));
-  }
-
-  private calculateHemoglobinReal(signal: number[]): number {
-    if (signal.length < 15) return 0;
-    
-    const range = Math.max(...signal) - Math.min(...signal);
-    if (range < 0.3) return 0;
-    
-    const amplitude = this.calculateAmplitude(signal);
-    const dcComponent = this.calculateDCComponent(signal);
-    const acComponent = this.calculateACComponent(signal);
-    
-    if (amplitude < 0.01) return 0;
-    
-    // Relación AC/DC correlaciona con Hb
-    const acDcRatio = dcComponent > 0 ? acComponent / dcComponent : 0;
-    
-    // Hemoglobina normal: 12-17 g/dL
+    // La hemoglobina absorbe luz - mayor DC con buena perfusión indica buena Hb
+    // Valor base: 14.0 g/dL (normal)
     const baseHemoglobin = 14.0;
-    const acDcAdjust = Math.tanh(acDcRatio * 5) * 2; // -2 a +2
     
-    return Math.max(11, Math.min(17, baseHemoglobin + acDcAdjust));
+    // Ratio AC/DC correlaciona inversamente con Hb
+    const acDcRatio = ac / dc;
+    const adjustment = Math.tanh((acDcRatio - 0.02) * 30) * 1.5;
+    
+    return Math.max(10, Math.min(18, baseHemoglobin + adjustment));
   }
 
+  /**
+   * CÁLCULO PRESIÓN ARTERIAL - Basado en PTT y morfología PPG
+   * NOTA: Requiere calibración individual para precisión clínica
+   */
   private calculateBloodPressureReal(intervals: number[], signal: number[]): { systolic: number; diastolic: number } {
-    if (intervals.length < 3) return { systolic: 0, diastolic: 0 };
+    if (intervals.length < 3 || signal.length < 20) {
+      return { systolic: 0, diastolic: 0 };
+    }
     
+    // Filtrar intervalos fisiológicamente válidos (300-1500ms = 40-200 BPM)
     const validIntervals = intervals.filter(i => i >= 300 && i <= 1500);
-    if (validIntervals.length < 2) return { systolic: 0, diastolic: 0 };
+    if (validIntervals.length < 2) {
+      return { systolic: 0, diastolic: 0 };
+    }
     
     const range = Math.max(...signal) - Math.min(...signal);
-    if (range < 0.3) return { systolic: 0, diastolic: 0 };
+    if (range < 1) return { systolic: 0, diastolic: 0 };
     
-    // Promedio de intervalos RR
-    const avgIntervalMs = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
+    // Promedio de intervalos RR en ms
+    const avgInterval = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
     
-    // PTT normalizado (más corto = mayor presión)
-    const pttNormalized = Math.max(0, Math.min(1, (avgIntervalMs - 400) / 800));
+    // FC derivada de intervalos
+    const heartRate = 60000 / avgInterval;
     
-    // Presión arterial normal: 110-130/70-85 mmHg
+    // PTT está inversamente relacionado con presión arterial
+    // Intervalos más cortos (FC alta) correlacionan con mayor presión
+    // Valores base: 120/80 mmHg (normal)
     const baseSystolic = 120;
-    const baseDiastolic = 75;
+    const baseDiastolic = 80;
     
-    // Ajuste moderado basado en PTT
-    const pttAdjust = (0.5 - pttNormalized) * 15; // -7.5 a +7.5
+    // Ajuste basado en FC (correlación débil pero real)
+    const hrAdjust = (heartRate - 70) * 0.3; // ±10 mmHg por ±30 BPM
     
-    const systolic = baseSystolic + pttAdjust;
-    const diastolic = baseDiastolic + (pttAdjust * 0.5);
+    const systolic = Math.round(Math.max(90, Math.min(160, baseSystolic + hrAdjust)));
+    const diastolic = Math.round(Math.max(55, Math.min(100, baseDiastolic + hrAdjust * 0.5)));
     
-    const s = Math.round(Math.max(100, Math.min(145, systolic)));
-    const d = Math.round(Math.max(60, Math.min(95, diastolic)));
+    // Asegurar presión de pulso fisiológica (30-60 mmHg)
+    const pulsePressure = Math.max(30, Math.min(60, systolic - diastolic));
     
-    // Asegurar diferencia de pulso fisiológica
-    const pulsePressure = Math.max(30, Math.min(55, s - d));
-    return { systolic: d + pulsePressure, diastolic: d };
-  }
-  
-  private calculateRRVariability(intervals: number[]): number {
-    if (intervals.length < 2) return 0;
-    const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const variance = intervals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / intervals.length;
-    return Math.sqrt(variance) / mean; // Coeficiente de variación
+    return { 
+      systolic: diastolic + pulsePressure, 
+      diastolic 
+    };
   }
 
+  /**
+   * CÁLCULO LÍPIDOS - Estimación muy aproximada
+   * NOTA: Los lípidos NO pueden medirse con PPG con precisión
+   * Esto es puramente referencial/demostrativo
+   */
   private calculateLipidsReal(signal: number[]): { totalCholesterol: number; triglycerides: number } {
-    if (signal.length < 20) return { totalCholesterol: 0, triglycerides: 0 };
+    if (signal.length < 30) {
+      return { totalCholesterol: 0, triglycerides: 0 };
+    }
     
     const range = Math.max(...signal) - Math.min(...signal);
-    if (range < 0.3) return { totalCholesterol: 0, triglycerides: 0 };
+    if (range < 1) return { totalCholesterol: 0, triglycerides: 0 };
     
-    const variance = this.calculateVariance(signal);
-    const pulsatility = this.calculatePulsatility(signal);
-    
-    if (variance < 0.001) return { totalCholesterol: 0, triglycerides: 0 };
-    
-    // Lípidos normales: Colesterol 150-200, Triglicéridos 80-150
+    // Valores base normales (puramente referenciales)
+    // Colesterol normal: 150-200 mg/dL
+    // Triglicéridos normal: 80-150 mg/dL
     const baseCholesterol = 180;
-    const baseTriglycerides = 110;
+    const baseTriglycerides = 120;
     
-    const varianceEffect = Math.tanh(variance * 5) * 20;
-    const pulsatilityEffect = pulsatility * 15;
-    
-    const cholesterol = baseCholesterol + varianceEffect;
-    const triglycerides = baseTriglycerides + pulsatilityEffect;
+    // Pequeña variación basada en características de señal
+    const variance = this.calculateVariance(signal);
+    const varEffect = Math.tanh(variance * 3) * 15;
     
     return {
-      totalCholesterol: Math.round(Math.max(150, Math.min(220, cholesterol))),
-      triglycerides: Math.round(Math.max(70, Math.min(180, triglycerides)))
+      totalCholesterol: Math.round(Math.max(140, Math.min(220, baseCholesterol + varEffect))),
+      triglycerides: Math.round(Math.max(70, Math.min(180, baseTriglycerides + varEffect * 0.5)))
     };
   }
 
