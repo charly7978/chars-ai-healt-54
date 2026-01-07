@@ -65,31 +65,36 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
 
   return (
     <div className="fixed top-20 right-2 z-30 flex flex-col items-end gap-1">
-      {/* Ventana de previsualización pequeña - esquina superior derecha */}
+      {/* Ventana de previsualización GRANDE para mejor visibilidad */}
       <div 
-        className={`relative rounded-md overflow-hidden shadow-lg transition-all duration-300 ${getStatusColor()} ${getStatusBg()} border`}
-        style={{ width: '56px', height: '56px' }}
+        className={`relative rounded-lg overflow-hidden shadow-lg transition-all duration-300 ${getStatusColor()} ${getStatusBg()} border-2`}
+        style={{ width: '120px', height: '90px' }}
       >
-        {/* Video de la cámara */}
+        {/* Video de la cámara - SIN transformaciones, imagen natural */}
         <video
           ref={videoRef}
           playsInline
           muted
           autoPlay
-          className="w-full h-full object-cover opacity-75"
+          className="w-full h-full object-cover"
+          style={{
+            // Sin filtros ni transformaciones - imagen natural
+            filter: 'none',
+            transform: 'none',
+          }}
         />
         
-        {/* Overlay de estado minimalista */}
+        {/* Overlay de estado */}
         {showGuide && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-            <span className="text-white text-[6px] font-semibold text-center leading-tight">
+          <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+            <span className="text-white text-xs font-semibold text-center leading-tight">
               {getStatusText()}
             </span>
           </div>
         )}
 
-        {/* Barra de calidad mini */}
-        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-black/50">
+        {/* Barra de calidad */}
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/50">
           <div 
             className={`h-full transition-all duration-300 ${
               signalQuality >= 70 ? 'bg-green-400' :
