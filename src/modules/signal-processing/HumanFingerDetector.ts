@@ -286,9 +286,17 @@ export class HumanFingerDetector {
   /**
    * Analizar si hay ritmo cardíaco real en la señal
    * Detecta picos y verifica frecuencia en rango fisiológico
+   * MODIFICADO: Más permisivo con menos muestras para recuperación rápida
    */
   private analyzeCardiacRhythm(): { isValid: boolean; bpm: number; consistency: number; message: string } {
-    if (this.redHistory.length < 60 || this.timestampHistory.length < 60) {
+    // REDUCIDO: Solo necesitar 30 muestras (~1s) en lugar de 60
+    // Esto permite recuperación mucho más rápida después de cortes
+    if (this.redHistory.length < 30 || this.timestampHistory.length < 30) {
+      // Si ya teníamos detección confirmada, ser MÁS permisivo
+      if (this.lastDetectionState && this.redHistory.length >= 15) {
+        // Con detección previa, aceptar con menos datos
+        return { isValid: true, bpm: 70, consistency: 0.5, message: "Recuperando..." };
+      }
       return { isValid: false, bpm: 0, consistency: 0, message: "Datos insuficientes" };
     }
     
@@ -423,32 +431,33 @@ export class HumanFingerDetector {
   }
 
   private updateHistory(redValue: number, timestamp: number): void {
-    // SOLO limpiar historial si hay una transición REAL dedo on/off
-    // (cambio muy brusco >100 unidades), NO por variación normal de pulso
+    // CRÍTICO: Solo limpiar historial en transiciones MUY claras
+    // La variación normal de pulso es 20-80 unidades - NO debe limpiar
     const redDelta = Math.abs(redValue - this.lastRedValue);
     
-    // NUEVO: Solo limpiar si el dedo fue REALMENTE quitado (red muy bajo) y ahora vuelve
-    // O viceversa - transición real, no variación de pulso
-    const wasFingerOff = this.lastRedValue < this.CONFIG.MIN_RED_VALUE * 0.5;
+    // Solo limpiar si:
+    // 1. El cambio es ENORME (>150 unidades)
+    // 2. Y hay una transición clara ON->OFF o OFF->ON
+    const wasFingerOff = this.lastRedValue > 0 && this.lastRedValue < this.CONFIG.MIN_RED_VALUE * 0.4;
     const isFingerNowOn = redValue >= this.CONFIG.MIN_RED_VALUE;
     const wasFingerOn = this.lastRedValue >= this.CONFIG.MIN_RED_VALUE;
-    const isFingerNowOff = redValue < this.CONFIG.MIN_RED_VALUE * 0.5;
+    const isFingerNowOff = redValue < this.CONFIG.MIN_RED_VALUE * 0.4;
     
-    // Solo limpiar en transiciones reales ON->OFF o OFF->ON con cambio grande
-    if (this.lastRedValue > 0 && redDelta > this.RED_TRANSITION_THRESHOLD) {
+    // SOLO limpiar en transiciones REALES y con cambio muy grande
+    if (this.lastRedValue > 0 && redDelta > 150) {
       if ((wasFingerOff && isFingerNowOn) || (wasFingerOn && isFingerNowOff)) {
         // Transición REAL detectada - limpiar historial contaminado
         this.redHistory = [];
         this.timestampHistory = [];
         this.pulsatilityHistory = [];
       }
-      // Si no es transición real (solo variación grande de pulso), NO limpiar
     }
     
     this.lastRedValue = redValue;
     
-    // Solo agregar al historial si el valor es razonable (dedo presente)
-    if (redValue >= this.CONFIG.MIN_RED_VALUE * 0.7) {
+    // SIEMPRE agregar al historial si es un valor razonable
+    // Esto asegura que el historial se mantenga para análisis de ritmo
+    if (redValue >= this.CONFIG.MIN_RED_VALUE * 0.5) {
       this.redHistory.push(redValue);
       this.timestampHistory.push(timestamp);
       
