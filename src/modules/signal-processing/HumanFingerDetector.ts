@@ -51,49 +51,49 @@ export class HumanFingerDetector {
   private trendUp = false;
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // UMBRALES CALIBRADOS PARA YEMA DE DEDO REAL CON FLASH LED
+  // UMBRALES CALIBRADOS PARA YEMA COMPLETA - TOLERANTE A SATURACIÓN
   // ═══════════════════════════════════════════════════════════════════════════
   private readonly CONFIG = {
-    // === COLOR - Valores reales de yema iluminada por flash ===
-    // La yema con flash produce: R~160-220, G~60-120, B~40-80
-    MIN_TOTAL_LIGHT: 120,           // Reducido - yema puede tener menos luz total
-    MIN_RED_VALUE: 70,              // Reducido - yema oscura o distante
-    GOOD_RED_VALUE: 120,            // Yema bien posicionada
-    IDEAL_RED_VALUE: 160,           // Yema perfectamente iluminada
+    // === COLOR - La yema con flash puede saturar el rojo ===
+    MIN_TOTAL_LIGHT: 80,            // Muy bajo para empezar a analizar
+    MIN_RED_VALUE: 50,              // Mínimo absoluto
+    GOOD_RED_VALUE: 100,            // Yema bien posicionada
+    IDEAL_RED_VALUE: 150,           // Yema perfectamente iluminada
+    MAX_RED_VALUE: 255,             // SIN LÍMITE SUPERIOR - yema saturada es válida
     
-    // === DOMINANCIA DEL ROJO ===
-    MIN_RED_PROPORTION: 0.42,       // Reducido - yema real: ~45-55%
+    // === DOMINANCIA DEL ROJO - Más permisivo ===
+    MIN_RED_PROPORTION: 0.38,       // La yema con flash: 40-70%
     
-    // === RATIOS DE COLOR - Calibrados para yema real ===
-    MIN_RG_RATIO: 1.05,             // Reducido significativamente - yema real: 1.1-2.5
-    MAX_RG_RATIO: 6.0,              // Ampliado - flash intenso puede dar ratios altos
-    MIN_RB_RATIO: 1.1,              // Reducido - yema real tiene más azul que esperado
+    // === RATIOS DE COLOR - Muy amplios para yema real ===
+    MIN_RG_RATIO: 0.95,             // Muy bajo - yema puede tener verde
+    MAX_RG_RATIO: 15.0,             // MUY ALTO - yema saturada puede dar ratios enormes
+    MIN_RB_RATIO: 0.9,              // Muy bajo
     
-    // === LÍMITES VERDE/AZUL - Más permisivos ===
-    MAX_GREEN_PROPORTION: 0.42,     // Aumentado - yema con flash: 25-38%
-    MAX_BLUE_PROPORTION: 0.30,      // Aumentado - yema real: 15-25%
+    // === LÍMITES VERDE/AZUL - Muy permisivos ===
+    MAX_GREEN_PROPORTION: 0.50,     // 50% - muy permisivo
+    MAX_BLUE_PROPORTION: 0.40,      // 40% - muy permisivo
     
     // ═══════════════════════════════════════════════════════════════════════
-    // PULSATILIDAD - OBLIGATORIA PARA CONFIRMAR TEJIDO VIVO
+    // PULSATILIDAD - MÁS TOLERANTE AL MOVIMIENTO
     // ═══════════════════════════════════════════════════════════════════════
-    MIN_SAMPLES_FOR_PULSE_CHECK: 30,  // Reducido a 1 segundo para respuesta rápida
+    MIN_SAMPLES_FOR_PULSE_CHECK: 15,  // Solo 0.5 segundos - detección RÁPIDA
     
-    // Componente AC/DC - variación por pulso sanguíneo
-    MIN_PULSATILITY_FOR_LIFE: 0.003,  // 0.3% mínimo - más sensible a pulso débil
-    GOOD_PULSATILITY: 0.008,          // 0.8% bueno
-    IDEAL_PULSATILITY: 0.015,         // 1.5% ideal
-    MAX_PULSATILITY: 0.20,            // 20% máximo - más tolerante a movimiento leve
+    // Componente AC/DC
+    MIN_PULSATILITY_FOR_LIFE: 0.001,  // 0.1% - muy sensible al pulso
+    GOOD_PULSATILITY: 0.005,          // 0.5% bueno
+    IDEAL_PULSATILITY: 0.010,         // 1.0% ideal
+    MAX_PULSATILITY: 0.50,            // 50% - MUY tolerante al movimiento
     
     // Frecuencia cardíaca esperada
-    MIN_HEART_RATE_HZ: 0.5,           // 30 BPM mínimo
-    MAX_HEART_RATE_HZ: 3.5,           // 210 BPM máximo
+    MIN_HEART_RATE_HZ: 0.4,           // 24 BPM mínimo
+    MAX_HEART_RATE_HZ: 4.0,           // 240 BPM máximo
     
     // Número mínimo de picos para confirmar ritmo
-    MIN_PEAKS_FOR_RHYTHM: 2,
+    MIN_PEAKS_FOR_RHYTHM: 1,
     
-    // === ESTABILIDAD TEMPORAL ===
-    MIN_CONSECUTIVE_FOR_DETECTION: 3,   // Reducido para respuesta más rápida
-    MAX_CONSECUTIVE_FOR_LOSS: 8,        // Aumentado para evitar pérdida intermitente
+    // === ESTABILIDAD TEMPORAL - Detección rápida pero estable ===
+    MIN_CONSECUTIVE_FOR_DETECTION: 2,   // Solo 2 frames para detectar
+    MAX_CONSECUTIVE_FOR_LOSS: 15,       // 15 frames para perder - muy estable
   };
 
   constructor() {
@@ -124,14 +124,14 @@ export class HumanFingerDetector {
     const rbRatio = blueValue > 0 ? redValue / blueValue : 0;
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FASE 1: VALIDACIÓN DE COLOR (necesaria pero NO suficiente)
+    // FASE 1: VALIDACIÓN DE COLOR BÁSICA (solo mínimos, sin máximos estrictos)
     // ═══════════════════════════════════════════════════════════════════════
     
-    // 1. ILUMINACIÓN SUFICIENTE
+    // 1. ILUMINACIÓN MÍNIMA
     if (totalLight < this.CONFIG.MIN_TOTAL_LIGHT) {
       this.handleNonDetection();
       return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        "❌ Luz insuficiente - Acerque la yema al flash"
+        "❌ Luz insuficiente - Acerque el dedo al flash"
       );
     }
 
@@ -139,90 +139,54 @@ export class HumanFingerDetector {
     if (redValue < this.CONFIG.MIN_RED_VALUE) {
       this.handleNonDetection();
       return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `❌ Rojo insuficiente (${redValue.toFixed(0)}) - Use la YEMA del dedo`
+        `❌ Rojo bajo (${redValue.toFixed(0)}) - Coloque la YEMA sobre el flash`
       );
     }
 
-    // 3. DOMINANCIA ROJA
+    // 3. ROJO DEBE SER EL CANAL DOMINANTE (simple comparación)
+    if (redValue < greenValue || redValue < blueValue) {
+      this.handleNonDetection();
+      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
+        "❌ Rojo no es dominante - No es tejido iluminado por flash"
+      );
+    }
+
+    // 4. PROPORCIÓN ROJA MÍNIMA (sin máximo)
     if (redProportion < this.CONFIG.MIN_RED_PROPORTION) {
       this.handleNonDetection();
       return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `❌ Rojo no dominante (${(redProportion*100).toFixed(0)}%) - Cubra el flash completamente`
+        `❌ Rojo ${(redProportion*100).toFixed(0)}% - Cubra el flash con la yema`
       );
     }
 
-    // 4. RATIO R/G
-    if (rgRatio < this.CONFIG.MIN_RG_RATIO || rgRatio > this.CONFIG.MAX_RG_RATIO) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `❌ Ratio R/G fuera de rango (${rgRatio.toFixed(2)}) - No es tejido humano`
-      );
-    }
-
-    // 5. RATIO R/B
-    if (rbRatio < this.CONFIG.MIN_RB_RATIO) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `❌ Demasiado azul - No es piel humana iluminada`
-      );
-    }
-
-    // 6. VERDE NO EXCESIVO
-    if (greenProportion > this.CONFIG.MAX_GREEN_PROPORTION) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `❌ Verde excesivo (${(greenProportion*100).toFixed(0)}%) - Objeto no es tejido humano`
-      );
-    }
-
-    // 7. AZUL NO EXCESIVO
-    if (blueProportion > this.CONFIG.MAX_BLUE_PROPORTION) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `❌ Azul excesivo - Luz ambiental o superficie no orgánica`
-      );
-    }
+    // NOTA: NO rechazamos por exceso de rojo - la yema saturada es válida
 
     // ═══════════════════════════════════════════════════════════════════════
-    // FASE 2: VALIDACIÓN DE SEÑAL VIVA (OBLIGATORIA)
+    // FASE 2: VALIDACIÓN DE SEÑAL VIVA (pulsatilidad)
     // ═══════════════════════════════════════════════════════════════════════
     
-    // Necesitamos suficientes muestras para analizar pulsatilidad
+    // Necesitamos suficientes muestras para analizar
     if (this.redHistory.length < this.CONFIG.MIN_SAMPLES_FOR_PULSE_CHECK) {
-      // Aún recolectando datos - NO confirmar detección todavía
+      // Color OK, recolectando datos - mostrar progreso positivo
+      const progress = Math.round((this.redHistory.length / this.CONFIG.MIN_SAMPLES_FOR_PULSE_CHECK) * 100);
       return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⏳ Analizando señal... (${this.redHistory.length}/${this.CONFIG.MIN_SAMPLES_FOR_PULSE_CHECK} muestras)`
+        `⏳ Color OK - Analizando pulso... ${progress}%`
       );
     }
     
-    // Calcular pulsatilidad (componente AC/DC)
+    // Calcular pulsatilidad
     const pulsatility = this.calculatePulsatility();
     
-    // VERIFICACIÓN CRÍTICA: ¿Hay pulsatilidad de tejido vivo?
+    // Verificar pulsatilidad mínima (señal de vida)
     if (pulsatility < this.CONFIG.MIN_PULSATILITY_FOR_LIFE) {
       this.handleNonDetection();
       return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, pulsatility,
-        `❌ SIN PULSO DETECTADO (AC=${(pulsatility*100).toFixed(2)}%) - Objeto inerte, no es dedo humano`
+        `❌ Sin pulso (${(pulsatility*100).toFixed(3)}%) - Mantenga el dedo quieto`
       );
     }
     
-    // Verificar que pulsatilidad no sea excesiva (movimiento, no pulso)
-    if (pulsatility > this.CONFIG.MAX_PULSATILITY) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, pulsatility,
-        `❌ Variación excesiva (${(pulsatility*100).toFixed(1)}%) - Mantenga el dedo quieto`
-      );
-    }
-    
-    // Verificar ritmo cardíaco (frecuencia de variación)
-    const rhythmValid = this.checkCardiacRhythm();
-    if (!rhythmValid) {
-      // Tenemos variación pero no en frecuencia cardíaca
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, pulsatility,
-        `❌ Variación no cardíaca - Ritmo fuera de rango fisiológico`
-      );
-    }
+    // NOTA: NO rechazamos por pulsatilidad alta - el movimiento no invalida el dedo
+    // Solo lo usamos para ajustar la calidad de la señal
 
     // ═══════════════════════════════════════════════════════════════════════
     // TODAS LAS VALIDACIONES PASARON - TEJIDO VIVO CONFIRMADO
@@ -247,24 +211,21 @@ export class HumanFingerDetector {
   }
 
   /**
-   * Calcular pulsatilidad AC/DC
-   * El pulso cardíaco produce variación de ~0.5-3% en la señal
+   * Calcular pulsatilidad AC/DC - Simplificado y más sensible
    */
   private calculatePulsatility(): number {
-    if (this.redHistory.length < 30) return 0;
+    if (this.redHistory.length < 10) return 0;
     
-    const samples = this.redHistory.slice(-60); // Últimos 2 segundos
+    const samples = this.redHistory.slice(-30); // Último segundo
     
-    // Calcular DC (componente continua - promedio)
+    // Calcular DC (promedio)
     const dc = samples.reduce((a, b) => a + b, 0) / samples.length;
     if (dc === 0) return 0;
     
-    // Calcular AC (componente alterna - variación pico a pico)
-    // Usar percentiles para robustez contra outliers
-    const sorted = [...samples].sort((a, b) => a - b);
-    const p5 = sorted[Math.floor(sorted.length * 0.05)];
-    const p95 = sorted[Math.floor(sorted.length * 0.95)];
-    const ac = p95 - p5;
+    // Calcular AC (max - min)
+    const max = Math.max(...samples);
+    const min = Math.min(...samples);
+    const ac = max - min;
     
     // Pulsatilidad = AC / DC
     return ac / dc;
