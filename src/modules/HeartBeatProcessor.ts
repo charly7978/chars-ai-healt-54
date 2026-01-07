@@ -457,10 +457,14 @@ export class HeartBeatProcessor {
     this.isArrhythmiaDetected = isDetected;
   }
   
+  /**
+   * MANEJO DE DETECCIÓN DE DEDO - SIN RESET AGRESIVO
+   * Ya no resetea al perder el dedo momentáneamente
+   * Solo degrada suavemente los valores
+   */
   setFingerDetected(detected: boolean): void {
-    if (!detected && this.wasFingerDetected) {
-      this.reset();
-    }
+    // NO hacer reset agresivo - causa pérdida de señal
+    // El procesador mantiene su estado y degrada suavemente
     this.wasFingerDetected = detected;
   }
 
