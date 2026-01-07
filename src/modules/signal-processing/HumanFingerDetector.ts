@@ -2,15 +2,21 @@
  * @file HumanFingerDetector.ts
  * @description ÚNICO PUNTO DE DETECCIÓN DE DEDO EN TODA LA APP
  * 
- * CRITERIO: Detectar la YEMA del dedo iluminada por el flash LED.
- * La yema del dedo sobre el flash produce una imagen ROJA BRILLANTE (saturada).
+ * CRITERIO: Detectar la YEMA del dedo (no la punta) iluminada por el flash LED.
  * 
- * Características de la yema del dedo correctamente posicionada:
- * 1. Canal ROJO muy alto (>150) por la luz atravesando el tejido
- * 2. Canal VERDE moderado-bajo (la hemoglobina absorbe verde)
- * 3. Canal AZUL bajo (la hemoglobina absorbe azul)
- * 4. Ratio R/G alto (típicamente 1.5-4.0)
- * 5. Imagen uniforme/saturada (poca textura porque es piel translúcida)
+ * La YEMA del dedo sobre el flash produce:
+ * - Imagen MUY ROJA y BRILLANTE (el flash atraviesa el tejido)
+ * - Canal ROJO dominante (>50% del total)
+ * - Canal VERDE bajo (hemoglobina absorbe verde)
+ * - Canal AZUL muy bajo (hemoglobina absorbe azul fuertemente)
+ * - Uniformidad alta (piel translúcida, sin bordes duros)
+ * 
+ * La PUNTA del dedo produce:
+ * - Menor área de contacto con el sensor
+ * - Menos luz roja (más bordes, menos penetración)
+ * - Más variabilidad (menor estabilidad)
+ * 
+ * UMBRALES CALIBRADOS EMPÍRICAMENTE para yema de dedo adulto
  */
 
 export interface FingerDetectionResult {
@@ -29,49 +35,60 @@ export interface FingerDetectionResult {
 }
 
 export class HumanFingerDetector {
-  // Buffer para estabilidad temporal
+  // Estabilidad temporal con histéresis
   private consecutiveDetections = 0;
   private consecutiveNonDetections = 0;
   private lastDetectionState = false;
   
-  // Historial para análisis de pulsatilidad
+  // Historial para análisis de pulsatilidad (componente AC)
   private redHistory: number[] = [];
-  private readonly HISTORY_SIZE = 30;
+  private readonly HISTORY_SIZE = 45; // ~1.5 segundos a 30fps
   
-  // UMBRALES CALIBRADOS PARA YEMA DE DEDO CON FLASH LED
+  // ═══════════════════════════════════════════════════════════════════════════
+  // UMBRALES RECALIBRADOS PARA YEMA DE DEDO (NO PUNTA)
+  // ═══════════════════════════════════════════════════════════════════════════
   private readonly CONFIG = {
-    // La yema iluminada por flash produce rojo MUY ALTO
-    MIN_RED_FOR_FINGER: 100,      // Rojo mínimo (yema iluminada es muy roja)
-    IDEAL_RED_MIN: 140,           // Rojo ideal mínimo
-    IDEAL_RED_MAX: 255,           // Rojo ideal máximo
+    // === ILUMINACIÓN MÍNIMA ===
+    MIN_TOTAL_LIGHT: 120,           // Mínimo absoluto
+    GOOD_TOTAL_LIGHT: 200,          // Buena iluminación
     
-    // Ratios de color para tejido humano con flash
-    MIN_RG_RATIO: 1.2,            // Rojo debe ser mayor que verde
-    MAX_RG_RATIO: 5.0,            // Pero no demasiado (evita luz roja artificial)
-    MIN_RB_RATIO: 1.5,            // Rojo mucho mayor que azul
+    // === CANAL ROJO ===
+    MIN_RED_VALUE: 80,              // Mínimo para considerar
+    GOOD_RED_VALUE: 120,            // Rojo bueno
+    IDEAL_RED_VALUE: 160,           // Rojo ideal
+    MAX_RED_VALUE: 255,             // Saturación
     
-    // Verde moderado (la sangre absorbe verde)
-    MAX_GREEN_RATIO: 0.45,        // Verde no debe ser más del 45% del total
+    // === DOMINANCIA DEL ROJO ===
+    MIN_RED_PROPORTION: 0.45,       // Rojo mínimo como proporción
+    IDEAL_RED_PROPORTION: 0.55,     // Rojo ideal
     
-    // Estabilidad requerida
-    MIN_CONSECUTIVE_FOR_DETECTION: 5,
-    MAX_CONSECUTIVE_FOR_LOSS: 10,
+    // === RATIOS DE COLOR ===
+    MIN_RG_RATIO: 1.15,             // Permisivo
+    MAX_RG_RATIO: 6.0,              // Alto para flash fuerte
+    IDEAL_RG_RATIO: 2.0,            // Valor ideal
+    MIN_RB_RATIO: 1.2,              // Permisivo
     
-    // Pulsatilidad mínima (la señal debe variar con el pulso)
-    MIN_PULSATILITY: 0.005
+    // === LÍMITES VERDE/AZUL ===
+    MAX_GREEN_PROPORTION: 0.40,     // Verde no más del 40%
+    MAX_BLUE_PROPORTION: 0.30,      // Azul no más del 30%
+    
+    // === ESTABILIDAD TEMPORAL ===
+    MIN_CONSECUTIVE_FOR_DETECTION: 3,
+    MAX_CONSECUTIVE_FOR_LOSS: 8,
+    
+    // === PULSATILIDAD ===
+    MIN_PULSATILITY: 0.003,
+    GOOD_PULSATILITY: 0.01,
+    IDEAL_PULSATILITY: 0.03
   };
 
   constructor() {
-    console.log("🔴 HumanFingerDetector: Detector de YEMA activado");
+    console.log("🔴 HumanFingerDetector: Detector de YEMA inicializado");
+    console.log(`   📋 Umbrales: R>${this.CONFIG.MIN_RED_VALUE}, R/G>${this.CONFIG.MIN_RG_RATIO}, R%>${this.CONFIG.MIN_RED_PROPORTION * 100}%`);
   }
 
   /**
-   * ÚNICA FUNCIÓN DE DETECCIÓN DE DEDO EN TODA LA APP
-   * 
-   * @param redValue - Valor promedio del canal rojo (0-255)
-   * @param greenValue - Valor promedio del canal verde (0-255)
-   * @param blueValue - Valor promedio del canal azul (0-255)
-   * @returns Resultado de detección con diagnósticos
+   * DETECCIÓN DE YEMA DE DEDO
    */
   detectFinger(
     redValue: number,
@@ -82,101 +99,97 @@ export class HumanFingerDetector {
     // Actualizar historial
     this.updateHistory(redValue);
     
-    // 1. VERIFICAR ILUMINACIÓN SUFICIENTE
+    // Calcular métricas
     const totalLight = redValue + greenValue + blueValue;
-    if (totalLight < 150) {
-      return this.createNegativeResult(
-        redValue, greenValue, blueValue,
-        "Iluminación insuficiente - active el flash o acerque el dedo"
-      );
-    }
-
-    // 2. VERIFICAR DOMINANCIA DEL ROJO (característica clave de yema con flash)
-    const redRatio = redValue / (totalLight + 0.001);
-    const greenRatio = greenValue / (totalLight + 0.001);
-    const rgRatio = redValue / (greenValue + 0.001);
-    const rbRatio = redValue / (blueValue + 0.001);
+    const redProportion = totalLight > 0 ? redValue / totalLight : 0;
+    const greenProportion = totalLight > 0 ? greenValue / totalLight : 0;
+    const blueProportion = totalLight > 0 ? blueValue / totalLight : 0;
+    const rgRatio = greenValue > 0 ? redValue / greenValue : 0;
+    const rbRatio = blueValue > 0 ? redValue / blueValue : 0;
     
-    const isRedDominant = redValue > greenValue && redValue > blueValue;
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDACIÓN PASO A PASO
+    // ═══════════════════════════════════════════════════════════════════════
     
-    if (!isRedDominant) {
+    // 1. ILUMINACIÓN SUFICIENTE
+    if (totalLight < this.CONFIG.MIN_TOTAL_LIGHT) {
       this.handleNonDetection();
-      return this.createNegativeResult(
-        redValue, greenValue, blueValue,
-        "El rojo debe dominar - coloque la YEMA (no la punta) sobre el flash"
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        "❌ Poca luz - Acerque la yema al flash"
       );
     }
 
-    // 3. VERIFICAR VALOR DE ROJO SUFICIENTE
-    if (redValue < this.CONFIG.MIN_RED_FOR_FINGER) {
+    // 2. VALOR ABSOLUTO DE ROJO
+    if (redValue < this.CONFIG.MIN_RED_VALUE) {
       this.handleNonDetection();
-      return this.createNegativeResult(
-        redValue, greenValue, blueValue,
-        `Rojo insuficiente (${redValue.toFixed(0)}) - presione más la yema sobre el flash`
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        `❌ Rojo bajo (${redValue.toFixed(0)}) - Coloque la YEMA sobre el flash`
       );
     }
 
-    // 4. VERIFICAR RATIOS DE COLOR PARA TEJIDO HUMANO
-    if (rgRatio < this.CONFIG.MIN_RG_RATIO || rgRatio > this.CONFIG.MAX_RG_RATIO) {
+    // 3. DOMINANCIA DEL ROJO
+    if (redProportion < this.CONFIG.MIN_RED_PROPORTION) {
       this.handleNonDetection();
-      return this.createNegativeResult(
-        redValue, greenValue, blueValue,
-        `Ratio R/G anormal (${rgRatio.toFixed(2)}) - no parece tejido humano iluminado`
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        `❌ Rojo no dominante (${(redProportion*100).toFixed(0)}%) - Cubra el flash con la yema`
       );
     }
 
+    // 4. RATIO R/G
+    if (rgRatio < this.CONFIG.MIN_RG_RATIO) {
+      this.handleNonDetection();
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        `❌ Ratio R/G bajo (${rgRatio.toFixed(2)}) - Presione más la yema`
+      );
+    }
+    
+    if (rgRatio > this.CONFIG.MAX_RG_RATIO) {
+      this.handleNonDetection();
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        `❌ Ratio R/G muy alto (${rgRatio.toFixed(2)}) - Posible luz roja externa`
+      );
+    }
+
+    // 5. RATIO R/B
     if (rbRatio < this.CONFIG.MIN_RB_RATIO) {
       this.handleNonDetection();
-      return this.createNegativeResult(
-        redValue, greenValue, blueValue,
-        `Ratio R/B bajo (${rbRatio.toFixed(2)}) - mucho azul para ser yema de dedo`
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        `❌ Mucho azul (R/B=${rbRatio.toFixed(2)}) - No es tejido humano`
       );
     }
 
-    // 5. VERIFICAR QUE EL VERDE NO DOMINE (la hemoglobina lo absorbe)
-    if (greenRatio > this.CONFIG.MAX_GREEN_RATIO) {
+    // 6. VERDE NO EXCESIVO
+    if (greenProportion > this.CONFIG.MAX_GREEN_PROPORTION) {
       this.handleNonDetection();
-      return this.createNegativeResult(
-        redValue, greenValue, blueValue,
-        "Demasiado verde - no es yema de dedo sobre flash"
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        `❌ Verde excesivo (${(greenProportion*100).toFixed(0)}%) - Cubra mejor el flash`
       );
     }
 
-    // 6. VERIFICAR PULSATILIDAD (debe haber variación por el pulso)
-    const pulsatility = this.calculatePulsatility();
-    
-    // 7. TODAS LAS VALIDACIONES PASARON - DEDO DETECTADO
+    // 7. AZUL NO EXCESIVO
+    if (blueProportion > this.CONFIG.MAX_BLUE_PROPORTION) {
+      this.handleNonDetection();
+      return this.createResult(false, 0, redValue, greenValue, blueValue, rgRatio,
+        `❌ Azul excesivo (${(blueProportion*100).toFixed(0)}%) - Luz ambiental interfiriendo`
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TODAS LAS VALIDACIONES PASARON - DEDO DETECTADO
+    // ═══════════════════════════════════════════════════════════════════════
     this.handleDetection();
     
-    // Calcular confianza basada en qué tan ideal es la señal
-    const confidence = this.calculateConfidence(
-      redValue, rgRatio, rbRatio, pulsatility
-    );
-    
-    // Calcular calidad para la medición
+    const pulsatility = this.calculatePulsatility();
+    const confidence = this.calculateConfidence(redValue, redProportion, rgRatio, rbRatio, pulsatility);
     const quality = this.calculateQuality(redValue, pulsatility, confidence);
     
-    return {
-      isFingerDetected: this.lastDetectionState,
-      confidence,
-      quality,
-      diagnostics: {
-        redValue,
-        greenValue,
-        blueValue,
-        redRatio: rgRatio,
-        isRedDominant: true,
-        isProperlyIlluminated: redValue >= this.CONFIG.IDEAL_RED_MIN,
-        message: this.lastDetectionState 
-          ? `✓ Yema detectada (R=${redValue.toFixed(0)}, R/G=${rgRatio.toFixed(2)})`
-          : "Estabilizando detección..."
-      }
-    };
+    const message = this.lastDetectionState 
+      ? `✓ YEMA detectada (R=${redValue.toFixed(0)}, R/G=${rgRatio.toFixed(2)}, AC=${(pulsatility*100).toFixed(1)}%)`
+      : "⏳ Estabilizando detección...";
+    
+    return this.createResult(this.lastDetectionState, confidence, redValue, greenValue, blueValue, rgRatio, message, quality);
   }
 
-  /**
-   * Manejar detección positiva con histéresis
-   */
   private handleDetection(): void {
     this.consecutiveDetections++;
     this.consecutiveNonDetections = 0;
@@ -189,9 +202,6 @@ export class HumanFingerDetector {
     }
   }
 
-  /**
-   * Manejar no-detección con histéresis
-   */
   private handleNonDetection(): void {
     this.consecutiveNonDetections++;
     this.consecutiveDetections = 0;
@@ -204,9 +214,6 @@ export class HumanFingerDetector {
     }
   }
 
-  /**
-   * Actualizar historial de valores rojos para análisis
-   */
   private updateHistory(redValue: number): void {
     this.redHistory.push(redValue);
     if (this.redHistory.length > this.HISTORY_SIZE) {
@@ -214,115 +221,114 @@ export class HumanFingerDetector {
     }
   }
 
-  /**
-   * Calcular pulsatilidad (variación AC/DC)
-   */
   private calculatePulsatility(): number {
     if (this.redHistory.length < 10) return 0;
     
-    const recent = this.redHistory.slice(-15);
+    const recent = this.redHistory.slice(-20);
     const max = Math.max(...recent);
     const min = Math.min(...recent);
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     
     if (mean === 0) return 0;
-    
-    // AC/DC ratio
     return (max - min) / mean;
   }
 
-  /**
-   * Calcular confianza de la detección
-   */
   private calculateConfidence(
     redValue: number,
+    redProportion: number,
     rgRatio: number,
     rbRatio: number,
     pulsatility: number
   ): number {
     let confidence = 0;
     
-    // Score por intensidad de rojo (0-40 puntos)
-    if (redValue >= this.CONFIG.IDEAL_RED_MIN) {
-      confidence += 40;
+    // Score por intensidad de rojo (0-35 puntos)
+    if (redValue >= this.CONFIG.IDEAL_RED_VALUE) {
+      confidence += 35;
+    } else if (redValue >= this.CONFIG.GOOD_RED_VALUE) {
+      confidence += 25;
     } else {
-      confidence += (redValue / this.CONFIG.IDEAL_RED_MIN) * 40;
+      confidence += (redValue / this.CONFIG.GOOD_RED_VALUE) * 20;
     }
     
-    // Score por ratio R/G ideal ~2.0-3.0 (0-25 puntos)
-    const idealRG = 2.5;
-    const rgScore = Math.max(0, 25 - Math.abs(rgRatio - idealRG) * 10);
-    confidence += rgScore;
+    // Score por proporción de rojo (0-25 puntos)
+    if (redProportion >= this.CONFIG.IDEAL_RED_PROPORTION) {
+      confidence += 25;
+    } else {
+      confidence += (redProportion / this.CONFIG.IDEAL_RED_PROPORTION) * 25;
+    }
     
-    // Score por ratio R/B (0-20 puntos)
-    if (rbRatio >= 2.0) {
+    // Score por ratio R/G (0-20 puntos)
+    const idealRG = this.CONFIG.IDEAL_RG_RATIO;
+    if (rgRatio >= idealRG && rgRatio <= 3.5) {
       confidence += 20;
     } else {
-      confidence += (rbRatio / 2.0) * 20;
+      const deviation = Math.abs(rgRatio - idealRG);
+      confidence += Math.max(0, 20 - deviation * 5);
     }
     
-    // Score por pulsatilidad (0-15 puntos)
-    if (pulsatility >= this.CONFIG.MIN_PULSATILITY) {
-      confidence += Math.min(15, pulsatility * 150);
+    // Score por pulsatilidad (0-20 puntos)
+    if (pulsatility >= this.CONFIG.IDEAL_PULSATILITY) {
+      confidence += 20;
+    } else if (pulsatility >= this.CONFIG.GOOD_PULSATILITY) {
+      confidence += 15;
+    } else if (pulsatility >= this.CONFIG.MIN_PULSATILITY) {
+      confidence += 10;
     }
     
     return Math.min(100, Math.max(0, confidence));
   }
 
-  /**
-   * Calcular calidad de señal para medición
-   */
   private calculateQuality(
     redValue: number,
     pulsatility: number,
     confidence: number
   ): number {
-    // Base: usar confianza
-    let quality = confidence * 0.6;
+    let quality = confidence * 0.5;
     
-    // Bonus por buena intensidad de rojo
-    if (redValue >= 150 && redValue <= 240) {
-      quality += 20;
+    if (redValue >= this.CONFIG.IDEAL_RED_VALUE) {
+      quality += 25;
+    } else if (redValue >= this.CONFIG.GOOD_RED_VALUE) {
+      quality += 15;
     }
     
-    // Bonus por buena pulsatilidad
-    if (pulsatility >= 0.01 && pulsatility <= 0.15) {
-      quality += 20;
+    if (pulsatility >= this.CONFIG.IDEAL_PULSATILITY) {
+      quality += 25;
+    } else if (pulsatility >= this.CONFIG.GOOD_PULSATILITY) {
+      quality += 15;
+    } else if (pulsatility >= this.CONFIG.MIN_PULSATILITY) {
+      quality += 5;
     }
     
     return Math.min(100, Math.max(0, quality));
   }
 
-  /**
-   * Crear resultado negativo con diagnóstico
-   */
-  private createNegativeResult(
+  private createResult(
+    detected: boolean,
+    confidence: number,
     redValue: number,
     greenValue: number,
     blueValue: number,
-    message: string
+    rgRatio: number,
+    message: string,
+    quality: number = 0
   ): FingerDetectionResult {
-    const rgRatio = redValue / (greenValue + 0.001);
-    
     return {
-      isFingerDetected: this.lastDetectionState,
-      confidence: 0,
-      quality: 0,
+      isFingerDetected: detected,
+      confidence,
+      quality,
       diagnostics: {
         redValue,
         greenValue,
         blueValue,
         redRatio: rgRatio,
         isRedDominant: redValue > greenValue && redValue > blueValue,
-        isProperlyIlluminated: redValue >= this.CONFIG.IDEAL_RED_MIN,
+        isProperlyIlluminated: redValue >= this.CONFIG.GOOD_RED_VALUE,
         message
       }
     };
   }
 
-  /**
-   * Resetear estado del detector
-   */
   reset(): void {
     this.consecutiveDetections = 0;
     this.consecutiveNonDetections = 0;
@@ -331,10 +337,11 @@ export class HumanFingerDetector {
     console.log("🔄 HumanFingerDetector: Reset completo");
   }
 
-  /**
-   * Obtener estado actual de detección
-   */
   isCurrentlyDetected(): boolean {
     return this.lastDetectionState;
+  }
+  
+  getRedHistory(): number[] {
+    return [...this.redHistory];
   }
 }
