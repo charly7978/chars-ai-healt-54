@@ -75,13 +75,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * VALIDACIÓN DE SANGRE REAL - Criterios adaptativos
+   * VALIDACIÓN DE SANGRE - SIMPLIFICADA Y ESTABLE
+   * Solo usa características RGB, sin requerir pulsatilidad para mantener detección
    */
   private validateBloodSignal(r: number, g: number, b: number): boolean {
     const total = r + g + b;
-    if (total < 80) return false; // Muy oscuro
+    if (total < 50) return false; // Muy oscuro - más permisivo
     
-    const rgRatio = g > 0 ? r / g : 0;
+    const rgRatio = g > 0.1 ? r / g : 0;
     const redPercent = r / total;
     
     // Guardar para diagnóstico
@@ -91,16 +92,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastRGB.rgRatio = rgRatio;
     this.lastRGB.redPercent = redPercent;
     
-    // CRITERIO 1: Ratio R/G característico de sangre
-    if (rgRatio < this.MIN_RG_RATIO) return false;
+    // CRITERIO ÚNICO Y SIMPLE: Rojo dominante
+    // Si hay más rojo que verde, hay dedo con sangre
+    const hasBlood = rgRatio >= 1.0 && redPercent >= 0.30 && r >= 40;
     
-    // CRITERIO 2: Dominancia de rojo
-    if (redPercent < this.MIN_RED_DOMINANCE) return false;
-    
-    // CRITERIO 3: Intensidad mínima de rojo
-    if (r < this.MIN_RED_VALUE) return false;
-    
-    return true;
+    return hasBlood;
   }
 
   /**
@@ -147,41 +143,36 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.filteredBuffer.shift();
       }
       
-      // 4. Validar si hay sangre real
+      // 4. Validar si hay sangre real (solo RGB, sin pulsatilidad requerida)
       const hasBloodCharacteristics = this.validateBloodSignal(redValue, avgGreen, avgBlue);
       
-      // 5. Verificar pulsatilidad
+      // 5. Calcular pulsatilidad (informativo, no bloquea)
       const pulsatility = this.calculatePulsatility();
       this.lastRGB.pulsatility = pulsatility;
-      const hasPulsatility = pulsatility >= this.MIN_PULSATILITY;
       
       // 6. Actualizar estadísticas RGB para SpO2
       this.updateRGBStats();
       
-      // 7. Actualizar contador de frames válidos - MÁS TOLERANTE
-      if (hasBloodCharacteristics && hasPulsatility) {
-        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 1.5, 100);
-      } else if (hasBloodCharacteristics) {
-        // Tiene sangre pero sin pulso visible - mantener estable
-        this.validBloodFrameCount = Math.max(this.validBloodFrameCount - 0.1, 0);
-      } else if (hasPulsatility) {
-        // Tiene pulso pero no características de sangre - degradar suave
-        this.validBloodFrameCount = Math.max(this.validBloodFrameCount - 0.3, 0);
+      // 7. Contador de frames - SÚPER ESTABLE
+      // Si hay características de sangre, mantener alto
+      // Solo degradar si NO hay sangre por muchos frames
+      if (hasBloodCharacteristics) {
+        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 2, 100);
       } else {
-        // Sin sangre ni pulso - degradar MUY suave
-        this.validBloodFrameCount = Math.max(0, this.validBloodFrameCount - 0.5);
+        // Degradación MUY lenta - toma 10+ segundos perder la señal
+        this.validBloodFrameCount = Math.max(0, this.validBloodFrameCount - 0.15);
       }
       
-      // 8. Determinar si hay sangre confirmada
-      const hasConfirmedBlood = this.validBloodFrameCount >= this.MIN_CONSECUTIVE_FRAMES;
+      // 8. Determinar si hay sangre confirmada - umbral bajo
+      const hasConfirmedBlood = this.validBloodFrameCount >= 5;
       
       // 9. Calcular calidad de señal
-      const quality = this.calculateQuality(hasBloodCharacteristics, hasPulsatility, pulsatility);
+      const quality = this.calculateQuality(hasBloodCharacteristics, pulsatility);
       
       // 10. Log de diagnóstico cada 3 segundos
       if (this.frameCount % 90 === 0) {
-        const status = hasConfirmedBlood ? '✓ SANGRE' : '✗ NO';
-        console.log(`🩸 R/G=${this.lastRGB.rgRatio.toFixed(2)} Puls=${(pulsatility * 100).toFixed(1)}% ${status}`);
+        const status = hasConfirmedBlood ? '✓ DEDO' : '✗ NO';
+        console.log(`🩸 R/G=${this.lastRGB.rgRatio.toFixed(2)} Puls=${(pulsatility * 100).toFixed(1)}% Frames=${this.validBloodFrameCount.toFixed(0)} ${status}`);
       }
       
       // 11. Emitir señal procesada
@@ -197,7 +188,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         perfusionIndex: pulsatility * 100,
         diagnostics: {
           message: `R:${redValue.toFixed(0)} G:${avgGreen.toFixed(0)} | R/G:${this.lastRGB.rgRatio.toFixed(2)} | Puls:${(pulsatility*100).toFixed(1)}% | ${hasConfirmedBlood ? '✓' : '✗'}`,
-          hasPulsatility: hasPulsatility,
+          hasPulsatility: pulsatility > 0.001,
           pulsatilityValue: pulsatility
         }
       };
@@ -226,26 +217,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   /**
    * Calcula calidad de señal 0-100
    */
-  private calculateQuality(hasBlood: boolean, hasPulsatility: boolean, pulsatility: number): number {
+  private calculateQuality(hasBlood: boolean, pulsatility: number): number {
     if (!hasBlood) return 0;
     
-    let score = 15; // Base por tener características de sangre
+    let score = 30; // Base alta por tener dedo detectado
     
     // Bonus por ratio R/G alto
-    if (this.lastRGB.rgRatio > 2.5) score += 20;
-    else if (this.lastRGB.rgRatio > 2.0) score += 15;
-    else if (this.lastRGB.rgRatio > 1.5) score += 10;
+    if (this.lastRGB.rgRatio > 2.5) score += 25;
+    else if (this.lastRGB.rgRatio > 2.0) score += 20;
+    else if (this.lastRGB.rgRatio > 1.5) score += 15;
+    else if (this.lastRGB.rgRatio > 1.2) score += 10;
     
     // Bonus por pulsatilidad
-    if (pulsatility > 0.02) score += 40;
-    else if (pulsatility > 0.01) score += 30;
-    else if (pulsatility > 0.005) score += 20;
-    else if (pulsatility > 0.002) score += 10;
+    if (pulsatility > 0.02) score += 35;
+    else if (pulsatility > 0.01) score += 25;
+    else if (pulsatility > 0.005) score += 15;
+    else if (pulsatility > 0.001) score += 5;
     
-    // Bonus por frames consecutivos válidos
-    if (this.validBloodFrameCount > 50) score += 25;
-    else if (this.validBloodFrameCount > 20) score += 15;
-    else if (this.validBloodFrameCount > 10) score += 5;
+    // Bonus por estabilidad
+    if (this.validBloodFrameCount > 50) score += 10;
     
     return Math.min(100, score);
   }

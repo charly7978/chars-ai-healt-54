@@ -256,30 +256,30 @@ const CameraView: React.FC<CameraViewProps> = ({
         return;
       }
 
-      // ===== CÁMARA PRINCIPAL - HD 720p @ 60fps (adaptativa) =====
+      // ===== CÁMARA PRINCIPAL - BAJA RESOLUCIÓN + 60FPS =====
       try {
-        // Intentar primero HD 720p @ 60fps
         let mainStream: MediaStream;
         try {
+          // Priorizar 60fps sobre resolución
           mainStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
               deviceId: { exact: primaryCamera.deviceId },
-              width: { ideal: 1280, min: 640 },
-              height: { ideal: 720, min: 480 },
+              width: { ideal: 640, max: 640 },
+              height: { ideal: 480, max: 480 },
               frameRate: { ideal: 60, min: 30 }
             }
           });
-          console.log('📹 HD 720p @ 60fps activado');
+          console.log('📹 640x480 @ 60fps activado');
         } catch (hdError) {
-          // Fallback: resolución media si HD falla
-          console.log('⚠️ HD no disponible, usando resolución media');
+          // Fallback: resolución mínima
+          console.log('⚠️ 60fps no disponible, usando 30fps');
           mainStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
               deviceId: { exact: primaryCamera.deviceId },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
+              width: { ideal: 480 },
+              height: { ideal: 360 },
               frameRate: { ideal: 30 }
             }
           });
