@@ -1,66 +1,53 @@
 /**
- * PROCESADOR DE LATIDOS CARDÍACOS - VERSIÓN CON ANTI-ARTEFACTOS
- * 
- * PROBLEMA RESUELTO: Antes detectaba MOVIMIENTO del dedo como latidos.
- * 
- * SOLUCIÓN IMPLEMENTADA:
- * 1. Detección de artefactos de movimiento (cambios bruscos = ignorar)
- * 2. Normalización de señal con baseline móvil
- * 3. Validación de intervalos fisiológicos estricta
- * 4. Requiere estabilidad antes de detectar picos
- * 
- * Un latido REAL tiene:
- * - Amplitud pequeña y consistente (no saltos gigantes)
- * - Intervalo regular entre 333ms-1500ms (40-180 BPM)
- * - Forma característica (subida gradual, bajada gradual)
+ * PROCESADOR DE LATIDOS CARDÍACOS - CON AUDIO MEJORADO
  */
 export class HeartBeatProcessor {
   // Configuración fisiológica
   private readonly MIN_BPM = 45;
   private readonly MAX_BPM = 170;
-  private readonly MIN_PEAK_INTERVAL_MS = 353;  // 170 BPM máximo
-  private readonly MAX_PEAK_INTERVAL_MS = 1333; // 45 BPM mínimo
-  private readonly WARMUP_TIME_MS = 2000;       // 2s de calentamiento (reducido)
+  private readonly MIN_PEAK_INTERVAL_MS = 353;
+  private readonly MAX_PEAK_INTERVAL_MS = 1333;
+  private readonly WARMUP_TIME_MS = 2000;
   
-  // Buffers - REDUCIDOS para menor memoria
+  // Buffers
   private signalBuffer: number[] = [];
   private normalizedBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 90; // 3 segundos a 30fps (reducido de 180)
+  private readonly BUFFER_SIZE = 90;
   
-  // Baseline adaptativo
+  // Baseline
   private baselineBuffer: number[] = [];
-  private readonly BASELINE_SIZE = 45; // 1.5 segundos (reducido de 90)
+  private readonly BASELINE_SIZE = 45;
   private baseline: number = 0;
   
-  // Estado de detección de picos
+  // Detección de picos
   private lastPeakTime: number | null = null;
   private previousPeakTime: number | null = null;
   private validPeakCount: number = 0;
-  private expectedPeakInterval: number = 800; // ~75 BPM inicial
+  private expectedPeakInterval: number = 800;
   
-  // BPM con historial para estabilidad
+  // BPM
   private bpmHistory: number[] = [];
   private smoothBPM: number = 0;
   private readonly BPM_SMOOTHING = 0.12;
   
-  // Intervalos RR para análisis
+  // RR intervals
   private rrIntervals: number[] = [];
   
-  // ====== DETECCIÓN DE MOVIMIENTO / ARTEFACTOS ======
-  // Valores MÁS PERMISIVOS para señales PPG reales (que son MUY pequeñas)
-  private readonly MOTION_THRESHOLD = 15;      // Aumentado de 8 a 15
-  private readonly MOTION_COOLDOWN_MS = 400;   // Reducido de 600 a 400ms
+  // Detección de movimiento
+  private readonly MOTION_THRESHOLD = 15;
+  private readonly MOTION_COOLDOWN_MS = 400;
   private lastMotionTime: number = 0;
   private consecutiveStableFrames: number = 0;
-  private readonly MIN_STABLE_FRAMES = 8;      // Reducido de 15 a 8 frames
+  private readonly MIN_STABLE_FRAMES = 8;
   private lastNormalizedValue: number = 0;
   
   // Audio
   private audioContext: AudioContext | null = null;
   private audioInitialized: boolean = false;
+  private audioUnlocked: boolean = false;
   private lastBeepTime: number = 0;
-  private readonly BEEP_VOLUME = 0.8;
-  private readonly MIN_BEEP_INTERVAL_MS = 400;
+  private readonly BEEP_VOLUME = 1.0;
+  private readonly MIN_BEEP_INTERVAL_MS = 350;
   
   // Estado
   private startTime: number = 0;
@@ -71,6 +58,42 @@ export class HeartBeatProcessor {
   constructor() {
     this.startTime = Date.now();
     this.initAudio();
+    this.setupAudioUnlock();
+  }
+
+  private setupAudioUnlock() {
+    const unlock = async () => {
+      if (this.audioUnlocked) return;
+      
+      try {
+        if (!this.audioContext) {
+          this.audioContext = new AudioContext();
+        }
+        
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
+        
+        // Sonido silencioso para desbloquear
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        gain.gain.value = 0.001;
+        osc.connect(gain);
+        gain.connect(this.audioContext.destination);
+        osc.start();
+        osc.stop(this.audioContext.currentTime + 0.01);
+        
+        this.audioUnlocked = true;
+        this.audioInitialized = true;
+        console.log('🔊 Audio desbloqueado');
+      } catch (e) {
+        console.error('❌ Error desbloqueando audio:', e);
+      }
+    };
+
+    ['touchstart', 'touchend', 'click', 'pointerdown'].forEach(event => {
+      document.addEventListener(event, unlock, { once: false, passive: true });
+    });
   }
 
   private async initAudio() {
@@ -86,62 +109,54 @@ export class HeartBeatProcessor {
   }
 
   private async playHeartSound() {
-    if (!this.audioContext || this.isInWarmup()) return;
+    if (!this.audioContext || !this.audioUnlocked) return;
+    if (this.isInWarmup()) return;
     
     const now = Date.now();
     if (now - this.lastBeepTime < this.MIN_BEEP_INTERVAL_MS) return;
     
     try {
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+      
+      // Vibración
       if (navigator.vibrate) {
         navigator.vibrate([50, 30, 80]);
       }
       
       const currentTime = this.audioContext.currentTime;
       
-      // LUB
-      const osc1 = this.audioContext.createOscillator();
-      const gain1 = this.audioContext.createGain();
-      osc1.type = 'sine';
-      osc1.frequency.value = 150;
-      gain1.gain.setValueAtTime(0, currentTime);
-      gain1.gain.linearRampToValueAtTime(this.BEEP_VOLUME, currentTime + 0.02);
-      gain1.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.12);
-      osc1.connect(gain1);
-      gain1.connect(this.audioContext.destination);
-      osc1.start(currentTime);
-      osc1.stop(currentTime + 0.15);
+      // BEEP claro
+      const osc = this.audioContext.createOscillator();
+      const gain = this.audioContext.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0, currentTime);
+      gain.gain.linearRampToValueAtTime(this.BEEP_VOLUME, currentTime + 0.01);
+      gain.gain.setValueAtTime(this.BEEP_VOLUME, currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.15);
+      osc.connect(gain);
+      gain.connect(this.audioContext.destination);
+      osc.start(currentTime);
+      osc.stop(currentTime + 0.2);
       
-      // DUB
+      // Segundo tono
       const osc2 = this.audioContext.createOscillator();
       const gain2 = this.audioContext.createGain();
       osc2.type = 'sine';
-      osc2.frequency.value = 120;
-      const dubStart = currentTime + 0.1;
-      gain2.gain.setValueAtTime(0, dubStart);
-      gain2.gain.linearRampToValueAtTime(this.BEEP_VOLUME * 0.8, dubStart + 0.02);
-      gain2.gain.exponentialRampToValueAtTime(0.001, dubStart + 0.12);
+      osc2.frequency.value = 660;
+      const dubTime = currentTime + 0.12;
+      gain2.gain.setValueAtTime(0, dubTime);
+      gain2.gain.linearRampToValueAtTime(this.BEEP_VOLUME * 0.7, dubTime + 0.01);
+      gain2.gain.exponentialRampToValueAtTime(0.001, dubTime + 0.12);
       osc2.connect(gain2);
       gain2.connect(this.audioContext.destination);
-      osc2.start(dubStart);
-      osc2.stop(dubStart + 0.15);
-      
-      if (this.isArrhythmiaDetected) {
-        const osc3 = this.audioContext.createOscillator();
-        const gain3 = this.audioContext.createGain();
-        osc3.type = 'sine';
-        osc3.frequency.value = 440;
-        const arrStart = dubStart + 0.15;
-        gain3.gain.setValueAtTime(0, arrStart);
-        gain3.gain.linearRampToValueAtTime(0.4, arrStart + 0.02);
-        gain3.gain.exponentialRampToValueAtTime(0.001, arrStart + 0.1);
-        osc3.connect(gain3);
-        gain3.connect(this.audioContext.destination);
-        osc3.start(arrStart);
-        osc3.stop(arrStart + 0.15);
-        this.isArrhythmiaDetected = false;
-      }
+      osc2.start(dubTime);
+      osc2.stop(dubTime + 0.15);
       
       this.lastBeepTime = now;
+      
     } catch (error) {
       // Silenciar
     }
@@ -151,9 +166,6 @@ export class HeartBeatProcessor {
     return Date.now() - this.startTime < this.WARMUP_TIME_MS;
   }
 
-  /**
-   * PROCESA UNA MUESTRA DE SEÑAL
-   */
   processSignal(value: number, timestamp?: number): {
     bpm: number;
     confidence: number;
@@ -165,34 +177,30 @@ export class HeartBeatProcessor {
     this.frameCount++;
     const now = timestamp || Date.now();
     
-    // 1. Actualizar baseline (promedio móvil de la señal)
+    // Actualizar baseline
     this.baselineBuffer.push(value);
     if (this.baselineBuffer.length > this.BASELINE_SIZE) {
       this.baselineBuffer.shift();
     }
     this.baseline = this.baselineBuffer.reduce((a, b) => a + b, 0) / this.baselineBuffer.length;
     
-    // 2. NORMALIZAR señal restando baseline (centra en 0)
+    // Normalizar
     const normalized = value - this.baseline;
     
-    // 3. DETECCIÓN DE MOVIMIENTO - cambio brusco = artefacto
+    // Detección de movimiento
     const jump = Math.abs(normalized - this.lastNormalizedValue);
     const isMotionArtifact = jump > this.MOTION_THRESHOLD;
     
     if (isMotionArtifact) {
       this.lastMotionTime = now;
       this.consecutiveStableFrames = 0;
-      
-      if (this.frameCount % 30 === 0) {
-        console.log(`⚠️ MOVIMIENTO detectado: salto=${jump.toFixed(1)} (máx=${this.MOTION_THRESHOLD})`);
-      }
     } else {
       this.consecutiveStableFrames++;
     }
     
     this.lastNormalizedValue = normalized;
     
-    // 4. Guardar en buffers
+    // Guardar en buffers
     this.signalBuffer.push(value);
     this.normalizedBuffer.push(normalized);
     if (this.signalBuffer.length > this.BUFFER_SIZE) {
@@ -200,24 +208,22 @@ export class HeartBeatProcessor {
       this.normalizedBuffer.shift();
     }
     
-    // 5. ¿Hay suficiente estabilidad para detectar picos?
+    // Detectar picos si hay estabilidad
     const isStable = this.consecutiveStableFrames >= this.MIN_STABLE_FRAMES;
-    const timeSinceMotion = now - this.lastMotionTime;
-    const cooledDown = timeSinceMotion > this.MOTION_COOLDOWN_MS;
+    const cooledDown = (now - this.lastMotionTime) > this.MOTION_COOLDOWN_MS;
     
-    // 6. Solo detectar picos si hay estabilidad
     let peakResult = { isPeak: false, confidence: 0 };
-    if (isStable && cooledDown && this.normalizedBuffer.length >= 45) {
+    if (isStable && cooledDown && this.normalizedBuffer.length >= 30) {
       peakResult = this.detectPeak(now);
     }
     
-    // 7. Si hay pico válido, actualizar BPM y sonar
+    // Si hay pico, actualizar BPM y sonar
     if (peakResult.isPeak && !this.isInWarmup()) {
       this.updateBPM();
       this.playHeartSound();
     }
     
-    // 8. Log de debug (reducido a cada 3 segundos)
+    // Log cada 3 segundos
     if (this.frameCount % 45 === 0) {
       console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.validPeakCount}, estable=${isStable}`);
     }
@@ -232,29 +238,16 @@ export class HeartBeatProcessor {
     };
   }
 
-  /**
-   * DETECCIÓN DE PICOS - Busca máximos locales en señal ESTABLE
-   * 
-   * Criterios estrictos:
-   * 1. Debe ser máximo local (mayor que vecinos)
-   * 2. Amplitud debe estar en rango fisiológico (no gigante)
-   * 3. Intervalo desde último pico debe ser fisiológico
-   */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
     const n = this.normalizedBuffer.length;
-    if (n < 45) return { isPeak: false, confidence: 0 };
+    if (n < 30) return { isPeak: false, confidence: 0 };
     
-    // Verificar intervalo mínimo desde último pico
     const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
     if (timeSinceLastPeak < this.MIN_PEAK_INTERVAL_MS) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Obtener ventana de análisis (últimos ~1 segundo)
     const window = this.normalizedBuffer.slice(-30);
-    
-    // Buscar el punto máximo en la mitad posterior de la ventana
-    // (el pico debería estar hace unos pocos frames, no en el frame actual)
     const searchStart = 10;
     const searchEnd = 25;
     
@@ -267,7 +260,6 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Verificar que es un máximo LOCAL (mayor que vecinos cercanos)
     const leftNeighbor = Math.max(window[maxIdx - 3] || 0, window[maxIdx - 2] || 0);
     const rightNeighbor = Math.max(window[maxIdx + 2] || 0, window[maxIdx + 3] || 0);
     
@@ -275,33 +267,27 @@ export class HeartBeatProcessor {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Verificar amplitud del pico (diferencia entre max y vecinos)
     const prominence = maxVal - Math.max(leftNeighbor, rightNeighbor);
     
-    // PPG real tiene prominencias MUY PEQUEÑAS (0.05-10)
-    // Señales de movimiento tienen prominencias GRANDES (20+)
     if (prominence < 0.05 || prominence > 15) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Verificar que la ventana completa tiene variación razonable
     const windowMin = Math.min(...window);
     const windowMax = Math.max(...window);
     const windowRange = windowMax - windowMin;
     
-    // Rango PPG real: 0.2-20 (movimiento genera rangos >30)
     if (windowRange < 0.15 || windowRange > 25) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // ¡PICO VÁLIDO DETECTADO!
+    // Pico válido
     this.validPeakCount++;
-    console.log(`✓ PICO #${this.validPeakCount} detectado: prominencia=${prominence.toFixed(2)}, rango=${windowRange.toFixed(2)}`);
+    console.log(`✓ PICO #${this.validPeakCount}`);
     
     this.previousPeakTime = this.lastPeakTime;
     this.lastPeakTime = now;
     
-    // Guardar intervalo RR si hay pico anterior
     if (this.previousPeakTime) {
       const rr = now - this.previousPeakTime;
       if (rr >= this.MIN_PEAK_INTERVAL_MS && rr <= this.MAX_PEAK_INTERVAL_MS) {
@@ -309,7 +295,6 @@ export class HeartBeatProcessor {
         if (this.rrIntervals.length > 30) {
           this.rrIntervals.shift();
         }
-        // Actualizar intervalo esperado
         this.expectedPeakInterval = this.expectedPeakInterval * 0.8 + rr * 0.2;
       }
     }
@@ -322,34 +307,25 @@ export class HeartBeatProcessor {
     if (!this.lastPeakTime || !this.previousPeakTime) return;
     
     const interval = this.lastPeakTime - this.previousPeakTime;
-    
-    // Validar rango fisiológico estricto
     if (interval < this.MIN_PEAK_INTERVAL_MS || interval > this.MAX_PEAK_INTERVAL_MS) return;
     
     const instantBPM = 60000 / interval;
     
-    // Suavizado exponencial con rechazo de outliers
     if (this.smoothBPM === 0) {
       this.smoothBPM = instantBPM;
     } else {
       const diff = Math.abs(instantBPM - this.smoothBPM);
-      
       if (diff > 25) {
-        // Cambio muy grande - casi ignorar
         this.smoothBPM = this.smoothBPM * 0.95 + instantBPM * 0.05;
       } else if (diff > 15) {
-        // Cambio grande - aplicar poco peso
         this.smoothBPM = this.smoothBPM * 0.9 + instantBPM * 0.1;
       } else {
-        // Cambio normal - suavizado estándar
         this.smoothBPM = this.smoothBPM * (1 - this.BPM_SMOOTHING) + instantBPM * this.BPM_SMOOTHING;
       }
     }
     
-    // Mantener en rango
     this.smoothBPM = Math.max(this.MIN_BPM, Math.min(this.MAX_BPM, this.smoothBPM));
     
-    // Historial
     this.bpmHistory.push(instantBPM);
     if (this.bpmHistory.length > 30) {
       this.bpmHistory.shift();
@@ -361,18 +337,15 @@ export class HeartBeatProcessor {
     
     let quality = 0;
     
-    // Basado en estabilidad (frames sin movimiento)
     if (this.consecutiveStableFrames > 60) quality = 40;
     else if (this.consecutiveStableFrames > 30) quality = 25;
     else if (this.consecutiveStableFrames > 15) quality = 15;
     else quality = 5;
     
-    // Bonus por tener BPM estable
     if (this.smoothBPM >= 50 && this.smoothBPM <= 120 && this.validPeakCount >= 3) {
       quality += 30;
     }
     
-    // Bonus por picos detectados
     if (this.validPeakCount > 10) quality += 30;
     else if (this.validPeakCount > 5) quality += 20;
     else if (this.validPeakCount > 2) quality += 10;
@@ -380,8 +353,6 @@ export class HeartBeatProcessor {
     return Math.min(100, quality);
   }
 
-  // === MÉTODOS PÚBLICOS ===
-  
   getSmoothBPM(): number {
     return this.smoothBPM;
   }
@@ -400,7 +371,6 @@ export class HeartBeatProcessor {
   
   setFingerDetected(detected: boolean): void {
     if (!detected && this.wasFingerDetected) {
-      // Dedo perdido - resetear
       this.reset();
     }
     this.wasFingerDetected = detected;
