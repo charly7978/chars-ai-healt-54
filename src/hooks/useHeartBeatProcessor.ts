@@ -14,22 +14,24 @@ interface HeartBeatResult {
 }
 
 /**
- * HOOK DE PROCESAMIENTO CARDÍACO - SIN FINGER DETECTION
+ * HOOK DE PROCESAMIENTO CARDÍACO - CON CALIBRACIÓN AUTOMÁTICA
  * 
- * Procesa la señal directamente:
- * - Si hay sangre real → BPM coherente
- * - Si hay ambiente → valores erráticos o 0
+ * Durante los primeros 5 segundos, el procesador calibra los umbrales
+ * basándose en las características de la señal del usuario.
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
   const [currentBPM, setCurrentBPM] = useState<number>(0);
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
+  const [isCalibrating, setIsCalibrating] = useState<boolean>(true);
+  const [calibrationProgress, setCalibrationProgress] = useState<number>(0);
   
   const sessionIdRef = useRef<string>("");
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
   const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
+  const calibrationIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
     const t = Date.now().toString(36);
@@ -39,7 +41,24 @@ export const useHeartBeatProcessor = () => {
     processorRef.current = new HeartBeatProcessor();
     processingStateRef.current = 'ACTIVE';
     
+    // Monitorear progreso de calibración
+    calibrationIntervalRef.current = window.setInterval(() => {
+      if (processorRef.current) {
+        const progress = processorRef.current.getCalibrationProgress();
+        setCalibrationProgress(progress);
+        setIsCalibrating(!processorRef.current.isCalibrationComplete());
+        
+        if (processorRef.current.isCalibrationComplete() && calibrationIntervalRef.current) {
+          clearInterval(calibrationIntervalRef.current);
+          calibrationIntervalRef.current = null;
+        }
+      }
+    }, 200);
+    
     return () => {
+      if (calibrationIntervalRef.current) {
+        clearInterval(calibrationIntervalRef.current);
+      }
       if (processorRef.current) {
         processorRef.current.dispose();
         processorRef.current = null;
@@ -77,24 +96,23 @@ export const useHeartBeatProcessor = () => {
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
-    // Procesar señal directamente - sin validación de dedo
+    // Procesar señal
     const result = processorRef.current.processSignal(value, timestamp);
     const rrIntervals = processorRef.current.getRRIntervals();
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };
-    
-    // NOTA: signalQuality ahora viene de SignalQualityAnalyzer a través de PPGSignalProcessor
-    // El hook recibe la calidad ya calculada desde Index.tsx
 
-    // Actualizar BPM si hay confianza y está en rango válido
-    if (result.confidence >= 0.3 && result.bpm >= 40 && result.bpm <= 180) {
-      const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
-      const newBPM = currentBPM > 0 ? 
-        currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
-        result.bpm;
-      
-      setCurrentBPM(Math.round(newBPM * 10) / 10);
-      setConfidence(result.confidence);
+    // Actualizar BPM solo después de calibración
+    if (processorRef.current.isCalibrationComplete()) {
+      if (result.confidence >= 0.3 && result.bpm >= 40 && result.bpm <= 180) {
+        const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
+        const newBPM = currentBPM > 0 ? 
+          currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
+          result.bpm;
+        
+        setCurrentBPM(Math.round(newBPM * 10) / 10);
+        setConfidence(result.confidence);
+      }
     }
 
     return {
@@ -102,7 +120,7 @@ export const useHeartBeatProcessor = () => {
       confidence: result.confidence,
       isPeak: result.isPeak,
       arrhythmiaCount: result.arrhythmiaCount,
-      signalQuality: signalQuality, // Usa el estado actual, que viene de PPG
+      signalQuality: signalQuality,
       rrData
     };
   }, [currentBPM, confidence, signalQuality]);
@@ -119,11 +137,55 @@ export const useHeartBeatProcessor = () => {
     setCurrentBPM(0);
     setConfidence(0);
     setSignalQuality(0);
+    setIsCalibrating(true);
+    setCalibrationProgress(0);
     
     lastProcessTimeRef.current = 0;
     processedSignalsRef.current = 0;
     
+    // Reiniciar monitoreo de calibración
+    if (calibrationIntervalRef.current) {
+      clearInterval(calibrationIntervalRef.current);
+    }
+    calibrationIntervalRef.current = window.setInterval(() => {
+      if (processorRef.current) {
+        const progress = processorRef.current.getCalibrationProgress();
+        setCalibrationProgress(progress);
+        setIsCalibrating(!processorRef.current.isCalibrationComplete());
+        
+        if (processorRef.current.isCalibrationComplete() && calibrationIntervalRef.current) {
+          clearInterval(calibrationIntervalRef.current);
+          calibrationIntervalRef.current = null;
+        }
+      }
+    }, 200);
+    
     processingStateRef.current = 'ACTIVE';
+  }, []);
+
+  const recalibrate = useCallback(() => {
+    if (processorRef.current) {
+      processorRef.current.recalibrate();
+      setIsCalibrating(true);
+      setCalibrationProgress(0);
+      
+      // Reiniciar monitoreo
+      if (calibrationIntervalRef.current) {
+        clearInterval(calibrationIntervalRef.current);
+      }
+      calibrationIntervalRef.current = window.setInterval(() => {
+        if (processorRef.current) {
+          const progress = processorRef.current.getCalibrationProgress();
+          setCalibrationProgress(progress);
+          setIsCalibrating(!processorRef.current.isCalibrationComplete());
+          
+          if (processorRef.current.isCalibrationComplete() && calibrationIntervalRef.current) {
+            clearInterval(calibrationIntervalRef.current);
+            calibrationIntervalRef.current = null;
+          }
+        }
+      }, 200);
+    }
   }, []);
 
   const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
@@ -136,8 +198,11 @@ export const useHeartBeatProcessor = () => {
     currentBPM,
     confidence,
     signalQuality,
+    isCalibrating,
+    calibrationProgress,
     processSignal,
     reset,
+    recalibrate,
     setArrhythmiaState,
     debugInfo: {
       sessionId: sessionIdRef.current,
