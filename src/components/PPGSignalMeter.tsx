@@ -60,22 +60,23 @@ const PPGSignalMeter = ({
   // CRÍTICO: Flag para controlar UN SOLO loop de animación
   const animationLoopActiveRef = useRef<boolean>(false);
 
-  // ===== CONFIGURACIÓN CALIBRADA PARA ONDAS CARDÍACAS PPG =====
-  const WINDOW_WIDTH_MS = 4000;        // 4 segundos de ventana para ver ciclos completos
+  // ===== CONFIGURACIÓN ESTABLE PARA ONDAS CARDÍACAS PPG =====
+  const WINDOW_WIDTH_MS = 4000;        // 4 segundos de ventana
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 800;
-  const GRID_SIZE_X = 40;              // Grid más grande para mejor lectura
-  const GRID_SIZE_Y = 20;              // Grid vertical proporcional
-  const VERTICAL_SCALE = 180;          // Escala amplificada para ondas visibles
-  const SMOOTHING_FACTOR = 0.15;       // Suavizado moderado (0-1)
-  const TARGET_FPS = 60;               // 60fps para fluidez
+  const GRID_SIZE_X = 50;              // Grid estándar
+  const GRID_SIZE_Y = 25;              // Grid vertical
+  const VERTICAL_SCALE = 2.5;          // Escala PEQUEÑA para evitar ondas gigantes
+  const SMOOTHING_FACTOR = 0.25;       // Suavizado fuerte
+  const TARGET_FPS = 60;
   const FRAME_TIME = 1000 / TARGET_FPS;
-  const BUFFER_SIZE = 500;             // Buffer para 4+ segundos de datos
-  const PEAK_DETECTION_WINDOW = 5;     // Ventana para detectar picos
-  const PEAK_THRESHOLD = 8;            // Umbral mínimo para picos
-  const MIN_PEAK_DISTANCE_MS = 400;    // Mínimo 400ms entre picos (150 BPM máx)
-  const MAX_PEAKS_TO_DISPLAY = 20;     // Máximo picos visibles
-  const BASELINE_ADAPT_RATE = 0.02;    // Tasa de adaptación de línea base
+  const BUFFER_SIZE = 400;
+  const PEAK_DETECTION_WINDOW = 5;
+  const PEAK_THRESHOLD = 15;           // Umbral más alto
+  const MIN_PEAK_DISTANCE_MS = 400;
+  const MAX_PEAKS_TO_DISPLAY = 20;
+  const BASELINE_ADAPT_RATE = 0.005;   // Adaptación MUY lenta
+  const MAX_AMPLITUDE = 120;           // Límite máximo de amplitud en píxeles
 
   // Actualizar refs cuando props cambian
   useEffect(() => {
@@ -146,11 +147,11 @@ const PPGSignalMeter = ({
     }
   }, [preserveResults, isFingerDetected]);
 
-  // Suavizado exponencial calibrado para señal PPG
+  // Suavizado exponencial FUERTE para señal PPG estable
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
-    // Suavizado exponencial: valor_suavizado = anterior + α * (actual - anterior)
-    return previousValue + 0.15 * (currentValue - previousValue);
+    // Suavizado más agresivo para ondas suaves
+    return previousValue + SMOOTHING_FACTOR * (currentValue - previousValue);
   }, []);
 
   // Dibujar grid (función estable sin dependencias de props)
@@ -327,24 +328,28 @@ const PPGSignalMeter = ({
         return;
       }
       
-      // ===== PROCESAMIENTO DE SEÑAL PPG CALIBRADO =====
-      // Adaptación de línea base (DC component)
+      // ===== PROCESAMIENTO DE SEÑAL PPG ESTABLE =====
+      // Inicializar baseline con el primer valor
       if (baselineRef.current === null) {
         baselineRef.current = currentValue;
       } else {
-        // Adaptación lenta para seguir cambios de iluminación
+        // Adaptación MUY lenta para línea base estable
         baselineRef.current = baselineRef.current * (1 - BASELINE_ADAPT_RATE) + currentValue * BASELINE_ADAPT_RATE;
       }
       
-      // Suavizado de la señal
+      // Suavizado fuerte para señal estable
       const smoothedValue = smoothValue(currentValue, lastValueRef.current);
       lastValueRef.current = smoothedValue;
       
-      // Normalización: extraer componente AC (pulsátil)
-      const acComponent = smoothedValue - (baselineRef.current || 0);
+      // Extraer componente AC (pulsátil) centrado en 0
+      const baseline = baselineRef.current || currentValue;
+      const acComponent = smoothedValue - baseline;
       
-      // Escalar para visualización (invertido para que picos vayan hacia arriba)
-      const scaledValue = -acComponent * VERTICAL_SCALE;
+      // Escalar de forma CONTROLADA con límites
+      let scaledValue = -acComponent * VERTICAL_SCALE;
+      
+      // CLAMP: Limitar amplitud máxima para evitar ondas disparadas
+      scaledValue = Math.max(-MAX_AMPLITUDE, Math.min(MAX_AMPLITUDE, scaledValue));
       
       const dataPoint: PPGDataPoint = {
         time: now,
