@@ -190,7 +190,7 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * PROCESAMIENTO PRINCIPAL - Algoritmo simplificado y robusto
+   * PROCESAMIENTO PRINCIPAL - Algoritmo robusto por derivada
    */
   processSignal(value: number, timestamp?: number): {
     bpm: number;
@@ -219,17 +219,17 @@ export class HeartBeatProcessor {
     }
     
     // No procesar hasta tener suficientes muestras
-    if (this.signalBuffer.length < 10) {
+    if (this.signalBuffer.length < 5) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: normalized, arrhythmiaCount: 0 };
     }
     
     // === 2. DETECTAR PICO POR CAMBIO DE PENDIENTE ===
-    // Derivada = diferencia entre valores consecutivos
-    const derivative = normalized - (this.signalBuffer[this.signalBuffer.length - 2] || 0);
+    const prevValue = this.signalBuffer[this.signalBuffer.length - 2] || 0;
+    const derivative = normalized - prevValue;
     
     // Detectar transición: subiendo → bajando = PICO
     const isRising = derivative > 0;
-    const isPeakCandidate = this.wasRising && !isRising && normalized > 0;
+    const isPeakCandidate = this.wasRising && !isRising;
     
     this.wasRising = isRising;
     this.lastDerivative = derivative;
@@ -238,54 +238,51 @@ export class HeartBeatProcessor {
     let confidence = 0;
     
     if (isPeakCandidate) {
-      // === 3. VALIDACIONES MÍNIMAS ===
-      const timeSinceLastPeak = now - this.lastPeakTime;
+      const timeSinceLastPeak = this.lastPeakTime > 0 ? now - this.lastPeakTime : 10000;
       
-      // Validación temporal: respetar intervalo mínimo
+      // Solo validar intervalo mínimo
       if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
         
-        // Validación de amplitud: el pico debe tener cierta altura
-        const recentBuffer = this.signalBuffer.slice(-15);
+        // Verificar amplitud mínima
+        const recentBuffer = this.signalBuffer.slice(-10);
         const bufferMax = Math.max(...recentBuffer);
         const bufferMin = Math.min(...recentBuffer);
         const amplitude = bufferMax - bufferMin;
         
-        // Solo requiere amplitud mínima (señal tiene variación)
-        if (amplitude > 0.1) {
-          // Verificar que el valor actual está cerca del máximo
-          const isNearMax = normalized >= bufferMax * 0.7;
+        // Amplitud mínima muy baja para ser permisivo
+        if (amplitude > 0.05) {
+          // === PICO VÁLIDO ===
+          isPeak = true;
+          this.peakCount++;
           
-          if (isNearMax) {
-            // === PICO VÁLIDO ===
-            isPeak = true;
-            this.peakCount++;
+          // Guardar tiempos para calcular RR
+          if (this.lastPeakTime > 0) {
+            const rr = now - this.lastPeakTime;
             
-            this.previousPeakTime = this.lastPeakTime;
-            this.lastPeakTime = now;
-            this.lastPeakValue = normalized;
-            
-            // Calcular RR interval
-            if (this.previousPeakTime > 0) {
-              const rr = now - this.previousPeakTime;
-              if (rr >= this.MIN_PEAK_INTERVAL_MS && rr <= this.MAX_PEAK_INTERVAL_MS) {
-                this.rrIntervals.push(rr);
-                if (this.rrIntervals.length > 20) {
-                  this.rrIntervals.shift();
-                }
-                
-                // Actualizar BPM
-                const instantBPM = 60000 / rr;
-                this.updateBPM(instantBPM);
+            // Validar que RR está en rango fisiológico
+            if (rr >= this.MIN_PEAK_INTERVAL_MS && rr <= this.MAX_PEAK_INTERVAL_MS) {
+              this.rrIntervals.push(rr);
+              if (this.rrIntervals.length > 20) {
+                this.rrIntervals.shift();
               }
+              
+              // Actualizar BPM
+              const instantBPM = 60000 / rr;
+              this.updateBPM(instantBPM);
             }
-            
-            // Calcular confianza basada en consistencia
-            confidence = this.calculateConfidence(amplitude);
-            
-            // Reproducir sonido
-            if (!this.isInWarmup()) {
-              this.playHeartSound();
-            }
+          }
+          
+          // Actualizar tiempos DESPUÉS de calcular RR
+          this.previousPeakTime = this.lastPeakTime;
+          this.lastPeakTime = now;
+          this.lastPeakValue = normalized;
+          
+          // Calcular confianza
+          confidence = this.calculateConfidence(amplitude);
+          
+          // Reproducir sonido
+          if (!this.isInWarmup()) {
+            this.playHeartSound();
           }
         }
       }
