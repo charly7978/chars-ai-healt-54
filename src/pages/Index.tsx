@@ -359,7 +359,14 @@ const Index = () => {
     if (!videoElement) return;
     
     let lastProcessTime = 0;
-    const targetFrameInterval = 1000/30;
+    // OPTIMIZACIÓN: 15 fps es suficiente para PPG (reduce carga 50%)
+    const targetFrameInterval = 1000/15;
+    
+    // OPTIMIZACIÓN: Resolución mínima para PPG (solo necesitamos color promedio)
+    const PPG_WIDTH = 80;
+    const PPG_HEIGHT = 60;
+    tempCanvas.width = PPG_WIDTH;
+    tempCanvas.height = PPG_HEIGHT;
     
     frameLoopActiveRef.current = true;
     
@@ -377,21 +384,10 @@ const Index = () => {
       if (timeSinceLastProcess >= targetFrameInterval) {
         try {
           if (videoElement.readyState >= 2) {
-            const targetWidth = Math.min(320, videoElement.videoWidth || 320);
-            const targetHeight = Math.min(240, videoElement.videoHeight || 240);
-            
-            tempCanvas.width = targetWidth;
-            tempCanvas.height = targetHeight;
-            
-            tempCtx.drawImage(
-              videoElement, 
-              0, 0, videoElement.videoWidth, videoElement.videoHeight,
-              0, 0, targetWidth, targetHeight
-            );
-            
-            const imageData = tempCtx.getImageData(0, 0, targetWidth, targetHeight);
+            // Dibujar a resolución mínima
+            tempCtx.drawImage(videoElement, 0, 0, PPG_WIDTH, PPG_HEIGHT);
+            const imageData = tempCtx.getImageData(0, 0, PPG_WIDTH, PPG_HEIGHT);
             processFrame(imageData);
-            
             lastProcessTime = now;
           }
         } catch (error) {}

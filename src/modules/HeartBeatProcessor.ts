@@ -20,16 +20,16 @@ export class HeartBeatProcessor {
   private readonly MAX_BPM = 170;
   private readonly MIN_PEAK_INTERVAL_MS = 353;  // 170 BPM máximo
   private readonly MAX_PEAK_INTERVAL_MS = 1333; // 45 BPM mínimo
-  private readonly WARMUP_TIME_MS = 3000;       // 3s de calentamiento
+  private readonly WARMUP_TIME_MS = 2000;       // 2s de calentamiento (reducido)
   
-  // Buffers
+  // Buffers - REDUCIDOS para menor memoria
   private signalBuffer: number[] = [];
   private normalizedBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 180; // 6 segundos a 30fps
+  private readonly BUFFER_SIZE = 90; // 3 segundos a 30fps (reducido de 180)
   
-  // Baseline adaptativo para normalización
+  // Baseline adaptativo
   private baselineBuffer: number[] = [];
-  private readonly BASELINE_SIZE = 90; // 3 segundos
+  private readonly BASELINE_SIZE = 45; // 1.5 segundos (reducido de 90)
   private baseline: number = 0;
   
   // Estado de detección de picos
@@ -217,9 +217,9 @@ export class HeartBeatProcessor {
       this.playHeartSound();
     }
     
-    // 8. Log de debug
-    if (this.frameCount % 90 === 0) {
-      console.log(`💓 Estado: BPM=${this.smoothBPM.toFixed(0)}, estable=${isStable}, picos=${this.validPeakCount}, frames_estables=${this.consecutiveStableFrames}`);
+    // 8. Log de debug (reducido a cada 3 segundos)
+    if (this.frameCount % 45 === 0) {
+      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.validPeakCount}, estable=${isStable}`);
     }
     
     return {
