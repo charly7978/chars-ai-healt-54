@@ -53,14 +53,14 @@ export class CameraAutoCalibrator {
     recommendation: ''
   };
   
-  // Historial para análisis - BALANCEADO: suficiente para estabilidad, rápido para respuesta
+  // Historial para análisis - MÍNIMO para máxima reactividad
   private brightnessHistory: number[] = [];
   private pulsatilityHistory: number[] = [];
-  private readonly HISTORY_SIZE = 8; // 8 muestras = ~270ms @ 30fps
+  private readonly HISTORY_SIZE = 4; // 4 muestras = ~130ms @ 30fps - MÁS REACTIVO
   
-  // Timing para ajustes - REACTIVO pero no bloqueante
+  // Timing para ajustes - MUY REACTIVO
   private lastAdjustmentTime = 0;
-  private readonly ADJUSTMENT_COOLDOWN = 500; // 500ms entre ajustes (balance: reactivo sin bloquear)
+  private readonly ADJUSTMENT_COOLDOWN = 150; // 150ms entre ajustes - RÁPIDO
   
   // Capacidades detectadas
   private capabilities: CameraCapabilities | null = null;
@@ -186,7 +186,7 @@ export class CameraAutoCalibrator {
   
   /**
    * Analizar frame y ajustar exposición automáticamente
-   * Llamar cada frame durante medición
+   * VERSIÓN ULTRA-REACTIVA: responde inmediatamente a cambios de luz
    */
   analyzeAndAdjust(
     avgRed: number, 
@@ -194,14 +194,14 @@ export class CameraAutoCalibrator {
     avgBlue: number,
     acComponent: number
   ): CalibrationState {
-    // Calcular brillo actual
+    // Calcular brillo INSTANTÁNEO (no promediado para reacción rápida)
     const brightness = (avgRed + avgGreen + avgBlue) / 3;
     
     // Calcular pulsatilidad
     const dc = brightness;
     const pulsatility = dc > 0 ? acComponent / dc : 0;
     
-    // Actualizar historial
+    // Actualizar historial (solo para estadísticas, no para decisiones)
     this.brightnessHistory.push(brightness);
     this.pulsatilityHistory.push(pulsatility);
     
@@ -210,30 +210,34 @@ export class CameraAutoCalibrator {
       this.pulsatilityHistory.shift();
     }
     
-    // Calcular promedios
-    const avgBrightness = this.brightnessHistory.reduce((a, b) => a + b, 0) / this.brightnessHistory.length;
-    const avgPulsatility = this.pulsatilityHistory.reduce((a, b) => a + b, 0) / this.pulsatilityHistory.length;
-    
-    // Actualizar estado
-    this.state.currentBrightness = avgBrightness;
-    this.state.pulsatility = avgPulsatility;
+    // Actualizar estado con valor INSTANTÁNEO
+    this.state.currentBrightness = brightness;
+    this.state.pulsatility = pulsatility;
     
     // Generar recomendación
-    this.state.recommendation = this.generateRecommendation(avgBrightness, avgPulsatility);
+    this.state.recommendation = this.generateRecommendation(brightness, pulsatility);
     
-    // Auto-ajustar si hay problema Y suficiente tiempo ha pasado
     const now = Date.now();
     const timeSinceLastAdjust = now - this.lastAdjustmentTime;
     
-    // Ajustar si: cooldown pasó Y hay desviación significativa
+    // === ACCIÓN INMEDIATA PARA SATURACIÓN ===
+    // Si está MUY saturado (>200), actuar SIN esperar cooldown
+    if (this.currentTrack && brightness > 200) {
+      console.log(`📷 ⚠️ SATURACIÓN DETECTADA: ${brightness.toFixed(0)} - Ajuste inmediato`);
+      this.autoAdjustExposure(brightness, pulsatility, brightness);
+      this.lastAdjustmentTime = now;
+      return { ...this.state };
+    }
+    
+    // === AJUSTE NORMAL CON COOLDOWN REDUCIDO ===
     if (this.currentTrack && timeSinceLastAdjust >= this.ADJUSTMENT_COOLDOWN) {
-      // Ajustar si está fuera del rango óptimo (80-160)
-      const needsAdjust = avgBrightness > this.TARGET_BRIGHTNESS_MAX || 
-                          avgBrightness < this.TARGET_BRIGHTNESS_MIN ||
-                          brightness > 210 || brightness < 50;
+      // Ajustar si está fuera del rango óptimo (80-160) o extremos
+      const needsAdjust = brightness > this.TARGET_BRIGHTNESS_MAX || 
+                          brightness < this.TARGET_BRIGHTNESS_MIN ||
+                          brightness > 180 || brightness < 60;
       
       if (needsAdjust) {
-        this.autoAdjustExposure(avgBrightness, avgPulsatility, brightness);
+        this.autoAdjustExposure(brightness, pulsatility, brightness);
         this.lastAdjustmentTime = now;
       }
     }
@@ -267,8 +271,8 @@ export class CameraAutoCalibrator {
   }
   
   /**
-   * Ajustar exposición automáticamente - VERSIÓN NO BLOQUEANTE
-   * Según WebRTC best practices: fire-and-forget para evitar bloqueos
+   * Ajustar exposición automáticamente - VERSIÓN AGRESIVA Y RÁPIDA
+   * PASOS GRANDES para compensar rápido los cambios de luz
    */
   private autoAdjustExposure(
     avgBrightness: number, 
@@ -284,85 +288,105 @@ export class CameraAutoCalibrator {
     const deviation = brightness - this.TARGET_BRIGHTNESS_IDEAL;
     const deviationPercent = Math.abs(deviation) / this.TARGET_BRIGHTNESS_IDEAL;
     
-    // AJUSTE PROPORCIONAL: más lejos del objetivo = ajuste más agresivo
-    const adjustmentStrength = Math.min(2.0, 0.5 + deviationPercent * 3);
+    // AJUSTE MUY AGRESIVO: pasos grandes para compensar rápido
+    // A más desviación, más agresivo el ajuste
+    const adjustmentStrength = Math.min(4.0, 1.0 + deviationPercent * 5);
     
     let adjusted = false;
     
-    // SATURACIÓN CRÍTICA (>220) - ACCIÓN INMEDIATA
-    if (brightness > 220) {
-      console.log('📷 ⚠️ SATURACIÓN CRÍTICA - Reducción máxima');
+    // === SATURACIÓN CRÍTICA (>210) - EMERGENCIA ===
+    if (brightness > 210) {
+      console.log(`📷 🚨 EMERGENCIA: Brillo=${brightness.toFixed(0)} - Reducción MÁXIMA`);
       this.applyEmergencyReduction(caps);
       this.state.phase = 'ADJUSTING';
       return;
     }
     
-    // SOBREEXPUESTO (>160) - Reducir exposición
+    // === SOBREEXPUESTO (>160) - Reducir exposición AGRESIVAMENTE ===
     if (brightness > this.TARGET_BRIGHTNESS_MAX) {
       adjusted = true;
-      const reductionFactor = adjustmentStrength;
       
-      // Reducir exposureCompensation
+      // Paso base grande: 20% del rango * factor de ajuste
+      const stepMultiplier = brightness > 190 ? 0.35 : brightness > 175 ? 0.25 : 0.18;
+      
+      // Reducir exposureCompensation PRIMERO (más efectivo)
       if (caps.exposureCompensation) {
         const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-        const step = range * 0.1 * reductionFactor;
-        this.currentSettings.exposureCompensation = Math.max(
+        const step = range * stepMultiplier * adjustmentStrength;
+        const newValue = Math.max(
           caps.exposureCompensation.min,
           this.currentSettings.exposureCompensation - step
         );
-        this.applyConstraintFast('exposureCompensation', this.currentSettings.exposureCompensation);
+        if (newValue !== this.currentSettings.exposureCompensation) {
+          this.currentSettings.exposureCompensation = newValue;
+          this.applyConstraintFast('exposureCompensation', newValue);
+          console.log(`📷 ExpComp: ${newValue.toFixed(2)} (step=${step.toFixed(2)})`);
+        }
       }
       
-      // Reducir ISO si está muy sobreexpuesto
-      if (caps.iso && brightness > 180) {
-        const isoStep = Math.floor(50 * reductionFactor);
-        this.currentSettings.iso = Math.max(caps.iso.min, this.currentSettings.iso - isoStep);
-        this.applyConstraintFast('iso', this.currentSettings.iso);
+      // Reducir ISO también si brillo > 175
+      if (caps.iso && brightness > 175) {
+        const isoRange = caps.iso.max - caps.iso.min;
+        const isoStep = Math.floor(isoRange * 0.15 * adjustmentStrength);
+        const newIso = Math.max(caps.iso.min, this.currentSettings.iso - isoStep);
+        if (newIso !== this.currentSettings.iso) {
+          this.currentSettings.iso = newIso;
+          this.applyConstraintFast('iso', newIso);
+        }
       }
       
-      // Reducir brightness si disponible
-      if (caps.brightness && brightness > 190) {
+      // Reducir brightness si disponible y brillo > 185
+      if (caps.brightness && brightness > 185) {
         const bRange = caps.brightness.max - caps.brightness.min;
-        const bStep = bRange * 0.15 * reductionFactor;
-        this.currentSettings.brightness = Math.max(
+        const bStep = bRange * 0.2 * adjustmentStrength;
+        const newBrightness = Math.max(
           caps.brightness.min,
           this.currentSettings.brightness - bStep
         );
-        this.applyConstraintFast('brightness', this.currentSettings.brightness);
+        if (newBrightness !== this.currentSettings.brightness) {
+          this.currentSettings.brightness = newBrightness;
+          this.applyConstraintFast('brightness', newBrightness);
+        }
       }
     }
     
-    // SUBEXPUESTO (<80) - Aumentar exposición
+    // === SUBEXPUESTO (<80) - Aumentar exposición ===
     if (brightness < this.TARGET_BRIGHTNESS_MIN) {
       adjusted = true;
-      const increaseFactor = adjustmentStrength * 0.8;
+      const stepMultiplier = brightness < 50 ? 0.25 : brightness < 65 ? 0.18 : 0.12;
       
       if (caps.exposureCompensation) {
         const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-        const maxAllowed = caps.exposureCompensation.min + range * 0.7;
-        const step = range * 0.08 * increaseFactor;
-        this.currentSettings.exposureCompensation = Math.min(
+        const maxAllowed = caps.exposureCompensation.min + range * 0.75; // No pasar del 75%
+        const step = range * stepMultiplier * adjustmentStrength;
+        const newValue = Math.min(
           maxAllowed,
           this.currentSettings.exposureCompensation + step
         );
-        this.applyConstraintFast('exposureCompensation', this.currentSettings.exposureCompensation);
+        if (newValue !== this.currentSettings.exposureCompensation) {
+          this.currentSettings.exposureCompensation = newValue;
+          this.applyConstraintFast('exposureCompensation', newValue);
+        }
       }
       
       if (caps.brightness && brightness < 60) {
         const bRange = caps.brightness.max - caps.brightness.min;
-        const bStep = bRange * 0.1 * increaseFactor;
-        this.currentSettings.brightness = Math.min(
-          caps.brightness.min + bRange * 0.6,
+        const bStep = bRange * 0.15 * adjustmentStrength;
+        const newBrightness = Math.min(
+          caps.brightness.min + bRange * 0.65,
           this.currentSettings.brightness + bStep
         );
-        this.applyConstraintFast('brightness', this.currentSettings.brightness);
+        if (newBrightness !== this.currentSettings.brightness) {
+          this.currentSettings.brightness = newBrightness;
+          this.applyConstraintFast('brightness', newBrightness);
+        }
       }
     }
     
     // Actualizar fase
     if (adjusted) {
       this.state.phase = 'ADJUSTING';
-      this.state.progress = Math.min(95, this.state.progress + 5);
+      this.state.progress = Math.min(95, this.state.progress + 10);
     } else if (brightness >= this.TARGET_BRIGHTNESS_MIN && brightness <= this.TARGET_BRIGHTNESS_MAX) {
       this.state.phase = 'COMPLETE';
       this.state.progress = 100;

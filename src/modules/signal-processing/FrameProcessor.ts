@@ -181,9 +181,9 @@ export class FrameProcessor {
       }
     }
     
-    // Notificar al auto-calibrador cada 10 frames (~333ms @ 30fps)
-    // Balance: suficientemente frecuente para reaccionar, no tanto para bloquear
-    if (this.frameCount % 10 === 0) {
+    // Notificar al auto-calibrador CADA 5 FRAMES (~166ms @ 30fps)
+    // MUY frecuente para reaccionar rápido a cambios de luz
+    if (this.frameCount % 5 === 0) {
       const calibrator = (window as any).__cameraCalibrator;
       if (calibrator?.analyzeAndAdjust) {
         calibrator.analyzeAndAdjust(avgRed, avgGreen, avgBlue, acComponent);

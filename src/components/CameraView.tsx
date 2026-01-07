@@ -238,17 +238,25 @@ const CameraView: React.FC<CameraViewProps> = ({
     };
   }, [isMonitoring, onCalibrationUpdate]);
 
-  // Exponer calibrador para uso externo
+  // Exponer calibrador INMEDIATAMENTE al iniciar monitoreo
   useEffect(() => {
+    // Exponer calibrador global desde el inicio
+    if (calibratorRef.current) {
+      (window as any).__cameraCalibrator = calibratorRef.current;
+    }
+    
+    // Si hay stream, asignar el track al calibrador
     if (streamRef.current && calibratorRef.current) {
       const track = streamRef.current.getVideoTracks()[0];
       if (track) {
-        // Guardar referencia global para que FrameProcessor pueda usarlo
-        (window as any).__cameraCalibrator = calibratorRef.current;
+        calibratorRef.current.detectCapabilities(track);
       }
     }
+    
     return () => {
-      delete (window as any).__cameraCalibrator;
+      if (!isMonitoring) {
+        delete (window as any).__cameraCalibrator;
+      }
     };
   }, [isMonitoring]);
 
