@@ -421,12 +421,9 @@ const Index = () => {
     // CRÍTICO: fingerDetected ahora significa "SANGRE REAL DETECTADA"
     const hasBlood = lastSignal.fingerDetected;
     
-    // Si NO hay sangre real, no procesar nada
+    // Si NO hay sangre real, degradar valores gradualmente
     if (!hasBlood) {
-      // Degradar valores gradualmente si los hay
-      if (heartRate > 0) {
-        setHeartRate(prev => Math.max(0, prev * 0.95));
-      }
+      setHeartRate(prev => prev > 0 ? Math.max(0, prev * 0.95) : 0);
       return; // NO PROCESAR SIN SANGRE
     }
     
@@ -483,7 +480,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, heartRate]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {
