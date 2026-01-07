@@ -12,11 +12,11 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 300;   // ~200 BPM máximo (más rápido)
   private readonly WARMUP_TIME_MS = 1500;            // 1.5s para estabilización rápida
 
-  // Parámetros de filtrado OPTIMIZADOS PARA SEÑAL REAL
-  private readonly MEDIAN_FILTER_WINDOW = 5;       // Aumentado para mejor filtrado de ruido
-  private readonly MOVING_AVERAGE_WINDOW = 7;      // Mayor suavizado sin perder picos
-  private readonly EMA_ALPHA = 0.35;               // Suavizado más fuerte
-  private readonly BASELINE_FACTOR = 0.92;         // Seguimiento de baseline más estable
+  // Parámetros de filtrado - CRÍTICO: Preservar componente AC
+  private readonly MEDIAN_FILTER_WINDOW = 3;       // REDUCIDO: menos suavizado
+  private readonly MOVING_AVERAGE_WINDOW = 3;      // REDUCIDO: respuesta rápida
+  private readonly EMA_ALPHA = 0.7;                // AUMENTADO: menos suavizado, más señal real
+  private readonly BASELINE_FACTOR = 0.995;        // AUMENTADO: baseline MUY lento para NO absorber AC
 
   // Parámetros de beep OPTIMIZADOS
   private readonly BEEP_DURATION = 400; 
@@ -42,9 +42,9 @@ export class HeartBeatProcessor {
   private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.03;  // Rango de pendientes
   private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.001; // Pendientes muy suaves
 
-  // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
-  private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
-  private readonly PEAK_DETECTION_SENSITIVITY = 0.35; // Ligeramente más sensible
+  // ────────── AMPLIFICACIÓN DE SEÑAL AC ──────────
+  private readonly SIGNAL_BOOST_FACTOR = 3.0; // AUMENTADO: amplificar componente AC débil
+  private readonly PEAK_DETECTION_SENSITIVITY = 0.5; // MÁS sensible a picos pequeños
   
   // Control del auto-ajuste más estricto
   private readonly ADAPTIVE_TUNING_PEAK_WINDOW = 15; // Aumentado para más estabilidad

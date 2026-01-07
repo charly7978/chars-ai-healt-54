@@ -1,55 +1,53 @@
 /**
- * IMPLEMENTACIÓN OPTIMIZADA DEL FILTRO SAVITZKY-GOLAY
- * * Este filtro es superior a un promedio móvil simple porque suaviza el ruido
- * de la cámara sin aplanar los picos de los latidos (preserva el valor real).
- * * Configuración: Ventana de 15 puntos, Polinomio Grado 2.
+ * FILTRO SAVITZKY-GOLAY OPTIMIZADO PARA PPG
+ * 
+ * CAMBIO CRÍTICO: Ventana REDUCIDA de 7 puntos para:
+ * - Preservar mejor el componente AC (pulsátil)
+ * - Respuesta más rápida a los picos de latido
+ * - Menos lag en la detección
  */
 export class SavitzkyGolayFilter {
   private readonly coefficients: number[];
   private buffer: number[] = [];
-  private readonly windowSize: number = 15;
-  // Factor de normalización (suma de los pesos positivos del filtro)
-  private readonly normFactor: number = 1105;
+  private readonly windowSize: number = 7;  // REDUCIDO de 15 a 7
+  private readonly normFactor: number = 21; // Factor para ventana de 7
 
   constructor() {
     /**
-     * Coeficientes para ventana de 15 puntos (Grado 2).
-     * Estos valores actúan como una "plantilla" matemática que se desliza
-     * sobre los datos de la cámara.
+     * Coeficientes para ventana de 7 puntos (Grado 2).
+     * Ventana más pequeña = mejor preservación de picos
      */
     this.coefficients = [
-      -78, -13, 42, 87, 122, 147, 162, 167, 162, 147, 122, 87, 42, -13, -78
+      -2, 3, 6, 7, 6, 3, -2
     ];
     
     this.buffer = [];
   }
 
   /**
-   * Procesa un nuevo valor de luz roja y devuelve el valor suavizado.
+   * Procesa un nuevo valor y devuelve el valor suavizado
+   * PRESERVANDO el componente pulsátil
    */
   filter(value: number): number {
-    // Inicialización: Llenamos el buffer con el primer valor para evitar saltos desde cero
+    // Primera inicialización
     if (this.buffer.length === 0) {
       this.buffer = new Array(this.windowSize).fill(value);
+      return value; // Retornar valor sin modificar al inicio
     }
 
-    // Desplazamiento del buffer circular
+    // Buffer circular
     this.buffer.push(value);
     this.buffer.shift();
     
-    // Aplicar Convolución (Multiplicar cada dato por su peso correspondiente)
+    // Convolución
     let filtered = 0;
     for (let i = 0; i < this.windowSize; i++) {
       filtered += this.buffer[i] * this.coefficients[i];
     }
     
-    // Normalizar para mantener la señal en la misma escala que la original
     return filtered / this.normFactor;
   }
 
-  /**
-   * Limpia el filtro para una nueva medición.
-   */
   reset(): void {
     this.buffer = [];
   }

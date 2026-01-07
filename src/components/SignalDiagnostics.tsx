@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useRef } from 'react';
 
 interface SignalDiagnosticsProps {
   rawValue: number;
@@ -10,7 +10,8 @@ interface SignalDiagnosticsProps {
 }
 
 /**
- * Panel de diagnóstico visual para ver calidad de señal en tiempo real
+ * Panel de diagnóstico visual para ver calidad de señal PPG
+ * CRÍTICO: Muestra el componente AC que es clave para detectar latidos
  */
 const SignalDiagnostics: React.FC<SignalDiagnosticsProps> = ({
   rawValue,
@@ -20,71 +21,92 @@ const SignalDiagnostics: React.FC<SignalDiagnosticsProps> = ({
   bpm,
   pulsatility = 0
 }) => {
-  // Determinar estado de señal
+  // Historial para calcular AC real (diferencia max-min en ventana)
+  const historyRef = useRef<number[]>([]);
+  
+  // Calcular AC real: diferencia entre máximo y mínimo en ventana reciente
+  const acValue = useMemo(() => {
+    historyRef.current.push(rawValue);
+    if (historyRef.current.length > 30) historyRef.current.shift();
+    
+    if (historyRef.current.length < 10) return 0;
+    
+    const recent = historyRef.current.slice(-20);
+    const max = Math.max(...recent);
+    const min = Math.min(...recent);
+    return max - min;
+  }, [rawValue]);
+  
+  // Determinar estado de señal basado en AC
   const getSignalStatus = () => {
-    if (!fingerDetected) return { text: 'SIN DEDO', color: 'text-red-400', bg: 'bg-red-900/30' };
-    if (quality < 20) return { text: 'DÉBIL', color: 'text-orange-400', bg: 'bg-orange-900/30' };
-    if (quality < 50) return { text: 'MODERADA', color: 'text-yellow-400', bg: 'bg-yellow-900/30' };
-    return { text: 'BUENA', color: 'text-green-400', bg: 'bg-green-900/30' };
+    if (!fingerDetected) return { text: 'SIN DEDO', color: 'text-red-400', bg: 'bg-red-900/50' };
+    if (acValue < 1) return { text: 'AC MUY BAJO', color: 'text-red-400', bg: 'bg-red-900/50' };
+    if (acValue < 3) return { text: 'AC DÉBIL', color: 'text-orange-400', bg: 'bg-orange-900/50' };
+    if (acValue < 8) return { text: 'MODERADA', color: 'text-yellow-400', bg: 'bg-yellow-900/50' };
+    return { text: 'BUENA', color: 'text-green-400', bg: 'bg-green-900/50' };
   };
 
   const status = getSignalStatus();
-  
-  // Calcular diferencia entre raw y filtered (indica nivel de filtrado)
-  const filterDiff = Math.abs(rawValue - filteredValue);
-  const filterPercent = rawValue > 0 ? (filterDiff / rawValue * 100) : 0;
 
   return (
-    <div className={`fixed bottom-20 left-2 right-2 z-40 ${status.bg} backdrop-blur-sm rounded-lg p-2 border border-white/10`}>
+    <div className={`fixed bottom-20 left-2 right-2 z-40 ${status.bg} backdrop-blur-sm rounded-lg p-3 border border-white/20`}>
       {/* Header con estado */}
-      <div className="flex justify-between items-center mb-1">
-        <span className={`text-xs font-bold ${status.color}`}>
-          📊 DIAGNÓSTICO: {status.text}
+      <div className="flex justify-between items-center mb-2">
+        <span className={`text-sm font-bold ${status.color}`}>
+          📊 {status.text}
         </span>
-        <span className="text-xs text-white/60">
-          BPM: {bpm > 0 ? bpm.toFixed(0) : '--'}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-white/60">
+            Dedo: {fingerDetected ? '✓' : '✗'}
+          </span>
+          <span className={`text-lg font-bold ${bpm > 0 ? 'text-green-400' : 'text-gray-500'}`}>
+            {bpm > 0 ? `${bpm} BPM` : '-- BPM'}
+          </span>
+        </div>
       </div>
       
-      {/* Barras de señal */}
-      <div className="grid grid-cols-2 gap-2 text-[10px]">
+      {/* Métricas principales en grid */}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
         {/* Señal Cruda */}
         <div>
-          <div className="flex justify-between text-white/70">
-            <span>RAW</span>
-            <span>{rawValue.toFixed(1)}</span>
+          <div className="flex justify-between text-white/70 mb-0.5">
+            <span>RAW (DC)</span>
+            <span className="font-mono">{rawValue.toFixed(1)}</span>
           </div>
-          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+          <div className="h-2 bg-black/40 rounded-full overflow-hidden">
             <div 
-              className="h-full bg-blue-500 transition-all duration-100"
-              style={{ width: `${Math.min(100, (rawValue / 255) * 100)}%` }}
+              className="h-full bg-blue-500 transition-all duration-75"
+              style={{ width: `${Math.min(100, (rawValue / 300) * 100)}%` }}
             />
           </div>
         </div>
         
-        {/* Señal Filtrada */}
+        {/* COMPONENTE AC - LO MÁS IMPORTANTE */}
         <div>
-          <div className="flex justify-between text-white/70">
-            <span>FILTRADA</span>
-            <span>{filteredValue.toFixed(1)}</span>
+          <div className="flex justify-between text-white/70 mb-0.5">
+            <span className="font-bold text-yellow-300">⚡ AC (Pulso)</span>
+            <span className="font-mono font-bold">{acValue.toFixed(2)}</span>
           </div>
-          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+          <div className="h-2 bg-black/40 rounded-full overflow-hidden">
             <div 
-              className="h-full bg-green-500 transition-all duration-100"
-              style={{ width: `${Math.min(100, (filteredValue / 255) * 100)}%` }}
+              className={`h-full transition-all duration-75 ${
+                acValue >= 5 ? 'bg-green-500' : 
+                acValue >= 2 ? 'bg-yellow-500' : 'bg-red-500'
+              }`}
+              style={{ width: `${Math.min(100, (acValue / 15) * 100)}%` }}
             />
           </div>
         </div>
         
         {/* Calidad */}
         <div>
-          <div className="flex justify-between text-white/70">
-            <span>CALIDAD</span>
-            <span>{quality.toFixed(0)}%</span>
+          <div className="flex justify-between text-white/70 mb-0.5">
+            <span>Calidad</span>
+            <span className="font-mono">{quality.toFixed(0)}%</span>
           </div>
-          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+          <div className="h-2 bg-black/40 rounded-full overflow-hidden">
             <div 
-              className={`h-full transition-all duration-100 ${
+              className={`h-full transition-all duration-75 ${
                 quality >= 50 ? 'bg-green-500' : 
                 quality >= 20 ? 'bg-yellow-500' : 'bg-red-500'
               }`}
@@ -93,28 +115,32 @@ const SignalDiagnostics: React.FC<SignalDiagnosticsProps> = ({
           </div>
         </div>
         
-        {/* Pulsatilidad */}
+        {/* Pulsatilidad del detector */}
         <div>
-          <div className="flex justify-between text-white/70">
-            <span>PULSO AC</span>
-            <span>{(pulsatility * 100).toFixed(2)}%</span>
+          <div className="flex justify-between text-white/70 mb-0.5">
+            <span>Pulsatilidad</span>
+            <span className="font-mono">{(pulsatility * 100).toFixed(1)}%</span>
           </div>
-          <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
+          <div className="h-2 bg-black/40 rounded-full overflow-hidden">
             <div 
-              className={`h-full transition-all duration-100 ${
+              className={`h-full transition-all duration-75 ${
                 pulsatility >= 0.01 ? 'bg-green-500' : 
                 pulsatility >= 0.003 ? 'bg-yellow-500' : 'bg-red-500'
               }`}
-              style={{ width: `${Math.min(100, pulsatility * 1000)}%` }}
+              style={{ width: `${Math.min(100, pulsatility * 500)}%` }}
             />
           </div>
         </div>
       </div>
       
-      {/* Indicadores adicionales */}
-      <div className="flex justify-between mt-1 text-[9px] text-white/50">
-        <span>Filtrado: {filterPercent.toFixed(1)}%</span>
-        <span>Dedo: {fingerDetected ? '✓' : '✗'}</span>
+      {/* Indicador de diagnóstico */}
+      <div className="mt-2 pt-2 border-t border-white/10 text-[10px] text-white/50">
+        <div className="flex justify-between">
+          <span>AC &gt; 5 = latidos detectables</span>
+          <span className={acValue >= 5 ? 'text-green-400' : 'text-red-400'}>
+            {acValue >= 5 ? '✓ Listo' : '✗ Ajustar dedo'}
+          </span>
+        </div>
       </div>
     </div>
   );
