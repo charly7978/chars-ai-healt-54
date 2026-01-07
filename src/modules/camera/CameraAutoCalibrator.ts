@@ -53,14 +53,14 @@ export class CameraAutoCalibrator {
     recommendation: ''
   };
   
-  // Historial para análisis - MÍNIMO para bajo overhead
+  // Historial para análisis - BALANCEADO: suficiente para estabilidad, rápido para respuesta
   private brightnessHistory: number[] = [];
   private pulsatilityHistory: number[] = [];
-  private readonly HISTORY_SIZE = 5; // Reducido de 10 a 5
+  private readonly HISTORY_SIZE = 8; // 8 muestras = ~270ms @ 30fps
   
-  // Timing para ajustes - MENOS FRECUENTE para evitar bloqueos
+  // Timing para ajustes - REACTIVO pero no bloqueante
   private lastAdjustmentTime = 0;
-  private readonly ADJUSTMENT_COOLDOWN = 2000; // 2 segundos entre ajustes (era 100ms)
+  private readonly ADJUSTMENT_COOLDOWN = 500; // 500ms entre ajustes (balance: reactivo sin bloquear)
   
   // Capacidades detectadas
   private capabilities: CameraCapabilities | null = null;
@@ -221,16 +221,18 @@ export class CameraAutoCalibrator {
     // Generar recomendación
     this.state.recommendation = this.generateRecommendation(avgBrightness, avgPulsatility);
     
-    // Auto-ajustar SOLO si hay problema CRÍTICO y suficiente tiempo ha pasado
+    // Auto-ajustar si hay problema Y suficiente tiempo ha pasado
     const now = Date.now();
     const timeSinceLastAdjust = now - this.lastAdjustmentTime;
     
-    // Solo ajustar si: cooldown pasó Y hay problema crítico
+    // Ajustar si: cooldown pasó Y hay desviación significativa
     if (this.currentTrack && timeSinceLastAdjust >= this.ADJUSTMENT_COOLDOWN) {
-      // SOLO ajustar en casos CRÍTICOS (saturación extrema)
-      const needsUrgentAdjust = brightness > 220 || brightness < 30;
+      // Ajustar si está fuera del rango óptimo (80-160)
+      const needsAdjust = avgBrightness > this.TARGET_BRIGHTNESS_MAX || 
+                          avgBrightness < this.TARGET_BRIGHTNESS_MIN ||
+                          brightness > 210 || brightness < 50;
       
-      if (needsUrgentAdjust) {
+      if (needsAdjust) {
         this.autoAdjustExposure(avgBrightness, avgPulsatility, brightness);
         this.lastAdjustmentTime = now;
       }
@@ -265,13 +267,14 @@ export class CameraAutoCalibrator {
   }
   
   /**
-   * Ajustar exposición automáticamente - VERSIÓN AGRESIVA Y RÁPIDA
+   * Ajustar exposición automáticamente - VERSIÓN NO BLOQUEANTE
+   * Según WebRTC best practices: fire-and-forget para evitar bloqueos
    */
-  private async autoAdjustExposure(
+  private autoAdjustExposure(
     avgBrightness: number, 
     pulsatility: number,
     instantBrightness?: number
-  ): Promise<void> {
+  ): void {
     if (!this.currentTrack || !this.capabilities) return;
     
     const caps: any = this.currentTrack.getCapabilities?.() || {};
@@ -282,7 +285,6 @@ export class CameraAutoCalibrator {
     const deviationPercent = Math.abs(deviation) / this.TARGET_BRIGHTNESS_IDEAL;
     
     // AJUSTE PROPORCIONAL: más lejos del objetivo = ajuste más agresivo
-    // Rango de ajuste: 0.5 a 2.0 según urgencia
     const adjustmentStrength = Math.min(2.0, 0.5 + deviationPercent * 3);
     
     let adjusted = false;
@@ -290,7 +292,7 @@ export class CameraAutoCalibrator {
     // SATURACIÓN CRÍTICA (>220) - ACCIÓN INMEDIATA
     if (brightness > 220) {
       console.log('📷 ⚠️ SATURACIÓN CRÍTICA - Reducción máxima');
-      await this.applyEmergencyReduction(caps);
+      this.applyEmergencyReduction(caps);
       this.state.phase = 'ADJUSTING';
       return;
     }
@@ -300,7 +302,7 @@ export class CameraAutoCalibrator {
       adjusted = true;
       const reductionFactor = adjustmentStrength;
       
-      // Reducir exposureCompensation AGRESIVAMENTE
+      // Reducir exposureCompensation
       if (caps.exposureCompensation) {
         const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
         const step = range * 0.1 * reductionFactor;
@@ -308,14 +310,14 @@ export class CameraAutoCalibrator {
           caps.exposureCompensation.min,
           this.currentSettings.exposureCompensation - step
         );
-        await this.applyConstraintFast('exposureCompensation', this.currentSettings.exposureCompensation);
+        this.applyConstraintFast('exposureCompensation', this.currentSettings.exposureCompensation);
       }
       
-      // Reducir ISO en paralelo si está muy sobreexpuesto
+      // Reducir ISO si está muy sobreexpuesto
       if (caps.iso && brightness > 180) {
         const isoStep = Math.floor(50 * reductionFactor);
         this.currentSettings.iso = Math.max(caps.iso.min, this.currentSettings.iso - isoStep);
-        await this.applyConstraintFast('iso', this.currentSettings.iso);
+        this.applyConstraintFast('iso', this.currentSettings.iso);
       }
       
       // Reducir brightness si disponible
@@ -326,24 +328,24 @@ export class CameraAutoCalibrator {
           caps.brightness.min,
           this.currentSettings.brightness - bStep
         );
-        await this.applyConstraintFast('brightness', this.currentSettings.brightness);
+        this.applyConstraintFast('brightness', this.currentSettings.brightness);
       }
     }
     
-    // SUBEXPUESTO (<80) - Aumentar exposición (solo si hay pulso)
+    // SUBEXPUESTO (<80) - Aumentar exposición
     if (brightness < this.TARGET_BRIGHTNESS_MIN) {
       adjusted = true;
-      const increaseFactor = adjustmentStrength * 0.8; // Menos agresivo para evitar saturación
+      const increaseFactor = adjustmentStrength * 0.8;
       
       if (caps.exposureCompensation) {
         const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-        const maxAllowed = caps.exposureCompensation.min + range * 0.7; // No pasar del 70%
+        const maxAllowed = caps.exposureCompensation.min + range * 0.7;
         const step = range * 0.08 * increaseFactor;
         this.currentSettings.exposureCompensation = Math.min(
           maxAllowed,
           this.currentSettings.exposureCompensation + step
         );
-        await this.applyConstraintFast('exposureCompensation', this.currentSettings.exposureCompensation);
+        this.applyConstraintFast('exposureCompensation', this.currentSettings.exposureCompensation);
       }
       
       if (caps.brightness && brightness < 60) {
@@ -353,7 +355,7 @@ export class CameraAutoCalibrator {
           caps.brightness.min + bRange * 0.6,
           this.currentSettings.brightness + bStep
         );
-        await this.applyConstraintFast('brightness', this.currentSettings.brightness);
+        this.applyConstraintFast('brightness', this.currentSettings.brightness);
       }
     }
     
@@ -368,40 +370,36 @@ export class CameraAutoCalibrator {
   }
   
   /**
-   * Aplicar constraint rápidamente sin esperar
+   * Aplicar constraint de forma NO BLOQUEANTE (fire and forget)
+   * Según WebRTC best practices: no esperar respuesta para evitar bloqueos
    */
-  private async applyConstraintFast(name: string, value: number): Promise<void> {
+  private applyConstraintFast(name: string, value: number): void {
     if (!this.currentTrack) return;
-    try {
-      await this.currentTrack.applyConstraints({ 
-        advanced: [{ [name]: value }] 
-      } as any);
-    } catch {}
+    // Fire and forget - no await, no bloqueo
+    this.currentTrack.applyConstraints({ 
+      advanced: [{ [name]: value }] 
+    } as any).catch(() => {});
   }
   
   /**
-   * Reducción de emergencia para saturación crítica
+   * Reducción de emergencia para saturación crítica - NO BLOQUEANTE
    */
-  private async applyEmergencyReduction(caps: any): Promise<void> {
-    const promises: Promise<void>[] = [];
-    
+  private applyEmergencyReduction(caps: any): void {
     if (caps.exposureCompensation) {
       this.currentSettings.exposureCompensation = caps.exposureCompensation.min;
-      promises.push(this.applyConstraintFast('exposureCompensation', caps.exposureCompensation.min));
+      this.applyConstraintFast('exposureCompensation', caps.exposureCompensation.min);
     }
     
     if (caps.iso) {
       this.currentSettings.iso = caps.iso.min;
-      promises.push(this.applyConstraintFast('iso', caps.iso.min));
+      this.applyConstraintFast('iso', caps.iso.min);
     }
     
     if (caps.brightness) {
       const lowBrightness = caps.brightness.min + (caps.brightness.max - caps.brightness.min) * 0.15;
       this.currentSettings.brightness = lowBrightness;
-      promises.push(this.applyConstraintFast('brightness', lowBrightness));
+      this.applyConstraintFast('brightness', lowBrightness);
     }
-    
-    await Promise.all(promises);
   }
   
   /**
