@@ -53,17 +53,17 @@ const CONFIG = {
     BASELINE_SPEED: 0.003,
     
     // Altura de onda objetivo (% del canvas) - ONDAS MÁS GRANDES
-    TARGET_AMPLITUDE: 0.55,  // 35% del alto para ondas bien visibles
+    TARGET_AMPLITUDE: 0.35,  // 35% del alto para ondas bien visibles
     
     // AMPLIFICACIÓN FIJA para señales muy pequeñas
-    AMPLIFICATION: 170,   // Multiplicador base
+    AMPLIFICATION: 150,   // Multiplicador base
   },
   
   // Detección de picos
   PEAKS: {
-    MIN_DISTANCE_MS: 250,   // Mínimo entre picos (200 BPM máx)
+    MIN_DISTANCE_MS: 300,   // Mínimo entre picos (200 BPM máx)
     DETECTION_WINDOW: 3,    // Puntos a cada lado para detectar (más sensible)
-    MIN_PROMINENCE: 0.06,   // Prominencia mínima BAJA para detectar más picos
+    MIN_PROMINENCE: 0.08,   // Prominencia mínima BAJA para detectar más picos
   },
   
   // Colores
