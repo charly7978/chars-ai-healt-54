@@ -330,7 +330,9 @@ const Index = () => {
     systemState.current = 'IDLE';
   };
 
-  // MANEJO DEL STREAM
+  // MANEJO DEL STREAM - MEJORADO PARA ROBUSTEZ
+  const videoElementRef = useRef<HTMLVideoElement | null>(null);
+  
   const handleStreamReady = (stream: MediaStream) => {
     setCameraStream(stream);
     
@@ -340,31 +342,57 @@ const Index = () => {
     
     const videoTrack = stream.getVideoTracks()[0];
     
+    // Activar flash si está disponible
     if (videoTrack?.getCapabilities?.()?.torch) {
       videoTrack.applyConstraints({
         advanced: [{ torch: true }]
       }).catch(() => {});
     }
     
+    // Crear canvas temporal para captura
     if (!tempCanvasRef.current) {
       tempCanvasRef.current = document.createElement('canvas');
-      tempCtxRef.current = tempCanvasRef.current.getContext('2d', {willReadFrequently: true});
+      tempCtxRef.current = tempCanvasRef.current.getContext('2d', { 
+        willReadFrequently: true,
+        alpha: false 
+      });
     }
     
     const tempCanvas = tempCanvasRef.current;
     const tempCtx = tempCtxRef.current;
     if (!tempCtx) return;
     
-    const videoElement = document.querySelector('video') as HTMLVideoElement;
-    if (!videoElement) return;
+    // BUSCAR VIDEO POR STREAM - MÁS CONFIABLE
+    // Buscar el video que tiene este stream asignado
+    let videoElement: HTMLVideoElement | null = null;
+    const allVideos = document.querySelectorAll('video');
+    for (const v of allVideos) {
+      if (v.srcObject === stream || (v as any).srcObject?.id === stream.id) {
+        videoElement = v;
+        break;
+      }
+    }
+    
+    // Fallback: usar primer video disponible
+    if (!videoElement) {
+      videoElement = allVideos[0] as HTMLVideoElement || null;
+    }
+    
+    if (!videoElement) {
+      console.error('❌ No se encontró elemento video');
+      return;
+    }
+    
+    videoElementRef.current = videoElement;
+    console.log('📹 Video encontrado:', videoElement.videoWidth, 'x', videoElement.videoHeight);
     
     let lastProcessTime = 0;
-    // OPTIMIZACIÓN: 15 fps es suficiente para PPG (reduce carga 50%)
-    const targetFrameInterval = 1000/15;
+    // AUMENTAR A 30 FPS para mejor detección
+    const targetFrameInterval = 1000 / 30;
     
-    // OPTIMIZACIÓN: Resolución mínima para PPG (solo necesitamos color promedio)
-    const PPG_WIDTH = 80;
-    const PPG_HEIGHT = 60;
+    // RESOLUCIÓN MAYOR para mejor detección de dedo
+    const PPG_WIDTH = 160;
+    const PPG_HEIGHT = 120;
     tempCanvas.width = PPG_WIDTH;
     tempCanvas.height = PPG_HEIGHT;
     
@@ -373,7 +401,8 @@ const Index = () => {
     const processImage = () => {
       if (!frameLoopActiveRef.current) return;
       
-      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) {
+      const video = videoElementRef.current;
+      if (!isMonitoring || systemState.current !== 'ACTIVE' || !video) {
         frameLoopActiveRef.current = false;
         return;
       }
@@ -383,14 +412,16 @@ const Index = () => {
       
       if (timeSinceLastProcess >= targetFrameInterval) {
         try {
-          if (videoElement.readyState >= 2) {
-            // Dibujar a resolución mínima
-            tempCtx.drawImage(videoElement, 0, 0, PPG_WIDTH, PPG_HEIGHT);
+          if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+            // Dibujar frame completo a canvas pequeño
+            tempCtx.drawImage(video, 0, 0, PPG_WIDTH, PPG_HEIGHT);
             const imageData = tempCtx.getImageData(0, 0, PPG_WIDTH, PPG_HEIGHT);
             processFrame(imageData);
             lastProcessTime = now;
           }
-        } catch (error) {}
+        } catch (error) {
+          console.error('Error capturando frame:', error);
+        }
       }
       
       if (frameLoopActiveRef.current && isMonitoring && systemState.current === 'ACTIVE') {
@@ -400,7 +431,17 @@ const Index = () => {
       }
     };
 
-    frameLoopIdRef.current = requestAnimationFrame(processImage);
+    // Esperar a que el video esté listo antes de iniciar el loop
+    const startLoop = () => {
+      if (videoElement && videoElement.readyState >= 2) {
+        console.log('✅ Iniciando captura de frames');
+        frameLoopIdRef.current = requestAnimationFrame(processImage);
+      } else {
+        setTimeout(startLoop, 100);
+      }
+    };
+    
+    startLoop();
   };
 
   // PROCESAMIENTO DE SEÑALES - CON VALIDACIÓN DE SANGRE REAL
