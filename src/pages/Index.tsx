@@ -590,8 +590,6 @@ const Index = () => {
           <CameraView 
             onStreamReady={handleStreamReady}
             isMonitoring={isCameraOn}
-            isFingerDetected={lastSignal?.fingerDetected}
-            signalQuality={signalQuality}
           />
         </div>
 

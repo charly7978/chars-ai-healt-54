@@ -2,19 +2,14 @@ import React, { useRef, useEffect } from "react";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
-  onAuxStreamReady?: (stream: MediaStream) => void;
   isMonitoring: boolean;
-  isFingerDetected?: boolean;
-  signalQuality?: number;
 }
 
 /**
- * SISTEMA DE CÁMARA SIMPLIFICADO Y ROBUSTO PARA PPG
+ * CÁMARA PPG - SELECCIÓN ROBUSTA POR DEVICE ID
  * 
- * ESTRATEGIA SIMPLE:
- * 1. Usar facingMode: "environment" para cámara trasera principal
- * 2. Resolución baja para máximo FPS
- * 3. Flash (torch) si está disponible
+ * Estrategia: enumerar cámaras, filtrar traseras por label,
+ * seleccionar la PRIMERA (principal), NO la segunda (telefoto/wide)
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
@@ -38,62 +33,144 @@ const CameraView: React.FC<CameraViewProps> = ({
   };
 
   /**
-   * INICIO SIMPLE DE CÁMARA - Solo facingMode environment
+   * OBTENER LA CÁMARA TRASERA PRINCIPAL
+   * 1. Enumerar todos los dispositivos
+   * 2. Filtrar cámaras traseras por label (back, rear, environment, trasera, 0)
+   * 3. Excluir cámaras secundarias (telephoto, wide, ultra, 2, 3)
+   * 4. Seleccionar la PRIMERA que quede
    */
+  const getPrimaryRearCameraId = async (): Promise<string | null> => {
+    try {
+      // Primero pedir permiso genérico para obtener labels
+      const tempStream = await navigator.mediaDevices.getUserMedia({ 
+        video: true, audio: false 
+      });
+      tempStream.getTracks().forEach(t => t.stop());
+      
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cameras = devices.filter(d => d.kind === 'videoinput');
+      
+      console.log('📷 Cámaras disponibles:', cameras.map(c => ({
+        id: c.deviceId.slice(0, 8),
+        label: c.label
+      })));
+      
+      // Filtrar cámaras traseras
+      const rearCameras = cameras.filter(cam => {
+        const label = cam.label.toLowerCase();
+        // Es trasera si contiene estas palabras
+        const isRear = label.includes('back') || 
+                       label.includes('rear') || 
+                       label.includes('environment') ||
+                       label.includes('trasera') ||
+                       label.includes('facing back') ||
+                       label.includes('camera 0') ||
+                       label.includes('camera0');
+        return isRear;
+      });
+      
+      // Excluir cámaras secundarias (telefoto, wide, ultra)
+      const primaryCameras = rearCameras.filter(cam => {
+        const label = cam.label.toLowerCase();
+        const isSecondary = label.includes('telephoto') ||
+                            label.includes('tele') ||
+                            label.includes('wide') ||
+                            label.includes('ultra') ||
+                            label.includes('macro') ||
+                            label.includes('depth') ||
+                            label.includes('camera 1') ||
+                            label.includes('camera 2') ||
+                            label.includes('camera 3') ||
+                            label.includes('camera1') ||
+                            label.includes('camera2');
+        return !isSecondary;
+      });
+      
+      console.log('📷 Cámaras traseras principales:', primaryCameras.map(c => c.label));
+      
+      // Retornar la primera cámara principal, o la primera trasera, o null
+      if (primaryCameras.length > 0) {
+        return primaryCameras[0].deviceId;
+      }
+      if (rearCameras.length > 0) {
+        return rearCameras[0].deviceId;
+      }
+      
+      // Si no encontramos trasera por label, intentar la primera cámara
+      // (en móviles suele ser la frontal, así que usamos la última)
+      if (cameras.length > 1) {
+        return cameras[cameras.length - 1].deviceId;
+      }
+      if (cameras.length === 1) {
+        return cameras[0].deviceId;
+      }
+      
+      return null;
+    } catch (err) {
+      console.error('Error enumerando cámaras:', err);
+      return null;
+    }
+  };
+
   const startCamera = async () => {
     if (startedRef.current) return;
     startedRef.current = true;
 
     try {
-      console.log('📷 Iniciando cámara trasera 720p@60fps...');
+      console.log('📷 Buscando cámara trasera principal...');
       
-      // PASO 1: Obtener cámara trasera con 720p y 60fps
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { exact: "environment" },
-          width: { ideal: 1280, min: 640 },
-          height: { ideal: 720, min: 480 },
-          frameRate: { ideal: 60, min: 30 }
-        }
-      }).catch(async () => {
-        // Fallback si "exact" falla
-        console.log('⚠️ Fallback a facingMode ideal');
-        return navigator.mediaDevices.getUserMedia({
+      // PASO 1: Obtener ID de cámara principal
+      const primaryCameraId = await getPrimaryRearCameraId();
+      
+      let stream: MediaStream;
+      
+      if (primaryCameraId) {
+        console.log('📷 Usando cámara por deviceId:', primaryCameraId.slice(0, 8));
+        // Usar deviceId exacto - esto GARANTIZA la cámara correcta
+        stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
-            facingMode: "environment",
+            deviceId: { exact: primaryCameraId },
+            width: { ideal: 1280, min: 640 },
+            height: { ideal: 720, min: 480 },
+            frameRate: { ideal: 60, min: 30 }
+          }
+        });
+      } else {
+        console.log('⚠️ No se encontró cámara por ID, usando facingMode');
+        // Fallback a facingMode
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
             width: { ideal: 1280 },
             height: { ideal: 720 },
             frameRate: { ideal: 60, min: 30 }
           }
         });
-      });
+      }
 
       streamRef.current = stream;
       
-      // Asignar al video
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => {});
       }
       
-      // PASO 2: Configurar track para PPG
+      // Configurar para PPG
       const track = stream.getVideoTracks()[0];
       if (track) {
         await configurePPG(track);
+        
+        const settings = track.getSettings?.() || {};
+        console.log('✅ Cámara iniciada:', {
+          label: track.label,
+          resolution: `${settings.width}x${settings.height}`,
+          fps: settings.frameRate
+        });
       }
       
-      // Notificar que el stream está listo
       onStreamReady?.(stream);
-      
-      // Log de información
-      const settings = track?.getSettings?.() || {};
-      console.log('✅ Cámara iniciada:', {
-        label: track?.label,
-        resolution: `${settings.width}x${settings.height}`,
-        fps: settings.frameRate
-      });
       
     } catch (err) {
       console.error('❌ Error iniciando cámara:', err);
@@ -101,9 +178,6 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
   };
 
-  /**
-   * CONFIGURAR CÁMARA PARA PPG
-   */
   const configurePPG = async (track: MediaStreamTrack) => {
     const caps: any = track.getCapabilities?.() || {};
     
@@ -119,24 +193,21 @@ const CameraView: React.FC<CameraViewProps> = ({
       await applyConstraint({ torch: true });
       console.log('🔦 Flash/Torch ACTIVADO');
     } else {
-      console.log('💡 Sin flash - usando luz ambiente');
-      
-      // Compensar falta de flash con exposición alta
+      console.log('💡 Sin flash - compensando con exposición');
       if (caps.exposureCompensation?.max) {
         await applyConstraint({ exposureCompensation: caps.exposureCompensation.max });
       }
       if (caps.iso?.max) {
-        const highIso = caps.iso.min + (caps.iso.max - caps.iso.min) * 0.8;
-        await applyConstraint({ iso: highIso });
+        await applyConstraint({ iso: Math.min(caps.iso.max, 1600) });
       }
     }
     
-    // Focus cercano (para dedo)
+    // Focus cercano para dedo
     if (caps.focusDistance?.min !== undefined) {
       await applyConstraint({ focusDistance: caps.focusDistance.min });
     }
     
-    // Modo manual si está disponible (más estable)
+    // Modo manual para estabilidad
     if (caps.exposureMode?.includes?.('manual')) {
       await applyConstraint({ exposureMode: 'manual' });
     }
@@ -145,7 +216,6 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
   };
 
-  // EFECTO: Iniciar/detener cámara según isMonitoring
   useEffect(() => {
     if (isMonitoring) {
       startCamera();
@@ -153,10 +223,9 @@ const CameraView: React.FC<CameraViewProps> = ({
       stopCamera();
     }
     return () => stopCamera();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMonitoring]);
 
-  // EFECTO: Mantener torch activo
+  // Mantener torch activo
   useEffect(() => {
     if (!isMonitoring) return;
     
@@ -165,9 +234,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       if (track) {
         const caps: any = track.getCapabilities?.() || {};
         if (caps.torch === true) {
-          try {
-            track.applyConstraints({ advanced: [{ torch: true }] } as any);
-          } catch {}
+          track.applyConstraints({ advanced: [{ torch: true }] } as any).catch(() => {});
         }
       }
     }, 3000);
@@ -189,7 +256,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         objectFit: "cover",
         opacity: 0.001,
         pointerEvents: "none",
-        // NO transformar - mantener orientación natural
       }}
     />
   );
