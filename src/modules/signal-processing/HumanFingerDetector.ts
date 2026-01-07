@@ -557,6 +557,8 @@ export class HumanFingerDetector {
     this.detectedPeaks = [];
     this.detectedValleys = [];
     this.logCounter = 0;
+    // CRÍTICO: Limpiar lastRedValue - CAUSA DE MEMORY LEAK
+    this.lastRedValue = 0;
   }
 
   isCurrentlyDetected(): boolean {

@@ -61,12 +61,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   start(): void {
     if (this.isProcessing) return;
     this.isProcessing = true;
-    this.initialize();
+    // CRÍTICO: Reset completo al iniciar para evitar datos residuales
+    this.reset();
     console.log("🚀 PPGSignalProcessor: Iniciado");
   }
 
   stop(): void {
     this.isProcessing = false;
+    // CRÍTICO: Limpiar al detener para liberar memoria
+    this.reset();
     console.log("⏹️ PPGSignalProcessor: Detenido");
   }
 
