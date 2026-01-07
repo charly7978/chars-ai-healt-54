@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
-import SignalDiagnostics from "@/components/SignalDiagnostics";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
@@ -668,24 +667,11 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER DE ESTADO - Sin detección de dedo */}
-          <div className="px-4 py-2 flex justify-around items-center bg-black/20">
-            <div className="text-white text-lg">
-              Calidad: {signalQuality}%
+          {/* HEADER MINIMALISTA - Solo tiempo restante */}
+          <div className="px-4 py-2 flex justify-center items-center bg-black/30">
+            <div className="text-white text-xl font-bold">
+              {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
             </div>
-            <div className="text-white text-lg">
-              Estado: {systemState.current}
-            </div>
-            <div className="text-white text-lg">
-              {isMonitoring ? `${60 - elapsedTime}s` : "Listo"}
-            </div>
-          </div>
-
-          {/* PANEL DE DEBUG */}
-          <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
-            <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
-            <div>Frames: {framesProcessed}</div>
-            <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
           </div>
 
           <div className="flex-1">

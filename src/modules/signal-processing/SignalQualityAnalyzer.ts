@@ -383,7 +383,7 @@ export class SignalQualityAnalyzer {
   
   /**
    * Calcula índice de calidad global (0-100)
-   * CRÍTICO: Sin dedo detectado = calidad muy baja
+   * MEJORADO: Valores graduales, sin saltos bruscos
    */
   private calculateGlobalQuality(metrics: {
     perfusionIndex: number;
@@ -395,38 +395,34 @@ export class SignalQualityAnalyzer {
   }): number {
     const { perfusionIndex, pulsatility, snr, periodicity, stability, fingerConfidence } = metrics;
     
-    // *** CRÍTICO: Sin dedo = calidad máxima 20% ***
-    if (fingerConfidence < 0.30) {
-      // Calidad proporcional a fingerConfidence, máximo 20%
-      return Math.round(fingerConfidence * 66); // 0.30 → 20%
-    }
-    
-    // Con dedo detectado, calcular calidad normal
+    // Base quality calculada de métricas reales (sin dependencia binaria de dedo)
     let quality = 0;
     
-    // 1. Perfusion Index (30% del peso)
-    const piScore = Math.min(30, (perfusionIndex / this.THRESHOLDS.GOOD_PERFUSION_INDEX) * 30);
-    quality += piScore;
+    // 1. Perfusion Index (25% del peso) - señal pulsátil real
+    const piNorm = Math.min(1, perfusionIndex / this.THRESHOLDS.GOOD_PERFUSION_INDEX);
+    quality += piNorm * 25;
     
-    // 2. SNR (20% del peso)
-    const snrScore = Math.min(20, (snr / this.THRESHOLDS.GOOD_SNR_DB) * 20);
-    quality += snrScore;
+    // 2. SNR (20% del peso) - claridad de señal
+    const snrNorm = Math.min(1, Math.max(0, snr) / this.THRESHOLDS.GOOD_SNR_DB);
+    quality += snrNorm * 20;
     
-    // 3. Periodicidad (20% del peso)
-    const periodScore = Math.min(20, (periodicity / this.THRESHOLDS.GOOD_PERIODICITY) * 20);
-    quality += periodScore;
+    // 3. Periodicidad (20% del peso) - ritmo cardíaco detectado
+    const periodNorm = Math.min(1, periodicity / this.THRESHOLDS.GOOD_PERIODICITY);
+    quality += periodNorm * 20;
     
-    // 4. Estabilidad (15% del peso)
-    quality += stability * 15;
+    // 4. Estabilidad (15% del peso) - baja variabilidad de baseline
+    quality += Math.min(1, stability) * 15;
     
-    // 5. Confianza de dedo (15% del peso)
-    quality += fingerConfidence * 15;
+    // 5. Confianza de dedo (20% del peso) - características físicas
+    quality += fingerConfidence * 20;
     
-    // Penalización por movimiento excesivo
-    if (pulsatility > this.THRESHOLDS.OPTIMAL_PULSATILITY * 3) {
-      quality *= 0.8;
+    // Penalización suave por movimiento (no binaria)
+    if (pulsatility > this.THRESHOLDS.OPTIMAL_PULSATILITY * 2) {
+      const movementPenalty = Math.min(0.3, (pulsatility / this.THRESHOLDS.MAX_PULSATILITY) * 0.3);
+      quality *= (1 - movementPenalty);
     }
     
+    // Asegurar rango 0-100 con redondeo
     return Math.round(Math.max(0, Math.min(100, quality)));
   }
   
