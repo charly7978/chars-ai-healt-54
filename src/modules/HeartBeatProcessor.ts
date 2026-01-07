@@ -6,11 +6,11 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_WINDOW_SIZE = 40;
   private readonly DEFAULT_MIN_BPM = 40;         // Rango fisiológico mínimo
   private readonly DEFAULT_MAX_BPM = 180;        // Rango fisiológico máximo realista
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03;  // MÁS SENSIBLE para captar señales reales
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.5;     // Confianza mínima razonable
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.004; // Más permisivo para pendientes suaves
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 333;   // ~180 BPM máximo (60000/180)
-  private readonly WARMUP_TIME_MS = 2000;            // 2s para estabilización adecuada
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.015;  // MUY SENSIBLE para captar señales débiles
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.35;    // Confianza mínima muy permisiva
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.002; // Pendientes muy suaves permitidas
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300;   // ~200 BPM máximo (más rápido)
+  private readonly WARMUP_TIME_MS = 1500;            // 1.5s para estabilización rápida
 
   // Parámetros de filtrado OPTIMIZADOS PARA SEÑAL REAL
   private readonly MEDIAN_FILTER_WINDOW = 5;       // Aumentado para mejor filtrado de ruido
@@ -34,13 +34,13 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites ADAPTATIVOS para captar señales reales de PPG
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.02;   // Muy sensible para señales débiles
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.25;   // Límite superior razonable
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.4;      // Confianza mínima permisiva
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.75;     // No demasiado exigente
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.04;  // Rango de pendientes
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.003; // Pendientes suaves permitidas
+  // Límites ADAPTATIVOS MUY SENSIBLES para captar señales PPG reales
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.008;  // Ultra sensible
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.15;   // Límite superior
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.25;     // Muy permisivo
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.7;      // No demasiado exigente
+  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.03;  // Rango de pendientes
+  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.001; // Pendientes muy suaves
 
   // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
@@ -77,15 +77,15 @@ export class HeartBeatProcessor {
   private peakCandidateValue: number = 0;
   private isArrhythmiaDetected: boolean = false;
   
-  // Variables para VALIDACIÓN ROBUSTA de picos reales
+  // Variables para VALIDACIÓN MUY PERMISIVA de picos reales
   private peakValidationBuffer: number[] = [];
-  private readonly PEAK_VALIDATION_THRESHOLD = 0.35;      // Umbral moderado
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.3;   // Calidad mínima permisiva
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.35; // Confianza mínima para confirmar
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.15;       // Amplitud mínima reducida
-  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.003; // Pendiente suave permitida
-  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.7;  // Estabilidad moderada
-  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 5;      // Buffer más corto para respuesta rápida
+  private readonly PEAK_VALIDATION_THRESHOLD = 0.2;       // Muy bajo
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.15;  // Muy permisivo
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.25; // Muy bajo para captar
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.008;      // Amplitud mínima muy baja
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.001; // Pendiente casi plana OK
+  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.5;  // Estabilidad moderada
+  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 4;      // Buffer corto para respuesta rápida
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
