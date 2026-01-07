@@ -15,13 +15,14 @@ export interface CalibrationState {
 }
 
 export class CameraAutoCalibrator {
-  private readonly TARGET_MIN = 80;
-  private readonly TARGET_MAX = 160;
+  // Rango objetivo AMPLIADO para mejor tolerancia
+  private readonly TARGET_MIN = 70;
+  private readonly TARGET_MAX = 180;
   
   private currentBrightness = 0;
   private track: MediaStreamTrack | null = null;
   private lastAdjustTime = 0;
-  private readonly COOLDOWN = 2000; // 2 segundos entre ajustes
+  private readonly COOLDOWN = 1000; // 1 segundo entre ajustes (más rápido)
   
   // Estado actual de exposición
   private currentExposure = 0;
@@ -41,9 +42,9 @@ export class CameraAutoCalibrator {
         min: caps.exposureCompensation.min,
         max: caps.exposureCompensation.max
       };
-      // Iniciar en 30% del rango
+      // Iniciar en 40% del rango (ligeramente más alto para evitar oscuridad)
       const range = this.exposureRange.max - this.exposureRange.min;
-      this.currentExposure = this.exposureRange.min + range * 0.3;
+      this.currentExposure = this.exposureRange.min + range * 0.4;
     }
   }
 
@@ -76,7 +77,8 @@ export class CameraAutoCalibrator {
         this.reduceExposureSlightly();
         this.lastAdjustTime = now;
       }
-    } else if (this.currentBrightness < 50) {
+    } else if (this.currentBrightness < 60) {
+      // Umbral de oscuro aumentado de 50 a 60
       recommendation = 'Muy oscuro';
       
       if (canAdjust && this.hasExposure && this.track) {

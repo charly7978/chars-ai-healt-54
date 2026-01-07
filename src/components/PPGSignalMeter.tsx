@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Fingerprint, AlertCircle, Heart } from 'lucide-react';
+import { Heart } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
-import { getQualityColor, getQualityText } from '@/utils/qualityUtils';
 import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
 
 interface PPGSignalMeterProps {
@@ -483,47 +482,16 @@ const PPGSignalMeter = ({
         className="w-full h-full absolute inset-0"
       />
 
-      {/* Header con indicadores */}
-      <div className="absolute top-0 left-0 right-0 p-3 flex justify-between items-start z-10">
-        {/* Indicador PPG + Calidad */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Heart 
-              className={`w-6 h-6 transition-all duration-150 ${
-                showPulse ? 'text-red-500 scale-125' : 'text-emerald-500'
-              }`}
-              fill={showPulse ? 'currentColor' : 'none'}
-            />
-            <span className="text-lg font-bold text-slate-100">PPG</span>
-          </div>
-          
-          <div className="w-32">
-            <div className={`h-1.5 rounded-full bg-gradient-to-r ${getQualityColor(quality)} transition-all duration-500`}>
-              <div
-                className="h-full rounded-full bg-white/30 transition-all duration-500"
-                style={{ width: `${isFingerDetected ? quality : 0}%` }}
-              />
-            </div>
-            <span className="text-[10px] text-slate-400 block mt-0.5">
-              {getQualityText(quality, isFingerDetected, 'meter')}
-            </span>
-          </div>
-        </div>
-
-        {/* Indicador de dedo */}
-        <div className="flex flex-col items-center max-w-[180px]">
-          <Fingerprint
-            className={`h-8 w-8 transition-colors duration-300 ${
-              !isFingerDetected ? 'text-slate-500' :
-              quality > 75 ? 'text-emerald-400' :
-              quality > 50 ? 'text-yellow-400' :
-              'text-red-400'
+      {/* Header minimalista - solo PPG + pulso visual */}
+      <div className="absolute top-0 left-0 p-3 z-10">
+        <div className="flex items-center gap-2">
+          <Heart 
+            className={`w-6 h-6 transition-all duration-150 ${
+              showPulse ? 'text-red-500 scale-125' : 'text-emerald-500'
             }`}
-            strokeWidth={1.5}
+            fill={showPulse ? 'currentColor' : 'none'}
           />
-          <span className="text-[10px] text-center text-slate-400 leading-tight mt-1">
-            {diagnosticMessage || (isFingerDetected ? "Dedo detectado" : "Ubique el dedo sobre el flash")}
-          </span>
+          <span className="text-lg font-bold text-slate-100">PPG</span>
         </div>
       </div>
 
