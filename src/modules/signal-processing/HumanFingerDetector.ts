@@ -85,9 +85,9 @@ export class HumanFingerDetector {
     // Los intervalos R-R deben ser relativamente consistentes
     MAX_RR_VARIATION: 0.40,         // 40% de variación máxima entre intervalos
     
-    // === ESTABILIDAD TEMPORAL (HISTÉRESIS ASIMÉTRICA - MÁS ROBUSTA) ===
-    FRAMES_TO_CONFIRM: 6,           // 6 frames para confirmar (~0.20s) - más responsivo
-    FRAMES_TO_LOSE: 75,             // 75 frames para perder (~2.5s) - MUY TOLERANTE una vez detectado
+    // === ESTABILIDAD TEMPORAL (HISTÉRESIS ASIMÉTRICA - MÁS ROBUSTA Y FIRME) ===
+    FRAMES_TO_CONFIRM: 6,           // 6 frames para confirmar (~0.20s) - responsivo
+    FRAMES_TO_LOSE: 90,             // 90 frames para perder (~3s) - ULTRA TOLERANTE una vez detectado
   };
 
   constructor() {
@@ -364,17 +364,19 @@ export class HumanFingerDetector {
     this.consecutiveNonDetections++;
     
     // CAMBIO CLAVE: Decrementar MUY gradualmente cuando ya está confirmado
-    // Si está confirmado (lastDetectionState=true), decrementar solo cada 3 frames
-    // Esto da mucha más estabilidad una vez detectado
+    // Si está confirmado (lastDetectionState=true), decrementar solo cada 4 frames
+    // Esto da MÁXIMA estabilidad una vez detectado
     if (this.consecutiveDetections > 0) {
       if (this.lastDetectionState) {
-        // Ya confirmado: decrementar solo cada 3 no-detecciones
-        if (this.consecutiveNonDetections % 3 === 0) {
+        // Ya confirmado: decrementar solo cada 4 no-detecciones (más firme)
+        if (this.consecutiveNonDetections % 4 === 0) {
           this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
         }
       } else {
-        // Aún no confirmado: decrementar normal
-        this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
+        // Aún no confirmado: decrementar cada 2 (moderado)
+        if (this.consecutiveNonDetections % 2 === 0) {
+          this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
+        }
       }
     }
     

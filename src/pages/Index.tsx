@@ -226,9 +226,9 @@ const Index = () => {
     measurementTimerRef.current = window.setInterval(() => {
       setElapsedTime(prev => {
         const newTime = prev + 1;
-        if (newTime >= 30) {
+        if (newTime >= 60) {
           finalizeMeasurement();
-          return 30;
+          return 60;
         }
         return newTime;
       });
