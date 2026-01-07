@@ -1,10 +1,9 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
 import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
-import type { MultiChannelOutputs } from '../types/multichannel';
 
 /**
- * HOOK ÚNICO DE SIGNOS VITALES - OPTIMIZADO CON useRef
- * CRÍTICO: Cambiado de useState a useRef para evitar recreación
+ * HOOK ÚNICO DE SIGNOS VITALES - OPTIMIZADO
+ * Sin dependencia de MultiChannel (eliminado por rendimiento)
  */
 export const useVitalSignsProcessor = () => {
   const processorRef = useRef<VitalSignsProcessor | null>(null);
@@ -56,23 +55,6 @@ export const useVitalSignsProcessor = () => {
     return result;
   }, []);
 
-  const processChannels = useCallback((channels: MultiChannelOutputs, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
-    if (!processorRef.current) return {
-      spo2: 0, glucose: 0, hemoglobin: 0,
-      pressure: { systolic: 0, diastolic: 0 },
-      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
-      lipids: { totalCholesterol: 0, triglycerides: 0 },
-      isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined
-    };
-    
-    processedSignals.current++;
-    const result = processorRef.current.processChannels(channels, rrData);
-    if (result.spo2 > 0 && result.glucose > 0) {
-      setLastValidResults(result);
-    }
-    return result;
-  }, []);
-
   const reset = useCallback(() => {
     if (!processorRef.current) return null;
     const savedResults = processorRef.current.reset();
@@ -90,7 +72,6 @@ export const useVitalSignsProcessor = () => {
 
   return {
     processSignal,
-    processChannels,
     reset,
     fullReset,
     startCalibration,

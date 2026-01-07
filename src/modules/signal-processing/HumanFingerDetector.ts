@@ -37,14 +37,19 @@ export class HumanFingerDetector {
   private consecutiveNonDetections = 0;
   private lastDetectionState = false;
   
-  // Historial para análisis de pulsatilidad - REDUCIDO PARA MEJOR RENDIMIENTO
+  // Historial para análisis de pulsatilidad - OPTIMIZADO
   private redHistory: number[] = [];
   private timestampHistory: number[] = [];
-  private readonly HISTORY_SIZE = 90; // 3 segundos a 30fps (reducido de 150)
+  private readonly HISTORY_SIZE = 45; // 1.5 segundos a 30fps - REDUCIDO de 90
   
-  // SUAVIZADO: Buffer de pulsatilidad - REDUCIDO
+  // SUAVIZADO: Buffer de pulsatilidad
   private pulsatilityHistory: number[] = [];
-  private readonly PULSATILITY_SMOOTH_SIZE = 8; // Reducido de 12
+  private readonly PULSATILITY_SMOOTH_SIZE = 5; // REDUCIDO de 8
+  
+  // CACHE: Evitar recalcular cada frame
+  private cachedResult: FingerDetectionResult | null = null;
+  private lastAnalysisTime: number = 0;
+  private readonly ANALYSIS_CACHE_MS = 50; // Cache por 50ms
   
   // Análisis de picos cardíacos
   private detectedPeaks: number[] = [];
@@ -114,6 +119,11 @@ export class HumanFingerDetector {
     blueValue: number
   ): FingerDetectionResult {
     const now = Date.now();
+    
+    // CACHE: Retornar resultado anterior si fue calculado recientemente
+    if (this.cachedResult && (now - this.lastAnalysisTime) < this.ANALYSIS_CACHE_MS) {
+      return this.cachedResult;
+    }
     
     // Actualizar historial
     this.updateHistory(redValue, now);
@@ -247,7 +257,7 @@ export class HumanFingerDetector {
       ? `✅ DEDO VIVO (R=${redValue.toFixed(0)}, AC=${(pulsatility*100).toFixed(2)}%, ~${rhythmAnalysis.bpm.toFixed(0)} BPM)`
       : `⏳ Confirmando (${this.consecutiveDetections}/${this.CONFIG.FRAMES_TO_CONFIRM})...`;
     
-    return this.createResult(
+    const result = this.createResult(
       this.lastDetectionState, 
       confidence, 
       quality, 
@@ -255,6 +265,12 @@ export class HumanFingerDetector {
       true, pulsatility,
       message
     );
+    
+    // CACHE: Guardar resultado
+    this.cachedResult = result;
+    this.lastAnalysisTime = now;
+    
+    return result;
   }
 
   /**

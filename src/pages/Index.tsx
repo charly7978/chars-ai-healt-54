@@ -6,14 +6,13 @@ import SignalDiagnostics from "@/components/SignalDiagnostics";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
-import { useMultiChannelOptimizer } from "@/hooks/useMultiChannelOptimizer";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
-  // ESTADO ÚNICO Y DEFINITIVO - CERO DUPLICIDADES
+  // ESTADO ÚNICO Y DEFINITIVO
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [signalQuality, setSignalQuality] = useState(0);
@@ -38,7 +37,7 @@ const Index = () => {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   
-  // REFERENCIAS ÚNICAS - CONTROL ABSOLUTO DE INSTANCIAS
+  // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
@@ -46,18 +45,18 @@ const Index = () => {
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   
-  // CONTROL ÚNICO DE ESTADO - EVITA INICIALIZACIONES PARALELAS ABSOLUTAMENTE
+  // CONTROL DE ESTADO
   const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
-  // CRÍTICO: Referencias para evitar múltiples loops de requestAnimationFrame
+  // Referencias para frame loop
   const frameLoopIdRef = useRef<number | null>(null);
   const frameLoopActiveRef = useRef<boolean>(false);
   const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const tempCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   
-  // HOOKS ÚNICOS - UNA SOLA INSTANCIA GARANTIZADA
+  // HOOKS - Sin MultiChannel
   const { 
     startProcessing, 
     stopProcessing, 
@@ -77,7 +76,6 @@ const Index = () => {
   
   const { 
     processSignal: processVitalSigns, 
-    processChannels: processVitalChannels,
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
     lastValidResults,
@@ -86,25 +84,16 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
-  // Optimizer multicanal (uso pasivo; se alimenta desde lastSignal)
-  const { pushRawSample, compute, pushFeedback, reset: resetOptimizer } = useMultiChannelOptimizer();
-
-  // INICIALIZACIÓN ÚNICA CON BLOQUEO ABSOLUTO
+  // INICIALIZACIÓN ÚNICA
   useEffect(() => {
     if (initializationLock.current) return;
     
     initializationLock.current = true;
-    // Generar ID determinista basado en tiempo y contadores (sin aleatoriedad)
     const t = Date.now().toString(36);
     const c1 = (performance.now() | 0).toString(36);
     sessionIdRef.current = `main_${t}_${c1}`;
     
-    console.log(`🚀 INICIALIZACIÓN ÚNICA GARANTIZADA: ${sessionIdRef.current}`);
-    console.log(`📊 Debug Info - Signal: ${JSON.stringify(signalDebugInfo)}, Heart: ${JSON.stringify(heartDebugInfo)}`);
-    
     return () => {
-      console.log(`🚀 DESTRUCCIÓN CONTROLADA: ${sessionIdRef.current}`);
-      // CRÍTICO: Limpiar loop de frames al desmontar
       frameLoopActiveRef.current = false;
       if (frameLoopIdRef.current) {
         cancelAnimationFrame(frameLoopIdRef.current);
@@ -114,7 +103,7 @@ const Index = () => {
     };
   }, []);
 
-  // PANTALLA COMPLETA ÚNICA
+  // PANTALLA COMPLETA
   const enterFullScreen = async () => {
     if (isFullscreen) return;
     
@@ -131,7 +120,6 @@ const Index = () => {
       }
       
       setIsFullscreen(true);
-      console.log(`📱 Pantalla completa activada ÚNICA - ${sessionIdRef.current}`);
     } catch (err) {
       console.log('Error pantalla completa:', err);
     }
@@ -149,12 +137,9 @@ const Index = () => {
       
       screen.orientation?.unlock();
       setIsFullscreen(false);
-    } catch (err) {
-      console.log('Error saliendo de pantalla completa:', err);
-    }
+    } catch (err) {}
   };
 
-  // INICIALIZACIÓN AUTOMÁTICA ÚNICA
   useEffect(() => {
     const timer = setTimeout(() => enterFullScreen(), 1000);
     
@@ -190,27 +175,20 @@ const Index = () => {
     };
   }, []);
 
-  // SINCRONIZACIÓN ÚNICA DE RESULTADOS
+  // SINCRONIZACIÓN DE RESULTADOS
   useEffect(() => {
     if (lastValidResults && !isMonitoring) {
       setVitalSigns(lastValidResults);
       setShowResults(true);
-      console.log(`✅ Resultados ÚNICOS sincronizados - ${sessionIdRef.current}`, lastValidResults);
     }
   }, [lastValidResults, isMonitoring]);
 
-  // FUNCIÓN ÚNICA DE INICIO - BLOQUEO TOTAL DE DUPLICIDADES
+  // INICIO
   const startMonitoring = () => {
-    // BLOQUEO ABSOLUTO DE MÚLTIPLES INICIALIZACIONES
-    if (systemState.current !== 'IDLE') {
-      console.warn(`⚠️ INICIO BLOQUEADO - Estado: ${systemState.current} - ${sessionIdRef.current}`);
-      return;
-    }
+    if (systemState.current !== 'IDLE') return;
     
     systemState.current = 'STARTING';
-    console.log(`🎬 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
-    // UN SOLO BEEP - NUNCA MÁS
     if (navigator.vibrate) {
       navigator.vibrate([200]);
     }
@@ -220,18 +198,13 @@ const Index = () => {
     setIsCameraOn(true);
     setShowResults(false);
     
-    // PROCESAMIENTO ÚNICO
     startProcessing();
     
-    // RESET ÚNICO
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // CALIBRACIÓN ÚNICA
-    console.log(`🔧 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
     startAutoCalibration();
     
-    // TEMPORIZADOR ÚNICO
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
     }
@@ -248,19 +221,15 @@ const Index = () => {
     }, 1000);
     
     systemState.current = 'ACTIVE';
-    console.log(`✅ SISTEMA ÚNICO ACTIVO - ${sessionIdRef.current}`);
   };
 
-  // CALIBRACIÓN ÚNICA
   const startAutoCalibration = () => {
     if (isCalibrating || systemState.current === 'CALIBRATING') return;
     
     systemState.current = 'CALIBRATING';
-    console.log(`🎯 Calibración ÚNICA iniciada - ${sessionIdRef.current}`);
     setIsCalibrating(true);
     startCalibration();
     
-    // Volver a ACTIVE después de calibración
     setTimeout(() => {
       if (systemState.current === 'CALIBRATING') {
         systemState.current = 'ACTIVE';
@@ -268,16 +237,13 @@ const Index = () => {
     }, 3000);
   };
 
-  // FINALIZACIÓN ÚNICA
   const finalizeMeasurement = () => {
     if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') {
       return;
     }
     
     systemState.current = 'STOPPING';
-    console.log(`🏁 FINALIZACIÓN ÚNICA - ${sessionIdRef.current}`);
     
-    // CRÍTICO: Detener loop de frames PRIMERO
     frameLoopActiveRef.current = false;
     if (frameLoopIdRef.current) {
       cancelAnimationFrame(frameLoopIdRef.current);
@@ -309,14 +275,11 @@ const Index = () => {
     setCalibrationProgress(0);
     
     systemState.current = 'IDLE';
-    console.log(`✅ FINALIZACIÓN COMPLETADA - ${sessionIdRef.current}`);
   };
 
   const handleReset = () => {
     systemState.current = 'STOPPING';
-    console.log(`🔄 RESET ÚNICO TOTAL - ${sessionIdRef.current}`);
     
-    // CRÍTICO: Detener loop de frames PRIMERO
     frameLoopActiveRef.current = false;
     if (frameLoopIdRef.current) {
       cancelAnimationFrame(frameLoopIdRef.current);
@@ -334,17 +297,13 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    // CRÍTICO: Reset COMPLETO de todos los procesadores
     fullResetVitalSigns();
     resetHeartBeat();
-    resetOptimizer();
     
-    // CRÍTICO: Limpiar canvas temporal para liberar memoria
     if (tempCtxRef.current && tempCanvasRef.current) {
       tempCtxRef.current.clearRect(0, 0, tempCanvasRef.current.width, tempCanvasRef.current.height);
     }
     
-    // RESET TOTAL DE ESTADOS
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -369,34 +328,24 @@ const Index = () => {
     arrhythmiaDetectedRef.current = false;
     
     systemState.current = 'IDLE';
-    console.log(`✅ RESET TOTAL COMPLETADO - ${sessionIdRef.current}`);
   };
 
-  // MANEJO ÚNICO DEL STREAM - CON CONTROL DE LOOP ÚNICO
+  // MANEJO DEL STREAM
   const handleStreamReady = (stream: MediaStream) => {
-    // Guardar stream para previsualización
     setCameraStream(stream);
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    // CRÍTICO: Si ya hay un loop activo, NO crear otro
-    if (frameLoopActiveRef.current) {
-      console.log(`⚠️ Loop ya activo, ignorando nuevo stream - ${sessionIdRef.current}`);
-      return;
-    }
-    
-    console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
+    if (frameLoopActiveRef.current) return;
     
     const videoTrack = stream.getVideoTracks()[0];
     
-    // LINTERNA ÚNICA
     if (videoTrack?.getCapabilities?.()?.torch) {
       videoTrack.applyConstraints({
         advanced: [{ torch: true }]
-      }).catch(err => console.error("Error linterna:", err));
+      }).catch(() => {});
     }
     
-    // REUSAR CANVAS O CREAR UNO NUEVO (SOLO UNA VEZ)
     if (!tempCanvasRef.current) {
       tempCanvasRef.current = document.createElement('canvas');
       tempCtxRef.current = tempCanvasRef.current.getContext('2d', {willReadFrequently: true});
@@ -410,17 +359,12 @@ const Index = () => {
     if (!videoElement) return;
     
     let lastProcessTime = 0;
-    const targetFrameInterval = 1000/30; // 30 FPS EXACTOS
+    const targetFrameInterval = 1000/30;
     
-    // MARCAR LOOP COMO ACTIVO
     frameLoopActiveRef.current = true;
     
     const processImage = () => {
-      // VERIFICACIÓN ESTRICTA: Si el loop fue desactivado, terminar
-      if (!frameLoopActiveRef.current) {
-        console.log(`🛑 Loop detenido correctamente - ${sessionIdRef.current}`);
-        return;
-      }
+      if (!frameLoopActiveRef.current) return;
       
       if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) {
         frameLoopActiveRef.current = false;
@@ -450,12 +394,9 @@ const Index = () => {
             
             lastProcessTime = now;
           }
-        } catch (error) {
-          console.error("Error procesando frame:", error);
-        }
+        } catch (error) {}
       }
       
-      // CONTINUAR SOLO SI EL LOOP SIGUE ACTIVO
       if (frameLoopActiveRef.current && isMonitoring && systemState.current === 'ACTIVE') {
         frameLoopIdRef.current = requestAnimationFrame(processImage);
       } else {
@@ -463,13 +404,12 @@ const Index = () => {
       }
     };
 
-    // INICIAR LOOP
     frameLoopIdRef.current = requestAnimationFrame(processImage);
   };
 
-  // PROCESAMIENTO ÚNICO DE SEÑALES - CON THROTTLING PARA SIGNOS VITALES
+  // PROCESAMIENTO DE SEÑALES - SIMPLIFICADO sin MultiChannel
   const vitalSignsFrameCounter = useRef<number>(0);
-  const VITALS_PROCESS_EVERY_N_FRAMES = 3; // Procesar signos vitales cada 3 frames
+  const VITALS_PROCESS_EVERY_N_FRAMES = 5; // Procesar cada 5 frames (6 veces/segundo)
   
   useEffect(() => {
     if (!lastSignal) return;
@@ -481,7 +421,7 @@ const Index = () => {
     const qualityFactor = lastSignal.fingerDetected ? 1 : 0.7;
     const signalValue = lastSignal.filteredValue * qualityFactor;
 
-    // PROCESAMIENTO DE LATIDOS - Cada frame (necesario para detección precisa)
+    // PROCESAMIENTO DE LATIDOS
     const heartBeatResult = processHeartBeat(
       signalValue,
       lastSignal.fingerDetected, 
@@ -496,50 +436,14 @@ const Index = () => {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // CRÍTICO: THROTTLE del procesamiento de signos vitales
-    // Solo procesar cada N frames para reducir carga y objetos temporales
+    // THROTTLE del procesamiento de signos vitales
     vitalSignsFrameCounter.current++;
     
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
-      // Alimentar optimizador multicanal
-      pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
-      const channelOutputs = compute();
-
-      // Feedback multicanal cuando calidad baja - OPTIMIZADO: evitar crear array cada vez
-      if (channelOutputs) {
-        const co = channelOutputs as Record<string, { output: number; quality: number; feedback?: { desiredGain?: number; confidence?: number } } | undefined>;
-        const heartOut = co['heart'];
-        if (heartOut && heartOut.quality < 55) {
-          pushFeedback('heart', heartOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
-        }
-        const spo2Out = co['spo2'];
-        if (spo2Out && spo2Out.quality < 55) {
-          pushFeedback('spo2', spo2Out.feedback || { desiredGain: 1.05, confidence: 0.3 });
-        }
-        const bpOut = co['bloodPressure'];
-        if (bpOut && bpOut.quality < 55) {
-          pushFeedback('bloodPressure', bpOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
-        }
-        const hbOut = co['hemoglobin'];
-        if (hbOut && hbOut.quality < 55) {
-          pushFeedback('hemoglobin', hbOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
-        }
-        const glOut = co['glucose'];
-        if (glOut && glOut.quality < 55) {
-          pushFeedback('glucose', glOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
-        }
-        const lipOut = co['lipids'];
-        if (lipOut && lipOut.quality < 55) {
-          pushFeedback('lipids', lipOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
-        }
-      }
-      
-      // PROCESAMIENTO DE SIGNOS VITALES
-      const vitals = channelOutputs
-        ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
-        : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+      // Procesamiento directo sin MultiChannel
+      const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
         
       if (vitals) {
         setVitalSigns(vitals);
@@ -566,9 +470,9 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, processVitalChannels, setArrhythmiaState, pushRawSample, compute, pushFeedback]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
-  // CONTROL DE CALIBRACIÓN ÚNICO
+  // CONTROL DE CALIBRACIÓN
   useEffect(() => {
     if (!isCalibrating) return;
     
@@ -579,7 +483,6 @@ const Index = () => {
       if (currentProgress >= 100) {
         clearInterval(interval);
         setIsCalibrating(false);
-        console.log(`✅ Calibración ÚNICA finalizada - ${sessionIdRef.current}`);
         
         if (navigator.vibrate) {
           navigator.vibrate([100]);
@@ -590,7 +493,6 @@ const Index = () => {
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
-  // TOGGLE ÚNICO
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
@@ -606,15 +508,11 @@ const Index = () => {
       maxWidth: '100vw',
       maxHeight: '100svh',
       overflow: 'hidden',
-      paddingTop: '0px', // Pantalla completamente inmersiva
-      paddingBottom: '0px', // Sin padding para máxima inmersión
-      touchAction: 'none', // Prevenir gestos del navegador
-      userSelect: 'none', // Prevenir selección de texto
-      WebkitTouchCallout: 'none', // iOS: prevenir callouts
-      WebkitUserSelect: 'none' // WebKit: prevenir selección
+      touchAction: 'none',
+      userSelect: 'none',
+      WebkitTouchCallout: 'none',
+      WebkitUserSelect: 'none'
     }}>
-      {/* RR INTERVALS OVERLAY REMOVIDO PARA PANTALLA INMERSIVA */}
-
       {/* OVERLAY PANTALLA COMPLETA */}
       {!isFullscreen && (
         <button 
@@ -661,7 +559,7 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER DE ESTADO ÚNICO */}
+          {/* HEADER DE ESTADO */}
           <div className="px-4 py-2 flex justify-around items-center bg-black/20">
             <div className="text-white text-lg">
               Calidad: {signalQuality}
@@ -674,12 +572,11 @@ const Index = () => {
             </div>
           </div>
 
-          {/* PANEL DE DEBUG ÚNICO */}
+          {/* PANEL DE DEBUG */}
           <div className="px-4 py-1 flex justify-around items-center bg-black/10 text-white text-sm">
             <div>Procesando: {isProcessing ? 'Sí' : 'No'}</div>
             <div>Frames: {framesProcessed}</div>
             <div>Calibrando: {isCalibrating ? 'Sí' : 'No'}</div>
-            <div>Sesión: {sessionIdRef.current.slice(-8)}</div>
           </div>
 
           <div className="flex-1">
@@ -738,7 +635,7 @@ const Index = () => {
             </div>
           </div>
 
-          {/* BOTONERA ÚNICA */}
+          {/* BOTONERA */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 
