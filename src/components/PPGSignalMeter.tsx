@@ -56,19 +56,19 @@ const PPGSignalMeter = ({
   // CRÍTICO: Flag para controlar UN SOLO loop de animación
   const animationLoopActiveRef = useRef<boolean>(false);
 
-  const WINDOW_WIDTH_MS = 4300;
-  const CANVAS_WIDTH = 1000;
-  const CANVAS_HEIGHT = 800;
+  const WINDOW_WIDTH_MS = 2200;
+  const CANVAS_WIDTH =980;
+  const CANVAS_HEIGHT = 720;
   const GRID_SIZE_X = 35;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 70.0;
+  const verticalScale = 50.0;
   const SMOOTHING_FACTOR = 1.8;
-  const TARGET_FPS = 30; // REDUCIDO de 60 a 30 para mejor rendimiento
+  const TARGET_FPS = 120; // REDUCIDO de 60 a 30 para mejor rendimiento
   const FRAME_TIME = 1000 / TARGET_FPS;
-  const BUFFER_SIZE = 300; // REDUCIDO de 600 a 300
+  const BUFFER_SIZE = 600; // REDUCIDO de 600 a 300
   const PEAK_DETECTION_WINDOW = 8;
   const PEAK_THRESHOLD = 3;
-  const MIN_PEAK_DISTANCE_MS = 300;
+  const MIN_PEAK_DISTANCE_MS = 250;
   const MAX_PEAKS_TO_DISPLAY = 15; // REDUCIDO de 25 a 15
 
   // Actualizar refs cuando props cambian (sin recrear funciones)
