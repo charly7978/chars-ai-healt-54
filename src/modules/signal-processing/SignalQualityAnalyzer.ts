@@ -405,7 +405,7 @@ export class SignalQualityAnalyzer {
   
   /**
    * Calcula índice de calidad global (0-100)
-   * MEJORADO: Valores graduales, sin saltos bruscos
+   * MEJORADO: La calidad DEBE reflejar capacidad de detectar latidos
    */
   private calculateGlobalQuality(metrics: {
     perfusionIndex: number;
@@ -417,34 +417,46 @@ export class SignalQualityAnalyzer {
   }): number {
     const { perfusionIndex, pulsatility, snr, periodicity, stability, fingerConfidence } = metrics;
     
-    // Base quality calculada de métricas reales (sin dependencia binaria de dedo)
+    // === CALIDAD BASADA EN MÉTRICAS REALES ===
     let quality = 0;
     
-    // 1. Perfusion Index (25% del peso) - señal pulsátil real
-    const piNorm = Math.min(1, perfusionIndex / this.THRESHOLDS.GOOD_PERFUSION_INDEX);
-    quality += piNorm * 25;
+    // 1. PULSATILIDAD es lo MÁS importante (35%) - sin pulso no hay nada
+    // pulsatility típico con dedo: 0.005-0.05 (0.5%-5%)
+    const pulsNorm = Math.min(1, pulsatility / 0.02); // 2% = excelente
+    quality += pulsNorm * 35;
     
-    // 2. SNR (20% del peso) - claridad de señal
-    const snrNorm = Math.min(1, Math.max(0, snr) / this.THRESHOLDS.GOOD_SNR_DB);
-    quality += snrNorm * 20;
+    // 2. Perfusion Index (20%) - fuerza de la señal pulsátil
+    const piNorm = Math.min(1, perfusionIndex / 0.5); // 0.5% = bueno
+    quality += piNorm * 20;
     
-    // 3. Periodicidad (20% del peso) - ritmo cardíaco detectado
-    const periodNorm = Math.min(1, periodicity / this.THRESHOLDS.GOOD_PERIODICITY);
-    quality += periodNorm * 20;
+    // 3. SNR (15%) - claridad vs ruido
+    const snrNorm = Math.min(1, Math.max(0, snr) / 10); // 10dB = excelente
+    quality += snrNorm * 15;
     
-    // 4. Estabilidad (15% del peso) - baja variabilidad de baseline
-    quality += Math.min(1, stability) * 15;
+    // 4. Periodicidad (15%) - ritmo regular detectado
+    const periodNorm = Math.min(1, periodicity / 0.4);
+    quality += periodNorm * 15;
     
-    // 5. Confianza de dedo (20% del peso) - características físicas
-    quality += fingerConfidence * 20;
+    // 5. Confianza de dedo (15%) - características físicas RGB
+    quality += fingerConfidence * 15;
     
-    // Penalización suave por movimiento (no binaria)
-    if (pulsatility > this.THRESHOLDS.OPTIMAL_PULSATILITY * 2) {
-      const movementPenalty = Math.min(0.3, (pulsatility / this.THRESHOLDS.MAX_PULSATILITY) * 0.3);
-      quality *= (1 - movementPenalty);
+    // === PENALIZACIONES ===
+    
+    // Sin pulsatilidad mínima = calidad muy baja
+    if (pulsatility < 0.001) {
+      quality *= 0.3;
     }
     
-    // Asegurar rango 0-100 con redondeo
+    // Sin periodicidad = probablemente no es pulso real
+    if (periodicity < 0.1 && this.rawBuffer.length > 45) {
+      quality *= 0.5;
+    }
+    
+    // Inestabilidad alta = movimiento
+    if (stability < 0.3) {
+      quality *= 0.7;
+    }
+    
     return Math.round(Math.max(0, Math.min(100, quality)));
   }
   
