@@ -334,15 +334,22 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
+    // CRÍTICO: Reset COMPLETO de todos los procesadores
     fullResetVitalSigns();
     resetHeartBeat();
     resetOptimizer();
+    
+    // CRÍTICO: Limpiar canvas temporal para liberar memoria
+    if (tempCtxRef.current && tempCanvasRef.current) {
+      tempCtxRef.current.clearRect(0, 0, tempCanvasRef.current.width, tempCanvasRef.current.height);
+    }
     
     // RESET TOTAL DE ESTADOS
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
     setBeatMarker(0);
+    setRRIntervals([]);
     setVitalSigns({ 
       spo2: Number.NaN as unknown as number,
       glucose: 0,

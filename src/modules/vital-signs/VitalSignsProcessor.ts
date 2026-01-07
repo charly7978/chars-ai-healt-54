@@ -859,5 +859,15 @@ export class VitalSignsProcessor {
     this.calibrationSamples = 0;
     this.arrhythmiaProcessor.reset();
     this.spo2Processor.reset();
+    
+    // CRÍTICO: Limpiar channelHistories - CAUSA DE MEMORY LEAK
+    this.channelHistories = {
+      heart: [],
+      spo2: [],
+      bloodPressure: [],
+      hemoglobin: [],
+      glucose: [],
+      lipids: []
+    };
   }
 }
