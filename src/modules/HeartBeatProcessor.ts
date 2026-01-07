@@ -565,9 +565,13 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Detección de picos ULTRA SENSIBLE Y ROBUSTA
-   * Basada en cambio de tendencia (derivada positiva -> negativa)
-   * MODIFICADO: Más permisivo para evitar bloqueos
+   * Detección de picos ROBUSTA Y CLÍNICAMENTE VÁLIDA
+   * Basada en cambio de tendencia con umbral AC mínimo real
+   * 
+   * PRINCIPIOS:
+   * 1. La señal PPG tiene frecuencia 0.5-4Hz (30-240 BPM)
+   * 2. Un pico real debe tener amplitud AC significativa
+   * 3. Debe haber subida clara ANTES y bajada clara DESPUÉS
    */
   private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
@@ -579,54 +583,68 @@ export class HeartBeatProcessor {
       ? now - this.lastPeakTime
       : Number.MAX_VALUE;
 
-    // Respetar intervalo mínimo entre picos
-    if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
+    // Intervalo mínimo fisiológico: 300ms = 200 BPM máximo
+    if (timeSinceLastPeak < 300) {
       return { isPeak: false, confidence: 0 };
     }
 
-    // Necesitamos suficientes muestras - REDUCIDO
-    if (this.signalBuffer.length < 5) {
+    // Necesitamos al menos 15 muestras (0.5s a 30fps)
+    if (this.signalBuffer.length < 15) {
       return { isPeak: false, confidence: 0 };
     }
 
-    // DETECCIÓN BASADA EN CAMBIO DE TENDENCIA
-    const recent = this.signalBuffer.slice(-8);
-    const n = recent.length;
+    // Obtener ventana de análisis
+    const window = this.signalBuffer.slice(-20);
+    const n = window.length;
     
-    if (n < 4) {
+    if (n < 8) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Calcular derivadas locales
-    const deriv1 = recent[n-2] - recent[n-3]; // Hace 2 frames
-    const deriv2 = recent[n-1] - recent[n-2]; // Hace 1 frame
+    // PASO 1: Calcular rango AC real
+    const windowMax = Math.max(...window);
+    const windowMin = Math.min(...window);
+    const acRange = windowMax - windowMin;
     
-    // CRITERIO PRINCIPAL: Cambio de tendencia positiva a negativa
-    // (subía y ahora baja = pico)
-    const isPotentialPeak = deriv1 > 0 && deriv2 <= 0; // <= en vez de < para ser más permisivo
+    // UMBRAL CRÍTICO: El rango AC debe ser significativo
+    // Para PPG real, mínimo 0.5 unidades de amplitud
+    const MIN_AC_RANGE = 0.5;
+    if (acRange < MIN_AC_RANGE) {
+      return { isPeak: false, confidence: 0 };
+    }
     
-    // CRITERIO SECUNDARIO MÁS PERMISIVO
-    const recentSamples = this.signalBuffer.slice(-15);
-    const recentMax = Math.max(...recentSamples);
-    const recentMin = Math.min(...recentSamples);
-    const acRange = recentMax - recentMin;
-    const currentVal = recent[n-2]; // El pico es el frame anterior
+    // PASO 2: Verificar cambio de tendencia en los últimos 5 frames
+    const deriv3 = window[n-4] - window[n-5]; // Hace 3 frames
+    const deriv2 = window[n-3] - window[n-4]; // Hace 2 frames
+    const deriv1 = window[n-2] - window[n-3]; // Hace 1 frame
+    const deriv0 = window[n-1] - window[n-2]; // Actual
     
-    // Altura relativa - MÁS PERMISIVO (> 30% del rango)
-    const relativeHeight = acRange > 0.05 ? (currentVal - recentMin) / acRange : 0.5;
-    const isNearTop = relativeHeight > 0.30; // Bajado de 0.40
+    // Buscar patrón: subida -> pico -> bajada
+    // El pico está en window[n-3] si: deriv3>0, deriv2>0, deriv1<=0
+    const wasRising = deriv3 > 0.01 && deriv2 > 0.01; // Subida clara
+    const isNowFalling = deriv1 <= 0 && deriv0 < 0;    // Bajada clara
     
-    // También aceptar si hay CUALQUIER señal AC visible - umbral bajado
-    const hasSignificantAC = acRange > 0.1; // Bajado de 0.3
+    const isPotentialPeak = wasRising && isNowFalling;
     
-    const isPeak = isPotentialPeak && (isNearTop || hasSignificantAC);
+    if (!isPotentialPeak) {
+      return { isPeak: false, confidence: 0 };
+    }
+    
+    // PASO 3: Verificar que el pico está en la zona alta
+    const peakValue = window[n-3];
+    const normalizedHeight = (peakValue - windowMin) / acRange;
+    
+    // El pico debe estar en el 40% superior del rango
+    if (normalizedHeight < 0.60) {
+      return { isPeak: false, confidence: 0 };
+    }
+    
+    // PASO 4: Calcular confianza
+    const heightScore = normalizedHeight;
+    const acScore = Math.min(1, acRange / 5); // Normalizar a rango esperado
+    const confidence = 0.5 * heightScore + 0.5 * acScore;
 
-    // Calcular confianza - MÁS GENEROSA
-    const heightScore = Math.min(1, relativeHeight * 1.5);
-    const acScore = Math.min(1, acRange / 3); // Más generoso
-    const confidence = isPeak ? Math.max(0.35, 0.35 * heightScore + 0.65 * acScore) : 0;
-
-    return { isPeak, confidence, rawDerivative: derivative };
+    return { isPeak: true, confidence, rawDerivative: derivative };
   }
 
   private confirmPeak(
