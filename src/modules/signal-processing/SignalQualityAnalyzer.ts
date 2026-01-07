@@ -82,10 +82,7 @@ export class SignalQualityAnalyzer {
   
   /**
    * ANÁLISIS PRINCIPAL - Procesa cada frame
-   * @param rawValue - Valor crudo (típicamente canal rojo)
-   * @param filteredValue - Valor filtrado
-   * @param timestamp - Timestamp del frame
-   * @param rgbData - Datos RGB opcionales para detección de dedo
+   * MODIFICADO: Respuesta INSTANTÁNEA cuando cambian condiciones RGB
    */
   analyze(
     rawValue: number, 
@@ -95,11 +92,37 @@ export class SignalQualityAnalyzer {
   ): SignalQualityResult {
     this.frameCount++;
     
+    // *** DETECCIÓN INSTANTÁNEA DE PÉRDIDA DE DEDO ***
+    // Si los valores RGB indican claramente que NO hay dedo, resetear buffers
+    if (rgbData) {
+      const { red, green, blue } = rgbData;
+      const rgRatio = green > 1 ? red / green : 1;
+      
+      // Condiciones de NO-DEDO (luz ambiente, sin dedo, etc.)
+      const noFinger = 
+        (green > 100 && rgRatio < 3) ||  // Verde alto + ratio bajo = no hay dedo
+        (red < 50 && green < 50) ||       // Muy oscuro = sin cámara/luz
+        (red > 250 && green > 200 && blue > 200); // Saturación = luz directa
+      
+      if (noFinger) {
+        // RESET INMEDIATO - no esperar a que el buffer se llene
+        this.rawBuffer = [];
+        this.filteredBuffer = [];
+        this.dcBuffer = [];
+        this.redBuffer = [];
+        this.greenBuffer = [];
+        
+        return this.createResult(0, 0, false, 'NO_FINGER', {
+          acAmplitude: 0, dcLevel: 0, snr: 0, periodicity: 0, stability: 0, fingerConfidence: 0
+        });
+      }
+    }
+    
     // Agregar a buffers con límite de tamaño eficiente
     this.rawBuffer.push(rawValue);
     this.filteredBuffer.push(filteredValue);
     
-    // Mantener tamaño de buffer - usar pop del inicio solo cuando necesario
+    // Mantener tamaño de buffer
     while (this.rawBuffer.length > this.BUFFER_SIZE) {
       this.rawBuffer.shift();
       this.filteredBuffer.shift();
@@ -109,7 +132,6 @@ export class SignalQualityAnalyzer {
     if (rgbData) {
       this.redBuffer.push(rgbData.red);
       this.greenBuffer.push(rgbData.green);
-      // Mantener solo últimos 20 valores (suficiente para ratio)
       while (this.redBuffer.length > 20) this.redBuffer.shift();
       while (this.greenBuffer.length > 20) this.greenBuffer.shift();
     }
@@ -119,10 +141,10 @@ export class SignalQualityAnalyzer {
     this.dcBuffer.push(dcLevel);
     if (this.dcBuffer.length > 30) this.dcBuffer.shift();
     
-    // Verificar si hay suficientes datos
+    // Verificar si hay suficientes datos - pero con valor bajo inicial
     if (this.rawBuffer.length < 15) {
-      return this.createResult(30, 0, true, undefined, {
-        acAmplitude: 0, dcLevel, snr: 0, periodicity: 0, stability: 1, fingerConfidence: 0.5
+      return this.createResult(10, 0, false, undefined, {
+        acAmplitude: 0, dcLevel, snr: 0, periodicity: 0, stability: 1, fingerConfidence: 0.2
       });
     }
     
