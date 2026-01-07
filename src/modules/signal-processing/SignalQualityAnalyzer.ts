@@ -100,6 +100,14 @@ export class SignalQualityAnalyzer {
     this.filteredBuffer.push(filteredValue);
     this.timestampBuffer.push(timestamp);
     
+    // *** CRÍTICO: Guardar datos RGB para detección de dedo ***
+    if (rgbData) {
+      this.redBuffer.push(rgbData.red);
+      this.greenBuffer.push(rgbData.green);
+      if (this.redBuffer.length > 30) this.redBuffer.shift();
+      if (this.greenBuffer.length > 30) this.greenBuffer.shift();
+    }
+    
     // Mantener tamaño de buffer
     if (this.rawBuffer.length > this.BUFFER_SIZE) {
       this.rawBuffer.shift();
@@ -112,59 +120,43 @@ export class SignalQualityAnalyzer {
     this.dcBuffer.push(dcLevel);
     if (this.dcBuffer.length > 30) this.dcBuffer.shift();
     
-    // Verificar si hay suficientes datos - REDUCIDO
-    if (this.rawBuffer.length < 15) { // Era 30
-      return this.createResult(30, 0, true, undefined, { // Asumir válido por defecto
+    // Verificar si hay suficientes datos
+    if (this.rawBuffer.length < 15) {
+      return this.createResult(30, 0, true, undefined, {
         acAmplitude: 0, dcLevel, snr: 0, periodicity: 0, stability: 1, fingerConfidence: 0.5
       });
     }
     
     // === MÉTRICAS DE CALIDAD ===
-    
-    // 1. Componente AC (pulsátil)
     const acAmplitude = this.calculateAC();
-    
-    // 2. Perfusion Index = (AC/DC) * 100
     const perfusionIndex = dcLevel > 0 ? (acAmplitude / dcLevel) * 100 : 0;
-    
-    // 3. SNR (Signal-to-Noise Ratio)
     const snr = this.calculateSNR();
-    
-    // 4. Periodicidad (autocorrelación en rango de pulso cardíaco)
     const periodicity = this.calculatePeriodicity();
-    
-    // 5. Estabilidad de línea base
     const stability = this.calculateStability();
     
-    // 6. NUEVO: Confianza de dedo basada en características físicas
-    const fingerConfidence = this.calculateFingerConfidence(periodicity);
+    // *** NUEVA DETECCIÓN DE DEDO - FÍSICA REAL ***
+    const fingerConfidence = this.calculateFingerConfidenceReal(rgbData, periodicity, acAmplitude, dcLevel);
     
     // Actualizar historial de periodicidad
     this.periodicityHistory.push(periodicity);
     if (this.periodicityHistory.length > 30) this.periodicityHistory.shift();
     
-    // === VALIDACIÓN DE SEÑAL - CON DETECCIÓN DE DEDO ===
+    // === VALIDACIÓN DE SEÑAL - ESTRICTA PARA DEDO ===
     let isValid = true;
     let invalidReason: SignalQualityResult['invalidReason'];
     
-    // Verificar pulsatilidad
     const pulsatility = acAmplitude / Math.max(dcLevel, 1);
     
-    // NUEVO: Si NO es un dedo (fingerConfidence < 0.3), invalidar
-    if (fingerConfidence < 0.25 && this.rawBuffer.length > 45) {
+    // CRÍTICO: Sin características físicas de dedo = INVÁLIDO
+    if (fingerConfidence < 0.30 && this.rawBuffer.length > 30) {
       isValid = false;
       invalidReason = 'NO_FINGER';
     } else if (pulsatility < this.THRESHOLDS.MIN_PULSATILITY && perfusionIndex < 0.02) {
       isValid = false;
       invalidReason = 'LOW_PULSATILITY';
     } else if (pulsatility > this.THRESHOLDS.MAX_PULSATILITY && stability < 0.2) {
-      // Solo marcar artefacto si también hay inestabilidad extrema
       isValid = false;
       invalidReason = 'MOTION_ARTIFACT';
-    } else if (snr < this.THRESHOLDS.MIN_SNR_DB && periodicity < 0.05) {
-      // Solo invalidar si AMBOS son muy bajos
-      isValid = false;
-      invalidReason = 'TOO_NOISY';
     }
     
     // === CÁLCULO DE CALIDAD GLOBAL ===
@@ -188,9 +180,10 @@ export class SignalQualityAnalyzer {
     
     this.lastQuality = result;
     
-    // Log cada 3 segundos
+    // Log cada 3 segundos con info de dedo
     if (this.frameCount % 90 === 0) {
-      console.log(`📊 SQI: quality=${quality}%, PI=${perfusionIndex.toFixed(2)}%, finger=${(fingerConfidence*100).toFixed(0)}%, valid=${isValid}${invalidReason ? ` (${invalidReason})` : ''}`);
+      const rgInfo = rgbData ? `R=${rgbData.red.toFixed(0)} G=${rgbData.green.toFixed(0)} B=${rgbData.blue.toFixed(0)}` : 'no RGB';
+      console.log(`📊 SQI: q=${quality}%, finger=${(fingerConfidence*100).toFixed(0)}%, valid=${isValid}${invalidReason ? ` (${invalidReason})` : ''} | ${rgInfo}`);
     }
     
     return result;
@@ -301,58 +294,103 @@ export class SignalQualityAnalyzer {
   }
   
   /**
-   * NUEVO: Calcula confianza de que la señal proviene de un dedo
-   * Basado en:
-   * 1. Periodicidad CONSISTENTE en rango cardíaco (40-180 BPM)
-   * 2. Ratio R/G característico de dedo con flash (>1.3)
-   * 3. Variabilidad temporal de la periodicidad (dedo = consistente)
+   * DETECCIÓN DE DEDO REAL - BASADA EN FÍSICA
+   * 
+   * Características de un DEDO REAL sobre la cámara con flash:
+   * 1. Canal ROJO muy alto (>200) - sangre absorbe verde/azul
+   * 2. Ratio R/G muy alto (>5) - característica física del dedo con flash
+   * 3. Saturación del rojo - el dedo con flash satura el sensor rojo
+   * 4. Variación PERIÓDICA del rojo (pulso) - no constante como pared
+   * 
+   * Una PARED o superficie NO tiene:
+   * - Ratio R/G tan alto (generalmente <3)
+   * - Saturación específica del rojo
+   * - Variación periódica real del color
    */
-  private calculateFingerConfidence(currentPeriodicity: number): number {
+  private calculateFingerConfidenceReal(
+    rgbData: { red: number; green: number; blue: number } | undefined,
+    periodicity: number,
+    acAmplitude: number,
+    dcLevel: number
+  ): number {
+    // Sin RGB no podemos detectar dedo físicamente
+    if (!rgbData || this.redBuffer.length < 15) {
+      return 0.3; // Valor neutro
+    }
+    
     let confidence = 0;
+    const { red, green, blue } = rgbData;
     
-    // 1. PERIODICIDAD ACTUAL (40% del peso)
-    // Un dedo tiene periodicidad real, la pared no
-    if (currentPeriodicity > 0.15) {
-      confidence += Math.min(0.4, currentPeriodicity * 0.8);
-    }
-    
-    // 2. CONSISTENCIA DE PERIODICIDAD EN EL TIEMPO (30% del peso)
-    // La pared puede tener periodicidad espuria momentánea, pero no consistente
-    if (this.periodicityHistory.length >= 10) {
-      const recentPeriodicity = this.periodicityHistory.slice(-10);
-      const avgPeriodicity = recentPeriodicity.reduce((a, b) => a + b, 0) / recentPeriodicity.length;
-      const variance = recentPeriodicity.reduce((sum, v) => sum + Math.pow(v - avgPeriodicity, 2), 0) / recentPeriodicity.length;
-      const cv = Math.sqrt(variance) / Math.max(avgPeriodicity, 0.01);
-      
-      // Baja varianza = periodicidad consistente = dedo
-      if (avgPeriodicity > 0.1 && cv < 0.5) {
-        confidence += 0.3 * (1 - cv);
-      }
-    }
-    
-    // 3. RATIO R/G (30% del peso)
-    // Dedo con flash: R/G > 1.3 típicamente
-    if (this.redBuffer.length >= 10 && this.greenBuffer.length >= 10) {
-      const recentRed = this.redBuffer.slice(-10);
-      const recentGreen = this.greenBuffer.slice(-10);
-      const avgRed = recentRed.reduce((a, b) => a + b, 0) / recentRed.length;
-      const avgGreen = recentGreen.reduce((a, b) => a + b, 0) / recentGreen.length;
-      
-      if (avgGreen > 10) {
-        const rgRatio = avgRed / avgGreen;
-        // Dedo típico: R/G entre 1.2 y 2.5
-        if (rgRatio >= 1.2 && rgRatio <= 2.5) {
-          confidence += 0.3 * Math.min(1, (rgRatio - 1.0) / 0.5);
-        } else if (rgRatio > 2.5) {
-          // Muy rojo pero podría ser dedo
-          confidence += 0.15;
-        }
-      }
+    // === 1. SATURACIÓN ROJA (35% del peso) ===
+    // Dedo con flash: rojo > 220 típicamente (sensor casi saturado)
+    // Pared: rojo variable, raramente tan alto
+    if (red >= 245) {
+      confidence += 0.35; // Rojo muy saturado = muy probable dedo
+    } else if (red >= 220) {
+      confidence += 0.30;
+    } else if (red >= 180) {
+      confidence += 0.15;
     } else {
-      // Sin datos RGB, dar beneficio de la duda basado en periodicidad
-      if (currentPeriodicity > 0.2) {
-        confidence += 0.15;
+      confidence += 0; // Rojo bajo = probablemente NO es dedo
+    }
+    
+    // === 2. RATIO R/G (30% del peso) ===
+    // Dedo con flash: R/G típico > 10 (verde muy bajo porque la sangre lo absorbe)
+    // Pared iluminada: R/G típico 1-4
+    const rgRatio = green > 1 ? red / green : red;
+    
+    if (rgRatio >= 20) {
+      confidence += 0.30; // Ratio muy alto = definitivamente dedo
+    } else if (rgRatio >= 10) {
+      confidence += 0.25;
+    } else if (rgRatio >= 5) {
+      confidence += 0.15;
+    } else if (rgRatio >= 2) {
+      confidence += 0.05; // Ratio bajo = probablemente NO es dedo
+    }
+    // rgRatio < 2 = 0 puntos (definitivamente no es dedo)
+    
+    // === 3. VERDE MUY BAJO (15% del peso) ===
+    // Dedo: verde < 30 típicamente (absorbido por hemoglobina)
+    // Pared: verde generalmente > 50
+    if (green <= 15) {
+      confidence += 0.15; // Verde muy bajo = dedo absorbiéndolo
+    } else if (green <= 30) {
+      confidence += 0.10;
+    } else if (green <= 60) {
+      confidence += 0.05;
+    }
+    // green > 60 = 0 puntos (no es dedo)
+    
+    // === 4. PULSATILIDAD REAL (20% del peso) ===
+    // Dedo: tiene pulsatilidad AC/DC > 0.005 (0.5%)
+    // Pared: pulsatilidad ~0 (constante)
+    const pulsatility = dcLevel > 0 ? acAmplitude / dcLevel : 0;
+    
+    if (pulsatility >= 0.02) {
+      confidence += 0.20; // Buena pulsatilidad = sangre real
+    } else if (pulsatility >= 0.008) {
+      confidence += 0.15;
+    } else if (pulsatility >= 0.003) {
+      confidence += 0.08;
+    }
+    // pulsatility < 0.003 = 0 puntos (sin pulso real)
+    
+    // === BONUS: Consistencia de saturación roja ===
+    // Dedo mantiene rojo alto constantemente
+    if (this.redBuffer.length >= 15) {
+      const avgRed = this.redBuffer.reduce((a, b) => a + b, 0) / this.redBuffer.length;
+      const minRed = Math.min(...this.redBuffer.slice(-15));
+      
+      // Rojo consistentemente alto
+      if (avgRed >= 240 && minRed >= 200) {
+        confidence += 0.10;
       }
+    }
+    
+    // Log para debug (cada 3 segundos)
+    if (this.frameCount % 90 === 0) {
+      console.log(`🖐️ Dedo: R=${red} G=${green} R/G=${rgRatio.toFixed(1)} puls=${(pulsatility*100).toFixed(2)}% → conf=${(confidence*100).toFixed(0)}%`);
     }
     
     return Math.max(0, Math.min(1, confidence));
@@ -360,6 +398,7 @@ export class SignalQualityAnalyzer {
   
   /**
    * Calcula índice de calidad global (0-100)
+   * CRÍTICO: Sin dedo detectado = calidad muy baja
    */
   private calculateGlobalQuality(metrics: {
     perfusionIndex: number;
@@ -371,11 +410,17 @@ export class SignalQualityAnalyzer {
   }): number {
     const { perfusionIndex, pulsatility, snr, periodicity, stability, fingerConfidence } = metrics;
     
-    // Componentes de calidad con pesos
+    // *** CRÍTICO: Sin dedo = calidad máxima 20% ***
+    if (fingerConfidence < 0.30) {
+      // Calidad proporcional a fingerConfidence, máximo 20%
+      return Math.round(fingerConfidence * 66); // 0.30 → 20%
+    }
+    
+    // Con dedo detectado, calcular calidad normal
     let quality = 0;
     
-    // 1. Perfusion Index (25% del peso)
-    const piScore = Math.min(100, (perfusionIndex / this.THRESHOLDS.GOOD_PERFUSION_INDEX) * 25);
+    // 1. Perfusion Index (30% del peso)
+    const piScore = Math.min(30, (perfusionIndex / this.THRESHOLDS.GOOD_PERFUSION_INDEX) * 30);
     quality += piScore;
     
     // 2. SNR (20% del peso)
@@ -383,23 +428,18 @@ export class SignalQualityAnalyzer {
     quality += snrScore;
     
     // 3. Periodicidad (20% del peso)
-    const periodScore = (periodicity / this.THRESHOLDS.GOOD_PERIODICITY) * 20;
-    quality += Math.min(20, periodScore);
+    const periodScore = Math.min(20, (periodicity / this.THRESHOLDS.GOOD_PERIODICITY) * 20);
+    quality += periodScore;
     
     // 4. Estabilidad (15% del peso)
     quality += stability * 15;
     
-    // 5. NUEVO: Confianza de dedo (20% del peso)
-    quality += fingerConfidence * 20;
+    // 5. Confianza de dedo (15% del peso)
+    quality += fingerConfidence * 15;
     
-    // Penalización por pulsatilidad fuera de rango óptimo
+    // Penalización por movimiento excesivo
     if (pulsatility > this.THRESHOLDS.OPTIMAL_PULSATILITY * 3) {
-      quality *= 0.7; // Penalizar movimiento
-    }
-    
-    // Penalización si no parece dedo
-    if (fingerConfidence < 0.3) {
-      quality *= 0.5;
+      quality *= 0.8;
     }
     
     return Math.round(Math.max(0, Math.min(100, quality)));
