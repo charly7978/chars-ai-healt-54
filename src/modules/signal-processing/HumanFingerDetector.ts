@@ -50,9 +50,11 @@ export class HumanFingerDetector {
   private detectedPeaks: number[] = [];
   private detectedValleys: number[] = [];
   
-  // NUEVO: Tracking de valor rojo anterior para detectar transiciones bruscas
+  // TRACKING: Para detectar solo cambios REALMENTE bruscos (dedo puesto/quitado, NO variación de pulso)
   private lastRedValue: number = 0;
-  private readonly RED_TRANSITION_THRESHOLD = 40; // Cambio brusco de >40 indica transición
+  // CRÍTICO: Umbral MUCHO más alto - la variación normal del pulso es 20-60 unidades
+  // Solo limpiar si hay un cambio de >100 unidades (transición real dedo on/off)
+  private readonly RED_TRANSITION_THRESHOLD = 100;
   
   // ═══════════════════════════════════════════════════════════════════════════
   // UMBRALES PERMISIVOS PARA DETECCIÓN ROBUSTA DE DEDO HUMANO
@@ -421,22 +423,31 @@ export class HumanFingerDetector {
   }
 
   private updateHistory(redValue: number, timestamp: number): void {
-    // CRÍTICO: Detectar transiciones bruscas de señal (dedo puesto/quitado)
-    // Si hay un cambio brusco, limpiar historial para empezar fresco
+    // SOLO limpiar historial si hay una transición REAL dedo on/off
+    // (cambio muy brusco >100 unidades), NO por variación normal de pulso
     const redDelta = Math.abs(redValue - this.lastRedValue);
     
+    // NUEVO: Solo limpiar si el dedo fue REALMENTE quitado (red muy bajo) y ahora vuelve
+    // O viceversa - transición real, no variación de pulso
+    const wasFingerOff = this.lastRedValue < this.CONFIG.MIN_RED_VALUE * 0.5;
+    const isFingerNowOn = redValue >= this.CONFIG.MIN_RED_VALUE;
+    const wasFingerOn = this.lastRedValue >= this.CONFIG.MIN_RED_VALUE;
+    const isFingerNowOff = redValue < this.CONFIG.MIN_RED_VALUE * 0.5;
+    
+    // Solo limpiar en transiciones reales ON->OFF o OFF->ON con cambio grande
     if (this.lastRedValue > 0 && redDelta > this.RED_TRANSITION_THRESHOLD) {
-      // Transición brusca detectada - limpiar historial contaminado
-      this.redHistory = [];
-      this.timestampHistory = [];
-      this.pulsatilityHistory = [];
-      // Mantener consecutiveDetections para no perder estado de confirmación
+      if ((wasFingerOff && isFingerNowOn) || (wasFingerOn && isFingerNowOff)) {
+        // Transición REAL detectada - limpiar historial contaminado
+        this.redHistory = [];
+        this.timestampHistory = [];
+        this.pulsatilityHistory = [];
+      }
+      // Si no es transición real (solo variación grande de pulso), NO limpiar
     }
     
     this.lastRedValue = redValue;
     
     // Solo agregar al historial si el valor es razonable (dedo presente)
-    // Evita contaminar con valores de "sin dedo"
     if (redValue >= this.CONFIG.MIN_RED_VALUE * 0.7) {
       this.redHistory.push(redValue);
       this.timestampHistory.push(timestamp);
