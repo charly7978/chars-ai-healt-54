@@ -318,9 +318,10 @@ const PPGSignalMeter = ({
       
       dataBufferRef.current.push(dataPoint);
       
+      // OPTIMIZADO: Trabajar directamente con la referencia readonly
       const points = dataBufferRef.current.getPoints();
       const isArrhythmiaActive = currentArrhythmiaStatus?.includes("ARRITMIA DETECTADA") || false;
-      detectPeaks(points, now, isArrhythmiaActive);
+      detectPeaks(points as PPGDataPoint[], now, isArrhythmiaActive);
       
       if (points.length > 1) {
         ctx.beginPath();

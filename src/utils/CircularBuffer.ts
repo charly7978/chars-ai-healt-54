@@ -1,4 +1,3 @@
-
 interface PPGDataPoint {
   time: number;
   value: number;
@@ -21,8 +20,20 @@ export class CircularBuffer {
     }
   }
 
-  getPoints(): PPGDataPoint[] {
-    return [...this.buffer];
+  /**
+   * OPTIMIZADO: Devuelve referencia directa al buffer interno
+   * IMPORTANTE: NO modificar el array devuelto - es de solo lectura
+   * Esto evita crear ~60 copias/segundo del array
+   */
+  getPoints(): readonly PPGDataPoint[] {
+    return this.buffer;
+  }
+
+  /**
+   * Devuelve el número de puntos sin crear copia del array
+   */
+  getPointsCount(): number {
+    return this.buffer.length;
   }
 
   clear(): void {
