@@ -74,7 +74,7 @@ export class HumanFingerDetector {
     MIN_PULSATILITY: 0.003,         // 0.3% mínimo - pulso débil pero real
     GOOD_PULSATILITY: 0.010,        // 1.0% - buena señal
     IDEAL_PULSATILITY: 0.020,       // 2.0% - señal excelente
-    MAX_PULSATILITY: 0.08,          // 8% máximo - más es movimiento, no pulso
+    MAX_PULSATILITY: 0.10,          // 10% máximo - tolera movimiento leve
     
     // === RITMO CARDÍACO ===
     MIN_HEART_RATE_BPM: 40,         // Bradicardia extrema
