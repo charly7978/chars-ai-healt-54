@@ -413,38 +413,33 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 8; // Muy permisivo para detectar dedos reales
+    const MIN_SIGNAL_QUALITY = 5; // MUY permisivo para captar señales reales
     
-    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
-      // Procesamiento reducido pero no bloqueo total - más permisivo
-      if (lastSignal.quality >= 5) {
-        const reducedBeatResult = processHeartBeat(
-          lastSignal.filteredValue * 0.6, 
-          false, // finger not fully detected but processing signal
-          lastSignal.timestamp
-        );
-        setHeartRate(reducedBeatResult.bpm * 0.7); // Reducir confianza
-        setHeartbeatSignal(lastSignal.filteredValue * 0.8);
-        setBeatMarker(reducedBeatResult.isPeak ? 0.6 : 0);
-      } else {
-        setHeartRate(0);
-        setHeartbeatSignal(0);
-        setBeatMarker(0);
-      }
-      // Alimentar igualmente al optimizador para mantener estado, aunque degradado
-      pushRawSample(lastSignal.timestamp, lastSignal.filteredValue * 0.5, lastSignal.quality);
+    // SIEMPRE procesar la señal si hay algo, aunque sea de baja calidad
+    // La detección de picos se encargará de validar
+    if (!lastSignal.fingerDetected && lastSignal.quality < MIN_SIGNAL_QUALITY) {
+      // Sin dedo y calidad muy baja - solo degradar
+      setHeartRate(prev => prev * 0.95);
+      setHeartbeatSignal(0);
+      setBeatMarker(0);
+      pushRawSample(lastSignal.timestamp, 0, 0);
       return;
     }
+    
+    // PROCESAR SEÑAL INCLUSO CON CALIDAD REDUCIDA
+    // El HeartBeatProcessor tiene su propia validación robusta
+    const qualityFactor = lastSignal.fingerDetected ? 1 : 0.7;
+    const signalValue = lastSignal.filteredValue * qualityFactor;
 
-    // PROCESAMIENTO ÚNICO DE LATIDOS
+    // PROCESAMIENTO ÚNICO DE LATIDOS - USANDO SEÑAL AJUSTADA
     const heartBeatResult = processHeartBeat(
-      lastSignal.filteredValue, 
+      signalValue,  // Usar señal con factor de calidad aplicado
       lastSignal.fingerDetected, 
       lastSignal.timestamp
     );
     
     setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(lastSignal.filteredValue);
+    setHeartbeatSignal(signalValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
