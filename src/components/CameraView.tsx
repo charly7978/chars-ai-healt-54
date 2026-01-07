@@ -1,48 +1,29 @@
-import React, { useRef, useEffect } from "react";
-import { CameraAutoCalibrator } from "@/modules/camera/CameraAutoCalibrator";
+import React, { useRef, useEffect, useCallback } from "react";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
-  onCalibrationUpdate?: (state: { brightness: number; recommendation: string }) => void;
   isMonitoring: boolean;
 }
 
 /**
- * CÁMARA PPG - CON AUTO-CALIBRACIÓN INTELIGENTE
+ * CÁMARA PPG - VERSIÓN ULTRA-LIGERA
  * 
- * Basado en HKUST 2023: "Optimizing Camera Exposure Control Settings"
- * 
- * CAMBIOS CLAVE:
- * 1. NO maximizar exposición (causa saturación)
- * 2. Buscar brillo óptimo: 80-160 (no saturado ni oscuro)
- * 3. Auto-ajustar según señal PPG recibida
- * 4. Priorizar exposición sobre ISO (menos ruido)
+ * PRINCIPIOS:
+ * 1. Mínima lógica - solo captura y entrega stream
+ * 2. SIN intervalos acumulativos
+ * 3. Torch aplicado una vez y listo
+ * 4. Cleanup completo en desmontaje
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
-  onCalibrationUpdate,
   isMonitoring,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const startedRef = useRef(false);
-  const calibratorRef = useRef<CameraAutoCalibrator | null>(null);
-  const torchAppliedRef = useRef(false);
+  const isActiveRef = useRef(false);
 
-  // Inicializar calibrador
-  useEffect(() => {
-    if (!calibratorRef.current) {
-      calibratorRef.current = new CameraAutoCalibrator();
-    }
-    return () => {
-      calibratorRef.current?.reset();
-    };
-  }, []);
-
-  const stopCamera = () => {
-    // Limpiar refs PRIMERO para evitar race conditions
-    startedRef.current = false;
-    torchAppliedRef.current = false;
+  const stopCamera = useCallback(() => {
+    isActiveRef.current = false;
     
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
@@ -50,102 +31,51 @@ const CameraView: React.FC<CameraViewProps> = ({
       });
       streamRef.current = null;
     }
+    
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    calibratorRef.current?.reset();
-  };
+  }, []);
 
-  /**
-   * OBTENER LA CÁMARA TRASERA PRINCIPAL
-   */
-  const getPrimaryRearCameraId = async (): Promise<string | null> => {
+  const startCamera = useCallback(async () => {
+    if (isActiveRef.current || streamRef.current) return;
+    isActiveRef.current = true;
+
     try {
-      const tempStream = await navigator.mediaDevices.getUserMedia({ 
-        video: true, audio: false 
-      });
+      // Obtener lista de cámaras
+      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       tempStream.getTracks().forEach(t => t.stop());
       
       const devices = await navigator.mediaDevices.enumerateDevices();
       const cameras = devices.filter(d => d.kind === 'videoinput');
       
-      console.log('📷 Cámaras disponibles:', cameras.map(c => ({
-        id: c.deviceId.slice(0, 8),
-        label: c.label
-      })));
-      
-      // Filtrar cámaras traseras
-      const rearCameras = cameras.filter(cam => {
+      // Buscar cámara trasera principal
+      let deviceId: string | undefined;
+      const rearCam = cameras.find(cam => {
         const label = cam.label.toLowerCase();
-        return label.includes('back') || 
-               label.includes('rear') || 
-               label.includes('environment') ||
-               label.includes('trasera') ||
-               label.includes('facing back') ||
-               label.includes('camera 0') ||
-               label.includes('camera0');
+        return (label.includes('back') || label.includes('rear') || label.includes('environment')) &&
+               !label.includes('tele') && !label.includes('wide') && !label.includes('ultra');
       });
       
-      // Excluir cámaras secundarias
-      const primaryCameras = rearCameras.filter(cam => {
-        const label = cam.label.toLowerCase();
-        const isSecondary = label.includes('telephoto') ||
-                            label.includes('tele') ||
-                            label.includes('wide') ||
-                            label.includes('ultra') ||
-                            label.includes('macro') ||
-                            label.includes('depth') ||
-                            label.includes('camera 1') ||
-                            label.includes('camera 2') ||
-                            label.includes('camera 3') ||
-                            label.includes('camera1') ||
-                            label.includes('camera2');
-        return !isSecondary;
-      });
-      
-      if (primaryCameras.length > 0) return primaryCameras[0].deviceId;
-      if (rearCameras.length > 0) return rearCameras[0].deviceId;
-      if (cameras.length > 1) return cameras[cameras.length - 1].deviceId;
-      if (cameras.length === 1) return cameras[0].deviceId;
-      
-      return null;
-    } catch (err) {
-      console.error('Error enumerando cámaras:', err);
-      return null;
-    }
-  };
+      if (rearCam) {
+        deviceId = rearCam.deviceId;
+      } else if (cameras.length > 0) {
+        deviceId = cameras[cameras.length - 1].deviceId;
+      }
 
-  const startCamera = async () => {
-    if (startedRef.current) return;
-    startedRef.current = true;
+      // Obtener stream con configuración PPG óptima
+      const constraints: MediaStreamConstraints = {
+        audio: false,
+        video: deviceId 
+          ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
+          : { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
+      };
 
-    try {
-      console.log('📷 Iniciando cámara con auto-calibración...');
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
-      const primaryCameraId = await getPrimaryRearCameraId();
-      
-      let stream: MediaStream;
-      
-      if (primaryCameraId) {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            deviceId: { exact: primaryCameraId },
-            width: { ideal: 1280, min: 640 },
-            height: { ideal: 720, min: 480 },
-            frameRate: { ideal: 60, min: 30 }
-          }
-        });
-      } else {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 60, min: 30 }
-          }
-        });
+      if (!isActiveRef.current) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
       }
 
       streamRef.current = stream;
@@ -154,31 +84,57 @@ const CameraView: React.FC<CameraViewProps> = ({
         videoRef.current.srcObject = stream;
         await videoRef.current.play().catch(() => {});
       }
-      
-      // Configurar con AUTO-CALIBRADOR
+
+      // Configurar track para PPG
       const track = stream.getVideoTracks()[0];
-      if (track && calibratorRef.current) {
-        // Detectar capacidades
-        await calibratorRef.current.detectCapabilities(track);
+      if (track) {
+        const caps: any = track.getCapabilities?.() || {};
         
-        // Aplicar configuración óptima (NO máxima)
-        await calibratorRef.current.applyOptimalPPGSettings(track);
+        // Aplicar configuración UNA VEZ
+        const settings: any[] = [];
         
-        const settings = track.getSettings?.() || {};
-        console.log('✅ Cámara PPG calibrada:', {
-          label: track.label,
-          resolution: `${settings.width}x${settings.height}`,
-          fps: settings.frameRate
+        // Torch
+        if (caps.torch === true) {
+          settings.push({ torch: true });
+        }
+        
+        // Exposición media (30% del rango, no máxima para evitar saturación)
+        if (caps.exposureCompensation) {
+          const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
+          settings.push({ exposureCompensation: caps.exposureCompensation.min + range * 0.3 });
+        }
+        
+        // ISO bajo (menos ruido)
+        if (caps.iso) {
+          settings.push({ iso: Math.min(caps.iso.min + 200, caps.iso.max) });
+        }
+        
+        // Focus cercano
+        if (caps.focusDistance?.min !== undefined) {
+          settings.push({ focusDistance: caps.focusDistance.min });
+        }
+        
+        // Aplicar TODO de una vez
+        if (settings.length > 0) {
+          try {
+            await track.applyConstraints({ advanced: settings } as any);
+          } catch {}
+        }
+        
+        console.log('📷 Cámara lista:', {
+          label: track.label.slice(0, 30),
+          torch: caps.torch === true,
+          fps: track.getSettings?.()?.frameRate || 30
         });
       }
-      
+
       onStreamReady?.(stream);
-      
+
     } catch (err) {
-      console.error('❌ Error iniciando cámara:', err);
-      startedRef.current = false;
+      console.error('❌ Error cámara:', err);
+      isActiveRef.current = false;
     }
-  };
+  }, [onStreamReady]);
 
   useEffect(() => {
     if (isMonitoring) {
@@ -186,79 +142,11 @@ const CameraView: React.FC<CameraViewProps> = ({
     } else {
       stopCamera();
     }
-    return () => stopCamera();
-  }, [isMonitoring]);
-
-  // Aplicar torch y mantenerlo activo
-  useEffect(() => {
-    if (!isMonitoring) {
-      torchAppliedRef.current = false;
-      return;
-    }
-    
-    // Función para aplicar torch
-    const applyTorch = () => {
-      if (!streamRef.current) return;
-      const track = streamRef.current.getVideoTracks()[0];
-      if (!track) return;
-      
-      const caps: any = track.getCapabilities?.() || {};
-      if (caps.torch === true) {
-        track.applyConstraints({ advanced: [{ torch: true }] } as any)
-          .then(() => { torchAppliedRef.current = true; })
-          .catch(() => {});
-      }
-    };
-    
-    // Aplicar torch inicialmente con pequeño delay para asegurar stream listo
-    const initialTimeout = setTimeout(applyTorch, 100);
-    
-    // Re-verificar torch cada 3 segundos (por si se apaga)
-    const torchInterval = setInterval(() => {
-      if (streamRef.current && !torchAppliedRef.current) {
-        applyTorch();
-      }
-    }, 3000);
-    
-    // Reportar calibración cada 5 segundos
-    const calibrationInterval = setInterval(() => {
-      if (calibratorRef.current && onCalibrationUpdate) {
-        const state = calibratorRef.current.getState();
-        onCalibrationUpdate({
-          brightness: state.currentBrightness,
-          recommendation: state.recommendation
-        });
-      }
-    }, 5000);
-
-    return () => {
-      clearTimeout(initialTimeout);
-      clearInterval(torchInterval);
-      clearInterval(calibrationInterval);
-    };
-  }, [isMonitoring, onCalibrationUpdate]);
-
-  // Exponer calibrador INMEDIATAMENTE al iniciar monitoreo
-  useEffect(() => {
-    // Exponer calibrador global desde el inicio
-    if (calibratorRef.current) {
-      (window as any).__cameraCalibrator = calibratorRef.current;
-    }
-    
-    // Si hay stream, asignar el track al calibrador
-    if (streamRef.current && calibratorRef.current) {
-      const track = streamRef.current.getVideoTracks()[0];
-      if (track) {
-        calibratorRef.current.detectCapabilities(track);
-      }
-    }
     
     return () => {
-      if (!isMonitoring) {
-        delete (window as any).__cameraCalibrator;
-      }
+      stopCamera();
     };
-  }, [isMonitoring]);
+  }, [isMonitoring, startCamera, stopCamera]);
 
   return (
     <video
@@ -276,14 +164,9 @@ const CameraView: React.FC<CameraViewProps> = ({
         objectFit: "cover",
         opacity: 0.001,
         pointerEvents: "none",
-        transform: "none",
-        filter: "none",
       }}
     />
   );
 };
 
 export default CameraView;
-
-// Exportar tipo del calibrador para uso en otros módulos
-export type { CameraAutoCalibrator };
