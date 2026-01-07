@@ -12,11 +12,11 @@ import { ProcessedSignal } from '../../types/signal';
  * NUEVO: Integración con CameraAutoCalibrator para ajuste dinámico
  */
 export class FrameProcessor {
-  // Buffer para análisis temporal - 240 frames para 4s @ 60fps
+  // Buffer para análisis temporal - REDUCIDO: 90 frames (~3s @ 30fps)
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
   private blueBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 240;
+  private readonly BUFFER_SIZE = 90; // Reducido de 240 - suficiente para AC/DC
   
   // === CALIBRACIÓN ADAPTATIVA ===
   private calibrationDC: number = 0;
@@ -36,9 +36,9 @@ export class FrameProcessor {
   private lastBlue: number = 0;
   private readonly SMOOTHING = 0.25; // 25% anterior, 75% nuevo - MÁS REACTIVO
   
-  // Log
+  // Log - REDUCIDO para menos overhead
   private frameCount = 0;
-  private readonly LOG_EVERY = 90; // cada 1.5s @ 60fps
+  private readonly LOG_EVERY = 150; // cada 5s @ 30fps (era 1.5s)
   
   // Estadísticas
   private skinPixelRatio: number = 0;
