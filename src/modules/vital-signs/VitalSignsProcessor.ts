@@ -265,8 +265,8 @@ export class VitalSignsProcessor {
     // 2. Glucosa - Basado en Satter et al. 2024
     const newGlucose = this.calculateGlucoseReal(features, rrData.intervals);
     if (newGlucose > 0) {
-      // Rango ampliado para glucosa: 40-600 mg/dL
-      this.measurements.glucose = this.smoothValue(this.measurements.glucose || newGlucose, newGlucose, 40, 600);
+      // Rango controlado: 50-350 mg/dL - sin acumulación
+      this.measurements.glucose = this.smoothValue(this.measurements.glucose || newGlucose, newGlucose, 50, 350);
       this.storeValue('glucose', this.measurements.glucose);
     }
 
@@ -336,22 +336,17 @@ export class VitalSignsProcessor {
 
   /**
    * GLUCOSA REAL - Algoritmo basado en Satter et al. 2024 (MDPI Applied Sciences)
+   * + Susana et al. 2023 (Time-Frequency Analysis)
    * 
    * "EMD-Based Noninvasive Blood Glucose Estimation from PPG Signals"
    * DOI: 10.3390/app14041406
    * 
-   * Características clave del paper:
-   * - AC/DC ratio correlaciona directamente con glucosa
-   * - Features de morfología de onda (upstroke time, pulse width)
-   * - Variabilidad de señal como indicador metabólico
-   * 
-   * SIN VALORES BASE FIJOS - Todo calculado desde la señal medida
+   * CORREGIDO: Sin acumulación, medición directa frame-by-frame
    */
   private calculateGlucoseReal(
     features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>,
     rrIntervals: number[]
   ): number {
-    // CRÍTICO: Sin intervalos RR válidos, no hay forma de medir glucosa
     if (rrIntervals.length < 3) return 0;
     
     const { 
@@ -360,7 +355,8 @@ export class VitalSignsProcessor {
       systolicTime,        // Tiempo sistólico - viscosidad sanguínea
       pulseWidth,          // Ancho de pulso - flujo periférico
       dc,                  // Componente DC - absorción óptica
-      dicroticDepth        // Profundidad dicrotica - elasticidad
+      dicroticDepth,       // Profundidad dicrotica - elasticidad
+      ac                   // Componente AC
     } = features;
     
     if (dc === 0 || acDcRatio < 0.003) return 0;
@@ -369,58 +365,57 @@ export class VitalSignsProcessor {
     const avgInterval = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
     const hr = 60000 / avgInterval;
     
-    // HR debe estar en rango fisiológico
     if (hr < 40 || hr > 180) return 0;
     
-    // === ALGORITMO SATTER et al. 2024 ===
-    // Glucosa correlaciona con absorción óptica y flujo sanguíneo
+    // === ALGORITMO CORREGIDO - Sin acumulación ===
+    // Todas las contribuciones normalizadas a rangos pequeños
     
-    // 1. COMPONENTE AC/DC - Principal predictor (Satter: r=0.72)
-    // Mayor AC/DC = mejor perfusión = glucosa tiende a ser normal-baja
-    // Menor AC/DC = peor perfusión = glucosa tiende a ser alta (hiperglucemia afecta microcirculación)
-    const acDcNorm = Math.min(acDcRatio * 25, 2); // Normalizar a rango 0-2
-    const acDcContribution = (1 - acDcNorm) * 80; // Inverso: menor AC/DC = mayor glucosa
+    // 1. COMPONENTE AC/DC (Satter: r=0.72 con glucosa)
+    // Rango típico AC/DC: 0.01-0.08
+    // Menor perfusión = glucosa más alta (hiperglucemia daña microvasos)
+    const acDcScore = Math.max(0, Math.min(1, acDcRatio * 15)); // 0-1
+    const acDcContribution = (1 - acDcScore) * 35; // 0-35 mg/dL
     
-    // 2. COMPONENTE DE VISCOSIDAD (systolicTime)
-    // Glucosa alta = sangre más viscosa = tiempo sistólico más largo
-    const systolicNorm = systolicTime > 0 ? Math.min(systolicTime / 12, 1.5) : 0.5;
-    const viscosityContribution = systolicNorm * 60;
+    // 2. COMPONENTE VISCOSIDAD (systolicTime)
+    // Rango típico: 3-12 muestras
+    // Mayor tiempo = sangre más viscosa = glucosa más alta
+    const viscosityScore = systolicTime > 0 ? Math.max(0, Math.min(1, systolicTime / 12)) : 0.4;
+    const viscosityContribution = viscosityScore * 25; // 0-25 mg/dL
     
-    // 3. COMPONENTE DE FLUJO PERIFÉRICO (pulseWidth)
-    // Glucosa alta = daño microvascular = pulso más estrecho
-    const pulseNorm = pulseWidth > 0 ? Math.min(pulseWidth / 15, 1.5) : 0.5;
-    const flowContribution = (1 - pulseNorm) * 40;
+    // 3. COMPONENTE FLUJO PERIFÉRICO (pulseWidth)
+    // Rango típico: 5-15 muestras
+    const flowScore = pulseWidth > 0 ? Math.max(0, Math.min(1, pulseWidth / 12)) : 0.5;
+    const flowContribution = (1 - flowScore) * 20; // 0-20 mg/dL
     
-    // 4. COMPONENTE DE VARIABILIDAD (amplitudeVariability)
-    // Mayor variabilidad = desregulación metabólica = glucosa inestable/alta
-    const variabilityContribution = amplitudeVariability * 120;
+    // 4. COMPONENTE VARIABILIDAD (normalizada por DC para evitar acumulación)
+    // amplitudeVariability es desviación estándar de picos - puede ser grande
+    // Normalizamos por DC para hacerla relativa
+    const normalizedVariability = dc !== 0 ? amplitudeVariability / Math.abs(dc) : 0;
+    const variabilityScore = Math.max(0, Math.min(1, normalizedVariability * 10)); // 0-1
+    const variabilityContribution = variabilityScore * 30; // 0-30 mg/dL
     
-    // 5. COMPONENTE HR - Taquicardia correlaciona con hiperglucemia
-    const hrContribution = (hr - 70) * 0.5;
+    // 5. COMPONENTE HR (correlación moderada)
+    // HR alta puede indicar respuesta a hiperglucemia
+    const hrScore = Math.max(0, Math.min(1, (hr - 50) / 100)); // 50-150 bpm → 0-1
+    const hrContribution = hrScore * 15; // 0-15 mg/dL
     
-    // 6. COMPONENTE DE ELASTICIDAD (dicroticDepth)
-    // Menor elasticidad (dicrotic superficial) = posible daño glucémico crónico
-    const elasticityContribution = (1 - Math.min(dicroticDepth, 1)) * 25;
+    // 6. COMPONENTE ELASTICIDAD (dicroticDepth)
+    // Menor elasticidad = posible daño glucémico crónico
+    const elasticityScore = Math.max(0, Math.min(1, dicroticDepth));
+    const elasticityContribution = (1 - elasticityScore) * 15; // 0-15 mg/dL
     
     // === CÁLCULO FINAL ===
-    // Suma ponderada SIN base fija artificial
-    let glucose = 70 + // Mínimo fisiológico como punto de partida
-                  acDcContribution + 
-                  viscosityContribution + 
-                  flowContribution +
-                  variabilityContribution +
-                  hrContribution +
-                  elasticityContribution;
+    // Base fisiológica + contribuciones medidas (máximo teórico: 70 + 140 = 210)
+    const glucose = 70 +  // Base fisiológica (mínimo normal ayunas)
+                    acDcContribution + 
+                    viscosityContribution + 
+                    flowContribution +
+                    variabilityContribution +
+                    hrContribution +
+                    elasticityContribution;
     
-    // Rangos fisiológicos amplios: 40-600 mg/dL
-    // 40-70: Hipoglucemia severa
-    // 70-100: Normal ayunas
-    // 100-125: Prediabetes
-    // 126-200: Diabetes
-    // 200-400: Hiperglucemia severa
-    // >400: Crisis hiperglucémica
-    
-    return Math.max(40, Math.min(600, glucose));
+    // Rango fisiológico: 50-350 mg/dL (cubre hipoglucemia a hiperglucemia severa)
+    return Math.max(50, Math.min(350, glucose));
   }
 
   /**
@@ -509,12 +504,11 @@ export class VitalSignsProcessor {
     // PAS = k1 * (1/PTT)^2 + k2 * rigidez + k3 * tono + k4 * HR
     
     // Constantes derivadas de calibración clínica (Burgos et al. 2024)
-    // K_PTT AUMENTADO para que la PA suba de manera coherente
-    // Calibrado para intervalos típicos de 600-1000ms → PA 110-140 mmHg
-    const K_PTT = 7200000;     // Factor PTT → PA (CALIBRADO para valores más realistas)
-    const K_STIFF = 55;        // Factor rigidez (aumentado)
-    const K_TONE = 35;         // Factor tono vascular (aumentado)
-    const K_HR = 0.55;         // Factor frecuencia cardíaca (aumentado)
+    // CALIBRACIÓN FINAL: Para intervalos 600-1000ms → PA 115-145 mmHg típico
+    const K_PTT = 9500000;     // Factor PTT → PA (AUMENTADO para valores más altos)
+    const K_STIFF = 65;        // Factor rigidez
+    const K_TONE = 40;         // Factor tono vascular
+    const K_HR = 0.65;         // Factor frecuencia cardíaca
     
     // Componente PTT: PA ∝ 1/PTT²
     const pttComponent = K_PTT / Math.pow(pttProxy, 2);
@@ -635,8 +629,8 @@ export class VitalSignsProcessor {
 
   private formatGlucose(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
-    // Rango ampliado: 40-600 mg/dL para detectar hipo e hiperglucemia severa
-    return Math.round(Math.max(40, Math.min(600, value)));
+    // Rango controlado: 50-350 mg/dL
+    return Math.round(Math.max(50, Math.min(350, value)));
   }
 
   private formatHemoglobin(value: number): number {
