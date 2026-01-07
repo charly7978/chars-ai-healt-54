@@ -89,10 +89,10 @@ const CameraView: React.FC<CameraViewProps> = ({
       if (caps.iso?.min !== undefined) await tryConstraint({ iso: caps.iso.min });
       
     } else {
-      // ===== MODO SIN FLASH - ILUMINACIÓN ADAPTATIVA MEJORADA =====
-      console.log('💡 Sin flash - usando iluminación adaptativa MEJORADA');
+      // ===== MODO SIN FLASH - ILUMINACIÓN ULTRA-ADAPTATIVA =====
+      console.log('💡 Sin flash - usando iluminación ULTRA-ADAPTATIVA');
       
-      // Exposición automática continua
+      // Exposición automática continua para que se adapte a la luz
       if (caps.exposureMode?.includes?.('continuous')) {
         await tryConstraint({ exposureMode: 'continuous' });
       }
@@ -100,19 +100,22 @@ const CameraView: React.FC<CameraViewProps> = ({
       // Compensación de exposición al MÁXIMO para más luz
       if (caps.exposureCompensation?.max !== undefined) {
         await tryConstraint({ exposureCompensation: caps.exposureCompensation.max });
+        console.log('📷 Compensación exposición:', caps.exposureCompensation.max);
       }
       
       // Tiempo de exposición largo para más luz (si está disponible)
       if (caps.exposureTime?.max !== undefined) {
-        // Usar 80% del máximo para evitar blur excesivo
-        const longExposure = Math.min(caps.exposureTime.max * 0.8, 100000); // máx 100ms
+        // Usar 60% del máximo para balance entre luz y nitidez
+        const longExposure = Math.min(caps.exposureTime.max * 0.6, 66000); // máx 66ms (15fps)
         await tryConstraint({ exposureTime: longExposure });
+        console.log('📷 Tiempo exposición:', longExposure);
       }
       
-      // ISO ALTO para máxima sensibilidad (75% del máximo)
+      // ISO MUY ALTO para máxima sensibilidad (90% del máximo)
       if (caps.iso?.max !== undefined) {
-        const highIso = caps.iso.min + (caps.iso.max - caps.iso.min) * 0.75;
+        const highIso = caps.iso.min + (caps.iso.max - caps.iso.min) * 0.90;
         await tryConstraint({ iso: highIso });
+        console.log('📷 ISO:', highIso);
       }
       
       // Brillo al máximo si está disponible
@@ -120,14 +123,29 @@ const CameraView: React.FC<CameraViewProps> = ({
         await tryConstraint({ brightness: caps.brightness.max });
       }
       
-      // Balance de blancos automático
+      // Contraste alto para mejor detección de pulso
+      if ((caps as any).contrast?.max !== undefined) {
+        await tryConstraint({ contrast: (caps as any).contrast.max * 0.8 });
+      }
+      
+      // Saturación alta para mejor detección del canal rojo
+      if ((caps as any).saturation?.max !== undefined) {
+        await tryConstraint({ saturation: (caps as any).saturation.max * 0.8 });
+      }
+      
+      // Balance de blancos automático continuo
       if (caps.whiteBalanceMode?.includes?.('continuous')) {
         await tryConstraint({ whiteBalanceMode: 'continuous' });
       }
       
-      // Focus cercano
+      // Focus cercano (para dedo)
       if (caps.focusDistance?.min !== undefined) {
         await tryConstraint({ focusDistance: caps.focusDistance.min });
+      }
+      
+      // Auto-focus continuo como fallback
+      if (caps.focusMode?.includes?.('continuous')) {
+        await tryConstraint({ focusMode: 'continuous' });
       }
     }
 
@@ -244,9 +262,9 @@ const CameraView: React.FC<CameraViewProps> = ({
           audio: false,
           video: {
             deviceId: { exact: primaryCamera.deviceId },
-            width: { ideal: 320, max: 640 },
-            height: { ideal: 240, max: 480 },
-            frameRate: { ideal: 15, max: 30 }
+            width: { ideal: 640, max: 1280 },
+            height: { ideal: 480, max: 720 },
+            frameRate: { ideal: 30, max: 60 }
           }
         });
         
@@ -274,9 +292,9 @@ const CameraView: React.FC<CameraViewProps> = ({
             audio: false,
             video: {
               deviceId: { exact: secondaryCamera.deviceId },
-              width: { ideal: 320, max: 640 },
-              height: { ideal: 240, max: 480 },
-              frameRate: { ideal: 15, max: 30 }
+              width: { ideal: 640, max: 1280 },
+              height: { ideal: 480, max: 720 },
+              frameRate: { ideal: 30, max: 60 }
             }
           });
           
