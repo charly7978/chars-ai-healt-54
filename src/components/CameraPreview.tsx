@@ -1,10 +1,10 @@
 /**
  * @file CameraPreview.tsx
  * @description INDICADOR DE CALIDAD - VALORES REALES INSTANTÁNEOS
- * Sin suavizado, sin animaciones - muestra el valor exacto del sensor
+ * Muestra el valor EXACTO del sensor sin suavizado ni animaciones
  */
 
-import React, { useRef, useEffect } from "react";
+import React from "react";
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
@@ -14,73 +14,61 @@ interface CameraPreviewProps {
 }
 
 const CameraPreview: React.FC<CameraPreviewProps> = ({
-  stream,
   signalQuality,
   isVisible
 }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(() => {});
-    }
-  }, [stream]);
-
   if (!isVisible) return null;
 
-  // Valor REAL sin modificar
+  // Valor REAL sin modificar - exactamente lo que viene del sensor
   const realQuality = Math.round(signalQuality);
 
-  // Color basado en valor real
+  // Color basado en rangos reales
   const getColor = () => {
     if (realQuality < 20) return "#ef4444"; // rojo
-    if (realQuality < 40) return "#f97316"; // naranja
+    if (realQuality < 40) return "#f97316"; // naranja  
     if (realQuality < 60) return "#eab308"; // amarillo
-    if (realQuality < 80) return "#3b82f6"; // azul
-    return "#22c55e"; // verde
+    if (realQuality < 80) return "#22c55e"; // verde
+    return "#10b981"; // verde brillante
+  };
+
+  // Etiqueta descriptiva basada en el valor real
+  const getLabel = () => {
+    if (realQuality < 20) return "Muy Baja";
+    if (realQuality < 40) return "Baja";
+    if (realQuality < 60) return "Regular";
+    if (realQuality < 80) return "Buena";
+    return "Excelente";
   };
 
   return (
-    <div className="fixed bottom-24 left-3 z-30">
-      {/* Contenedor compacto y elegante */}
+    <div className="absolute top-14 left-3 z-40">
+      {/* Indicador compacto y elegante */}
       <div 
-        className="rounded-xl overflow-hidden shadow-lg bg-black/80 border"
+        className="rounded-lg px-3 py-2 flex items-center gap-2 backdrop-blur-sm"
         style={{ 
-          width: '100px', 
-          borderColor: getColor(),
-          borderWidth: '2px'
+          backgroundColor: 'rgba(0,0,0,0.7)',
+          border: `2px solid ${getColor()}`,
+          boxShadow: `0 0 10px ${getColor()}40`
         }}
       >
-        {/* Video pequeño */}
-        <video
-          ref={videoRef}
-          playsInline
-          muted
-          autoPlay
-          className="w-full h-16 object-cover"
+        {/* Punto indicador de color */}
+        <div 
+          className="w-3 h-3 rounded-full"
+          style={{ backgroundColor: getColor() }}
         />
         
-        {/* Indicador numérico REAL */}
-        <div className="px-2 py-1 text-center">
-          <span 
-            className="text-xl font-bold font-mono"
-            style={{ color: getColor() }}
-          >
-            {realQuality}%
-          </span>
-        </div>
-
-        {/* Barra de calidad REAL instantánea */}
-        <div className="h-1 bg-gray-800">
-          <div 
-            className="h-full"
-            style={{ 
-              width: `${realQuality}%`,
-              backgroundColor: getColor()
-            }}
-          />
-        </div>
+        {/* Valor numérico REAL */}
+        <span 
+          className="text-lg font-bold font-mono"
+          style={{ color: getColor() }}
+        >
+          {realQuality}%
+        </span>
+        
+        {/* Etiqueta */}
+        <span className="text-xs text-white/70">
+          {getLabel()}
+        </span>
       </div>
     </div>
   );
