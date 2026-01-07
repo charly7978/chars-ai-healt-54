@@ -40,27 +40,30 @@ const CONFIG = {
   GRID_MAJOR: 100,   // Líneas principales cada 100px
   GRID_MINOR: 20,    // Líneas menores cada 20px
   
-  // Procesamiento de señal PPG
+  // Procesamiento de señal PPG - CALIBRADO PARA VALORES REALES
   SIGNAL: {
-    // Normalización automática
-    MIN_RANGE: 0.5,      // Rango mínimo esperado de la señal raw
-    MAX_RANGE: 50,       // Rango máximo esperado
+    // Normalización automática - VALORES MUY AMPLIOS para capturar cualquier señal
+    MIN_RANGE: 0.001,    // Rango mínimo muy pequeño para señales débiles
+    MAX_RANGE: 200,      // Rango máximo amplio
     
     // Suavizado exponencial (0.1 = muy suave, 0.5 = más reactivo)
-    SMOOTHING: 0.18,
+    SMOOTHING: 0.12,     // Más suave para ondas limpias
     
-    // Línea base adaptativa (velocidad de adaptación)
-    BASELINE_SPEED: 0.008,
+    // Línea base adaptativa (velocidad de adaptación) - MÁS LENTA
+    BASELINE_SPEED: 0.003,
     
-    // Altura de onda objetivo (% del canvas)
-    TARGET_AMPLITUDE: 0.25,  // 25% del alto = ondas medianas pero visibles
+    // Altura de onda objetivo (% del canvas) - ONDAS MÁS GRANDES
+    TARGET_AMPLITUDE: 0.35,  // 35% del alto para ondas bien visibles
+    
+    // AMPLIFICACIÓN FIJA para señales muy pequeñas
+    AMPLIFICATION: 150,   // Multiplicador base
   },
   
   // Detección de picos
   PEAKS: {
-    MIN_DISTANCE_MS: 350,   // Mínimo entre picos (170 BPM máx)
-    DETECTION_WINDOW: 4,    // Puntos a cada lado para detectar
-    MIN_PROMINENCE: 0.15,   // Prominencia mínima relativa
+    MIN_DISTANCE_MS: 300,   // Mínimo entre picos (200 BPM máx)
+    DETECTION_WINDOW: 3,    // Puntos a cada lado para detectar (más sensible)
+    MIN_PROMINENCE: 0.08,   // Prominencia mínima BAJA para detectar más picos
   },
   
   // Colores
@@ -289,48 +292,56 @@ const PPGSignalMeter = ({
         return;
       }
       
-      // ========== PROCESAMIENTO DE SEÑAL PPG ==========
+      // ========== PROCESAMIENTO DE SEÑAL PPG - SIMPLIFICADO Y ROBUSTO ==========
       const S = CONFIG.SIGNAL;
       
-      // 1. Inicializar/actualizar línea base
+      // 1. Inicializar línea base (DC) con el primer valor
       if (proc.baseline === null) {
         proc.baseline = rawValue;
-      } else {
-        proc.baseline = proc.baseline * (1 - S.BASELINE_SPEED) + rawValue * S.BASELINE_SPEED;
+        proc.signalMin = rawValue;
+        proc.signalMax = rawValue;
       }
       
-      // 2. Suavizado exponencial
+      // 2. Actualizar línea base MUY LENTAMENTE (sigue cambios de iluminación)
+      proc.baseline = proc.baseline * (1 - S.BASELINE_SPEED) + rawValue * S.BASELINE_SPEED;
+      
+      // 3. Suavizado exponencial de la señal
       const smoothed = proc.lastSmoothed === null 
         ? rawValue 
         : proc.lastSmoothed + S.SMOOTHING * (rawValue - proc.lastSmoothed);
       proc.lastSmoothed = smoothed;
       
-      // 3. Extraer componente AC (pulsátil)
+      // 4. Extraer componente AC (variación pulsátil) = señal - línea base
       const ac = smoothed - proc.baseline;
       
-      // 4. Actualizar rango dinámico
-      proc.signalMin = Math.min(proc.signalMin, ac);
-      proc.signalMax = Math.max(proc.signalMax, ac);
+      // 5. Tracking del rango dinámico con decay
+      proc.signalMin = Math.min(proc.signalMin * 0.9995 + ac * 0.0005, ac);
+      proc.signalMax = Math.max(proc.signalMax * 0.9995 + ac * 0.0005, ac);
       
-      // Decay lento del rango para adaptarse a cambios
-      const rangeDiff = proc.signalMax - proc.signalMin;
-      if (rangeDiff > 0.1) {
-        proc.signalMin += 0.001;
-        proc.signalMax -= 0.001;
-      }
+      // 6. Calcular amplitud dinámica
+      const dynamicRange = Math.max(proc.signalMax - proc.signalMin, S.MIN_RANGE);
       
-      // 5. Normalizar a rango visual (-1 a 1) con auto-escala
-      const range = Math.max(proc.signalMax - proc.signalMin, S.MIN_RANGE);
-      const normalized = (ac - proc.signalMin) / range * 2 - 1;
-      
-      // 6. Escalar a píxeles (invertido: picos hacia arriba)
+      // 7. AMPLIFICACIÓN ADAPTATIVA: escalar para llenar TARGET_AMPLITUDE del canvas
       const targetHeight = CONFIG.CANVAS_HEIGHT * S.TARGET_AMPLITUDE;
-      const scaledValue = -normalized * targetHeight;
+      
+      // Calcular factor de escala necesario
+      let scaleFactor = targetHeight / Math.max(dynamicRange, 0.001);
+      
+      // Limitar el factor para evitar ruido excesivo
+      scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
+      scaleFactor = Math.max(scaleFactor, 10); // Mínimo de amplificación
+      
+      // 8. Aplicar escala (invertido: valores positivos de AC van hacia ARRIBA)
+      const scaledValue = -ac * scaleFactor;
+      
+      // 9. Clamp para evitar valores extremos
+      const maxAmplitude = targetHeight * 1.2;
+      const clampedValue = Math.max(-maxAmplitude, Math.min(maxAmplitude, scaledValue));
       
       // Agregar punto al buffer
       buffer.push({
         time: now,
-        value: scaledValue,
+        value: clampedValue,
         isArrhythmia: arrStatus?.includes('ARRITMIA') || false
       });
       
@@ -369,20 +380,26 @@ const PPGSignalMeter = ({
             ctx.lineTo(x, y);
           }
           
-          // Detectar picos locales
+          // Detectar picos locales (picos van hacia ARRIBA = valores NEGATIVOS en canvas)
           if (i >= CONFIG.PEAKS.DETECTION_WINDOW && i < points.length - CONFIG.PEAKS.DETECTION_WINDOW) {
             let isPeakLocal = true;
+            const currentVal = pt.value;
+            
+            // Un pico es un MÍNIMO local (valor más negativo = más arriba en canvas)
             for (let j = i - CONFIG.PEAKS.DETECTION_WINDOW; j <= i + CONFIG.PEAKS.DETECTION_WINDOW; j++) {
-              if (j !== i && points[j].value <= pt.value) {
-                // pt.value es negativo, menor = más alto visualmente
-              } else if (j !== i && points[j].value > pt.value) {
+              if (j !== i && points[j].value < currentVal) {
+                // Hay un punto más alto (más negativo), no es pico
                 isPeakLocal = false;
                 break;
               }
             }
             
-            // Verificar prominencia (el pico debe ser significativo)
-            if (isPeakLocal && pt.value < -targetHeight * CONFIG.PEAKS.MIN_PROMINENCE) {
+            // Verificar prominencia: el pico debe estar significativamente arriba de la línea base
+            // (valor negativo grande = arriba)
+            const prominence = -currentVal; // Convertir a positivo para comparar
+            const minProminence = CONFIG.CANVAS_HEIGHT * CONFIG.SIGNAL.TARGET_AMPLITUDE * CONFIG.PEAKS.MIN_PROMINENCE;
+            
+            if (isPeakLocal && prominence > minProminence) {
               peakCandidates.push({ x, y, time: pt.time, val: pt.value });
             }
           }
