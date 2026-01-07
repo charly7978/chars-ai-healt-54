@@ -50,6 +50,10 @@ export class HumanFingerDetector {
   private detectedPeaks: number[] = [];
   private detectedValleys: number[] = [];
   
+  // NUEVO: Tracking de valor rojo anterior para detectar transiciones bruscas
+  private lastRedValue: number = 0;
+  private readonly RED_TRANSITION_THRESHOLD = 40; // Cambio brusco de >40 indica transición
+  
   // ═══════════════════════════════════════════════════════════════════════════
   // UMBRALES PERMISIVOS PARA DETECCIÓN ROBUSTA DE DEDO HUMANO
   // Prioriza ESTABILIDAD sobre estrictez
@@ -413,15 +417,34 @@ export class HumanFingerDetector {
     this.pulsatilityHistory = [];
     this.detectedPeaks = [];
     this.detectedValleys = [];
+    this.lastRedValue = 0; // CRÍTICO: También resetear para nueva detección limpia
   }
 
   private updateHistory(redValue: number, timestamp: number): void {
-    this.redHistory.push(redValue);
-    this.timestampHistory.push(timestamp);
+    // CRÍTICO: Detectar transiciones bruscas de señal (dedo puesto/quitado)
+    // Si hay un cambio brusco, limpiar historial para empezar fresco
+    const redDelta = Math.abs(redValue - this.lastRedValue);
     
-    if (this.redHistory.length > this.HISTORY_SIZE) {
-      this.redHistory.shift();
-      this.timestampHistory.shift();
+    if (this.lastRedValue > 0 && redDelta > this.RED_TRANSITION_THRESHOLD) {
+      // Transición brusca detectada - limpiar historial contaminado
+      this.redHistory = [];
+      this.timestampHistory = [];
+      this.pulsatilityHistory = [];
+      // Mantener consecutiveDetections para no perder estado de confirmación
+    }
+    
+    this.lastRedValue = redValue;
+    
+    // Solo agregar al historial si el valor es razonable (dedo presente)
+    // Evita contaminar con valores de "sin dedo"
+    if (redValue >= this.CONFIG.MIN_RED_VALUE * 0.7) {
+      this.redHistory.push(redValue);
+      this.timestampHistory.push(timestamp);
+      
+      if (this.redHistory.length > this.HISTORY_SIZE) {
+        this.redHistory.shift();
+        this.timestampHistory.shift();
+      }
     }
   }
 
