@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 
@@ -15,8 +14,7 @@ interface HeartBeatResult {
 }
 
 /**
- * HOOK COMPLETAMENTE UNIFICADO DE PROCESAMIENTO CARDÍACO - ELIMINADAS TODAS LAS DUPLICIDADES
- * Sistema matemático avanzado con algoritmos de detección de latidos de vanguardia
+ * HOOK DE PROCESAMIENTO CARDÍACO - MEDICIÓN REAL
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
@@ -24,43 +22,57 @@ export const useHeartBeatProcessor = () => {
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
   
-  // CONTROL UNIFICADO DE ESTADO
+  // Control de estado
   const sessionIdRef = useRef<string>("");
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
   const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
+  
+  // Buffer para cálculo de calidad
+  const signalBufferRef = useRef<number[]>([]);
 
-  // INICIALIZACIÓN UNIFICADA - UNA SOLA VEZ
+  // Inicialización única
   useEffect(() => {
-    // GENERAR SESSION ID sin aleatoriedad
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `heartbeat_${t}_${p}`;
 
-    console.log(`💓 CREANDO PROCESADOR CARDÍACO UNIFICADO - ${sessionIdRef.current}`);
+    console.log(`💓 CREANDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
     
     processorRef.current = new HeartBeatProcessor();
     processingStateRef.current = 'ACTIVE';
     
     return () => {
       console.log(`💓 DESTRUYENDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
-      if (processorRef.current) {
-        processorRef.current = null;
-      }
+      processorRef.current = null;
       processingStateRef.current = 'IDLE';
     };
   }, []);
 
-  // PROCESAMIENTO UNIFICADO DE SEÑAL - ELIMINADAS DUPLICIDADES
+  // Calcular calidad de señal
+  const calculateQuality = useCallback((value: number): number => {
+    signalBufferRef.current.push(value);
+    if (signalBufferRef.current.length > 30) {
+      signalBufferRef.current.shift();
+    }
+    
+    if (signalBufferRef.current.length < 10) return 0;
+    
+    const buffer = signalBufferRef.current;
+    const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length;
+    const variance = buffer.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / buffer.length;
+    const amplitude = Math.max(...buffer) - Math.min(...buffer);
+    
+    // SNR aproximado
+    const snr = amplitude > 0 ? 10 * Math.log10(amplitude / Math.sqrt(variance + 0.001)) : 0;
+    return Math.max(0, Math.min(100, snr * 8));
+  }, []);
+
+  // Procesamiento de señal
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
-      const fallbackBPM = Math.round(
-        (processorRef.current && typeof (processorRef.current as any).getSmoothBPM === 'function')
-          ? (processorRef.current as any).getSmoothBPM()
-          : 0
-      );
       return {
-        bpm: fallbackBPM,
+        bpm: currentBPM,
         confidence: 0,
         isPeak: false,
         arrhythmiaCount: 0,
@@ -71,8 +83,8 @@ export const useHeartBeatProcessor = () => {
 
     const currentTime = Date.now();
     
-    // CONTROL DE TASA DE PROCESAMIENTO PARA EVITAR SOBRECARGA
-    if (currentTime - lastProcessTimeRef.current < 16) { // ~60 FPS máximo
+    // Control de tasa de procesamiento (60 FPS máx)
+    if (currentTime - lastProcessTimeRef.current < 16) {
       return {
         bpm: currentBPM,
         confidence,
@@ -86,24 +98,25 @@ export const useHeartBeatProcessor = () => {
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
-    // PROCESAMIENTO MATEMÁTICO AVANZADO DIRECTO
-    const result = processorRef.current.processSignal(value, timestamp);
-    const rrData = processorRef.current.getRRIntervals();
-    const currentQuality = result.signalQuality || 0;
+    // Calcular calidad de la señal
+    const quality = calculateQuality(value);
+    setSignalQuality(quality);
     
-    setSignalQuality(currentQuality);
-
-    // LÓGICA UNIFICADA DE DETECCIÓN CON ALGORITMOS AVANZADOS
-    const effectiveFingerDetected = fingerDetected || (currentQuality > 20 && result.confidence > 0.45);
+    // Procesar señal para obtener BPM
+    const bpm = processorRef.current.processSignal(value, timestamp || currentTime);
+    const rrIntervals = processorRef.current.getRRIntervals();
     
-    if (!effectiveFingerDetected) {
-      // DEGRADACIÓN SUAVE Y CONTROLADA
+    // Detectar si hubo un pico (latido)
+    const isPeak = bpm > 0 && bpm !== currentBPM;
+    
+    // Calcular confianza basada en calidad y estabilidad
+    const newConfidence = quality > 50 ? Math.min(1, quality / 100 + 0.2) : quality / 100;
+    
+    if (!fingerDetected) {
+      // Degradación suave cuando no hay dedo
       if (currentBPM > 0) {
-        const newBPM = Math.max(0, currentBPM * 0.96); // Degradación más suave
-        const newConfidence = Math.max(0, confidence * 0.92);
-        
-        setCurrentBPM(newBPM);
-        setConfidence(newConfidence);
+        setCurrentBPM(prev => Math.max(0, prev * 0.96));
+        setConfidence(prev => Math.max(0, prev * 0.92));
       }
       
       return {
@@ -111,73 +124,60 @@ export const useHeartBeatProcessor = () => {
         confidence: Math.max(0, confidence * 0.92),
         isPeak: false,
         arrhythmiaCount: 0,
-        signalQuality: currentQuality,
-        rrData: { intervals: [], lastPeakTime: null }
+        signalQuality: quality,
+        rrData: { intervals: rrIntervals, lastPeakTime: null }
       };
     }
 
-    // ACTUALIZACIÓN CON CONFIANZA MATEMÁTICAMENTE VALIDADA
-    if (result.confidence >= 0.55 && result.bpm > 0 && result.bpm >= 40 && result.bpm <= 200) {
-      // FILTRADO ADAPTATIVO PARA ESTABILIDAD
-      const smoothingFactor = Math.min(0.3, result.confidence * 0.5);
-      const newBPM = currentBPM > 0 ? 
-        currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
-        result.bpm;
+    // Actualizar BPM con filtro de estabilidad
+    if (bpm > 0 && bpm >= 40 && bpm <= 200) {
+      const smoothingFactor = Math.min(0.3, newConfidence * 0.5);
+      const smoothedBPM = currentBPM > 0 
+        ? currentBPM * (1 - smoothingFactor) + bpm * smoothingFactor 
+        : bpm;
       
-      setCurrentBPM(Math.round(newBPM * 10) / 10); // Redondeo a 1 decimal
-      setConfidence(result.confidence);
-      
-      // LOG CADA 100 SEÑALES PROCESADAS PARA EVITAR SPAM
-      if (processedSignalsRef.current % 100 === 0) {
-        console.log(`💓 BPM actualizado: ${newBPM.toFixed(1)} (confianza: ${result.confidence.toFixed(2)}) - ${sessionIdRef.current}`);
-      }
+      setCurrentBPM(Math.round(smoothedBPM));
+      setConfidence(newConfidence);
     }
 
     return {
-      ...result,
       bpm: currentBPM,
-      confidence,
-      signalQuality: currentQuality,
-      rrData
+      confidence: newConfidence,
+      isPeak,
+      arrhythmiaCount: 0,
+      signalQuality: quality,
+      rrData: { 
+        intervals: rrIntervals, 
+        lastPeakTime: rrIntervals.length > 0 ? currentTime : null 
+      }
     };
-  }, [currentBPM, confidence, signalQuality]);
+  }, [currentBPM, confidence, signalQuality, calculateQuality]);
 
-  // RESET UNIFICADO COMPLETAMENTE LIMPIO
+  // Reset
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
     
     processingStateRef.current = 'RESETTING';
-    console.log(`🔄 RESET COMPLETO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
     
     if (processorRef.current) {
       processorRef.current.reset();
     }
     
-    // RESET COMPLETO DE TODOS LOS ESTADOS
     setCurrentBPM(0);
     setConfidence(0);
     setSignalQuality(0);
-    
-    // RESET DE CONTADORES INTERNOS
+    signalBufferRef.current = [];
     lastProcessTimeRef.current = 0;
     processedSignalsRef.current = 0;
     
     processingStateRef.current = 'ACTIVE';
-    console.log(`✅ Reset cardíaco completado - ${sessionIdRef.current}`);
   }, []);
 
-  // CONFIGURACIÓN UNIFICADA DE ESTADO DE ARRITMIA
+  // Estado de arritmia (para compatibilidad)
   const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
-    if (processorRef.current && processingStateRef.current === 'ACTIVE') {
-      processorRef.current.setArrhythmiaDetected(isArrhythmiaDetected);
-      
-      if (isArrhythmiaDetected) {
-        console.log(`⚠️ Arritmia activada en procesador - ${sessionIdRef.current}`);
-      }
-    }
+    // Método de compatibilidad - la arritmia se detecta en VitalSignsProcessor
   }, []);
 
-  // RETORNO UNIFICADO DEL HOOK
   return {
     currentBPM,
     confidence,
@@ -185,7 +185,6 @@ export const useHeartBeatProcessor = () => {
     processSignal,
     reset,
     setArrhythmiaState,
-    // DEBUG INFO
     debugInfo: {
       sessionId: sessionIdRef.current,
       processingState: processingStateRef.current,
