@@ -131,50 +131,35 @@ export class FrameProcessor {
   }
   
   /**
-   * CALIBRACIÓN DE GANANCIA AUTOMÁTICA
+   * CALIBRACIÓN DE GANANCIA - VERSIÓN ESTABLE
    * 
-   * Ajusta la ganancia según el nivel DC base (tono de piel)
-   * - Piel oscura: DC bajo → aumentar ganancia
-   * - Piel clara: DC alto → reducir ganancia
-   * - Mantiene rango dinámico óptimo para detección de pulso
+   * Calibra UNA VEZ y mantiene ganancia fija para evitar drift
+   * que causa pérdida de señal cuando el dedo está quieto
    */
   private updateGainCalibration(r: number, g: number, b: number): void {
     const currentDC = (r + g + b) / 3;
     
-    // Acumular historial DC
-    this.dcHistory.push(currentDC);
-    if (this.dcHistory.length > this.DC_HISTORY_SIZE) {
-      this.dcHistory.shift();
-    }
-    
-    // Fase de calibración inicial
-    if (!this.calibrationComplete) {
-      this.calibrationSamples++;
-      this.calibrationDC += currentDC;
-      
-      if (this.calibrationSamples >= this.CALIBRATION_FRAMES) {
-        this.calibrationDC /= this.calibrationSamples;
-        this.calibrationComplete = true;
-        
-        // Calcular ganancia inicial basada en tono de piel
-        if (this.calibrationDC > 0) {
-          this.gainFactor = this.TARGET_DC / this.calibrationDC;
-          this.gainFactor = Math.max(this.MIN_GAIN, Math.min(this.MAX_GAIN, this.gainFactor));
-        }
-        
-        console.log(`🎚️ Calibración completa: DC=${this.calibrationDC.toFixed(1)}, Ganancia=${this.gainFactor.toFixed(2)}`);
-      }
+    // Solo calibrar si no está completo
+    if (this.calibrationComplete) {
+      // NO hacer adaptación continua - causa pérdida de señal
       return;
     }
     
-    // Adaptación continua suave (evita cambios bruscos)
-    if (this.dcHistory.length >= 10) {
-      const recentDC = this.dcHistory.slice(-10).reduce((a, b) => a + b, 0) / 10;
-      const idealGain = this.TARGET_DC / recentDC;
-      const clampedGain = Math.max(this.MIN_GAIN, Math.min(this.MAX_GAIN, idealGain));
+    // Fase de calibración inicial
+    this.calibrationSamples++;
+    this.calibrationDC += currentDC;
+    
+    if (this.calibrationSamples >= this.CALIBRATION_FRAMES) {
+      this.calibrationDC /= this.calibrationSamples;
+      this.calibrationComplete = true;
       
-      // Suavizado exponencial muy lento (0.02) para evitar oscilaciones
-      this.gainFactor = this.gainFactor * 0.98 + clampedGain * 0.02;
+      // Calcular ganancia FIJA basada en tono de piel
+      if (this.calibrationDC > 0) {
+        this.gainFactor = this.TARGET_DC / this.calibrationDC;
+        this.gainFactor = Math.max(this.MIN_GAIN, Math.min(this.MAX_GAIN, this.gainFactor));
+      }
+      
+      console.log(`🎚️ Calibración FIJA: DC=${this.calibrationDC.toFixed(1)}, Ganancia=${this.gainFactor.toFixed(2)}`);
     }
   }
   
