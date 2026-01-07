@@ -414,18 +414,10 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const MIN_SIGNAL_QUALITY = 5; // MUY permisivo para captar señales reales
-    
-    // SIEMPRE procesar la señal si hay algo, aunque sea de baja calidad
-    // La detección de picos se encargará de validar
-    if (!lastSignal.fingerDetected && lastSignal.quality < MIN_SIGNAL_QUALITY) {
-      // Sin dedo y calidad muy baja - solo degradar
-      setHeartRate(prev => prev * 0.95);
-      setHeartbeatSignal(0);
-      setBeatMarker(0);
-      pushRawSample(lastSignal.timestamp, 0, 0);
-      return;
-    }
+    // CRÍTICO: NUNCA bloquear el procesamiento de señal
+    // El HeartBeatProcessor tiene su propia lógica de validación
+    // Pasar SIEMPRE la señal, aunque fingerDetected sea false
+    // Esto permite recuperación rápida después de cortes momentáneos
     
     // PROCESAR SEÑAL INCLUSO CON CALIDAD REDUCIDA
     // El HeartBeatProcessor tiene su propia validación robusta

@@ -47,10 +47,8 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  // REFERENCIA PARA TRACKING DE ESTADO DEL DEDO - CON DEBOUNCE
+  // REFERENCIA PARA TRACKING DE ESTADO DEL DEDO
   const lastFingerStateRef = useRef<boolean>(false);
-  const fingerLostTimeRef = useRef<number>(0);
-  const FINGER_DEBOUNCE_MS = 300; // Ignorar cortes < 300ms
 
   // PROCESAMIENTO UNIFICADO DE SEÑAL
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
@@ -82,40 +80,27 @@ export const useHeartBeatProcessor = () => {
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
-    // DEBOUNCE INTELIGENTE: Ignorar cortes muy breves del dedo
-    let effectiveFingerDetected = fingerDetected;
+    // SIMPLIFICADO: Ya no hacer debounce complejo
+    // Simplemente pasar el estado del dedo al procesador
+    // El procesador tiene su propia lógica de manejo
     
-    if (!fingerDetected && lastFingerStateRef.current) {
-      // Dedo acaba de "perderse" - registrar tiempo
-      if (fingerLostTimeRef.current === 0) {
-        fingerLostTimeRef.current = currentTime;
-      }
-      // Si el corte es muy breve, seguir considerando como detectado
-      if (currentTime - fingerLostTimeRef.current < FINGER_DEBOUNCE_MS) {
-        effectiveFingerDetected = true; // Ignorar corte breve
-      }
-    } else if (fingerDetected) {
-      // Dedo detectado - resetear timer de pérdida
-      fingerLostTimeRef.current = 0;
+    // Solo notificar cambios reales de estado
+    if (fingerDetected !== lastFingerStateRef.current) {
+      processorRef.current.setFingerDetected(fingerDetected);
+      lastFingerStateRef.current = fingerDetected;
     }
 
-    // Notificar al procesador SOLO si hay cambio real (después de debounce)
-    if (effectiveFingerDetected !== lastFingerStateRef.current) {
-      processorRef.current.setFingerDetected(effectiveFingerDetected);
-      lastFingerStateRef.current = effectiveFingerDetected;
-    }
-
-    // PROCESAR SEÑAL SIEMPRE (incluso sin dedo, para mantener buffers actualizados)
+    // PROCESAR SEÑAL SIEMPRE - CRÍTICO para mantener continuidad
     const result = processorRef.current.processSignal(value, timestamp);
     const rrData = processorRef.current.getRRIntervals();
     const currentQuality = result.signalQuality || 0;
     
     setSignalQuality(currentQuality);
 
-    // Si no hay dedo efectivo, degradar suavemente pero NO bloquear
-    if (!effectiveFingerDetected) {
+    // Si no hay dedo, degradar suavemente pero SEGUIR procesando
+    if (!fingerDetected) {
       if (currentBPM > 0) {
-        setCurrentBPM(prev => Math.max(0, prev * 0.98)); // Degradación muy suave
+        setCurrentBPM(prev => Math.max(0, prev * 0.98));
         setConfidence(prev => Math.max(0, prev * 0.95));
       }
       
