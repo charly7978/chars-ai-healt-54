@@ -115,7 +115,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         ? this.calculatePerfusionIndex(redValue, detection.quality)
         : 0;
       
-      // 7. Emitir señal procesada
+      // 7. Emitir señal procesada con diagnósticos completos
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,
@@ -123,7 +123,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         quality: detection.quality,
         fingerDetected: detection.isFingerDetected,
         roi: roi,
-        perfusionIndex: perfusionIndex
+        perfusionIndex: perfusionIndex,
+        diagnostics: {
+          message: detection.diagnostics.message,
+          hasPulsatility: detection.diagnostics.hasPulsatility,
+          pulsatilityValue: detection.diagnostics.pulsatilityValue
+        }
       };
 
       this.onSignalReady(processedSignal);

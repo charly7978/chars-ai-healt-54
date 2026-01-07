@@ -17,6 +17,8 @@ interface PPGSignalMeterProps {
     rrVariation: number;
   } | null;
   preserveResults?: boolean;
+  // Diagnóstico de detección de dedo
+  diagnosticMessage?: string;
 }
 
 const PPGSignalMeter = ({ 
@@ -27,7 +29,8 @@ const PPGSignalMeter = ({
   onReset,
   arrhythmiaStatus,
   rawArrhythmiaData,
-  preserveResults = false
+  preserveResults = false,
+  diagnosticMessage
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -435,7 +438,7 @@ const PPGSignalMeter = ({
           </div>
         </div>
 
-        <div className="flex flex-col items-center">
+        <div className="flex flex-col items-center max-w-[200px]">
           <Fingerprint
             className={`h-8 w-8 transition-colors duration-300 ${
               !isFingerDetected ? 'text-blue-400' :
@@ -445,8 +448,8 @@ const PPGSignalMeter = ({
             }`}
             strokeWidth={1.5}
           />
-          <span className="text-[8px] text-center font-medium text-blue-200"> {/* Texto claro */}
-            {isFingerDetected ? "Dedo detectado" : "Ubique su dedo"}
+          <span className="text-[9px] text-center font-medium text-blue-200 leading-tight px-1">
+            {diagnosticMessage || (isFingerDetected ? "Dedo detectado" : "Ubique la YEMA del dedo sobre el flash")}
           </span>
         </div>
       </div>

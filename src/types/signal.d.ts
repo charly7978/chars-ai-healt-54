@@ -13,6 +13,12 @@ export interface ProcessedSignal {
     height: number;
   };
   perfusionIndex?: number;
+  // Diagnóstico de detección de dedo
+  diagnostics?: {
+    message: string;
+    hasPulsatility: boolean;
+    pulsatilityValue: number;
+  };
 }
 
 export interface ProcessingError {
