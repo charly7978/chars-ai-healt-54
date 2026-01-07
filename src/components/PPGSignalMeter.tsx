@@ -60,20 +60,22 @@ const PPGSignalMeter = ({
   // CRÍTICO: Flag para controlar UN SOLO loop de animación
   const animationLoopActiveRef = useRef<boolean>(false);
 
-  const WINDOW_WIDTH_MS = 5300;
+  // ===== CONFIGURACIÓN CALIBRADA PARA ONDAS CARDÍACAS PPG =====
+  const WINDOW_WIDTH_MS = 4000;        // 4 segundos de ventana para ver ciclos completos
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 800;
-  const GRID_SIZE_X = 35;
-  const GRID_SIZE_Y = 10;
-  const verticalScale = 35;
-  const SMOOTHING_FACTOR = 1,5;
-  const TARGET_FPS = 120; // REDUCIDO de 60 a 30 para mejor rendimiento
+  const GRID_SIZE_X = 40;              // Grid más grande para mejor lectura
+  const GRID_SIZE_Y = 20;              // Grid vertical proporcional
+  const VERTICAL_SCALE = 180;          // Escala amplificada para ondas visibles
+  const SMOOTHING_FACTOR = 0.15;       // Suavizado moderado (0-1)
+  const TARGET_FPS = 60;               // 60fps para fluidez
   const FRAME_TIME = 1000 / TARGET_FPS;
-  const BUFFER_SIZE = 300; // REDUCIDO de 600 a 300
-  const PEAK_DETECTION_WINDOW = 8;
-  const PEAK_THRESHOLD = 3;
-  const MIN_PEAK_DISTANCE_MS = 300;
-  const MAX_PEAKS_TO_DISPLAY = 30; // REDUCIDO de 25 a 15
+  const BUFFER_SIZE = 500;             // Buffer para 4+ segundos de datos
+  const PEAK_DETECTION_WINDOW = 5;     // Ventana para detectar picos
+  const PEAK_THRESHOLD = 8;            // Umbral mínimo para picos
+  const MIN_PEAK_DISTANCE_MS = 400;    // Mínimo 400ms entre picos (150 BPM máx)
+  const MAX_PEAKS_TO_DISPLAY = 20;     // Máximo picos visibles
+  const BASELINE_ADAPT_RATE = 0.02;    // Tasa de adaptación de línea base
 
   // Actualizar refs cuando props cambian
   useEffect(() => {
@@ -144,9 +146,11 @@ const PPGSignalMeter = ({
     }
   }, [preserveResults, isFingerDetected]);
 
+  // Suavizado exponencial calibrado para señal PPG
   const smoothValue = useCallback((currentValue: number, previousValue: number | null): number => {
     if (previousValue === null) return currentValue;
-    return previousValue + SMOOTHING_FACTOR * (currentValue - previousValue);
+    // Suavizado exponencial: valor_suavizado = anterior + α * (actual - anterior)
+    return previousValue + 0.15 * (currentValue - previousValue);
   }, []);
 
   // Dibujar grid (función estable sin dependencias de props)
@@ -323,17 +327,24 @@ const PPGSignalMeter = ({
         return;
       }
       
+      // ===== PROCESAMIENTO DE SEÑAL PPG CALIBRADO =====
+      // Adaptación de línea base (DC component)
       if (baselineRef.current === null) {
         baselineRef.current = currentValue;
       } else {
-        baselineRef.current = baselineRef.current * 0.95 + currentValue * 0.05;
+        // Adaptación lenta para seguir cambios de iluminación
+        baselineRef.current = baselineRef.current * (1 - BASELINE_ADAPT_RATE) + currentValue * BASELINE_ADAPT_RATE;
       }
       
+      // Suavizado de la señal
       const smoothedValue = smoothValue(currentValue, lastValueRef.current);
       lastValueRef.current = smoothedValue;
       
-      const normalizedValue = (baselineRef.current || 0) - smoothedValue;
-      const scaledValue = normalizedValue * verticalScale;
+      // Normalización: extraer componente AC (pulsátil)
+      const acComponent = smoothedValue - (baselineRef.current || 0);
+      
+      // Escalar para visualización (invertido para que picos vayan hacia arriba)
+      const scaledValue = -acComponent * VERTICAL_SCALE;
       
       const dataPoint: PPGDataPoint = {
         time: now,
@@ -442,7 +453,7 @@ const PPGSignalMeter = ({
             ctx.font = 'bold 14px Inter';
             ctx.fillStyle = peak.isArrhythmia ? '#EF4444' : '#fff';
             ctx.textAlign = 'center';
-            ctx.fillText(Math.abs(peak.value / verticalScale).toFixed(2), x, y - 8);
+            ctx.fillText(Math.abs(peak.value / VERTICAL_SCALE).toFixed(1), x, y - 8);
           }
         });
       }
