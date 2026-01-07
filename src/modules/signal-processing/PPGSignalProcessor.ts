@@ -25,16 +25,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private rawRedBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   
-  // ====== UMBRALES ADAPTATIVOS ======
-  // Más permisivos para adaptarse a diferentes condiciones
-  private readonly MIN_RG_RATIO = 1.1;        // Ratio R/G mínimo
-  private readonly MIN_RED_DOMINANCE = 0.35;  // Rojo debe ser > 35% del RGB
-  private readonly MIN_RED_VALUE = 50;        // Valor mínimo absoluto de rojo
-  private readonly MIN_PULSATILITY = 0.001;   // Pulsatilidad mínima 0.1%
+  // ====== UMBRALES MUY TOLERANTES PARA MICRO-MOVIMIENTOS ======
+  private readonly MIN_RG_RATIO = 0.95;       // Casi paridad R/G ya cuenta
+  private readonly MIN_RED_DOMINANCE = 0.32;  // 32% mínimo de rojo
+  private readonly MIN_RED_VALUE = 35;        // Valor mínimo muy bajo
+  private readonly MIN_PULSATILITY = 0.0005;  // 0.05% mínimo
   
-  // Control de validación temporal
+  // Control temporal - MUY ESTABLE
   private validBloodFrameCount: number = 0;
-  private readonly MIN_CONSECUTIVE_FRAMES = 8; // 8 frames consecutivos
+  private readonly MIN_CONSECUTIVE_FRAMES = 4; // Solo 4 frames para confirmar
+  private readonly MAX_FRAME_COUNT = 150;      // Tope alto para estabilidad
   
   // Diagnóstico
   private lastRGB = { r: 0, g: 0, b: 0, rgRatio: 0, redPercent: 0, pulsatility: 0 };
@@ -75,12 +75,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * VALIDACIÓN DE SANGRE - SIMPLIFICADA Y ESTABLE
-   * Solo usa características RGB, sin requerir pulsatilidad para mantener detección
+   * VALIDACIÓN DE SANGRE - MUY TOLERANTE PARA HUMANOS REALES
+   * Prioriza mantener la detección una vez establecida
    */
   private validateBloodSignal(r: number, g: number, b: number): boolean {
     const total = r + g + b;
-    if (total < 50) return false; // Muy oscuro - más permisivo
+    if (total < 30) return false; // Solo rechazar si muy oscuro
     
     const rgRatio = g > 0.1 ? r / g : 0;
     const redPercent = r / total;
@@ -92,9 +92,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastRGB.rgRatio = rgRatio;
     this.lastRGB.redPercent = redPercent;
     
-    // CRITERIO ÚNICO Y SIMPLE: Rojo dominante
-    // Si hay más rojo que verde, hay dedo con sangre
-    const hasBlood = rgRatio >= 1.0 && redPercent >= 0.30 && r >= 40;
+    // CRITERIO MUY PERMISIVO: Cualquier predominio de rojo
+    // Más importante: R > G y R es significativo
+    const hasBlood = rgRatio >= 0.9 && redPercent >= 0.28 && r >= 30;
     
     return hasBlood;
   }
@@ -153,18 +153,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 6. Actualizar estadísticas RGB para SpO2
       this.updateRGBStats();
       
-      // 7. Contador de frames - SÚPER ESTABLE
-      // Si hay características de sangre, mantener alto
-      // Solo degradar si NO hay sangre por muchos frames
+      // 7. Contador de frames - ULTRA ESTABLE para humanos reales
+      // Acumula rápido, degrada MUY lentamente
       if (hasBloodCharacteristics) {
-        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 2, 100);
+        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 3, this.MAX_FRAME_COUNT);
       } else {
-        // Degradación MUY lenta - toma 10+ segundos perder la señal
-        this.validBloodFrameCount = Math.max(0, this.validBloodFrameCount - 0.15);
+        // Degradación EXTREMADAMENTE lenta - permite 2+ segundos de micro-movimientos
+        // Solo pierde 0.08 por frame = necesita ~60 frames malos (~2s) para perder señal
+        this.validBloodFrameCount = Math.max(0, this.validBloodFrameCount - 0.08);
       }
       
-      // 8. Determinar si hay sangre confirmada - umbral bajo
-      const hasConfirmedBlood = this.validBloodFrameCount >= 5;
+      // 8. Determinar si hay sangre confirmada - umbral muy bajo
+      const hasConfirmedBlood = this.validBloodFrameCount >= this.MIN_CONSECUTIVE_FRAMES;
       
       // 9. Calcular calidad de señal
       const quality = this.calculateQuality(hasBloodCharacteristics, pulsatility);

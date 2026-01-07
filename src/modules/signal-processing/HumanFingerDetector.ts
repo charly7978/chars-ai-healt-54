@@ -30,35 +30,38 @@ export interface FingerDetectionResult {
 
 export class HumanFingerDetector {
   // ═══════════════════════════════════════════════════════════════════════════
-  // ESTADO DE DETECCIÓN - SE INVALIDA INMEDIATAMENTE SI COLOR FALLA
+  // ESTADO DE DETECCIÓN - CON TOLERANCIA A MICRO-MOVIMIENTOS HUMANOS
   // ═══════════════════════════════════════════════════════════════════════════
   private isConfirmed = false;
   private consecutiveValidFrames = 0;
+  private consecutiveInvalidFrames = 0;  // NUEVO: contador de frames inválidos
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // HISTORIAL PARA PULSATILIDAD - SOLO SE LLENA CON FRAMES DE COLOR VÁLIDO
+  // HISTORIAL - TOLERANTE A VARIACIONES MOMENTÁNEAS
   // ═══════════════════════════════════════════════════════════════════════════
-  private readonly HISTORY_SIZE = 90;
+  private readonly HISTORY_SIZE = 120;   // 4 segundos de historial
   private redHistory: number[] = [];
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // UMBRALES ESTRICTOS - NO NEGOCIABLES
+  // UMBRALES OPTIMIZADOS PARA HUMANOS - TOLERANTES PERO SIN FALSOS POSITIVOS
   // ═══════════════════════════════════════════════════════════════════════════
   private readonly CONFIG = {
-    // === COLOR (OBLIGATORIO cada frame) ===
-    MIN_RED: 100,                  // Rojo mínimo absoluto
-    GOOD_RED: 150,                 // Rojo ideal
-    MIN_RED_GREEN_DIFF: 30,        // R debe superar G por esto
-    MIN_RED_BLUE_DIFF: 40,         // R debe superar B por esto
-    MIN_RED_PROPORTION: 0.45,      // Rojo mínimo 45% del total RGB
+    // === COLOR (más permisivo para variaciones naturales) ===
+    MIN_RED: 60,                   // Bajado: diferentes tonos de piel
+    GOOD_RED: 120,                 // Bajado: ideal pero no requerido
+    MIN_RED_GREEN_DIFF: 15,        // Bajado: permite micro-variaciones
+    MIN_RED_BLUE_DIFF: 20,         // Bajado: permite micro-variaciones  
+    MIN_RED_PROPORTION: 0.38,      // Bajado: 38% mínimo de rojo
     
-    // === PULSATILIDAD (requiere historial de color válido) ===
-    MIN_SAMPLES_FOR_PULSATILITY: 30, // ~1 segundo antes de evaluar pulso
-    MIN_PULSATILITY: 0.004,        // 0.4% mínimo (pulso real)
-    MAX_PULSATILITY: 0.12,         // 12% máximo (evitar movimiento)
+    // === PULSATILIDAD (más amplia para diferentes personas) ===
+    MIN_SAMPLES_FOR_PULSATILITY: 25, // ~0.8 segundos
+    MIN_PULSATILITY: 0.002,        // 0.2% mínimo (más sensible)
+    MAX_PULSATILITY: 0.20,         // 20% máximo (más tolerante a movimiento)
     
-    // === CONFIRMACIÓN ===
-    FRAMES_TO_CONFIRM: 10,         // 10 frames consecutivos (~0.33s)
+    // === CONFIRMACIÓN Y TOLERANCIA ===
+    FRAMES_TO_CONFIRM: 6,          // Bajado: 6 frames (~0.2s)
+    MAX_INVALID_FRAMES: 15,        // NUEVO: tolerar hasta 15 frames malos (~0.5s)
+    DEGRADATION_RATE: 0.3,         // NUEVO: degradación lenta de confianza
   };
 
   constructor() {
@@ -76,13 +79,40 @@ export class HumanFingerDetector {
   ): FingerDetectionResult {
     
     // ═══════════════════════════════════════════════════════════════════════
-    // PASO 1: VALIDACIÓN DE COLOR - SI FALLA, INVALIDAR TODO
+    // PASO 1: VALIDACIÓN DE COLOR - CON TOLERANCIA A MICRO-MOVIMIENTOS
     // ═══════════════════════════════════════════════════════════════════════
     const colorCheck = this.validateColor(redValue, greenValue, blueValue);
     
     if (!colorCheck.isValid) {
-      // *** CRÍTICO: LIMPIAR TODO ***
-      this.invalidateCompletely();
+      this.consecutiveInvalidFrames++;
+      
+      // TOLERANCIA: Si ya estaba confirmado, mantener por un tiempo
+      if (this.isConfirmed && this.consecutiveInvalidFrames < this.CONFIG.MAX_INVALID_FRAMES) {
+        // Degradar suavemente pero NO invalidar
+        this.consecutiveValidFrames = Math.max(0, this.consecutiveValidFrames - this.CONFIG.DEGRADATION_RATE);
+        
+        // Mantener historial - no borrar datos
+        // Usar último valor válido interpolado
+        if (this.redHistory.length > 0) {
+          const lastValid = this.redHistory[this.redHistory.length - 1];
+          this.addToHistory(lastValid * 0.98); // Ligera degradación
+        }
+        
+        const pulsatility = this.calculatePulsatility();
+        return this.createResult(
+          true, // Mantener detección
+          Math.max(50, 100 - this.consecutiveInvalidFrames * 3), // Confianza degradándose
+          Math.max(40, 80 - this.consecutiveInvalidFrames * 2),
+          redValue, greenValue, blueValue,
+          true, pulsatility,
+          `⚠️ Ajustando... (${this.consecutiveInvalidFrames}/${this.CONFIG.MAX_INVALID_FRAMES})`
+        );
+      }
+      
+      // Solo invalidar si supera tolerancia
+      if (this.consecutiveInvalidFrames >= this.CONFIG.MAX_INVALID_FRAMES) {
+        this.invalidateGradually();
+      }
       
       return this.createResult(
         false, 0, 0, 
@@ -93,8 +123,9 @@ export class HumanFingerDetector {
     }
     
     // ═══════════════════════════════════════════════════════════════════════
-    // PASO 2: COLOR VÁLIDO - AGREGAR A HISTORIAL
+    // PASO 2: COLOR VÁLIDO - RESETEAR CONTADOR DE INVÁLIDOS Y AGREGAR HISTORIAL
     // ═══════════════════════════════════════════════════════════════════════
+    this.consecutiveInvalidFrames = 0; // Reset al tener frame válido
     this.addToHistory(redValue);
     
     // ═══════════════════════════════════════════════════════════════════════
@@ -118,16 +149,30 @@ export class HumanFingerDetector {
                            pulsatility <= this.CONFIG.MAX_PULSATILITY;
     
     if (!hasPulsatility) {
-      // Color OK pero sin pulso = objeto inerte, limpiar contadores
-      this.consecutiveValidFrames = 0;
-      this.isConfirmed = false;
+      // Color OK pero sin pulso todavía - NO invalidar inmediatamente
+      // Puede ser que el dedo acaba de posicionarse
       
+      // Si ya estaba confirmado, dar gracia
+      if (this.isConfirmed) {
+        this.consecutiveValidFrames = Math.max(this.CONFIG.FRAMES_TO_CONFIRM, this.consecutiveValidFrames - 0.5);
+        return this.createResult(
+          true, 70, 50,
+          redValue, greenValue, blueValue,
+          false, pulsatility,
+          `⏳ Esperando pulso estable...`
+        );
+      }
+      
+      // No confirmado aún - seguir acumulando historial
       let message: string;
       if (pulsatility < this.CONFIG.MIN_PULSATILITY) {
-        message = `❌ Sin pulso (${(pulsatility * 100).toFixed(3)}%) - OBJETO INERTE`;
+        message = `⏳ Detectando pulso (${(pulsatility * 100).toFixed(2)}%)`;
       } else {
-        message = `❌ Movimiento excesivo (${(pulsatility * 100).toFixed(1)}%)`;
+        message = `⚠️ Estabilizando (${(pulsatility * 100).toFixed(1)}%)`;
       }
+      
+      // Incrementar contador lentamente incluso sin pulso confirmado
+      this.consecutiveValidFrames += 0.3;
       
       return this.createResult(
         false, 0, 0,
@@ -242,14 +287,19 @@ export class HumanFingerDetector {
   }
 
   /**
-   * INVALIDAR COMPLETAMENTE
-   * Llamado cuando el color falla - limpia TODO
+   * INVALIDAR GRADUALMENTE
+   * Solo se llama cuando se supera el límite de tolerancia
+   * Mantiene parte del historial para recuperación rápida
    */
-  private invalidateCompletely(): void {
+  private invalidateGradually(): void {
     this.isConfirmed = false;
     this.consecutiveValidFrames = 0;
-    // CRÍTICO: Limpiar historial completo cuando color falla
-    this.redHistory = [];
+    this.consecutiveInvalidFrames = 0;
+    
+    // NO borrar todo el historial - mantener 50% para recuperación rápida
+    if (this.redHistory.length > 30) {
+      this.redHistory = this.redHistory.slice(-30);
+    }
   }
 
   /**
@@ -319,6 +369,7 @@ export class HumanFingerDetector {
   reset(): void {
     this.isConfirmed = false;
     this.consecutiveValidFrames = 0;
+    this.consecutiveInvalidFrames = 0;
     this.redHistory = [];
   }
 
