@@ -313,6 +313,14 @@ export class HeartBeatProcessor {
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
+    // 🔍 DIAGNÓSTICO: Log cada 60 frames (~2s) para entender la señal
+    if (this.signalBuffer.length % 60 === 0) {
+      const range = this.signalBuffer.length > 5 
+        ? Math.max(...this.signalBuffer.slice(-20)) - Math.min(...this.signalBuffer.slice(-20))
+        : 0;
+      console.log(`🔬 DIAGNÓSTICO SEÑAL: raw=${value.toFixed(2)}, norm=${normalizedValue.toFixed(4)}, deriv=${smoothDerivative.toFixed(5)}, range=${range.toFixed(3)}, quality=${this.currentSignalQuality.toFixed(0)}, threshold=${this.adaptiveSignalThreshold.toFixed(4)}`);
+    }
+
     if (isConfirmedPeak && !this.isInWarmup()) {
       const now = Date.now();
       const timeSinceLastPeak = this.lastPeakTime
@@ -325,6 +333,9 @@ export class HeartBeatProcessor {
         if (this.validatePeak(normalizedValue, confidence)) {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
+          
+          // 🎯 LOG DE LATIDO DETECTADO
+          console.log(`💓 LATIDO REAL: amp=${normalizedValue.toFixed(4)}, conf=${confidence.toFixed(2)}, BPM=${this.getSmoothBPM()}`);
           
           // Reproducir sonido y actualizar estado
           this.playHeartSound(1.0, this.isArrhythmiaDetected);
@@ -352,6 +363,10 @@ export class HeartBeatProcessor {
             this.peaksSinceLastTuning = 0;
           }
         } else {
+          // Log por qué se rechazó
+          if (this.signalBuffer.length % 30 === 0) {
+            console.log(`⚠️ Pico rechazado: amp=${normalizedValue.toFixed(4)}, conf=${confidence.toFixed(2)}, quality=${this.currentSignalQuality.toFixed(0)}`);
+          }
           isPeak = false;
         }
       }

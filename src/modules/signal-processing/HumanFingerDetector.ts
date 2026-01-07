@@ -42,9 +42,9 @@ export class HumanFingerDetector {
   private timestampHistory: number[] = [];
   private readonly HISTORY_SIZE = 150; // 5 segundos a 30fps
   
-  // NUEVO: Buffer de pulsatilidad para suavizado (evita cortes por micro-movimientos)
+  // SUAVIZADO: Buffer de pulsatilidad para evitar cortes por micro-movimientos
   private pulsatilityHistory: number[] = [];
-  private readonly PULSATILITY_SMOOTH_SIZE = 8; // Suavizar últimos 8 valores (~0.27s)
+  private readonly PULSATILITY_SMOOTH_SIZE = 12; // Suavizar últimos 12 valores (~0.4s)
   
   // Análisis de picos cardíacos
   private detectedPeaks: number[] = [];
