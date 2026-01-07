@@ -357,7 +357,12 @@ export class HumanFingerDetector {
 
   private handleNonDetection(): void {
     this.consecutiveNonDetections++;
-    this.consecutiveDetections = 0;
+    
+    // CAMBIO CLAVE: Solo decrementar detecciones gradualmente, no resetear a 0
+    // Esto hace la detección más "sticky" y robusta
+    if (this.consecutiveDetections > 0) {
+      this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
+    }
     
     if (this.consecutiveNonDetections >= this.CONFIG.FRAMES_TO_LOSE) {
       if (this.lastDetectionState) {
