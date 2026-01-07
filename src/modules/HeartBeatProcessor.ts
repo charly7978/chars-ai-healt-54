@@ -202,7 +202,6 @@ export class HeartBeatProcessor {
     isPeak: boolean;
     filteredValue: number;
     arrhythmiaCount: number;
-    signalQuality?: number;
   } {
     this.frameCount++;
     const now = timestamp || Date.now();
@@ -263,8 +262,7 @@ export class HeartBeatProcessor {
       confidence: peakResult.confidence,
       isPeak: peakResult.isPeak,
       filteredValue: normalized,
-      arrhythmiaCount: 0,
-      signalQuality: this.calculateSignalQuality()
+      arrhythmiaCount: 0
     };
   }
 
@@ -413,26 +411,8 @@ export class HeartBeatProcessor {
     }
   }
 
-  private calculateSignalQuality(): number {
-    if (this.normalizedBuffer.length < 30) return 0;
-    
-    let quality = 0;
-    
-    if (this.consecutiveStableFrames > 60) quality = 40;
-    else if (this.consecutiveStableFrames > 30) quality = 25;
-    else if (this.consecutiveStableFrames > 15) quality = 15;
-    else quality = 5;
-    
-    if (this.smoothBPM >= 50 && this.smoothBPM <= 120 && this.validPeakCount >= 3) {
-      quality += 30;
-    }
-    
-    if (this.validPeakCount > 10) quality += 30;
-    else if (this.validPeakCount > 5) quality += 20;
-    else if (this.validPeakCount > 2) quality += 10;
-    
-    return Math.min(100, quality);
-  }
+  // ELIMINADO: calculateSignalQuality ahora viene de SignalQualityAnalyzer
+  // La calidad de señal es responsabilidad única de PPGSignalProcessor
 
   getSmoothBPM(): number {
     return this.smoothBPM;
