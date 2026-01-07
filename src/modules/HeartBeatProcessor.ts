@@ -47,11 +47,12 @@ export class HeartBeatProcessor {
   private rrIntervals: number[] = [];
   
   // ====== DETECCIÓN DE MOVIMIENTO / ARTEFACTOS ======
-  private readonly MOTION_THRESHOLD = 8;       // Cambio máximo permitido (normalizado 0-100)
-  private readonly MOTION_COOLDOWN_MS = 600;   // Tiempo de espera después de movimiento
+  // Valores MÁS PERMISIVOS para señales PPG reales (que son MUY pequeñas)
+  private readonly MOTION_THRESHOLD = 15;      // Aumentado de 8 a 15
+  private readonly MOTION_COOLDOWN_MS = 400;   // Reducido de 600 a 400ms
   private lastMotionTime: number = 0;
   private consecutiveStableFrames: number = 0;
-  private readonly MIN_STABLE_FRAMES = 15;     // Mínimo de frames estables antes de detectar
+  private readonly MIN_STABLE_FRAMES = 8;      // Reducido de 15 a 8 frames
   private lastNormalizedValue: number = 0;
   
   // Audio
@@ -277,9 +278,9 @@ export class HeartBeatProcessor {
     // Verificar amplitud del pico (diferencia entre max y vecinos)
     const prominence = maxVal - Math.max(leftNeighbor, rightNeighbor);
     
-    // La prominencia debe ser significativa pero NO gigante
-    // Latidos reales tienen prominencia de ~0.5-5, no 50+
-    if (prominence < 0.3 || prominence > 20) {
+    // PPG real tiene prominencias MUY PEQUEÑAS (0.05-10)
+    // Señales de movimiento tienen prominencias GRANDES (20+)
+    if (prominence < 0.05 || prominence > 15) {
       return { isPeak: false, confidence: 0 };
     }
     
@@ -288,8 +289,8 @@ export class HeartBeatProcessor {
     const windowMax = Math.max(...window);
     const windowRange = windowMax - windowMin;
     
-    // El rango debe ser razonable (no plano ni explosivo)
-    if (windowRange < 0.5 || windowRange > 30) {
+    // Rango PPG real: 0.2-20 (movimiento genera rangos >30)
+    if (windowRange < 0.15 || windowRange > 25) {
       return { isPeak: false, confidence: 0 };
     }
     
