@@ -35,16 +35,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private rawRedBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   
-  // ====== UMBRALES CIENTÍFICOS PARA DETECCIÓN DE SANGRE ======
-  // Basados en propiedades ópticas de la hemoglobina
-  private readonly MIN_RG_RATIO = 1.3;        // Ratio R/G mínimo (sangre > 1.5 típico)
-  private readonly MIN_RED_DOMINANCE = 0.42;  // Rojo debe ser > 42% del RGB
-  private readonly MIN_RED_VALUE = 80;        // Valor mínimo absoluto de rojo
-  private readonly MIN_PULSATILITY = 0.002;   // Pulsatilidad mínima (0.2% variación AC/DC)
+  // ====== UMBRALES MUY SENSIBLES PARA DETECCIÓN DE SANGRE ======
+  // Basados en propiedades ópticas de la hemoglobina pero MÁS PERMISIVOS
+  private readonly MIN_RG_RATIO = 1.2;        // Ratio R/G mínimo (reducido de 1.3)
+  private readonly MIN_RED_DOMINANCE = 0.40;  // Rojo debe ser > 40% del RGB (reducido)
+  private readonly MIN_RED_VALUE = 70;        // Valor mínimo absoluto de rojo (reducido)
+  private readonly MIN_PULSATILITY = 0.0005;  // Pulsatilidad mínima 0.05% (MUY BAJO - antes 0.2%)
   
-  // Control de validación temporal
+  // Control de validación temporal - MÁS RÁPIDO
   private validBloodFrameCount: number = 0;
-  private readonly MIN_CONSECUTIVE_FRAMES = 10; // 10 frames consecutivos (~0.33s)
+  private readonly MIN_CONSECUTIVE_FRAMES = 5; // 5 frames consecutivos (~0.16s) - más rápido
   
   // Diagnóstico
   private lastRGB = { r: 0, g: 0, b: 0, rgRatio: 0, redPercent: 0, pulsatility: 0 };

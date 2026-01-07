@@ -20,19 +20,19 @@ export class HeartBeatProcessor {
   // Configuración fisiológica
   private readonly MIN_BPM = 40;
   private readonly MAX_BPM = 180;
-  private readonly MIN_PEAK_INTERVAL_MS = 333;  // 180 BPM máximo
-  private readonly WARMUP_TIME_MS = 2000;       // 2s de calentamiento
+  private readonly MIN_PEAK_INTERVAL_MS = 300;  // 200 BPM máximo - más permisivo
+  private readonly WARMUP_TIME_MS = 1500;       // 1.5s de calentamiento - más rápido
   
   // Buffers
   private signalBuffer: number[] = [];
   private derivativeBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 120; // 4 segundos a 30fps
+  private readonly BUFFER_SIZE = 150; // 5 segundos a 30fps para mejor análisis
   
   // Estado de detección de picos
   private lastPeakTime: number | null = null;
   private previousPeakTime: number | null = null;
   private peakAmplitudes: number[] = [];
-  private adaptiveThreshold: number = 0.5;
+  private adaptiveThreshold: number = 0.1; // BAJADO: umbral inicial más sensible
   
   // BPM
   private bpmHistory: number[] = [];
@@ -201,16 +201,17 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * DETECCIÓN DE PICOS - Algoritmo basado en derivada
+   * DETECCIÓN DE PICOS MEJORADA
    * 
-   * Un pico ocurre cuando:
-   * 1. La derivada pasa de positiva a negativa (cruce por cero)
-   * 2. La amplitud del pico supera el umbral adaptativo
-   * 3. Ha pasado suficiente tiempo desde el último pico
+   * Usa múltiples criterios:
+   * 1. Cruce por cero de la derivada
+   * 2. Método de prominencia local (comparar con vecinos)
+   * 3. Verificación de amplitud mínima muy baja
    */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
-    const n = this.derivativeBuffer.length;
-    if (n < 5) return { isPeak: false, confidence: 0 };
+    const n = this.signalBuffer.length;
+    const dn = this.derivativeBuffer.length;
+    if (n < 15 || dn < 8) return { isPeak: false, confidence: 0 };
     
     // Verificar intervalo mínimo desde último pico
     const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
@@ -218,46 +219,64 @@ export class HeartBeatProcessor {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Obtener las últimas derivadas
-    const d1 = this.derivativeBuffer[n - 4]; // hace 3 frames
-    const d2 = this.derivativeBuffer[n - 3]; // hace 2 frames
-    const d3 = this.derivativeBuffer[n - 2]; // hace 1 frame
-    const d4 = this.derivativeBuffer[n - 1]; // actual
+    // MÉTODO 1: Cruce por cero de derivada (más flexible)
+    const d = this.derivativeBuffer;
+    const wasPositive = d[dn - 5] > 0 || d[dn - 4] > 0 || d[dn - 3] > 0;
+    const isNowNegative = d[dn - 2] <= 0 || d[dn - 1] <= 0;
+    const derivativeCross = wasPositive && isNowNegative;
     
-    // Buscar cruce por cero: derivada positiva -> negativa
-    // El pico está aproximadamente en n-2 o n-3
-    const wasRising = d1 > 0 && d2 > 0;
-    const isNowFalling = d3 < 0 || d4 < 0;
-    const hadPeak = d2 > 0 && d3 <= 0;
+    // MÉTODO 2: Prominencia local - el punto hace ~3 frames era máximo local
+    const recentSignal = this.signalBuffer.slice(-12);
+    const candidateIdx = 6; // Punto central aproximado
+    const candidateValue = recentSignal[candidateIdx] || 0;
     
-    if (!wasRising || !isNowFalling || !hadPeak) {
+    // Verificar que es mayor que sus vecinos
+    let isLocalMax = true;
+    for (let i = 0; i < recentSignal.length; i++) {
+      if (i !== candidateIdx && i !== candidateIdx - 1 && i !== candidateIdx + 1) {
+        if (recentSignal[i] > candidateValue) {
+          isLocalMax = false;
+          break;
+        }
+      }
+    }
+    
+    // Necesita al menos uno de los dos métodos
+    if (!derivativeCross && !isLocalMax) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Verificar amplitud del pico
-    const recent = this.signalBuffer.slice(-30);
-    const peakValue = Math.max(...this.signalBuffer.slice(-5));
-    const minValue = Math.min(...recent);
-    const maxValue = Math.max(...recent);
+    // Calcular amplitud en ventana más amplia
+    const windowSignal = this.signalBuffer.slice(-45);
+    const minValue = Math.min(...windowSignal);
+    const maxValue = Math.max(...windowSignal);
     const amplitude = maxValue - minValue;
     
-    // Actualizar umbral adaptativo
-    this.updateAdaptiveThreshold(amplitude);
+    // Log de debug cada 60 frames (~2 segundos)
+    if (this.frameCount % 60 === 0) {
+      console.log(`💓 Peak check: amplitude=${amplitude.toFixed(3)}, threshold=${this.adaptiveThreshold.toFixed(3)}, derivCross=${derivativeCross}, localMax=${isLocalMax}`);
+    }
     
-    // El pico debe tener amplitud significativa
-    if (amplitude < this.adaptiveThreshold * 0.5) {
+    // UMBRAL MUY BAJO - cualquier variación detectable
+    const minAmplitude = Math.max(0.05, this.adaptiveThreshold * 0.3);
+    if (amplitude < minAmplitude) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // El valor del pico debe estar en la zona alta
-    const normalizedPeak = (peakValue - minValue) / (amplitude || 1);
-    if (normalizedPeak < 0.6) {
+    // Verificar que el pico candidato está en zona alta (más flexible: 50%)
+    const normalizedPeak = (candidateValue - minValue) / (amplitude || 0.001);
+    if (normalizedPeak < 0.5) {
       return { isPeak: false, confidence: 0 };
     }
     
     // ¡PICO DETECTADO!
+    console.log(`✓ PICO en t=${now}, amp=${amplitude.toFixed(2)}, norm=${normalizedPeak.toFixed(2)}`);
+    
     this.previousPeakTime = this.lastPeakTime;
     this.lastPeakTime = now;
+    
+    // Actualizar umbral adaptativo DESPUÉS de detectar pico
+    this.updateAdaptiveThreshold(amplitude);
     
     // Guardar amplitud para calibración
     this.peakAmplitudes.push(amplitude);
@@ -268,7 +287,7 @@ export class HeartBeatProcessor {
     // Guardar intervalo RR
     if (this.previousPeakTime) {
       const rr = now - this.previousPeakTime;
-      if (rr >= 300 && rr <= 2000) { // 30-200 BPM
+      if (rr >= 280 && rr <= 2200) { // 27-214 BPM - muy amplio
         this.rrIntervals.push(rr);
         if (this.rrIntervals.length > 30) {
           this.rrIntervals.shift();
@@ -276,29 +295,30 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Calcular confianza
-    const confidence = Math.min(1, 0.5 + normalizedPeak * 0.3 + (amplitude / this.adaptiveThreshold) * 0.2);
+    // Confianza basada en claridad del pico
+    const confidence = Math.min(1, 0.4 + normalizedPeak * 0.4 + (amplitude > 0.5 ? 0.2 : 0));
     
     return { isPeak: true, confidence };
   }
 
   /**
-   * Actualiza el umbral adaptativo basado en las últimas amplitudes de pico
+   * Actualiza el umbral adaptativo - MUY SENSIBLE para señales débiles
    */
   private updateAdaptiveThreshold(amplitude: number): void {
-    if (this.peakAmplitudes.length < 3) {
-      this.adaptiveThreshold = Math.max(0.3, amplitude * 0.6);
+    if (this.peakAmplitudes.length < 2) {
+      // Inicio: umbral muy bajo
+      this.adaptiveThreshold = Math.max(0.05, amplitude * 0.4);
       return;
     }
     
     // Promedio de las últimas amplitudes
     const avgAmplitude = this.peakAmplitudes.reduce((a, b) => a + b, 0) / this.peakAmplitudes.length;
     
-    // Umbral = 50% del promedio (permite detectar picos algo más débiles)
-    this.adaptiveThreshold = avgAmplitude * 0.5;
+    // Umbral = 30% del promedio (muy sensible para detectar picos débiles)
+    this.adaptiveThreshold = avgAmplitude * 0.3;
     
-    // Límites mínimo y máximo
-    this.adaptiveThreshold = Math.max(0.2, Math.min(5, this.adaptiveThreshold));
+    // Límites: mínimo muy bajo, máximo razonable
+    this.adaptiveThreshold = Math.max(0.03, Math.min(3, this.adaptiveThreshold));
   }
 
   private updateBPM(): void {

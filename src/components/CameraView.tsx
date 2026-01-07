@@ -36,11 +36,78 @@ const CameraView: React.FC<CameraViewProps> = ({
     startedRef.current = false;
   };
 
-  const enableTorch = async (track: MediaStreamTrack) => {
+  /**
+   * CONFIGURACIÓN ÓPTIMA PARA PPG:
+   * - Torch: encendido para iluminar el dedo
+   * - ExposureMode: manual para evitar ajustes automáticos que causan ruido
+   * - FocusMode: manual con distancia cercana (dedo muy cerca del lente)
+   * - WhiteBalanceMode: manual para evitar fluctuaciones de color
+   */
+  const optimizeCameraForPPG = async (track: MediaStreamTrack) => {
     const caps: any = track.getCapabilities?.() || {};
+    
+    // Construir constraints óptimos para PPG
+    const advancedConstraints: any[] = [];
+    
+    // 1. TORCH - Crítico para iluminar el dedo
     if (caps?.torch) {
-      try { await track.applyConstraints({ advanced: [{ torch: true }] } as any); } catch {}
+      advancedConstraints.push({ torch: true });
     }
+    
+    // 2. EXPOSURE MODE - Manual evita ajustes automáticos que causan ruido
+    if (caps?.exposureMode?.includes?.('manual')) {
+      advancedConstraints.push({ exposureMode: 'manual' });
+    }
+    
+    // 3. FOCUS MODE - Manual con distancia cercana (dedo muy próximo)
+    if (caps?.focusMode?.includes?.('manual')) {
+      advancedConstraints.push({ focusMode: 'manual' });
+      // Focus distance: el más cercano posible
+      if (caps?.focusDistance?.min !== undefined) {
+        advancedConstraints.push({ focusDistance: caps.focusDistance.min });
+      }
+    }
+    
+    // 4. WHITE BALANCE - Manual para evitar fluctuaciones de color
+    if (caps?.whiteBalanceMode?.includes?.('manual')) {
+      advancedConstraints.push({ whiteBalanceMode: 'manual' });
+    }
+    
+    // 5. EXPOSURE COMPENSATION - Reducir para evitar saturación
+    if (caps?.exposureCompensation?.min !== undefined) {
+      // Valor bajo para no saturar el rojo
+      const midExposure = (caps.exposureCompensation.min + caps.exposureCompensation.max) / 2;
+      advancedConstraints.push({ exposureCompensation: midExposure * 0.7 });
+    }
+    
+    // 6. ISO - Bajo para reducir ruido
+    if (caps?.iso?.min !== undefined) {
+      advancedConstraints.push({ iso: caps.iso.min });
+    }
+    
+    // Aplicar todos los constraints
+    if (advancedConstraints.length > 0) {
+      try {
+        await track.applyConstraints({ advanced: advancedConstraints } as any);
+        console.log('📷 Cámara optimizada para PPG:', advancedConstraints);
+      } catch (e) {
+        // Intentar uno por uno si falla en bloque
+        for (const constraint of advancedConstraints) {
+          try {
+            await track.applyConstraints({ advanced: [constraint] } as any);
+          } catch {}
+        }
+      }
+    }
+    
+    // Log de capacidades para debug
+    console.log('📷 Capacidades de cámara:', {
+      torch: caps?.torch,
+      exposureMode: caps?.exposureMode,
+      focusMode: caps?.focusMode,
+      focusDistance: caps?.focusDistance,
+      whiteBalanceMode: caps?.whiteBalanceMode
+    });
   };
 
   const pickBackCameras = async () => {
@@ -69,7 +136,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         });
         s1Ref.current = s1;
         if (v1Ref.current) { v1Ref.current.srcObject = s1; await v1Ref.current.play().catch(()=>{}); }
-        const t1 = s1.getVideoTracks()[0]; if (t1) enableTorch(t1);
+        const t1 = s1.getVideoTracks()[0]; if (t1) optimizeCameraForPPG(t1);
         onStreamReady?.(s1);
       }
       // stream 2 (si existe)
@@ -80,7 +147,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         });
         s2Ref.current = s2;
         if (v2Ref.current) { v2Ref.current.srcObject = s2; await v2Ref.current.play().catch(()=>{}); }
-        const t2 = s2.getVideoTracks()[0]; if (t2) enableTorch(t2);
+        const t2 = s2.getVideoTracks()[0]; if (t2) optimizeCameraForPPG(t2);
         onAuxStreamReady?.(s2);
       }
     } catch (e) {
@@ -89,7 +156,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         const s1 = await navigator.mediaDevices.getUserMedia({ audio:false, video:{ facingMode:"environment" } as any });
         s1Ref.current = s1;
         if (v1Ref.current) { v1Ref.current.srcObject = s1; await v1Ref.current.play().catch(()=>{}); }
-        const t1 = s1.getVideoTracks()[0]; if (t1) enableTorch(t1);
+        const t1 = s1.getVideoTracks()[0]; if (t1) optimizeCameraForPPG(t1);
         onStreamReady?.(s1);
       } catch (err) {
         startedRef.current = false;
@@ -111,7 +178,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     const id = setInterval(() => {
       [s1Ref.current, s2Ref.current].forEach(s => {
         const t = s?.getVideoTracks?.()[0];
-        if (t) enableTorch(t);
+        if (t) optimizeCameraForPPG(t);
       });
     }, 1500);
     return () => clearInterval(id);
