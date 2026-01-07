@@ -1,532 +1,340 @@
 /**
  * @file HumanFingerDetector.ts
- * @description Sistema avanzado de detección de dedos humanos reales con validación biofísica
- * PROHIBIDA CUALQUIER SIMULACIÓN - SOLO MEDICIÓN REAL PPG
+ * @description ÚNICO PUNTO DE DETECCIÓN DE DEDO EN TODA LA APP
+ * 
+ * CRITERIO: Detectar la YEMA del dedo iluminada por el flash LED.
+ * La yema del dedo sobre el flash produce una imagen ROJA BRILLANTE (saturada).
+ * 
+ * Características de la yema del dedo correctamente posicionada:
+ * 1. Canal ROJO muy alto (>150) por la luz atravesando el tejido
+ * 2. Canal VERDE moderado-bajo (la hemoglobina absorbe verde)
+ * 3. Canal AZUL bajo (la hemoglobina absorbe azul)
+ * 4. Ratio R/G alto (típicamente 1.5-4.0)
+ * 5. Imagen uniforme/saturada (poca textura porque es piel translúcida)
  */
 
-export interface HumanFingerValidation {
-  isHumanFinger: boolean;
+export interface FingerDetectionResult {
+  isFingerDetected: boolean;
   confidence: number;
-  biophysicalScore: number;
-  opticalCoherence: number;
-  bloodFlowIndicator: number;
-  tissueConsistency: number;
-  validationDetails: {
-    skinColorValid: boolean;
-    perfusionValid: boolean;
-    hemodynamicValid: boolean;
-    spatialConsistency: boolean;
-    temporalConsistency: boolean;
+  quality: number;
+  diagnostics: {
+    redValue: number;
+    greenValue: number;
+    blueValue: number;
+    redRatio: number;
+    isRedDominant: boolean;
+    isProperlyIlluminated: boolean;
+    message: string;
   };
 }
 
 export class HumanFingerDetector {
-  private readonly HEMOGLOBIN_ABSORPTION_R = 660; // nm - rojo
-  private readonly HEMOGLOBIN_ABSORPTION_IR = 940; // nm - infrarrojo simulado con azul
+  // Buffer para estabilidad temporal
+  private consecutiveDetections = 0;
+  private consecutiveNonDetections = 0;
+  private lastDetectionState = false;
   
-  // Buffer de análisis temporal para validación humana
-  private temporalAnalysisBuffer: Array<{
-    timestamp: number;
-    redValue: number;
-    greenValue: number;
-    blueValue: number;
-    perfusionIndex: number;
-  }> = [];
+  // Historial para análisis de pulsatilidad
+  private redHistory: number[] = [];
+  private readonly HISTORY_SIZE = 30;
   
-  private readonly TEMPORAL_BUFFER_SIZE = 50;
-  private skinBaselineR = 0;
-  private skinBaselineG = 0;
-  private skinBaselineB = 0;
-  private perfusionBaseline = 0;
-  
-  // Contadores para detección consecutiva
-  private consecutiveHumanDetections = 0;
-  private consecutiveNonHumanDetections = 0;
-  private lastValidHumanTime = 0;
-  
+  // UMBRALES CALIBRADOS PARA YEMA DE DEDO CON FLASH LED
+  private readonly CONFIG = {
+    // La yema iluminada por flash produce rojo MUY ALTO
+    MIN_RED_FOR_FINGER: 100,      // Rojo mínimo (yema iluminada es muy roja)
+    IDEAL_RED_MIN: 140,           // Rojo ideal mínimo
+    IDEAL_RED_MAX: 255,           // Rojo ideal máximo
+    
+    // Ratios de color para tejido humano con flash
+    MIN_RG_RATIO: 1.2,            // Rojo debe ser mayor que verde
+    MAX_RG_RATIO: 5.0,            // Pero no demasiado (evita luz roja artificial)
+    MIN_RB_RATIO: 1.5,            // Rojo mucho mayor que azul
+    
+    // Verde moderado (la sangre absorbe verde)
+    MAX_GREEN_RATIO: 0.45,        // Verde no debe ser más del 45% del total
+    
+    // Estabilidad requerida
+    MIN_CONSECUTIVE_FOR_DETECTION: 5,
+    MAX_CONSECUTIVE_FOR_LOSS: 10,
+    
+    // Pulsatilidad mínima (la señal debe variar con el pulso)
+    MIN_PULSATILITY: 0.005
+  };
+
   constructor() {
-    console.log("🔬 HumanFingerDetector: Sistema biofísico activado");
+    console.log("🔴 HumanFingerDetector: Detector de YEMA activado");
   }
-  
+
   /**
-   * ANÁLISIS INTEGRAL DE DEDO HUMANO - Sin simulaciones
+   * ÚNICA FUNCIÓN DE DETECCIÓN DE DEDO EN TODA LA APP
+   * 
+   * @param redValue - Valor promedio del canal rojo (0-255)
+   * @param greenValue - Valor promedio del canal verde (0-255)
+   * @param blueValue - Valor promedio del canal azul (0-255)
+   * @returns Resultado de detección con diagnósticos
    */
-  detectHumanFinger(
+  detectFinger(
+    redValue: number,
+    greenValue: number,
+    blueValue: number
+  ): FingerDetectionResult {
+    
+    // Actualizar historial
+    this.updateHistory(redValue);
+    
+    // 1. VERIFICAR ILUMINACIÓN SUFICIENTE
+    const totalLight = redValue + greenValue + blueValue;
+    if (totalLight < 150) {
+      return this.createNegativeResult(
+        redValue, greenValue, blueValue,
+        "Iluminación insuficiente - active el flash o acerque el dedo"
+      );
+    }
+
+    // 2. VERIFICAR DOMINANCIA DEL ROJO (característica clave de yema con flash)
+    const redRatio = redValue / (totalLight + 0.001);
+    const greenRatio = greenValue / (totalLight + 0.001);
+    const rgRatio = redValue / (greenValue + 0.001);
+    const rbRatio = redValue / (blueValue + 0.001);
+    
+    const isRedDominant = redValue > greenValue && redValue > blueValue;
+    
+    if (!isRedDominant) {
+      this.handleNonDetection();
+      return this.createNegativeResult(
+        redValue, greenValue, blueValue,
+        "El rojo debe dominar - coloque la YEMA (no la punta) sobre el flash"
+      );
+    }
+
+    // 3. VERIFICAR VALOR DE ROJO SUFICIENTE
+    if (redValue < this.CONFIG.MIN_RED_FOR_FINGER) {
+      this.handleNonDetection();
+      return this.createNegativeResult(
+        redValue, greenValue, blueValue,
+        `Rojo insuficiente (${redValue.toFixed(0)}) - presione más la yema sobre el flash`
+      );
+    }
+
+    // 4. VERIFICAR RATIOS DE COLOR PARA TEJIDO HUMANO
+    if (rgRatio < this.CONFIG.MIN_RG_RATIO || rgRatio > this.CONFIG.MAX_RG_RATIO) {
+      this.handleNonDetection();
+      return this.createNegativeResult(
+        redValue, greenValue, blueValue,
+        `Ratio R/G anormal (${rgRatio.toFixed(2)}) - no parece tejido humano iluminado`
+      );
+    }
+
+    if (rbRatio < this.CONFIG.MIN_RB_RATIO) {
+      this.handleNonDetection();
+      return this.createNegativeResult(
+        redValue, greenValue, blueValue,
+        `Ratio R/B bajo (${rbRatio.toFixed(2)}) - mucho azul para ser yema de dedo`
+      );
+    }
+
+    // 5. VERIFICAR QUE EL VERDE NO DOMINE (la hemoglobina lo absorbe)
+    if (greenRatio > this.CONFIG.MAX_GREEN_RATIO) {
+      this.handleNonDetection();
+      return this.createNegativeResult(
+        redValue, greenValue, blueValue,
+        "Demasiado verde - no es yema de dedo sobre flash"
+      );
+    }
+
+    // 6. VERIFICAR PULSATILIDAD (debe haber variación por el pulso)
+    const pulsatility = this.calculatePulsatility();
+    
+    // 7. TODAS LAS VALIDACIONES PASARON - DEDO DETECTADO
+    this.handleDetection();
+    
+    // Calcular confianza basada en qué tan ideal es la señal
+    const confidence = this.calculateConfidence(
+      redValue, rgRatio, rbRatio, pulsatility
+    );
+    
+    // Calcular calidad para la medición
+    const quality = this.calculateQuality(redValue, pulsatility, confidence);
+    
+    return {
+      isFingerDetected: this.lastDetectionState,
+      confidence,
+      quality,
+      diagnostics: {
+        redValue,
+        greenValue,
+        blueValue,
+        redRatio: rgRatio,
+        isRedDominant: true,
+        isProperlyIlluminated: redValue >= this.CONFIG.IDEAL_RED_MIN,
+        message: this.lastDetectionState 
+          ? `✓ Yema detectada (R=${redValue.toFixed(0)}, R/G=${rgRatio.toFixed(2)})`
+          : "Estabilizando detección..."
+      }
+    };
+  }
+
+  /**
+   * Manejar detección positiva con histéresis
+   */
+  private handleDetection(): void {
+    this.consecutiveDetections++;
+    this.consecutiveNonDetections = 0;
+    
+    if (this.consecutiveDetections >= this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION) {
+      if (!this.lastDetectionState) {
+        console.log("✅ YEMA DE DEDO DETECTADA - Iniciando medición PPG");
+      }
+      this.lastDetectionState = true;
+    }
+  }
+
+  /**
+   * Manejar no-detección con histéresis
+   */
+  private handleNonDetection(): void {
+    this.consecutiveNonDetections++;
+    this.consecutiveDetections = 0;
+    
+    if (this.consecutiveNonDetections >= this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS) {
+      if (this.lastDetectionState) {
+        console.log("❌ DEDO PERDIDO - Deteniendo medición");
+      }
+      this.lastDetectionState = false;
+    }
+  }
+
+  /**
+   * Actualizar historial de valores rojos para análisis
+   */
+  private updateHistory(redValue: number): void {
+    this.redHistory.push(redValue);
+    if (this.redHistory.length > this.HISTORY_SIZE) {
+      this.redHistory.shift();
+    }
+  }
+
+  /**
+   * Calcular pulsatilidad (variación AC/DC)
+   */
+  private calculatePulsatility(): number {
+    if (this.redHistory.length < 10) return 0;
+    
+    const recent = this.redHistory.slice(-15);
+    const max = Math.max(...recent);
+    const min = Math.min(...recent);
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    
+    if (mean === 0) return 0;
+    
+    // AC/DC ratio
+    return (max - min) / mean;
+  }
+
+  /**
+   * Calcular confianza de la detección
+   */
+  private calculateConfidence(
+    redValue: number,
+    rgRatio: number,
+    rbRatio: number,
+    pulsatility: number
+  ): number {
+    let confidence = 0;
+    
+    // Score por intensidad de rojo (0-40 puntos)
+    if (redValue >= this.CONFIG.IDEAL_RED_MIN) {
+      confidence += 40;
+    } else {
+      confidence += (redValue / this.CONFIG.IDEAL_RED_MIN) * 40;
+    }
+    
+    // Score por ratio R/G ideal ~2.0-3.0 (0-25 puntos)
+    const idealRG = 2.5;
+    const rgScore = Math.max(0, 25 - Math.abs(rgRatio - idealRG) * 10);
+    confidence += rgScore;
+    
+    // Score por ratio R/B (0-20 puntos)
+    if (rbRatio >= 2.0) {
+      confidence += 20;
+    } else {
+      confidence += (rbRatio / 2.0) * 20;
+    }
+    
+    // Score por pulsatilidad (0-15 puntos)
+    if (pulsatility >= this.CONFIG.MIN_PULSATILITY) {
+      confidence += Math.min(15, pulsatility * 150);
+    }
+    
+    return Math.min(100, Math.max(0, confidence));
+  }
+
+  /**
+   * Calcular calidad de señal para medición
+   */
+  private calculateQuality(
+    redValue: number,
+    pulsatility: number,
+    confidence: number
+  ): number {
+    // Base: usar confianza
+    let quality = confidence * 0.6;
+    
+    // Bonus por buena intensidad de rojo
+    if (redValue >= 150 && redValue <= 240) {
+      quality += 20;
+    }
+    
+    // Bonus por buena pulsatilidad
+    if (pulsatility >= 0.01 && pulsatility <= 0.15) {
+      quality += 20;
+    }
+    
+    return Math.min(100, Math.max(0, quality));
+  }
+
+  /**
+   * Crear resultado negativo con diagnóstico
+   */
+  private createNegativeResult(
     redValue: number,
     greenValue: number,
     blueValue: number,
-    textureScore: number,
-    imageWidth: number,
-    imageHeight: number
-  ): HumanFingerValidation {
-    
-    // 1. VALIDACIÓN PRIMARIA - Rangos fisiológicos humanos
-    if (!this.isPhysiologicallyValid(redValue, greenValue, blueValue)) {
-      this.consecutiveNonHumanDetections++;
-      return this.createNegativeResult("Valores fuera de rango fisiológico humano");
-    }
-    
-    // 2. ANÁLISIS ESPECTRAL DE HEMOGLOBINA - Cálculo real PPG
-    const hemoglobinAnalysis = this.analyzeHemoglobinSpectrum(redValue, greenValue, blueValue);
-    
-    // 3. VALIDACIÓN DE PERFUSIÓN SANGUÍNEA - Solo datos reales
-    const perfusionAnalysis = this.analyzePerfusion(redValue, greenValue);
-    
-    // 4. ANÁLISIS TEMPORAL DE CONSISTENCIA HUMANA
-    const temporalConsistency = this.analyzeTemporalConsistency(
-      redValue, greenValue, blueValue, perfusionAnalysis.perfusionIndex
-    );
-    
-    // 5. VALIDACIÓN ESPACIAL Y DE TEXTURA HUMANA
-    const spatialValidation = this.validateSpatialCharacteristics(
-      textureScore, imageWidth, imageHeight
-    );
-    
-    // 6. ANÁLISIS HEMDINÁMICO - Patrones cardiovasculares reales
-    const hemodynamicScore = this.analyzeHemodynamicPatterns();
-    
-    // 7. CÁLCULO DE CONFIANZA INTEGRAL
-    const overallConfidence = this.calculateOverallConfidence(
-      hemoglobinAnalysis,
-      perfusionAnalysis,
-      temporalConsistency,
-      spatialValidation,
-      hemodynamicScore
-    );
-    
-    // 8. DECISIÓN FINAL CON CRITERIOS ESTRICTOS PERO EQUILIBRADOS
-    const isHumanFinger = this.makeHumanFingerDecision(overallConfidence);
-    
-    if (isHumanFinger) {
-      this.consecutiveHumanDetections++;
-      this.consecutiveNonHumanDetections = 0;
-      this.lastValidHumanTime = Date.now();
-      
-      // Actualizar líneas base solo con detecciones válidas
-      this.updateHumanBaselines(redValue, greenValue, blueValue, perfusionAnalysis.perfusionIndex);
-    } else {
-      this.consecutiveNonHumanDetections++;
-      this.consecutiveHumanDetections = 0;
-    }
+    message: string
+  ): FingerDetectionResult {
+    const rgRatio = redValue / (greenValue + 0.001);
     
     return {
-      isHumanFinger,
-      confidence: overallConfidence,
-      biophysicalScore: hemoglobinAnalysis.biophysicalScore,
-      opticalCoherence: hemoglobinAnalysis.opticalCoherence,
-      bloodFlowIndicator: perfusionAnalysis.bloodFlowIndicator,
-      tissueConsistency: temporalConsistency.consistency,
-      validationDetails: {
-        skinColorValid: hemoglobinAnalysis.skinColorValid,
-        perfusionValid: perfusionAnalysis.perfusionValid,
-        hemodynamicValid: hemodynamicScore > 0.6,
-        spatialConsistency: spatialValidation.spatialValid,
-        temporalConsistency: temporalConsistency.temporalValid
-      }
-    };
-  }
-  
-  /**
-   * VALIDACIÓN FISIOLÓGICA OPTIMIZADA - MÁXIMA SENSIBILIDAD PARA DEDOS REALES
-   * Criterios basados en física de absorción de hemoglobina + alta sensibilidad
-   */
-  private isPhysiologicallyValid(r: number, g: number, b: number): boolean {
-    // 1. INTENSIDAD TOTAL - Dedo cubriendo cámara con flash
-    const total = r + g + b;
-    if (total < 80 || total > 765) return false; // Rango muy amplio
-    
-    // 2. ROJO DEBE SER SIGNIFICATIVO (no necesariamente dominante al inicio)
-    if (r < 40) return false; // Mínimo muy bajo para captar cualquier dedo
-    
-    // 3. RATIO R/G AMPLIO - Tejido humano variable: 1.0-4.0
-    const rgRatio = r / (g + 1);
-    if (rgRatio < 1.0 || rgRatio > 4.0) return false;
-    
-    // 4. RATIO R/B AMPLIO - Rojo superior a azul en dedo
-    const rbRatio = r / (b + 1);
-    if (rbRatio < 1.2 || rbRatio > 10.0) return false;
-    
-    // 5. PATRÓN BÁSICO: R >= G (dedo humano real puede tener R casi igual a G)
-    if (r < g * 0.95) return false;
-    
-    // 6. DIFERENCIA MÍNIMA R-G (indica perfusión real) - muy permisivo
-    const rgDiff = r - g;
-    if (rgDiff < -10) return false; // Permite que G sea ligeramente mayor
-    
-    // 7. AZUL LIMITADO - Dedo absorbe azul (más permisivo)
-    if (b > g * 1.1) return false;
-    if (b > r * 0.7) return false;
-    
-    // 8. PROPORCIÓN ROJA DEL TOTAL - Dedo humano: 30-75%
-    const redProportion = r / total;
-    if (redProportion < 0.30 || redProportion > 0.75) return false;
-    
-    // 9. COHERENCIA DE TEJIDO VIVO (rangos muy amplios)
-    const greenProportion = g / total;
-    const blueProportion = b / total;
-    if (greenProportion < 0.12 || greenProportion > 0.50) return false;
-    if (blueProportion < 0.02 || blueProportion > 0.35) return false;
-    
-    // 10. VERIFICACIÓN DE SATURACIÓN FLEXIBLE
-    const maxChannel = Math.max(r, g, b);
-    const minChannel = Math.min(r, g, b);
-    const saturation = (maxChannel - minChannel) / (maxChannel + 1);
-    if (saturation < 0.08 || saturation > 0.90) return false;
-    
-    return true;
-  }
-  
-  /**
-   * ANÁLISIS ESPECTRAL DE HEMOGLOBINA - Cálculos reales de absorción
-   */
-  private analyzeHemoglobinSpectrum(r: number, g: number, b: number): {
-    biophysicalScore: number;
-    opticalCoherence: number;
-    skinColorValid: boolean;
-  } {
-    const total = r + g + b + 1e-10;
-    
-    // Coeficientes de absorción específica de hemoglobina humana
-    const hbAbsorptionR = 0.32; // Absorción alta en rojo
-    const hbAbsorptionG = 0.85; // Absorción muy alta en verde
-    const hbAbsorptionB = 0.15; // Absorción baja en azul
-    
-    // Análisis de absorción esperada vs observada
-    const expectedR = r * (1 - hbAbsorptionR);
-    const expectedG = g * (1 - hbAbsorptionG);
-    const expectedB = b * (1 - hbAbsorptionB);
-    
-    // Score biofísico basado en patrón de absorción
-    const absorptionPattern = (expectedR + expectedB) / (expectedG + 1);
-    const biophysicalScore = Math.min(1.0, Math.max(0, absorptionPattern / 2.5));
-    
-    // Coherencia óptica - patrones característicos de tejido vivo
-    // Dedo real con flash: rojo domina 40-60% del total
-    const redDominance = r / total;
-    const greenDominance = g / total;
-    const blueDominance = b / total;
-    
-    // Patrón esperado: R > G > B, con R entre 40-60%, G entre 25-40%, B entre 10-25%
-    const opticalCoherence = (
-      redDominance >= 0.35 && redDominance <= 0.65 &&
-      greenDominance >= 0.20 && greenDominance <= 0.45 &&
-      blueDominance >= 0.05 && blueDominance <= 0.30
-    ) ? 1.0 : Math.max(0, 1 - Math.abs(redDominance - 0.50) * 2);
-    
-    // Validación de color de piel humana - MÁS ESTRICTA
-    const skinColorValid = 
-      redDominance >= 0.38 && redDominance <= 0.62 && 
-      biophysicalScore >= 0.35 && 
-      opticalCoherence >= 0.5 &&
-      r > g && g >= b * 0.7; // Patrón R > G >= B
-    
-    return {
-      biophysicalScore,
-      opticalCoherence,
-      skinColorValid
-    };
-  }
-  
-  /**
-   * ANÁLISIS DE PERFUSIÓN SANGUÍNEA - Solo medición real PPG
-   */
-  private analyzePerfusion(r: number, g: number): {
-    perfusionIndex: number;
-    bloodFlowIndicator: number;
-    perfusionValid: boolean;
-  } {
-    // Cálculo AC/DC real para índice de perfusión
-    const acComponent = this.calculateACComponent(r);
-    const dcComponent = r + 1e-10;
-    const perfusionIndex = (acComponent / dcComponent) * 100;
-    
-    // Indicador de flujo sanguíneo basado en pulsatilidad
-    const pulsatility = this.calculatePulsatility();
-    const bloodFlowIndicator = Math.min(1.0, pulsatility * perfusionIndex / 2);
-    
-    // Validación de perfusión - MUY PERMISIVA para máxima detección
-    // Índice de perfusión normal dedo humano: 0.05-20%
-    const perfusionValid = perfusionIndex >= 0.05 && perfusionIndex <= 20.0 && 
-                          bloodFlowIndicator >= 0.02 &&
-                          pulsatility >= 0.02; // Pulsación mínima muy baja
-    
-    return {
-      perfusionIndex: Math.max(0, perfusionIndex),
-      bloodFlowIndicator: Math.max(0, bloodFlowIndicator),
-      perfusionValid
-    };
-  }
-  
-  /**
-   * COMPONENTE AC REAL - Sin simulaciones
-   */
-  private calculateACComponent(currentValue: number): number {
-    if (this.temporalAnalysisBuffer.length < 10) return 0.1;
-    
-    const recentValues = this.temporalAnalysisBuffer
-      .slice(-10)
-      .map(item => item.redValue);
-    
-    const max = Math.max(...recentValues);
-    const min = Math.min(...recentValues);
-    
-    return Math.max(0.01, max - min);
-  }
-  
-  /**
-   * PULSATILIDAD REAL - Medición directa
-   */
-  private calculatePulsatility(): number {
-    if (this.temporalAnalysisBuffer.length < 20) return 0.1;
-    
-    const values = this.temporalAnalysisBuffer
-      .slice(-20)
-      .map(item => item.redValue);
-    
-    let peakCount = 0;
-    for (let i = 2; i < values.length - 2; i++) {
-      if (values[i] > values[i-1] && values[i] > values[i+1] &&
-          values[i] > values[i-2] && values[i] > values[i+2]) {
-        const prominence = Math.min(values[i] - values[i-1], values[i] - values[i+1]);
-        if (prominence > 2.0) peakCount++;
-      }
-    }
-    
-    return Math.min(1.0, peakCount / 3.0);
-  }
-  
-  /**
-   * ANÁLISIS TEMPORAL DE CONSISTENCIA
-   */
-  private analyzeTemporalConsistency(
-    r: number, g: number, b: number, perfusionIndex: number
-  ): { consistency: number; temporalValid: boolean } {
-    
-    // Actualizar buffer temporal
-    this.temporalAnalysisBuffer.push({
-      timestamp: Date.now(),
-      redValue: r,
-      greenValue: g,
-      blueValue: b,
-      perfusionIndex
-    });
-    
-    if (this.temporalAnalysisBuffer.length > this.TEMPORAL_BUFFER_SIZE) {
-      this.temporalAnalysisBuffer.shift();
-    }
-    
-    if (this.temporalAnalysisBuffer.length < 15) {
-      return { consistency: 0.5, temporalValid: false };
-    }
-    
-    // Análisis de consistencia temporal
-    const recent = this.temporalAnalysisBuffer.slice(-15);
-    const redVariance = this.calculateVariance(recent.map(item => item.redValue));
-    const perfusionVariance = this.calculateVariance(recent.map(item => item.perfusionIndex));
-    
-    // Consistencia debe ser estable pero con variación fisiológica mínima
-    const consistency = Math.max(0, 1 - (redVariance / 500) - (perfusionVariance / 5.0));
-    // Variación mínima necesaria indica pulsación real, no imagen estática
-    const temporalValid = consistency >= 0.30 && redVariance >= 5 && redVariance <= 1200;
-    
-    return { consistency, temporalValid };
-  }
-  
-  /**
-   * VALIDACIÓN ESPACIAL
-   */
-  private validateSpatialCharacteristics(
-    textureScore: number, width: number, height: number
-  ): { spatialValid: boolean } {
-    
-    // Textura debe indicar tejido orgánico, no superficie lisa
-    const textureValid = textureScore >= 0.3 && textureScore <= 0.9;
-    
-    // Área mínima para dedo humano adulto
-    const area = width * height;
-    // Ajustado para soportar entradas 320x240 provenientes del canvas (76,800 px)
-    const areaValid = area >= 70000;
-    
-    return {
-      spatialValid: textureValid && areaValid
-    };
-  }
-  
-  /**
-   * ANÁLISIS HEMODINÁMICO - Patrones cardiovasculares
-   */
-  private analyzeHemodynamicPatterns(): number {
-    if (this.temporalAnalysisBuffer.length < 30) return 0.3;
-    
-    const values = this.temporalAnalysisBuffer.slice(-30).map(item => item.redValue);
-    
-    // Buscar patrones de ondas de pulso característicos
-    const cycles = this.detectCardiacCycles(values);
-    if (cycles.length < 2) return 0.2;
-    
-    // Análisis de variabilidad de frecuencia cardíaca (HRV)
-    const intervals = cycles.map((cycle, i) => 
-      i > 0 ? cycle.timestamp - cycles[i-1].timestamp : 0
-    ).filter(interval => interval > 0);
-    
-    if (intervals.length < 2) return 0.3;
-    
-    const meanInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const hrv = Math.sqrt(intervals.reduce((sum, interval) => 
-      sum + Math.pow(interval - meanInterval, 2), 0) / intervals.length
-    );
-    
-    // HRV normal indica sistema cardiovascular humano funcional
-    const normalizedHRV = Math.min(1.0, hrv / (meanInterval * 0.1));
-    
-    return Math.min(1.0, normalizedHRV);
-  }
-  
-  /**
-   * DETECCIÓN DE CICLOS CARDÍACOS REALES
-   */
-  private detectCardiacCycles(values: number[]): Array<{timestamp: number, amplitude: number}> {
-    const cycles: Array<{timestamp: number, amplitude: number}> = [];
-    
-    for (let i = 3; i < values.length - 3; i++) {
-      if (values[i] > values[i-1] && values[i] > values[i+1] &&
-          values[i] > values[i-2] && values[i] > values[i+2] &&
-          values[i] > values[i-3] && values[i] > values[i+3]) {
-        
-        const prominence = Math.min(
-          values[i] - Math.min(values[i-1], values[i+1]),
-          values[i] - Math.min(values[i-2], values[i+2])
-        );
-        
-        if (prominence > 3.0) {
-          cycles.push({
-            timestamp: this.temporalAnalysisBuffer[this.temporalAnalysisBuffer.length - values.length + i]?.timestamp || Date.now(),
-            amplitude: values[i]
-          });
-        }
-      }
-    }
-    
-    return cycles;
-  }
-  
-  /**
-   * CÁLCULO DE CONFIANZA GENERAL
-   */
-  private calculateOverallConfidence(
-    hemoglobin: any,
-    perfusion: any,
-    temporal: any,
-    spatial: any,
-    hemodynamic: number
-  ): number {
-    
-    // Incluir coherencia espacial explícitamente en el score final
-    const weights = {
-      biophysical: 0.22,
-      optical: 0.18,
-      perfusion: 0.25,
-      temporal: 0.15,
-      spatial: 0.10,
-      hemodynamic: 0.10
-    };
-    
-    const spatialScore = spatial?.spatialValid ? 1.0 : 0.0;
-    
-    const weightedScore = 
-      hemoglobin.biophysicalScore * weights.biophysical +
-      hemoglobin.opticalCoherence * weights.optical +
-      perfusion.bloodFlowIndicator * weights.perfusion +
-      temporal.consistency * weights.temporal +
-      spatialScore * weights.spatial +
-      hemodynamic * weights.hemodynamic;
-    
-    // Bonificación por detecciones consecutivas válidas
-    const consecutiveBonus = Math.min(0.1, this.consecutiveHumanDetections * 0.02);
-    
-    return Math.min(1.0, Math.max(0, weightedScore + consecutiveBonus));
-  }
-  
-  /**
-   * DECISIÓN FINAL DE DETECCIÓN HUMANA - ALTA SENSIBILIDAD
-   */
-  private makeHumanFingerDecision(confidence: number): boolean {
-    // Umbral base MÁS BAJO para mejor detección
-    let threshold = 0.30;
-    
-    // Histéresis: si ya detectamos dedo estable, ser muy permisivo
-    if (Date.now() - this.lastValidHumanTime < 8000 && this.consecutiveHumanDetections >= 5) {
-      threshold = 0.22;
-    }
-    
-    // Bonificación agresiva con detecciones consecutivas
-    if (this.consecutiveHumanDetections >= 10) {
-      threshold = 0.18;
-    } else if (this.consecutiveHumanDetections >= 5) {
-      threshold = 0.25;
-    }
-    
-    // Penalización solo por fallas MUY consecutivas
-    if (this.consecutiveNonHumanDetections > 25) {
-      threshold = 0.45;
-    } else if (this.consecutiveNonHumanDetections > 15) {
-      threshold = 0.38;
-    }
-    
-    return confidence >= threshold;
-  }
-  
-  /**
-   * ACTUALIZAR LÍNEAS BASE HUMANAS
-   */
-  private updateHumanBaselines(r: number, g: number, b: number, perfusion: number): void {
-    const smoothing = 0.1;
-    
-    this.skinBaselineR = this.skinBaselineR * (1 - smoothing) + r * smoothing;
-    this.skinBaselineG = this.skinBaselineG * (1 - smoothing) + g * smoothing;
-    this.skinBaselineB = this.skinBaselineB * (1 - smoothing) + b * smoothing;
-    this.perfusionBaseline = this.perfusionBaseline * (1 - smoothing) + perfusion * smoothing;
-  }
-  
-  /**
-   * UTILIDADES MATEMÁTICAS
-   */
-  private calculateVariance(values: number[]): number {
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    return values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-  }
-  
-  private createNegativeResult(reason: string): HumanFingerValidation {
-    return {
-      isHumanFinger: false,
+      isFingerDetected: this.lastDetectionState,
       confidence: 0,
-      biophysicalScore: 0,
-      opticalCoherence: 0,
-      bloodFlowIndicator: 0,
-      tissueConsistency: 0,
-      validationDetails: {
-        skinColorValid: false,
-        perfusionValid: false,
-        hemodynamicValid: false,
-        spatialConsistency: false,
-        temporalConsistency: false
+      quality: 0,
+      diagnostics: {
+        redValue,
+        greenValue,
+        blueValue,
+        redRatio: rgRatio,
+        isRedDominant: redValue > greenValue && redValue > blueValue,
+        isProperlyIlluminated: redValue >= this.CONFIG.IDEAL_RED_MIN,
+        message
       }
     };
   }
-  
+
   /**
-   * RESET DEL SISTEMA
+   * Resetear estado del detector
    */
   reset(): void {
-    this.temporalAnalysisBuffer = [];
-    this.consecutiveHumanDetections = 0;
-    this.consecutiveNonHumanDetections = 0;
-    this.lastValidHumanTime = 0;
-    this.skinBaselineR = 0;
-    this.skinBaselineG = 0;
-    this.skinBaselineB = 0;
-    this.perfusionBaseline = 0;
-    
-    console.log("🔄 HumanFingerDetector: Sistema reiniciado");
+    this.consecutiveDetections = 0;
+    this.consecutiveNonDetections = 0;
+    this.lastDetectionState = false;
+    this.redHistory = [];
+    console.log("🔄 HumanFingerDetector: Reset completo");
+  }
+
+  /**
+   * Obtener estado actual de detección
+   */
+  isCurrentlyDetected(): boolean {
+    return this.lastDetectionState;
   }
 }
