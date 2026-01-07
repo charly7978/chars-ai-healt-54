@@ -45,15 +45,15 @@ const CameraView: React.FC<CameraViewProps> = ({
     startedRef.current = true;
 
     try {
-      console.log('📷 Iniciando cámara trasera...');
+      console.log('📷 Iniciando cámara trasera 720p@60fps...');
       
-      // PASO 1: Obtener cámara trasera con constraints simples
+      // PASO 1: Obtener cámara trasera con 720p y 60fps
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
           facingMode: { exact: "environment" },
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 },
           frameRate: { ideal: 60, min: 30 }
         }
       }).catch(async () => {
@@ -63,9 +63,9 @@ const CameraView: React.FC<CameraViewProps> = ({
           audio: false,
           video: {
             facingMode: "environment",
-            width: { ideal: 480 },
-            height: { ideal: 360 },
-            frameRate: { ideal: 30 }
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 60, min: 30 }
           }
         });
       });
