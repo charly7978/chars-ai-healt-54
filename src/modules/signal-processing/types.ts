@@ -43,9 +43,5 @@ export interface FrameData {
   rToGRatio: number;
   rToBRatio: number;
 }
-
-export interface DetectionResult {
-  isFingerDetected: boolean;
-  quality: number;
-  detectorDetails: Record<string, number | string>;
-}
+// NOTA: DetectionResult eliminado - ya no usamos detección de dedo
+// La calidad de señal viene de SignalQualityAnalyzer
