@@ -51,6 +51,12 @@ const Index = () => {
   const sessionIdRef = useRef<string>("");
   const initializationLock = useRef<boolean>(false);
   
+  // CRÍTICO: Referencias para evitar múltiples loops de requestAnimationFrame
+  const frameLoopIdRef = useRef<number | null>(null);
+  const frameLoopActiveRef = useRef<boolean>(false);
+  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const tempCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  
   // HOOKS ÚNICOS - UNA SOLA INSTANCIA GARANTIZADA
   const { 
     startProcessing, 
@@ -98,6 +104,12 @@ const Index = () => {
     
     return () => {
       console.log(`🚀 DESTRUCCIÓN CONTROLADA: ${sessionIdRef.current}`);
+      // CRÍTICO: Limpiar loop de frames al desmontar
+      frameLoopActiveRef.current = false;
+      if (frameLoopIdRef.current) {
+        cancelAnimationFrame(frameLoopIdRef.current);
+        frameLoopIdRef.current = null;
+      }
       initializationLock.current = false;
     };
   }, []);
@@ -265,6 +277,13 @@ const Index = () => {
     systemState.current = 'STOPPING';
     console.log(`🏁 FINALIZACIÓN ÚNICA - ${sessionIdRef.current}`);
     
+    // CRÍTICO: Detener loop de frames PRIMERO
+    frameLoopActiveRef.current = false;
+    if (frameLoopIdRef.current) {
+      cancelAnimationFrame(frameLoopIdRef.current);
+      frameLoopIdRef.current = null;
+    }
+    
     if (isCalibrating) {
       forceCalibrationCompletion();
     }
@@ -297,6 +316,13 @@ const Index = () => {
     systemState.current = 'STOPPING';
     console.log(`🔄 RESET ÚNICO TOTAL - ${sessionIdRef.current}`);
     
+    // CRÍTICO: Detener loop de frames PRIMERO
+    frameLoopActiveRef.current = false;
+    if (frameLoopIdRef.current) {
+      cancelAnimationFrame(frameLoopIdRef.current);
+      frameLoopIdRef.current = null;
+    }
+    
     setIsMonitoring(false);
     setIsCameraOn(false);
     setShowResults(false);
@@ -310,6 +336,7 @@ const Index = () => {
     
     fullResetVitalSigns();
     resetHeartBeat();
+    resetOptimizer();
     
     // RESET TOTAL DE ESTADOS
     setElapsedTime(0);
@@ -338,37 +365,60 @@ const Index = () => {
     console.log(`✅ RESET TOTAL COMPLETADO - ${sessionIdRef.current}`);
   };
 
-  // MANEJO ÚNICO DEL STREAM
+  // MANEJO ÚNICO DEL STREAM - CON CONTROL DE LOOP ÚNICO
   const handleStreamReady = (stream: MediaStream) => {
     // Guardar stream para previsualización
     setCameraStream(stream);
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
+    // CRÍTICO: Si ya hay un loop activo, NO crear otro
+    if (frameLoopActiveRef.current) {
+      console.log(`⚠️ Loop ya activo, ignorando nuevo stream - ${sessionIdRef.current}`);
+      return;
+    }
+    
     console.log(`📹 Stream ÚNICO listo - ${sessionIdRef.current}`);
     
     const videoTrack = stream.getVideoTracks()[0];
     
     // LINTERNA ÚNICA
-    if (videoTrack.getCapabilities()?.torch) {
+    if (videoTrack?.getCapabilities?.()?.torch) {
       videoTrack.applyConstraints({
         advanced: [{ torch: true }]
       }).catch(err => console.error("Error linterna:", err));
     }
     
-    // PROCESAMIENTO ÚNICO DE FRAMES
-    const tempCanvas = document.createElement('canvas');
-    const tempCtx = tempCanvas.getContext('2d', {willReadFrequently: true});
-    if (!tempCtx) return;
+    // REUSAR CANVAS O CREAR UNO NUEVO (SOLO UNA VEZ)
+    if (!tempCanvasRef.current) {
+      tempCanvasRef.current = document.createElement('canvas');
+      tempCtxRef.current = tempCanvasRef.current.getContext('2d', {willReadFrequently: true});
+    }
     
-    let lastProcessTime = 0;
-    const targetFrameInterval = 1000/30; // 30 FPS EXACTOS
+    const tempCanvas = tempCanvasRef.current;
+    const tempCtx = tempCtxRef.current;
+    if (!tempCtx) return;
     
     const videoElement = document.querySelector('video') as HTMLVideoElement;
     if (!videoElement) return;
     
-    const processImage = async () => {
-      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) return;
+    let lastProcessTime = 0;
+    const targetFrameInterval = 1000/30; // 30 FPS EXACTOS
+    
+    // MARCAR LOOP COMO ACTIVO
+    frameLoopActiveRef.current = true;
+    
+    const processImage = () => {
+      // VERIFICACIÓN ESTRICTA: Si el loop fue desactivado, terminar
+      if (!frameLoopActiveRef.current) {
+        console.log(`🛑 Loop detenido correctamente - ${sessionIdRef.current}`);
+        return;
+      }
+      
+      if (!isMonitoring || systemState.current !== 'ACTIVE' || !videoElement) {
+        frameLoopActiveRef.current = false;
+        return;
+      }
       
       const now = Date.now();
       const timeSinceLastProcess = now - lastProcessTime;
@@ -398,12 +448,16 @@ const Index = () => {
         }
       }
       
-      if (isMonitoring && systemState.current === 'ACTIVE') {
-        requestAnimationFrame(processImage);
+      // CONTINUAR SOLO SI EL LOOP SIGUE ACTIVO
+      if (frameLoopActiveRef.current && isMonitoring && systemState.current === 'ACTIVE') {
+        frameLoopIdRef.current = requestAnimationFrame(processImage);
+      } else {
+        frameLoopActiveRef.current = false;
       }
     };
 
-    processImage();
+    // INICIAR LOOP
+    frameLoopIdRef.current = requestAnimationFrame(processImage);
   };
 
   // PROCESAMIENTO ÚNICO DE SEÑALES
