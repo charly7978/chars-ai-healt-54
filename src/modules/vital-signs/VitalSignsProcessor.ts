@@ -59,9 +59,9 @@ export class VitalSignsProcessor {
     lastArrhythmiaData: null as { timestamp: number; rmssd: number; rrVariation: number; } | null
   };
   
-  // HISTORIAL DE SEÑAL
+  // HISTORIAL DE SEÑAL - REDUCIDO
   private signalHistory: number[] = [];
-  private readonly HISTORY_SIZE = 60;
+  private readonly HISTORY_SIZE = 45; // Reducido de 60 - suficiente para análisis
   
   // Baseline para calibración
   private baselineDC: number = 0;
@@ -756,7 +756,8 @@ export class VitalSignsProcessor {
                 type === 'glucose' ? this.measurementHistory.glucoseValues :
                 this.measurementHistory.pressureValues;
     arr.push(value);
-    if (arr.length > 20) arr.shift();
+    // REDUCIDO: máximo 15 valores (era 20)
+    while (arr.length > 15) arr.shift();
   }
 
   // *** SIN CLAMPS - VALORES CRUDOS REALES ***

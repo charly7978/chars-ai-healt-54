@@ -60,17 +60,17 @@ export class SignalQualityAnalyzer {
     GOOD_PERIODICITY: 0.3,      // Reducido de 0.5 a 0.3
   };
   
-  // Buffers para análisis - REDUCIDOS para respuesta más rápida
-  private readonly BUFFER_SIZE = 90; // ~3 segundos a 30fps (era 150)
+  // Buffers para análisis - OPTIMIZADOS para menos memoria
+  private readonly BUFFER_SIZE = 60; // ~2 segundos a 30fps (suficiente para análisis)
   private rawBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   private dcBuffer: number[] = [];
-  private timestampBuffer: number[] = [];
+  // ELIMINADO: timestampBuffer - no se usaba realmente
   
-  // NUEVO: Buffers para detección de dedo
+  // Buffers para detección de dedo - REDUCIDOS
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
-  private periodicityHistory: number[] = [];
+  // ELIMINADO: periodicityHistory - el valor actual es suficiente
   
   // Estado
   private lastQuality: SignalQualityResult | null = null;
@@ -95,24 +95,23 @@ export class SignalQualityAnalyzer {
   ): SignalQualityResult {
     this.frameCount++;
     
-    // Agregar a buffers
+    // Agregar a buffers con límite de tamaño eficiente
     this.rawBuffer.push(rawValue);
     this.filteredBuffer.push(filteredValue);
-    this.timestampBuffer.push(timestamp);
     
-    // *** CRÍTICO: Guardar datos RGB para detección de dedo ***
+    // Mantener tamaño de buffer - usar pop del inicio solo cuando necesario
+    while (this.rawBuffer.length > this.BUFFER_SIZE) {
+      this.rawBuffer.shift();
+      this.filteredBuffer.shift();
+    }
+    
+    // Guardar datos RGB para detección de dedo (buffer pequeño)
     if (rgbData) {
       this.redBuffer.push(rgbData.red);
       this.greenBuffer.push(rgbData.green);
-      if (this.redBuffer.length > 30) this.redBuffer.shift();
-      if (this.greenBuffer.length > 30) this.greenBuffer.shift();
-    }
-    
-    // Mantener tamaño de buffer
-    if (this.rawBuffer.length > this.BUFFER_SIZE) {
-      this.rawBuffer.shift();
-      this.filteredBuffer.shift();
-      this.timestampBuffer.shift();
+      // Mantener solo últimos 20 valores (suficiente para ratio)
+      while (this.redBuffer.length > 20) this.redBuffer.shift();
+      while (this.greenBuffer.length > 20) this.greenBuffer.shift();
     }
     
     // Calcular DC (línea base) con media móvil
@@ -136,10 +135,6 @@ export class SignalQualityAnalyzer {
     
     // *** NUEVA DETECCIÓN DE DEDO - FÍSICA REAL ***
     const fingerConfidence = this.calculateFingerConfidenceReal(rgbData, periodicity, acAmplitude, dcLevel);
-    
-    // Actualizar historial de periodicidad
-    this.periodicityHistory.push(periodicity);
-    if (this.periodicityHistory.length > 30) this.periodicityHistory.shift();
     
     // === VALIDACIÓN DE SEÑAL - ESTRICTA PARA DEDO ===
     let isValid = true;
@@ -180,10 +175,9 @@ export class SignalQualityAnalyzer {
     
     this.lastQuality = result;
     
-    // Log cada 3 segundos con info de dedo
-    if (this.frameCount % 90 === 0) {
-      const rgInfo = rgbData ? `R=${rgbData.red.toFixed(0)} G=${rgbData.green.toFixed(0)} B=${rgbData.blue.toFixed(0)}` : 'no RGB';
-      console.log(`📊 SQI: q=${quality}%, finger=${(fingerConfidence*100).toFixed(0)}%, valid=${isValid}${invalidReason ? ` (${invalidReason})` : ''} | ${rgInfo}`);
+    // Log solo cada 5 segundos para reducir overhead (era 3s)
+    if (this.frameCount % 150 === 0) {
+      console.log(`📊 SQI: q=${quality}%, finger=${(fingerConfidence*100).toFixed(0)}%, valid=${isValid}`);
     }
     
     return result;
@@ -246,9 +240,9 @@ export class SignalQualityAnalyzer {
    * Busca patrón repetitivo en rango de pulso cardíaco (40-180 BPM)
    */
   private calculatePeriodicity(): number {
-    if (this.filteredBuffer.length < 90) return 0;
+    if (this.filteredBuffer.length < 45) return 0; // Reducido de 90
     
-    const signal = this.filteredBuffer.slice(-90);
+    const signal = this.filteredBuffer.slice(-45); // Suficiente para 2 latidos
     const n = signal.length;
     
     // Normalizar señal
@@ -381,10 +375,8 @@ export class SignalQualityAnalyzer {
       confidence = 0.1; // Luz directa saturando sensor
     }
     
-    // Log para debug (cada 3 segundos)
-    if (this.frameCount % 90 === 0) {
-      console.log(`🖐️ Dedo: R=${red.toFixed(0)} G=${green.toFixed(2)} R/G=${rgRatio.toFixed(1)} puls=${(pulsatility*100).toFixed(2)}% → conf=${(confidence*100).toFixed(0)}%`);
-    }
+    // Log eliminado para reducir overhead
+    // Solo el log principal en analyze() cada 5 segundos
     
     return Math.max(0, Math.min(1, confidence));
   }
@@ -468,10 +460,8 @@ export class SignalQualityAnalyzer {
     this.rawBuffer = [];
     this.filteredBuffer = [];
     this.dcBuffer = [];
-    this.timestampBuffer = [];
     this.redBuffer = [];
     this.greenBuffer = [];
-    this.periodicityHistory = [];
     this.lastQuality = null;
     this.frameCount = 0;
   }

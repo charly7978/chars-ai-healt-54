@@ -66,9 +66,16 @@ export class HeartBeatProcessor {
     this.setupAudioUnlock();
   }
 
+  // Guardamos referencia para poder remover listeners
+  private unlockHandler: (() => Promise<void>) | null = null;
+  
   private setupAudioUnlock() {
-    const unlock = async () => {
-      if (this.audioUnlocked) return;
+    this.unlockHandler = async () => {
+      if (this.audioUnlocked) {
+        // Ya desbloqueado - remover listeners para liberar memoria
+        this.removeAudioListeners();
+        return;
+      }
       
       try {
         if (!this.audioContext) {
@@ -90,6 +97,9 @@ export class HeartBeatProcessor {
         
         this.audioUnlocked = true;
         this.audioInitialized = true;
+        
+        // CRÍTICO: Remover listeners después de desbloquear
+        this.removeAudioListeners();
         console.log('🔊 Audio desbloqueado');
       } catch (e) {
         console.error('❌ Error desbloqueando audio:', e);
@@ -97,8 +107,16 @@ export class HeartBeatProcessor {
     };
 
     ['touchstart', 'touchend', 'click', 'pointerdown'].forEach(event => {
-      document.addEventListener(event, unlock, { once: false, passive: true });
+      document.addEventListener(event, this.unlockHandler!, { passive: true });
     });
+  }
+  
+  private removeAudioListeners(): void {
+    if (!this.unlockHandler) return;
+    ['touchstart', 'touchend', 'click', 'pointerdown'].forEach(event => {
+      document.removeEventListener(event, this.unlockHandler!);
+    });
+    this.unlockHandler = null;
   }
 
   private async initAudio() {
@@ -253,9 +271,9 @@ export class HeartBeatProcessor {
       this.playHeartSound();
     }
     
-    // Log cada 3 segundos
-    if (this.frameCount % 90 === 0) {
-      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.validPeakCount}, estable=${isStable}`);
+    // Log solo cada 5 segundos para reducir overhead (era 3s)
+    if (this.frameCount % 150 === 0) {
+      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.validPeakCount}`);
     }
     
     return {
@@ -444,6 +462,9 @@ export class HeartBeatProcessor {
   }
 
   dispose(): void {
+    // CRÍTICO: Remover listeners de audio primero
+    this.removeAudioListeners();
+    
     if (this.audioContext) {
       this.audioContext.close();
       this.audioContext = null;
