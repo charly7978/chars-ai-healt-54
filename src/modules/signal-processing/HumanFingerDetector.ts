@@ -51,47 +51,43 @@ export class HumanFingerDetector {
   private detectedValleys: number[] = [];
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // UMBRALES ESTRICTOS PARA DETECCIÓN REAL DE DEDO HUMANO
-  // Basados en literatura científica de fotopletismografía
+  // UMBRALES PERMISIVOS PARA DETECCIÓN ROBUSTA DE DEDO HUMANO
+  // Prioriza ESTABILIDAD sobre estrictez
   // ═══════════════════════════════════════════════════════════════════════════
   private readonly CONFIG = {
     // === COLOR DE TEJIDO HUMANO CON FLASH LED ===
-    // La yema iluminada por flash produce: R>150, G~50-100, B~30-70
-    MIN_RED_VALUE: 120,             // Tejido bien iluminado
-    GOOD_RED_VALUE: 160,            // Muy buena señal
-    IDEAL_RED_VALUE: 200,           // Señal excelente
+    MIN_RED_VALUE: 80,              // MÁS PERMISIVO - acepta iluminación variable
+    GOOD_RED_VALUE: 140,            // Buena señal
+    IDEAL_RED_VALUE: 180,           // Señal excelente
     
-    // Rojo debe ser significativamente mayor que G y B
-    MIN_RED_GREEN_DIFF: 40,         // R debe superar G por al menos 40
-    MIN_RED_BLUE_DIFF: 60,          // R debe superar B por al menos 60
+    // Diferencias de color más permisivas
+    MIN_RED_GREEN_DIFF: 20,         // R debe superar G por al menos 20
+    MIN_RED_BLUE_DIFF: 30,          // R debe superar B por al menos 30
     
     // Proporciones de color (R debe dominar)
-    MIN_RED_PROPORTION: 0.45,       // Rojo mínimo 45% del total
-    MAX_GREEN_PROPORTION: 0.35,     // Verde máximo 35%
-    MAX_BLUE_PROPORTION: 0.25,      // Azul máximo 25%
+    MIN_RED_PROPORTION: 0.40,       // Rojo mínimo 40% del total
+    MAX_GREEN_PROPORTION: 0.40,     // Verde máximo 40%
+    MAX_BLUE_PROPORTION: 0.30,      // Azul máximo 30%
     
-    // === PULSATILIDAD - SEÑAL DE VIDA REAL ===
-    // El pulso cardíaco produce variación AC/DC de 0.5-5%
-    // El ruido de cámara es típicamente <0.2%
-    MIN_SAMPLES_FOR_ANALYSIS: 60,   // 2 segundos mínimo para análisis serio
+    // === PULSATILIDAD - MÁS PERMISIVA ===
+    MIN_SAMPLES_FOR_ANALYSIS: 30,   // 1 segundo para análisis inicial
     
-    MIN_PULSATILITY: 0.003,         // 0.3% mínimo - pulso débil pero real
-    GOOD_PULSATILITY: 0.010,        // 1.0% - buena señal
-    IDEAL_PULSATILITY: 0.020,       // 2.0% - señal excelente
-    MAX_PULSATILITY: 0.15,          // 15% máximo - tolera movimiento considerable
+    MIN_PULSATILITY: 0.0008,        // 0.08% - ULTRA sensible para captar pulso débil
+    GOOD_PULSATILITY: 0.005,        // 0.5% - buena señal
+    IDEAL_PULSATILITY: 0.015,       // 1.5% - señal excelente
+    MAX_PULSATILITY: 0.25,          // 25% máximo - tolera más movimiento
     
     // === RITMO CARDÍACO ===
-    MIN_HEART_RATE_BPM: 40,         // Bradicardia extrema
-    MAX_HEART_RATE_BPM: 200,        // Taquicardia extrema
-    MIN_PEAKS_FOR_RHYTHM: 3,        // Mínimo 3 picos para confirmar ritmo
+    MIN_HEART_RATE_BPM: 35,         // Más permisivo
+    MAX_HEART_RATE_BPM: 220,        // Más permisivo
+    MIN_PEAKS_FOR_RHYTHM: 2,        // Solo 2 picos para confirmar
     
     // === CONSISTENCIA DE INTERVALOS ===
-    // Los intervalos R-R deben ser relativamente consistentes
-    MAX_RR_VARIATION: 0.40,         // 40% de variación máxima entre intervalos
+    MAX_RR_VARIATION: 0.60,         // 60% de variación permitida
     
-    // === ESTABILIDAD TEMPORAL (HISTÉRESIS ASIMÉTRICA - MÁXIMA FIRMEZA) ===
-    FRAMES_TO_CONFIRM: 6,           // 6 frames para confirmar (~0.20s) - responsivo
-    FRAMES_TO_LOSE: 120,            // 120 frames para perder (~4s) - ULTRA ESTABLE
+    // === ESTABILIDAD TEMPORAL (MÁXIMA FIRMEZA) ===
+    FRAMES_TO_CONFIRM: 4,           // 4 frames para confirmar (~0.13s) - MÁS RÁPIDO
+    FRAMES_TO_LOSE: 180,            // 180 frames para perder (~6s) - ULTRA ESTABLE
   };
 
   constructor() {
@@ -377,18 +373,17 @@ export class HumanFingerDetector {
   private handleNonDetection(): void {
     this.consecutiveNonDetections++;
     
-    // CAMBIO CLAVE: Decrementar MUY gradualmente cuando ya está confirmado
-    // Si está confirmado (lastDetectionState=true), decrementar solo cada 4 frames
-    // Esto da MÁXIMA estabilidad una vez detectado
+    // MÁXIMA ESTABILIDAD: Una vez confirmado, casi NUNCA decrementar
+    // Solo decrementar muy gradualmente después de MUCHAS no-detecciones consecutivas
     if (this.consecutiveDetections > 0) {
       if (this.lastDetectionState) {
-        // Ya confirmado: decrementar solo cada 4 no-detecciones (más firme)
-        if (this.consecutiveNonDetections % 4 === 0) {
+        // Ya confirmado: decrementar solo cada 10 no-detecciones (ultra firme)
+        if (this.consecutiveNonDetections % 10 === 0) {
           this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
         }
       } else {
-        // Aún no confirmado: decrementar cada 2 (moderado)
-        if (this.consecutiveNonDetections % 2 === 0) {
+        // Aún no confirmado: decrementar cada 3 (más permisivo)
+        if (this.consecutiveNonDetections % 3 === 0) {
           this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
         }
       }
