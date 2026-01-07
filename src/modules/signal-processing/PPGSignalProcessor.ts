@@ -1,25 +1,21 @@
 import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
 import { FrameProcessor } from './FrameProcessor';
-import { HumanFingerDetector } from './HumanFingerDetector';
 
 /**
- * PROCESADOR PPG - VERSIÓN ANTI-FALSOS POSITIVOS
+ * PROCESADOR PPG - VERSIÓN DIRECTA SIN DETECCIÓN DE DEDO
  * 
- * CRÍTICO: Usa HumanFingerDetector para validar que la señal es de SANGRE HUMANA REAL
- * No procesa señales de ambiente, paredes, objetos, etc.
+ * PRINCIPIO: La señal entra → se procesa → sale
+ * Si la señal es de sangre real: valores coherentes
+ * Si la señal es de ambiente: valores erráticos/inválidos
  * 
- * PRINCIPIOS:
- * 1. Detección estricta de dedo con color + pulsatilidad + periodicidad
- * 2. Sin dedo confirmado = SIN señal procesada
- * 3. Los signos vitales SOLO se calculan con señal humana real
+ * NO hay "finger detection" - la calidad de la señal habla por sí misma
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   
   private bandpassFilter: BandpassFilter;
   private frameProcessor: FrameProcessor;
-  private fingerDetector: HumanFingerDetector;
   
   // Buffers
   private readonly BUFFER_SIZE = 120;
@@ -39,14 +35,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   ) {
     this.bandpassFilter = new BandpassFilter(30);
     this.frameProcessor = new FrameProcessor({ ROI_SIZE_FACTOR: 0.80 });
-    this.fingerDetector = new HumanFingerDetector();
   }
 
   async initialize(): Promise<void> {
     this.rawRedBuffer = [];
     this.filteredBuffer = [];
     this.bandpassFilter.reset();
-    this.fingerDetector.reset();
   }
 
   start(): void {
@@ -66,8 +60,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * PROCESAMIENTO DE FRAME - ANTI-FALSOS POSITIVOS
-   * Usa HumanFingerDetector para validar señal humana real
+   * PROCESAMIENTO DE FRAME - DIRECTO SIN VALIDACIÓN DE DEDO
+   * Procesa todo, la señal real producirá patrones coherentes
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
@@ -101,43 +95,35 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.filteredBuffer.shift();
       }
       
-      // ════════════════════════════════════════════════════════════════════
-      // 4. VALIDACIÓN ESTRICTA CON HumanFingerDetector
-      // ════════════════════════════════════════════════════════════════════
-      const fingerResult = this.fingerDetector.detectFinger(redValue, avgGreen, avgBlue);
-      
-      const hasConfirmedBlood = fingerResult.isFingerDetected;
-      const pulsatility = fingerResult.diagnostics.pulsatilityValue;
+      // 4. Calcular pulsatilidad desde la señal filtrada
+      const pulsatility = this.calculatePulsatility();
       this.lastRGB.pulsatility = pulsatility;
       
-      // 5. Actualizar estadísticas RGB para SpO2 (solo si hay dedo)
-      if (hasConfirmedBlood) {
-        this.updateRGBStats();
-      }
+      // 5. Actualizar estadísticas RGB para SpO2
+      this.updateRGBStats();
       
-      // 6. Calcular calidad de señal
-      const quality = hasConfirmedBlood ? fingerResult.quality : 0;
+      // 6. Calcular calidad basada solo en características de señal
+      const quality = this.calculateSignalQuality(pulsatility);
       
       // 7. Log de diagnóstico cada 3 segundos
       if (this.frameCount % 90 === 0) {
-        console.log(`🩸 ${fingerResult.diagnostics.message}`);
+        console.log(`📊 PPG: R=${redValue.toFixed(1)}, pulsatility=${(pulsatility * 100).toFixed(2)}%, quality=${quality}%`);
       }
       
-      // 8. Emitir señal procesada
+      // 8. Emitir señal procesada - SIEMPRE
       const roi = this.frameProcessor.detectROI(redValue, imageData);
       
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,
-        // CRÍTICO: Solo emitir señal filtrada si hay dedo CONFIRMADO
-        filteredValue: hasConfirmedBlood ? filtered : 0,
+        filteredValue: filtered,
         quality: quality,
-        fingerDetected: hasConfirmedBlood,
+        fingerDetected: true, // Siempre true, no hay validación
         roi: roi,
         perfusionIndex: pulsatility * 100,
         diagnostics: {
-          message: fingerResult.diagnostics.message,
-          hasPulsatility: fingerResult.diagnostics.hasPulsatility,
+          message: `Pulsatility: ${(pulsatility * 100).toFixed(2)}%`,
+          hasPulsatility: pulsatility > 0.002,
           pulsatilityValue: pulsatility
         }
       };
@@ -149,7 +135,53 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * Actualiza estadísticas RGB para cálculo de SpO2
+   * Calcula pulsatilidad de la señal (AC/DC ratio)
+   */
+  private calculatePulsatility(): number {
+    if (this.filteredBuffer.length < 30) return 0;
+    
+    const recent = this.filteredBuffer.slice(-30);
+    const rawRecent = this.rawRedBuffer.slice(-30);
+    
+    // AC = desviación estándar de señal filtrada
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const variance = recent.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / recent.length;
+    const ac = Math.sqrt(variance);
+    
+    // DC = media del canal rojo crudo
+    const dc = rawRecent.reduce((a, b) => a + b, 0) / rawRecent.length;
+    
+    if (dc === 0) return 0;
+    
+    return ac / dc;
+  }
+
+  /**
+   * Calcula calidad basada en características de señal
+   */
+  private calculateSignalQuality(pulsatility: number): number {
+    // Señal sin pulsatilidad = baja calidad
+    if (pulsatility < 0.001) return 5;
+    
+    // Rango típico de pulsatilidad PPG: 0.5% - 10%
+    let quality = 0;
+    
+    if (pulsatility >= 0.002 && pulsatility <= 0.15) {
+      // Buena pulsatilidad
+      quality = 50 + Math.min(50, pulsatility * 500);
+    } else if (pulsatility > 0.15) {
+      // Demasiada variación = ruido o movimiento
+      quality = Math.max(10, 80 - (pulsatility - 0.15) * 300);
+    } else {
+      // Muy baja pulsatilidad
+      quality = Math.min(30, pulsatility * 5000);
+    }
+    
+    return Math.round(Math.min(100, Math.max(0, quality)));
+  }
+
+  /**
+   * Actualiza estadísticas RGB para SpO2
    */
   private updateRGBStats(): void {
     this.rgbStats = this.frameProcessor.getRGBStats();
@@ -168,7 +200,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount = 0;
     this.bandpassFilter.reset();
     this.frameProcessor.reset();
-    this.fingerDetector.reset();
     this.rgbStats = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0 };
   }
 
