@@ -70,6 +70,8 @@ const Index = () => {
     processSignal: processHeartBeat, 
     setArrhythmiaState,
     reset: resetHeartBeat,
+    isCalibrating: isHeartBeatCalibrating,
+    calibrationProgress: heartBeatCalibrationProgress,
     debugInfo: heartDebugInfo
   } = useHeartBeatProcessor();
   
@@ -669,11 +671,31 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER MINIMALISTA - Solo tiempo restante */}
-          <div className="px-4 py-2 flex justify-center items-center bg-black/30">
+          {/* HEADER - Tiempo + Estado de calibración */}
+          <div className="px-4 py-2 flex justify-between items-center bg-black/30">
             <div className="text-white text-xl font-bold">
               {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
             </div>
+            
+            {/* Indicador de calibración */}
+            {isMonitoring && isHeartBeatCalibrating && (
+              <div className="flex items-center gap-2 bg-amber-500/20 px-3 py-1 rounded-full">
+                <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+                <span className="text-amber-300 text-sm font-medium">
+                  Calibrando {heartBeatCalibrationProgress}%
+                </span>
+              </div>
+            )}
+            
+            {/* Indicador de listo */}
+            {isMonitoring && !isHeartBeatCalibrating && (
+              <div className="flex items-center gap-2 bg-emerald-500/20 px-3 py-1 rounded-full">
+                <div className="w-2 h-2 bg-emerald-400 rounded-full" />
+                <span className="text-emerald-300 text-sm font-medium">
+                  Detectando
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="flex-1">
