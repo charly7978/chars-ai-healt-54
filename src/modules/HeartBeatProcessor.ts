@@ -4,24 +4,24 @@ export class HeartBeatProcessor {
   // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
   private readonly DEFAULT_SAMPLE_RATE = 60;
   private readonly DEFAULT_WINDOW_SIZE = 40;
-  private readonly DEFAULT_MIN_BPM = 35; // Aumentado para filtrar ruido
-  private readonly DEFAULT_MAX_BPM = 200; // Reducido para rango más realista
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.045; // Más sensible manteniendo precisión
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.6; // Leve relajación
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.007; // Un poco menos estricto
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 400; // Aumentado para evitar detecciones rápidas falsas
-  private readonly WARMUP_TIME_MS = 1500; // Aumentado para mejor estabilización
+  private readonly DEFAULT_MIN_BPM = 40;         // Rango fisiológico mínimo
+  private readonly DEFAULT_MAX_BPM = 180;        // Rango fisiológico máximo realista
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.03;  // MÁS SENSIBLE para captar señales reales
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.5;     // Confianza mínima razonable
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.004; // Más permisivo para pendientes suaves
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 333;   // ~180 BPM máximo (60000/180)
+  private readonly WARMUP_TIME_MS = 2000;            // 2s para estabilización adecuada
 
-  // Parámetros de filtrado MÁS CONSERVADORES
-  private readonly MEDIAN_FILTER_WINDOW = 3;
-  private readonly MOVING_AVERAGE_WINDOW = 5; // Aumentado para mejor filtrado de ruido
-  private readonly EMA_ALPHA = 0.4; // Reducido para más suavizado
-  private readonly BASELINE_FACTOR = 0.85; // Aumentado para seguimiento más estable
+  // Parámetros de filtrado OPTIMIZADOS PARA SEÑAL REAL
+  private readonly MEDIAN_FILTER_WINDOW = 5;       // Aumentado para mejor filtrado de ruido
+  private readonly MOVING_AVERAGE_WINDOW = 7;      // Mayor suavizado sin perder picos
+  private readonly EMA_ALPHA = 0.35;               // Suavizado más fuerte
+  private readonly BASELINE_FACTOR = 0.92;         // Seguimiento de baseline más estable
 
-  // Parámetros de beep más estrictos
-  private readonly BEEP_DURATION = 450; 
+  // Parámetros de beep OPTIMIZADOS
+  private readonly BEEP_DURATION = 400; 
   private readonly BEEP_VOLUME = 1.0;
-  private readonly MIN_BEEP_INTERVAL_MS = 700; // Aumentado para evitar beeps excesivos
+  private readonly MIN_BEEP_INTERVAL_MS = 350;     // Permitir hasta ~170 BPM
   private readonly VIBRATION_PATTERN = [40, 20, 60];
 
   // AUTO-RESET más agresivo para falsos positivos
@@ -34,13 +34,13 @@ export class HeartBeatProcessor {
   private adaptiveMinConfidence: number;
   private adaptiveDerivativeThreshold: number;
 
-  // Límites MÁS ESTRICTOS para parámetros adaptativos
-  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.08; // Permitir detección en señales más débiles
-  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.35; // Reducido
-  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.55; // Aumentado para mayor exigencia
-  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.85; // Reducido el máximo
-  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.06; // Más estricto
-  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.008; // Más estricto
+  // Límites ADAPTATIVOS para captar señales reales de PPG
+  private readonly MIN_ADAPTIVE_SIGNAL_THRESHOLD = 0.02;   // Muy sensible para señales débiles
+  private readonly MAX_ADAPTIVE_SIGNAL_THRESHOLD = 0.25;   // Límite superior razonable
+  private readonly MIN_ADAPTIVE_MIN_CONFIDENCE = 0.4;      // Confianza mínima permisiva
+  private readonly MAX_ADAPTIVE_MIN_CONFIDENCE = 0.75;     // No demasiado exigente
+  private readonly MIN_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.04;  // Rango de pendientes
+  private readonly MAX_ADAPTIVE_DERIVATIVE_THRESHOLD = -0.003; // Pendientes suaves permitidas
 
   // ────────── PARÁMETROS MÁS CONSERVADORES PARA PROCESAMIENTO ──────────
   private readonly SIGNAL_BOOST_FACTOR = 1.4; // Reducido para evitar amplificar ruido
@@ -77,15 +77,15 @@ export class HeartBeatProcessor {
   private peakCandidateValue: number = 0;
   private isArrhythmiaDetected: boolean = false;
   
-  // Variables para VALIDACIÓN MÁS ESTRICTA de picos
+  // Variables para VALIDACIÓN ROBUSTA de picos reales
   private peakValidationBuffer: number[] = [];
-  private readonly PEAK_VALIDATION_THRESHOLD = 0.5; // AUMENTADO para validación más estricta
-  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.5; // AUMENTADO
-  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.4; // AUMENTADO  
-  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.3; // AUMENTADO para filtrar picos pequeños
-  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.006; // Más estricto
-  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.9; // AUMENTADO para mayor estabilidad
-  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 7; // Aumentado para mejor confirmación
+  private readonly PEAK_VALIDATION_THRESHOLD = 0.35;      // Umbral moderado
+  private readonly MIN_PEAK_CONFIRMATION_QUALITY = 0.3;   // Calidad mínima permisiva
+  private readonly MIN_PEAK_CONFIRMATION_CONFIDENCE = 0.35; // Confianza mínima para confirmar
+  private readonly PEAK_AMPLITUDE_THRESHOLD = 0.15;       // Amplitud mínima reducida
+  private readonly DERIVATIVE_STEEPNESS_THRESHOLD = -0.003; // Pendiente suave permitida
+  private readonly PEAK_BUFFER_STABILITY_THRESHOLD = 0.7;  // Estabilidad moderada
+  private readonly PEAK_CONFIRMATION_BUFFER_SIZE = 5;      // Buffer más corto para respuesta rápida
   private lastSignalStrength: number = 0;
   private recentSignalStrengths: number[] = [];
   private readonly SIGNAL_STRENGTH_HISTORY = 30;
@@ -486,7 +486,8 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Detección de picos mejorada para señales con validación médica
+   * Detección de picos ROBUSTA para señales PPG reales
+   * Usa múltiples criterios para evitar falsos positivos/negativos
    */
   private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
@@ -498,23 +499,37 @@ export class HeartBeatProcessor {
       ? now - this.lastPeakTime
       : Number.MAX_VALUE;
 
+    // Respetar intervalo mínimo entre picos (evita dobles detecciones)
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
 
-    // Pico fisiológico: cruce de derivada de positivo a negativo
-    const isSlopeChangeToNegative = derivative < this.DERIVATIVE_STEEPNESS_THRESHOLD;
+    // CRITERIO 1: Cruce de derivada (pendiente cambia de positiva a negativa)
+    const isSlopeChangeToNegative = derivative < this.adaptiveDerivativeThreshold;
 
-    // Umbral de amplitud relativa respecto a baseline
+    // CRITERIO 2: Amplitud significativa sobre baseline
     const amplitude = Math.abs(normalizedValue);
     const amplitudeOk = amplitude > this.adaptiveSignalThreshold;
 
-    const isPeak = isSlopeChangeToNegative && amplitudeOk;
+    // CRITERIO 3: Valor positivo (pico debe estar sobre baseline)
+    const isPositivePeak = normalizedValue > 0;
 
-    // Confianza basada en amplitud y pendiente
-    const slopeScore = Math.min(1, Math.abs(derivative) / Math.abs(this.DERIVATIVE_STEEPNESS_THRESHOLD * 4));
-    const ampScore = Math.min(1, amplitude / (this.adaptiveSignalThreshold * 3));
-    const confidence = Math.max(0, Math.min(1, 0.55 * ampScore + 0.45 * slopeScore));
+    // CRITERIO 4: Contexto temporal - verificar que hubo subida previa
+    const recentValues = this.signalBuffer.slice(-5);
+    const hadRisingPhase = recentValues.length >= 3 && 
+      recentValues[recentValues.length - 2] > recentValues[recentValues.length - 3];
+
+    // Combinar criterios: todos deben cumplirse para pico válido
+    const isPeak = isSlopeChangeToNegative && amplitudeOk && isPositivePeak && hadRisingPhase;
+
+    // Calcular confianza basada en múltiples factores
+    const slopeScore = Math.min(1, Math.abs(derivative) / (Math.abs(this.adaptiveDerivativeThreshold) * 3));
+    const ampScore = Math.min(1, amplitude / (this.adaptiveSignalThreshold * 2.5));
+    const risingScore = hadRisingPhase ? 1 : 0.3;
+    
+    const confidence = Math.max(0, Math.min(1, 
+      0.4 * ampScore + 0.35 * slopeScore + 0.25 * risingScore
+    ));
 
     return { isPeak, confidence, rawDerivative: derivative };
   }
@@ -539,15 +554,29 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Validación de picos basada estrictamente en criterios médicos
+   * Validación de picos con criterios fisiológicos reales
    */
   private validatePeak(peakValue: number, confidence: number): boolean {
-    // Un pico es válido si tiene suficiente confianza y la calidad de la señal es alta.
-    // Esto asegura que solo los picos robustos y fisiológicamente plausibles sean considerados.
-    const isHighConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
-    const isGoodSignalQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY;
+    // CRITERIO 1: Confianza mínima
+    const hasMinConfidence = confidence >= this.MIN_PEAK_CONFIRMATION_CONFIDENCE;
+    
+    // CRITERIO 2: Amplitud significativa
+    const hasMinAmplitude = Math.abs(peakValue) > this.PEAK_AMPLITUDE_THRESHOLD;
+    
+    // CRITERIO 3: Calidad de señal aceptable (más permisivo)
+    const hasAcceptableQuality = this.currentSignalQuality >= this.MIN_PEAK_CONFIRMATION_QUALITY || 
+                                  this.bpmHistory.length < 5; // Permisivo al inicio
 
-    return isHighConfidence && isGoodSignalQuality;
+    // CRITERIO 4: Consistencia con historial (si hay suficientes datos)
+    let isConsistentWithHistory = true;
+    if (this.bpmHistory.length >= 3 && this.lastPeakTime && this.previousPeakTime) {
+      const expectedInterval = 60000 / (this.getSmoothBPM() || 70);
+      const actualInterval = Date.now() - this.lastPeakTime;
+      const deviation = Math.abs(actualInterval - expectedInterval) / expectedInterval;
+      isConsistentWithHistory = deviation < 0.5; // 50% de tolerancia
+    }
+
+    return hasMinConfidence && hasMinAmplitude && hasAcceptableQuality && isConsistentWithHistory;
   }
 
   private updateBPM() {

@@ -85,9 +85,9 @@ export class HumanFingerDetector {
     // Los intervalos R-R deben ser relativamente consistentes
     MAX_RR_VARIATION: 0.40,         // 40% de variación máxima entre intervalos
     
-    // === ESTABILIDAD TEMPORAL (HISTÉRESIS ASIMÉTRICA - MÁS ROBUSTA Y FIRME) ===
+    // === ESTABILIDAD TEMPORAL (HISTÉRESIS ASIMÉTRICA - MÁXIMA FIRMEZA) ===
     FRAMES_TO_CONFIRM: 6,           // 6 frames para confirmar (~0.20s) - responsivo
-    FRAMES_TO_LOSE: 90,             // 90 frames para perder (~3s) - ULTRA TOLERANTE una vez detectado
+    FRAMES_TO_LOSE: 120,            // 120 frames para perder (~4s) - ULTRA ESTABLE
   };
 
   constructor() {
