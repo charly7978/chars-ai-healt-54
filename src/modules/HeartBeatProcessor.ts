@@ -12,11 +12,11 @@ export class HeartBeatProcessor {
   private readonly DEFAULT_MIN_PEAK_TIME_MS = 300;   // ~200 BPM máximo (más rápido)
   private readonly WARMUP_TIME_MS = 1500;            // 1.5s para estabilización rápida
 
-  // Parámetros de filtrado - CRÍTICO: Preservar componente AC
-  private readonly MEDIAN_FILTER_WINDOW = 3;       // REDUCIDO: menos suavizado
-  private readonly MOVING_AVERAGE_WINDOW = 3;      // REDUCIDO: respuesta rápida
-  private readonly EMA_ALPHA = 0.7;                // AUMENTADO: menos suavizado, más señal real
-  private readonly BASELINE_FACTOR = 0.995;        // AUMENTADO: baseline MUY lento para NO absorber AC
+  // Parámetros de filtrado - CRÍTICO: Preservar componente AC REAL
+  private readonly MEDIAN_FILTER_WINDOW = 3;       // Ventana pequeña
+  private readonly MOVING_AVERAGE_WINDOW = 3;      // Respuesta rápida
+  private readonly EMA_ALPHA = 0.85;               // MUY ALTA: casi sin suavizado para ver picos
+  private readonly BASELINE_FACTOR = 0.998;        // ULTRA LENTO: baseline casi no cambia
 
   // Parámetros de beep OPTIMIZADOS
   private readonly BEEP_DURATION = 400; 
@@ -281,9 +281,24 @@ export class HeartBeatProcessor {
       };
     }
 
-    // Baseline tracking
-    this.baseline = this.baseline * this.BASELINE_FACTOR + smoothed * (1 - this.BASELINE_FACTOR);
-    const normalizedValue = smoothed - this.baseline;
+    // Baseline tracking ULTRA LENTO - NO debe absorber el pulso
+    // CORRECCIÓN CRÍTICA: Inicializar baseline correctamente
+    if (this.baseline === 0) {
+      this.baseline = smoothed; // Primera vez: igualar
+    } else {
+      this.baseline = this.baseline * this.BASELINE_FACTOR + smoothed * (1 - this.BASELINE_FACTOR);
+    }
+    
+    // VALOR NORMALIZADO: Usar diferencia respecto a baseline
+    // PERO también considerar el rango AC reciente
+    const recentSamples = this.signalBuffer.slice(-30);
+    const recentMax = Math.max(...recentSamples);
+    const recentMin = Math.min(...recentSamples);
+    const acRange = recentMax - recentMin;
+    
+    // Normalizar usando el rango AC para escalar la señal
+    const rawNormalized = smoothed - this.baseline;
+    const normalizedValue = acRange > 0.5 ? rawNormalized / acRange : rawNormalized;
     
     // Seguimiento de fuerza de señal
     this.trackSignalStrength(Math.abs(normalizedValue));
@@ -501,8 +516,8 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Detección de picos ROBUSTA para señales PPG reales
-   * Usa múltiples criterios para evitar falsos positivos/negativos
+   * Detección de picos SIMPLIFICADA Y ROBUSTA
+   * Basada en máximos locales en la señal normalizada
    */
   private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
@@ -519,32 +534,45 @@ export class HeartBeatProcessor {
       return { isPeak: false, confidence: 0 };
     }
 
-    // CRITERIO 1: Cruce de derivada (pendiente cambia de positiva a negativa)
-    const isSlopeChangeToNegative = derivative < this.adaptiveDerivativeThreshold;
+    // Necesitamos suficientes muestras
+    if (this.signalBuffer.length < 10) {
+      return { isPeak: false, confidence: 0 };
+    }
 
-    // CRITERIO 2: Amplitud significativa sobre baseline
-    const amplitude = Math.abs(normalizedValue);
-    const amplitudeOk = amplitude > this.adaptiveSignalThreshold;
-
-    // CRITERIO 3: Valor positivo (pico debe estar sobre baseline)
-    const isPositivePeak = normalizedValue > 0;
-
-    // CRITERIO 4: Contexto temporal - verificar que hubo subida previa
-    const recentValues = this.signalBuffer.slice(-5);
-    const hadRisingPhase = recentValues.length >= 3 && 
-      recentValues[recentValues.length - 2] > recentValues[recentValues.length - 3];
-
-    // Combinar criterios: todos deben cumplirse para pico válido
-    const isPeak = isSlopeChangeToNegative && amplitudeOk && isPositivePeak && hadRisingPhase;
-
-    // Calcular confianza basada en múltiples factores
-    const slopeScore = Math.min(1, Math.abs(derivative) / (Math.abs(this.adaptiveDerivativeThreshold) * 3));
-    const ampScore = Math.min(1, amplitude / (this.adaptiveSignalThreshold * 2.5));
-    const risingScore = hadRisingPhase ? 1 : 0.3;
+    // DETECCIÓN SIMPLIFICADA: Buscar máximos locales
+    const recent = this.signalBuffer.slice(-7);
+    const currentIdx = recent.length - 1;
+    const currentVal = recent[currentIdx];
     
-    const confidence = Math.max(0, Math.min(1, 
-      0.4 * ampScore + 0.35 * slopeScore + 0.25 * risingScore
-    ));
+    // CRITERIO PRINCIPAL: El valor actual es un máximo local
+    // (los 2 valores anteriores son menores Y la tendencia cambia a bajar)
+    const isPotentialPeak = 
+      recent.length >= 5 &&
+      currentVal > recent[currentIdx - 1] &&  // Mayor que anterior
+      currentVal > recent[currentIdx - 2] &&  // Mayor que 2 anteriores
+      derivative < 0;  // Pendiente cambia a negativa
+    
+    // CRITERIO SECUNDARIO: La amplitud debe ser significativa
+    // Usar el rango reciente como referencia
+    const recentMax = Math.max(...this.signalBuffer.slice(-30));
+    const recentMin = Math.min(...this.signalBuffer.slice(-30));
+    const acRange = recentMax - recentMin;
+    
+    // El valor actual debe estar cerca del máximo del rango
+    const relativeHeight = acRange > 0.5 ? (currentVal - recentMin) / acRange : 0;
+    const isNearTop = relativeHeight > 0.7; // Debe estar en el 30% superior
+    
+    const isPeak = isPotentialPeak && isNearTop;
+
+    // Calcular confianza
+    const heightScore = Math.min(1, relativeHeight);
+    const slopeScore = Math.min(1, Math.abs(derivative) * 50);
+    const confidence = isPeak ? Math.max(0.5, 0.5 * heightScore + 0.5 * slopeScore) : 0;
+
+    // Log diagnóstico cada vez que detectamos un pico potencial
+    if (isPotentialPeak && this.signalBuffer.length % 10 === 0) {
+      console.log(`🔍 Pico potencial: val=${currentVal.toFixed(2)}, height=${(relativeHeight*100).toFixed(0)}%, deriv=${derivative.toFixed(4)}, range=${acRange.toFixed(2)}`);
+    }
 
     return { isPeak, confidence, rawDerivative: derivative };
   }
@@ -609,21 +637,26 @@ export class HeartBeatProcessor {
   }
 
   public getSmoothBPM(): number {
-    if (this.bpmHistory.length < 3) return 0;
+    if (this.bpmHistory.length === 0) return 0;
     
-    // Filtrado adaptativo basado en confianza
-    const validReadings = this.bpmHistory.filter((_, i) => 
-      this.recentPeakConfidences[i] > 0.7
-    );
+    // Si tenemos pocos datos, usar directamente el promedio
+    if (this.bpmHistory.length < 3) {
+      const avg = this.bpmHistory.reduce((a, b) => a + b, 0) / this.bpmHistory.length;
+      this.smoothBPM = avg;
+      return Math.round(avg);
+    }
     
-    // Ponderar por confianza y aplicar mediana móvil
-    const weightedBPM = validReadings.reduce(
-      (sum, bpm, i) => sum + (bpm * this.recentPeakConfidences[i]), 
-      0
-    ) / validReadings.reduce((sum, _, i) => sum + this.recentPeakConfidences[i], 0);
+    // Usar mediana para robustez (ignora outliers)
+    const sorted = [...this.bpmHistory].sort((a, b) => a - b);
+    const medianBPM = sorted[Math.floor(sorted.length / 2)];
     
-    // Suavizado final con filtro de Kalman simple
-    this.smoothBPM = this.kalmanFilter(weightedBPM);
+    // Suavizado exponencial
+    if (this.smoothBPM === 0) {
+      this.smoothBPM = medianBPM;
+    } else {
+      this.smoothBPM = this.smoothBPM * 0.7 + medianBPM * 0.3;
+    }
+    
     return Math.round(this.smoothBPM);
   }
 
