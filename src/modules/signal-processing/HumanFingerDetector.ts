@@ -1,6 +1,6 @@
 /**
- * HUMAN FINGER DETECTOR - DETECCIÓN REAL DE DEDO
- * Algoritmo mejorado para detectar yema del dedo sobre la cámara
+ * HUMAN FINGER DETECTOR - DETECCIÓN ESTRICTA
+ * Solo detecta dedo humano real cubriendo la cámara
  */
 export interface HumanFingerValidation {
   isHumanFinger: boolean;
@@ -19,20 +19,31 @@ export interface HumanFingerValidation {
 }
 
 export class HumanFingerDetector {
-  private temporalBuffer: Array<{ r: number; g: number; b: number; luminance: number }> = [];
-  private readonly BUFFER_SIZE = 45; // 1.5 segundos a 30fps
-  private readonly MIN_SAMPLES_FOR_DETECTION = 10;
+  private temporalBuffer: Array<{ r: number; g: number; b: number; time: number }> = [];
+  private readonly BUFFER_SIZE = 60; // 2 segundos
   
-  // Umbrales calibrados para yema del dedo cubriendo flash
-  private readonly FINGER_RED_MIN = 0.38;
-  private readonly FINGER_RED_MAX = 0.85;
-  private readonly FINGER_GREEN_MAX = 0.40;
-  private readonly MIN_LUMINANCE = 60;
-  private readonly MAX_LUMINANCE = 250;
-  private readonly MIN_VARIANCE = 0.0005; // Señal viva mínima
+  // Umbrales ESTRICTOS para dedo + flash
+  private readonly THRESHOLDS = {
+    // Color de piel con sangre (flash encendido)
+    MIN_RED: 85,
+    MAX_RED: 235,
+    MIN_RED_RATIO: 0.43,
+    MAX_GREEN_RATIO: 0.34,
+    MAX_BLUE_RATIO: 0.28,
+    
+    // Varianza para señal viva
+    MIN_VARIANCE: 0.3,
+    MAX_VARIANCE: 40,
+    
+    // Mínimo de muestras para validar
+    MIN_SAMPLES: 10,
+    
+    // Confianza mínima
+    MIN_CONFIDENCE: 0.55
+  };
 
   /**
-   * Detecta si hay un dedo humano sobre la cámara
+   * Detecta si hay un dedo humano real sobre la cámara
    */
   public detectHumanFinger(
     red: number,
@@ -42,64 +53,60 @@ export class HumanFingerDetector {
     width: number = 320,
     height: number = 240
   ): HumanFingerValidation {
-    // Calcular proporciones de color
-    const total = red + green + blue + 0.0001;
+    const timestamp = Date.now();
+    
+    // Agregar al buffer temporal
+    this.temporalBuffer.push({ r: red, g: green, b: blue, time: timestamp });
+    if (this.temporalBuffer.length > this.BUFFER_SIZE) {
+      this.temporalBuffer.shift();
+    }
+    
+    // Calcular ratios
+    const total = red + green + blue + 0.001;
     const rRatio = red / total;
     const gRatio = green / total;
     const bRatio = blue / total;
     
-    // Calcular luminancia
-    const luminance = 0.299 * red + 0.587 * green + 0.114 * blue;
+    // === VALIDACIONES ESTRICTAS ===
     
-    // Agregar al buffer temporal
-    this.temporalBuffer.push({ r: red, g: green, b: blue, luminance });
-    if (this.temporalBuffer.length > this.BUFFER_SIZE) {
-      this.temporalBuffer.shift();
-    }
-
-    // Validaciones individuales
+    // 1. Color válido de piel con sangre
+    const skinColorValid = this.validateSkinColor(red, rRatio, gRatio, bRatio);
     
-    // 1. Color de piel con sangre (flash encendido = rojo dominante)
-    const isRedDominant = rRatio >= this.FINGER_RED_MIN && rRatio <= this.FINGER_RED_MAX;
-    const hasLowGreen = gRatio <= this.FINGER_GREEN_MAX;
-    const skinColorValid = isRedDominant && hasLowGreen;
+    // 2. Señal con pulsación (varianza temporal)
+    const perfusionValid = this.validatePulsation();
     
-    // 2. Luminancia en rango esperado (ni muy oscuro ni saturado)
-    const luminanceValid = luminance >= this.MIN_LUMINANCE && luminance <= this.MAX_LUMINANCE;
+    // 3. Coherencia hemodinámica
+    const hemodynamicValid = this.validateHemodynamics();
     
-    // 3. Variabilidad temporal (señal viva - pulso real)
-    const perfusionValid = this.checkTemporalVariability();
+    // 4. Consistencia temporal (no movimientos bruscos)
+    const temporalConsistency = this.validateTemporalConsistency();
     
-    // 4. Coherencia hemodinámica (variaciones coordinadas en R y G)
-    const hemodynamicValid = this.checkHemodynamicCoherence();
+    // 5. Orden de canales correcto (R > G > B típico de piel)
+    const spatialConsistency = red > green && green >= blue * 0.9;
     
-    // 5. Consistencia espacial (asumimos que la imagen es uniforme si es un dedo)
-    const spatialConsistency = this.checkSpatialConsistency(rRatio, gRatio, bRatio);
-    
-    // 6. Consistencia temporal (valores estables en el tiempo)
-    const temporalConsistency = this.checkTemporalConsistency();
-
     // Calcular puntuaciones
-    const colorScore = skinColorValid ? 0.25 : 0;
-    const luminanceScore = luminanceValid ? 0.15 : 0;
-    const perfusionScore = perfusionValid ? 0.25 : 0;
-    const hemodynamicScore = hemodynamicValid ? 0.15 : 0;
-    const spatialScore = spatialConsistency ? 0.10 : 0;
-    const temporalScore = temporalConsistency ? 0.10 : 0;
+    const scores = {
+      color: skinColorValid ? 0.30 : 0,
+      pulsation: perfusionValid ? 0.25 : 0,
+      hemodynamic: hemodynamicValid ? 0.20 : 0,
+      temporal: temporalConsistency ? 0.15 : 0,
+      spatial: spatialConsistency ? 0.10 : 0
+    };
     
-    const totalConfidence = colorScore + luminanceScore + perfusionScore + 
-                           hemodynamicScore + spatialScore + temporalScore;
+    const totalConfidence = scores.color + scores.pulsation + scores.hemodynamic + 
+                           scores.temporal + scores.spatial;
     
-    // Calcular indicadores adicionales
-    const bloodFlowIndicator = this.calculateBloodFlowIndicator();
-    const opticalCoherence = this.calculateOpticalCoherence(rRatio, gRatio);
-
+    // Solo es dedo si pasa los criterios principales
+    const isHumanFinger = skinColorValid && 
+                          perfusionValid && 
+                          totalConfidence >= this.THRESHOLDS.MIN_CONFIDENCE;
+    
     return {
-      isHumanFinger: totalConfidence >= 0.45 && skinColorValid && luminanceValid,
+      isHumanFinger,
       confidence: totalConfidence,
       biophysicalScore: totalConfidence,
-      opticalCoherence,
-      bloodFlowIndicator,
+      opticalCoherence: this.calculateOpticalCoherence(rRatio, gRatio),
+      bloodFlowIndicator: this.calculateBloodFlow(),
       tissueConsistency: spatialConsistency && temporalConsistency ? 1.0 : 0.5,
       validationDetails: {
         skinColorValid,
@@ -112,100 +119,94 @@ export class HumanFingerDetector {
   }
 
   /**
-   * Verifica variabilidad temporal de la señal (indica pulso real)
+   * Valida color de piel con sangre
    */
-  private checkTemporalVariability(): boolean {
-    if (this.temporalBuffer.length < this.MIN_SAMPLES_FOR_DETECTION) return false;
+  private validateSkinColor(red: number, rRatio: number, gRatio: number, bRatio: number): boolean {
+    return red >= this.THRESHOLDS.MIN_RED &&
+           red <= this.THRESHOLDS.MAX_RED &&
+           rRatio >= this.THRESHOLDS.MIN_RED_RATIO &&
+           gRatio <= this.THRESHOLDS.MAX_GREEN_RATIO &&
+           bRatio <= this.THRESHOLDS.MAX_BLUE_RATIO;
+  }
+
+  /**
+   * Valida que hay pulsación (varianza en el canal rojo)
+   */
+  private validatePulsation(): boolean {
+    if (this.temporalBuffer.length < this.THRESHOLDS.MIN_SAMPLES) return false;
     
     const redValues = this.temporalBuffer.map(d => d.r);
     const variance = this.calculateVariance(redValues);
     
-    // Debe haber variación mínima (señal viva) pero no excesiva (ruido)
-    return variance > this.MIN_VARIANCE && variance < 0.1;
+    return variance >= this.THRESHOLDS.MIN_VARIANCE && 
+           variance <= this.THRESHOLDS.MAX_VARIANCE;
   }
 
   /**
-   * Verifica coherencia hemodinámica (R y G varían de forma coordinada)
+   * Valida coherencia hemodinámica (R y G varían de forma coordinada)
    */
-  private checkHemodynamicCoherence(): boolean {
-    if (this.temporalBuffer.length < this.MIN_SAMPLES_FOR_DETECTION) return false;
+  private validateHemodynamics(): boolean {
+    if (this.temporalBuffer.length < 15) return false;
     
-    const recent = this.temporalBuffer.slice(-15);
-    const redChanges: number[] = [];
-    const greenChanges: number[] = [];
+    const recent = this.temporalBuffer.slice(-20);
+    let coordinated = 0;
     
     for (let i = 1; i < recent.length; i++) {
-      redChanges.push(recent[i].r - recent[i-1].r);
-      greenChanges.push(recent[i].g - recent[i-1].g);
+      const redChange = recent[i].r - recent[i-1].r;
+      const greenChange = recent[i].g - recent[i-1].g;
+      
+      // En tejido vivo, R y G cambian en la misma dirección
+      if (Math.sign(redChange) === Math.sign(greenChange) || 
+          Math.abs(redChange) < 1 || Math.abs(greenChange) < 1) {
+        coordinated++;
+      }
     }
     
-    // Calcular correlación simplificada
-    let correlation = 0;
-    for (let i = 0; i < redChanges.length; i++) {
-      correlation += Math.sign(redChanges[i]) === Math.sign(greenChanges[i]) ? 1 : 0;
-    }
-    
-    return correlation / redChanges.length > 0.5;
+    return coordinated / (recent.length - 1) > 0.5;
   }
 
   /**
-   * Verifica consistencia espacial del color
+   * Valida consistencia temporal (sin movimientos bruscos)
    */
-  private checkSpatialConsistency(rRatio: number, gRatio: number, bRatio: number): boolean {
-    // Si los ratios están dentro de rangos esperados, asumimos consistencia
-    return rRatio > 0.3 && rRatio < 0.9 && gRatio < 0.5 && bRatio < 0.4;
-  }
-
-  /**
-   * Verifica consistencia temporal (valores no cambian bruscamente)
-   */
-  private checkTemporalConsistency(): boolean {
+  private validateTemporalConsistency(): boolean {
     if (this.temporalBuffer.length < 5) return false;
     
-    const recent = this.temporalBuffer.slice(-5);
-    const luminances = recent.map(d => d.luminance);
+    const recent = this.temporalBuffer.slice(-10);
+    let maxJump = 0;
     
-    // Calcular cambios consecutivos
-    let maxChange = 0;
-    for (let i = 1; i < luminances.length; i++) {
-      const change = Math.abs(luminances[i] - luminances[i-1]);
-      if (change > maxChange) maxChange = change;
+    for (let i = 1; i < recent.length; i++) {
+      const jump = Math.abs(recent[i].r - recent[i-1].r);
+      if (jump > maxJump) maxJump = jump;
     }
     
-    // Cambios bruscos (>30%) indican movimiento o retiro del dedo
-    const avgLuminance = luminances.reduce((a, b) => a + b, 0) / luminances.length;
-    return maxChange < avgLuminance * 0.3;
-  }
-
-  /**
-   * Calcula indicador de flujo sanguíneo
-   */
-  private calculateBloodFlowIndicator(): number {
-    if (this.temporalBuffer.length < this.MIN_SAMPLES_FOR_DETECTION) return 0;
-    
-    const redValues = this.temporalBuffer.map(d => d.r);
-    const variance = this.calculateVariance(redValues);
-    
-    // Normalizar a 0-1
-    return Math.min(1, variance * 100);
+    // Saltos mayores a 30 indican movimiento o retiro del dedo
+    return maxJump < 30;
   }
 
   /**
    * Calcula coherencia óptica
    */
   private calculateOpticalCoherence(rRatio: number, gRatio: number): number {
-    // Proporción esperada para dedo iluminado
-    const expectedRRatio = 0.55;
-    const expectedGRatio = 0.25;
-    
-    const rDiff = Math.abs(rRatio - expectedRRatio);
-    const gDiff = Math.abs(gRatio - expectedGRatio);
-    
-    return Math.max(0, 1 - (rDiff + gDiff) * 2);
+    const expectedR = 0.50;
+    const expectedG = 0.28;
+    const deviation = Math.abs(rRatio - expectedR) + Math.abs(gRatio - expectedG);
+    return Math.max(0, 1 - deviation * 2);
   }
 
   /**
-   * Calcula varianza de un array
+   * Calcula indicador de flujo sanguíneo
+   */
+  private calculateBloodFlow(): number {
+    if (this.temporalBuffer.length < 10) return 0;
+    
+    const redValues = this.temporalBuffer.slice(-20).map(d => d.r);
+    const variance = this.calculateVariance(redValues);
+    
+    return Math.min(1, variance / 20);
+  }
+
+  /**
+   * Calcula varianza
    */
   private calculateVariance(values: number[]): number {
     if (values.length < 2) return 0;
@@ -214,7 +215,7 @@ export class HumanFingerDetector {
   }
 
   /**
-   * Reinicia el detector
+   * Reset
    */
   public reset(): void {
     this.temporalBuffer = [];

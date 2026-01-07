@@ -14,7 +14,8 @@ interface HeartBeatResult {
 }
 
 /**
- * HOOK DE PROCESAMIENTO CARDÍACO - MEDICIÓN REAL
+ * HOOK DE PROCESAMIENTO CARDÍACO CON AUDIO
+ * Detecta latidos reales y reproduce sonido
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
@@ -22,11 +23,17 @@ export const useHeartBeatProcessor = () => {
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
   
+  // Audio para latidos
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const lastBeepTimeRef = useRef<number>(0);
+  const MIN_BEEP_INTERVAL = 250; // Mínimo 250ms entre beeps
+  
   // Control de estado
   const sessionIdRef = useRef<string>("");
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
   const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
+  const lastBPMRef = useRef<number>(0);
   
   // Buffer para cálculo de calidad
   const signalBufferRef = useRef<number[]>([]);
@@ -37,16 +44,74 @@ export const useHeartBeatProcessor = () => {
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `heartbeat_${t}_${p}`;
 
-    console.log(`💓 CREANDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
+    console.log(`💓 CREANDO PROCESADOR CARDÍACO CON AUDIO - ${sessionIdRef.current}`);
     
     processorRef.current = new HeartBeatProcessor();
     processingStateRef.current = 'ACTIVE';
     
+    // Crear AudioContext para sonidos de latido
+    try {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    } catch (e) {
+      console.warn("AudioContext no disponible:", e);
+    }
+    
     return () => {
-      console.log(`💓 DESTRUYENDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
+      if (audioContextRef.current) {
+        audioContextRef.current.close();
+        audioContextRef.current = null;
+      }
       processorRef.current = null;
       processingStateRef.current = 'IDLE';
     };
+  }, []);
+
+  /**
+   * Reproduce un sonido de latido
+   */
+  const playHeartbeatSound = useCallback(() => {
+    const now = Date.now();
+    
+    // Evitar beeps muy seguidos
+    if (now - lastBeepTimeRef.current < MIN_BEEP_INTERVAL) {
+      return;
+    }
+    
+    lastBeepTimeRef.current = now;
+    
+    if (!audioContextRef.current) return;
+    
+    try {
+      const ctx = audioContextRef.current;
+      
+      // Reanudar contexto si está suspendido
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      
+      // Crear oscilador para el sonido
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      // Sonido tipo "lub-dub" de corazón
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(80, ctx.currentTime); // Tono grave
+      oscillator.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + 0.1);
+      
+      // Envolvente de volumen
+      gainNode.gain.setValueAtTime(0, ctx.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      
+      oscillator.start(ctx.currentTime);
+      oscillator.stop(ctx.currentTime + 0.15);
+      
+    } catch (e) {
+      // Silenciar errores de audio
+    }
   }, []);
 
   // Calcular calidad de señal
@@ -63,13 +128,18 @@ export const useHeartBeatProcessor = () => {
     const variance = buffer.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / buffer.length;
     const amplitude = Math.max(...buffer) - Math.min(...buffer);
     
+    // Verificar que hay señal viva
+    if (variance < 0.5 || amplitude < 1) return 0;
+    
     // SNR aproximado
     const snr = amplitude > 0 ? 10 * Math.log10(amplitude / Math.sqrt(variance + 0.001)) : 0;
-    return Math.max(0, Math.min(100, snr * 8));
+    return Math.max(0, Math.min(100, snr * 10));
   }, []);
 
   // Procesamiento de señal
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
+    const currentTime = timestamp || Date.now();
+    
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
         bpm: currentBPM,
@@ -80,8 +150,6 @@ export const useHeartBeatProcessor = () => {
         rrData: { intervals: [], lastPeakTime: null }
       };
     }
-
-    const currentTime = Date.now();
     
     // Control de tasa de procesamiento (60 FPS máx)
     if (currentTime - lastProcessTimeRef.current < 16) {
@@ -98,60 +166,63 @@ export const useHeartBeatProcessor = () => {
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
+    // Sin dedo = sin procesamiento
+    if (!fingerDetected || value === 0) {
+      setCurrentBPM(0);
+      setConfidence(0);
+      setSignalQuality(0);
+      signalBufferRef.current = [];
+      return {
+        bpm: 0,
+        confidence: 0,
+        isPeak: false,
+        arrhythmiaCount: 0,
+        signalQuality: 0,
+        rrData: { intervals: [], lastPeakTime: null }
+      };
+    }
+
     // Calcular calidad de la señal
     const quality = calculateQuality(value);
     setSignalQuality(quality);
     
     // Procesar señal para obtener BPM
-    const bpm = processorRef.current.processSignal(value, timestamp || currentTime);
+    const prevBPM = lastBPMRef.current;
+    const bpm = processorRef.current.processSignal(value, currentTime);
     const rrIntervals = processorRef.current.getRRIntervals();
+    const lastPeakTime = processorRef.current.getLastPeakTime();
     
-    // Detectar si hubo un pico (latido)
-    const isPeak = bpm > 0 && bpm !== currentBPM;
+    // Detectar si hubo un nuevo pico (BPM cambió y es válido)
+    const isPeak = bpm > 0 && bpm !== prevBPM && quality > 30;
+    
+    if (isPeak) {
+      // ¡REPRODUCIR SONIDO DE LATIDO!
+      playHeartbeatSound();
+    }
+    
+    lastBPMRef.current = bpm;
     
     // Calcular confianza basada en calidad y estabilidad
-    const newConfidence = quality > 50 ? Math.min(1, quality / 100 + 0.2) : quality / 100;
+    const newConfidence = quality > 40 ? Math.min(1, quality / 80) : quality / 100;
     
-    if (!fingerDetected) {
-      // Degradación suave cuando no hay dedo
-      if (currentBPM > 0) {
-        setCurrentBPM(prev => Math.max(0, prev * 0.96));
-        setConfidence(prev => Math.max(0, prev * 0.92));
-      }
-      
-      return {
-        bpm: currentBPM,
-        confidence: Math.max(0, confidence * 0.92),
-        isPeak: false,
-        arrhythmiaCount: 0,
-        signalQuality: quality,
-        rrData: { intervals: rrIntervals, lastPeakTime: null }
-      };
-    }
-
-    // Actualizar BPM con filtro de estabilidad
+    // Actualizar estado
     if (bpm > 0 && bpm >= 40 && bpm <= 200) {
-      const smoothingFactor = Math.min(0.3, newConfidence * 0.5);
-      const smoothedBPM = currentBPM > 0 
-        ? currentBPM * (1 - smoothingFactor) + bpm * smoothingFactor 
-        : bpm;
-      
-      setCurrentBPM(Math.round(smoothedBPM));
+      setCurrentBPM(bpm);
       setConfidence(newConfidence);
     }
 
     return {
-      bpm: currentBPM,
+      bpm: currentBPM > 0 ? currentBPM : bpm,
       confidence: newConfidence,
       isPeak,
       arrhythmiaCount: 0,
       signalQuality: quality,
       rrData: { 
         intervals: rrIntervals, 
-        lastPeakTime: rrIntervals.length > 0 ? currentTime : null 
+        lastPeakTime: rrIntervals.length > 0 ? lastPeakTime : null 
       }
     };
-  }, [currentBPM, confidence, signalQuality, calculateQuality]);
+  }, [currentBPM, confidence, signalQuality, calculateQuality, playHeartbeatSound]);
 
   // Reset
   const reset = useCallback(() => {
@@ -169,13 +240,14 @@ export const useHeartBeatProcessor = () => {
     signalBufferRef.current = [];
     lastProcessTimeRef.current = 0;
     processedSignalsRef.current = 0;
+    lastBPMRef.current = 0;
     
     processingStateRef.current = 'ACTIVE';
   }, []);
 
   // Estado de arritmia (para compatibilidad)
   const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
-    // Método de compatibilidad - la arritmia se detecta en VitalSignsProcessor
+    // La arritmia se detecta en VitalSignsProcessor
   }, []);
 
   return {
@@ -185,6 +257,7 @@ export const useHeartBeatProcessor = () => {
     processSignal,
     reset,
     setArrhythmiaState,
+    playHeartbeatSound, // Exponer para uso externo si necesario
     debugInfo: {
       sessionId: sessionIdRef.current,
       processingState: processingStateRef.current,

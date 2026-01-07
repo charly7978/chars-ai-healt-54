@@ -1,137 +1,82 @@
 import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { KalmanFilter } from './KalmanFilter';
 import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
-import { SignalTrendAnalyzer } from './SignalTrendAnalyzer';
-import { BiophysicalValidator } from './BiophysicalValidator';
 import { FrameProcessor } from './FrameProcessor';
-import { CalibrationHandler } from './CalibrationHandler';
-import { SignalAnalyzer } from './SignalAnalyzer';
-import { HumanFingerDetector } from './HumanFingerDetector';
-import { DetectionLogger } from '../../utils/DetectionLogger';
 
 /**
- * PROCESADOR PPG OPTIMIZADO - VERSIÓN SENSIBLE PARA MEDICIÓN REAL
+ * PROCESADOR PPG - MEDICIÓN REAL SIN SIMULACIONES
+ * Solo procesa datos reales de la cámara
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   private kalmanFilter: KalmanFilter;
   private sgFilter: SavitzkyGolayFilter;
-  private trendAnalyzer: SignalTrendAnalyzer;
-  private biophysicalValidator: BiophysicalValidator;
   private frameProcessor: FrameProcessor;
-  private calibrationHandler: CalibrationHandler;
-  private signalAnalyzer: SignalAnalyzer;
-  private humanFingerDetector: HumanFingerDetector;
-  private detectionLogger: DetectionLogger;
   
-  private fingerDetectionState = {
+  // Buffer de señal para análisis
+  private signalBuffer: number[] = [];
+  private readonly BUFFER_SIZE = 90; // 3 segundos a 30fps
+  
+  // Estado de detección de dedo - ESTRICTO
+  private fingerState = {
     isDetected: false,
-    detectionScore: 0,
-    consecutiveDetections: 0,
-    consecutiveNonDetections: 0,
-    lastDetectionTime: 0,
-    stabilityBuffer: [] as number[],
-    signalHistory: [] as number[],
-    noiseLevel: 0,
-    signalToNoiseRatio: 0,
-    peakHistory: [] as number[],
-    valleyHistory: [] as number[]
+    consecutiveValid: 0,
+    consecutiveInvalid: 0,
+    lastValidTime: 0,
+    baselineRed: 0,
+    baselineEstablished: false
   };
   
-  private readonly BUFFER_SIZE = 64;
-  private signalBuffer: Float32Array;
-  private bufferIndex: number = 0;
-  private bufferFull: boolean = false;
-  
-  private isCalibrating: boolean = false;
-  private frameCount: number = 0;
-  
-  /**
-   * CONFIGURACIÓN REAJUSTADA PARA SENSIBILIDAD REAL
-   * Se han bajado los umbrales para evitar que la señal se quede "congelada"
-   */
+  // Configuración ESTRICTA para detección real de dedo
   private readonly CONFIG = {
-    MIN_RED_THRESHOLD: 10,       // Más bajo para detectar el dedo incluso con poca luz
-    MAX_RED_THRESHOLD: 255,
-    MIN_DETECTION_SCORE: 0.25,   // Antes 0.4 - Más sensible al inicio
-    MIN_CONSECUTIVE_FOR_DETECTION: 2, 
-    MAX_CONSECUTIVE_FOR_LOSS: 15, // Más tolerante a micro-movimientos
+    // Umbrales de color para dedo con flash encendido
+    MIN_RED_VALUE: 80,           // Rojo mínimo cuando hay dedo + flash
+    MAX_RED_VALUE: 240,          // Máximo antes de saturación
+    MIN_RED_RATIO: 0.42,         // Proporción R/(R+G+B) mínima
+    MAX_GREEN_RATIO: 0.35,       // Proporción G máxima
     
-    MIN_SNR_REQUIRED: 4.0,       // Antes 8.0 - Permite señales con más ruido de cámara
-    SKIN_COLOR_STRICTNESS: 0.4,  // Más permisivo con diferentes tonos de piel/luz
-    PULSATILITY_MIN_REQUIRED: 0.02, // Antes 0.1 - Detecta pulsos débiles
-    TEXTURE_HUMAN_MIN: 0.3,
-    STABILITY_FRAMES: 5,         
+    // Detección de pulso real
+    MIN_VARIANCE: 0.5,           // Varianza mínima para señal viva
+    MAX_VARIANCE: 50,            // Varianza máxima (evitar ruido)
     
-    NOISE_THRESHOLD: 2.5,
-    PEAK_PROMINENCE: 0.05,       // CRÍTICO: Antes 0.15. Ahora detecta variaciones pequeñas.
-    VALLEY_DEPTH: 0.03,
-    SIGNAL_CONSISTENCY: 0.3
+    // Consistencia temporal
+    MIN_CONSECUTIVE_FOR_DETECTION: 8,   // 8 frames = ~0.27s
+    MAX_CONSECUTIVE_FOR_LOSS: 5,        // 5 frames de pérdida = reset
+    
+    // Luminancia
+    MIN_LUMINANCE: 50,
+    MAX_LUMINANCE: 245
   };
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    console.log("🎯 PPGSignalProcessor: Modo ALTA SENSIBILIDAD activado");
+    console.log("🎯 PPGSignalProcessor: Inicializado - Modo MEDICIÓN REAL");
     
-    this.signalBuffer = new Float32Array(this.BUFFER_SIZE);
     this.kalmanFilter = new KalmanFilter();
-    this.sgFilter = new SavitzkyGolayFilter(); // Usará la nueva ventana de 15 puntos
-    this.trendAnalyzer = new SignalTrendAnalyzer();
-    this.biophysicalValidator = new BiophysicalValidator();
+    this.sgFilter = new SavitzkyGolayFilter();
     this.frameProcessor = new FrameProcessor({
       TEXTURE_GRID_SIZE: 16,
-      ROI_SIZE_FACTOR: 0.95 // ROI máximo para capturar toda la señal del dedo
+      ROI_SIZE_FACTOR: 0.85
     });
-    this.calibrationHandler = new CalibrationHandler({
-      CALIBRATION_SAMPLES: 15, // Calibración más rápida
-      MIN_RED_THRESHOLD: this.CONFIG.MIN_RED_THRESHOLD,
-      MAX_RED_THRESHOLD: this.CONFIG.MAX_RED_THRESHOLD
-    });
-    this.signalAnalyzer = new SignalAnalyzer({
-      QUALITY_LEVELS: 100,
-      QUALITY_HISTORY_SIZE: 50,
-      MIN_CONSECUTIVE_DETECTIONS: this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION,
-      MAX_CONSECUTIVE_NO_DETECTIONS: this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS
-    });
-    this.humanFingerDetector = new HumanFingerDetector();
-    this.detectionLogger = new DetectionLogger();
   }
 
   async initialize(): Promise<void> {
-    try {
-      this.signalBuffer.fill(0);
-      this.bufferIndex = 0;
-      this.bufferFull = false;
-      this.frameCount = 0;
-      this.resetDetectionStateInternal();
-      
-      this.kalmanFilter.reset();
-      this.sgFilter.reset();
-      this.trendAnalyzer.reset();
-      this.biophysicalValidator.reset();
-      this.signalAnalyzer.reset();
-      
-      console.log("✅ PPGSignalProcessor: Inicializado");
-    } catch (error) {
-      this.handleError("INIT_ERROR", "Error inicializando procesador");
-    }
+    this.signalBuffer = [];
+    this.resetFingerState();
+    this.kalmanFilter.reset();
+    this.sgFilter.reset();
   }
 
-  private resetDetectionStateInternal(): void {
-    this.fingerDetectionState = {
+  private resetFingerState(): void {
+    this.fingerState = {
       isDetected: false,
-      detectionScore: 0,
-      consecutiveDetections: 0,
-      consecutiveNonDetections: 0,
-      lastDetectionTime: 0,
-      stabilityBuffer: [],
-      signalHistory: [],
-      noiseLevel: 0,
-      signalToNoiseRatio: 0,
-      peakHistory: [],
-      valleyHistory: []
+      consecutiveValid: 0,
+      consecutiveInvalid: 0,
+      lastValidTime: 0,
+      baselineRed: 0,
+      baselineEstablished: false
     };
   }
 
@@ -143,105 +88,181 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   stop(): void {
     this.isProcessing = false;
-    this.reset();
+    this.signalBuffer = [];
+    this.resetFingerState();
   }
 
   async calibrate(): Promise<boolean> {
-    try {
-      this.isCalibrating = true;
-      await this.initialize();
-      setTimeout(() => { this.isCalibrating = false; }, 2000);
-      return true;
-    } catch (error) {
-      this.isCalibrating = false;
-      return false;
-    }
+    await this.initialize();
+    return true;
   }
 
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
     try {
-      this.frameCount = (this.frameCount + 1) % 10000;
+      const timestamp = Date.now();
       
-      // 1. Extracción de datos (Señal Cruda)
-      const extractionResult = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, textureScore } = extractionResult;
-      const roi = this.frameProcessor.detectROI(redValue, imageData);
-
-      // 2. Validación de Dedo (Umbrales relajados para evitar falsos negativos)
-      const humanFingerValidation = this.humanFingerDetector.detectHumanFinger(
-        redValue, 
-        extractionResult.avgGreen ?? 0, 
-        extractionResult.avgBlue ?? 0, 
-        textureScore, 
-        imageData.width, 
-        imageData.height
+      // 1. Extraer datos de la imagen
+      const frameData = this.frameProcessor.extractFrameData(imageData);
+      const { redValue, avgRed = 0, avgGreen = 0, avgBlue = 0 } = frameData;
+      
+      // 2. Calcular proporciones de color
+      const total = avgRed + avgGreen + avgBlue + 0.001;
+      const redRatio = avgRed / total;
+      const greenRatio = avgGreen / total;
+      
+      // 3. Calcular luminancia
+      const luminance = 0.299 * avgRed + 0.587 * avgGreen + 0.114 * avgBlue;
+      
+      // 4. VALIDACIÓN ESTRICTA DE DEDO
+      const isValidFinger = this.validateFingerPresence(
+        avgRed, avgGreen, avgBlue,
+        redRatio, greenRatio, luminance
       );
-
-      const isDetected = humanFingerValidation.isHumanFinger || redValue > this.CONFIG.MIN_RED_THRESHOLD;
-      const confidence = humanFingerValidation.confidence;
-
-      // 3. FILTRADO (Aquí aplicamos Savitzky-Golay optimizado)
-      let filteredValue = redValue;
-      if (isDetected) {
-        filteredValue = this.kalmanFilter.filter(redValue);
-        filteredValue = this.sgFilter.filter(filteredValue);
+      
+      // 5. Actualizar estado de detección con histéresis
+      this.updateFingerDetectionState(isValidFinger, timestamp);
+      
+      // 6. Procesar señal solo si hay dedo detectado
+      let filteredValue = 0;
+      let quality = 0;
+      
+      if (this.fingerState.isDetected) {
+        // Filtrar señal
+        const kalmanFiltered = this.kalmanFilter.filter(redValue);
+        filteredValue = this.sgFilter.filter(kalmanFiltered);
         
-        // Ganancia adaptativa para resaltar el pulso
-        const preciseGain = this.calculateOptimizedGain(confidence);
-        filteredValue = filteredValue * preciseGain;
+        // Agregar al buffer
+        this.signalBuffer.push(filteredValue);
+        if (this.signalBuffer.length > this.BUFFER_SIZE) {
+          this.signalBuffer.shift();
+        }
+        
+        // Calcular calidad basada en SNR real
+        quality = this.calculateSignalQuality();
+      } else {
+        // Sin dedo = sin señal
+        filteredValue = 0;
+        quality = 0;
+        this.signalBuffer = []; // Limpiar buffer
       }
-
-      // 4. Gestión de Buffer
-      this.signalBuffer[this.bufferIndex] = filteredValue;
-      this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
-      if (this.bufferIndex === 0) this.bufferFull = true;
-
-      // 5. Calidad y Perfusión
-      const quality = isDetected ? Math.min(100, confidence * 120) : 0;
-      const perfusionIndex = this.calculatePrecisePerfusion(redValue, isDetected, quality, confidence);
-
-      // 6. Enviar señal procesada a la UI
+      
+      // 7. Construir señal procesada
+      const roi = this.frameProcessor.detectROI(redValue, imageData);
+      
       const processedSignal: ProcessedSignal = {
-        timestamp: Date.now(),
-        rawValue: redValue,
-        filteredValue: filteredValue,
-        quality: quality,
-        fingerDetected: isDetected,
-        roi: roi,
-        perfusionIndex: perfusionIndex
+        timestamp,
+        rawValue: this.fingerState.isDetected ? redValue : 0,
+        filteredValue,
+        quality,
+        fingerDetected: this.fingerState.isDetected,
+        roi,
+        perfusionIndex: this.fingerState.isDetected ? this.calculatePerfusion() : 0
       };
 
       this.onSignalReady(processedSignal);
 
     } catch (error) {
-      console.error("❌ Error en processFrame:", error);
+      console.error("❌ Error procesando frame:", error);
     }
   }
 
-  private calculateOptimizedGain(score: number): number {
-    // Aumenta la amplitud de la onda si la detección es buena
-    return 1.0 + (score * 1.5); 
+  /**
+   * Validación ESTRICTA de presencia de dedo
+   * Un dedo cubriendo la cámara con flash tiene características muy específicas
+   */
+  private validateFingerPresence(
+    red: number, green: number, blue: number,
+    redRatio: number, greenRatio: number, luminance: number
+  ): boolean {
+    // Criterio 1: Rojo dominante (dedo + flash = mucho rojo)
+    const isRedDominant = redRatio >= this.CONFIG.MIN_RED_RATIO;
+    
+    // Criterio 2: Verde bajo (piel absorbe verde)
+    const isGreenLow = greenRatio <= this.CONFIG.MAX_GREEN_RATIO;
+    
+    // Criterio 3: Valor absoluto de rojo en rango
+    const isRedInRange = red >= this.CONFIG.MIN_RED_VALUE && red <= this.CONFIG.MAX_RED_VALUE;
+    
+    // Criterio 4: Luminancia en rango (no saturado, no oscuro)
+    const isLuminanceValid = luminance >= this.CONFIG.MIN_LUMINANCE && 
+                            luminance <= this.CONFIG.MAX_LUMINANCE;
+    
+    // Criterio 5: Rojo > Verde > Azul (característica de piel iluminada)
+    const isColorOrderValid = red > green && green > blue * 0.8;
+    
+    // Todos los criterios deben cumplirse
+    return isRedDominant && isGreenLow && isRedInRange && isLuminanceValid && isColorOrderValid;
   }
 
-  private calculatePrecisePerfusion(red: number, detected: boolean, qual: number, score: number): number {
-    if (!detected || qual < 30) return 0;
-    // Cálculo simplificado de perfusión basado en la variabilidad del rojo
-    return (red / 255) * 10 * score;
+  /**
+   * Actualiza estado de detección con histéresis para evitar parpadeo
+   */
+  private updateFingerDetectionState(isValid: boolean, timestamp: number): void {
+    if (isValid) {
+      this.fingerState.consecutiveValid++;
+      this.fingerState.consecutiveInvalid = 0;
+      this.fingerState.lastValidTime = timestamp;
+      
+      // Requiere múltiples frames válidos para confirmar detección
+      if (!this.fingerState.isDetected && 
+          this.fingerState.consecutiveValid >= this.CONFIG.MIN_CONSECUTIVE_FOR_DETECTION) {
+        this.fingerState.isDetected = true;
+        console.log("✅ Dedo DETECTADO - Iniciando medición PPG");
+      }
+    } else {
+      this.fingerState.consecutiveInvalid++;
+      this.fingerState.consecutiveValid = 0;
+      
+      // Requiere múltiples frames inválidos para perder detección
+      if (this.fingerState.isDetected && 
+          this.fingerState.consecutiveInvalid >= this.CONFIG.MAX_CONSECUTIVE_FOR_LOSS) {
+        this.fingerState.isDetected = false;
+        this.signalBuffer = [];
+        console.log("❌ Dedo PERDIDO - Deteniendo medición");
+      }
+    }
   }
 
-  private reset(): void {
-    this.signalBuffer.fill(0);
-    this.bufferIndex = 0;
-    this.bufferFull = false;
-    this.kalmanFilter.reset();
-    this.sgFilter.reset();
-    this.humanFingerDetector.reset();
+  /**
+   * Calcula calidad de señal basada en SNR real
+   */
+  private calculateSignalQuality(): number {
+    if (this.signalBuffer.length < 15) return 0;
+    
+    const recent = this.signalBuffer.slice(-30);
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const variance = recent.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / recent.length;
+    
+    // Verificar que hay varianza (señal viva)
+    if (variance < this.CONFIG.MIN_VARIANCE) return 0;
+    if (variance > this.CONFIG.MAX_VARIANCE) return Math.max(0, 100 - variance);
+    
+    // Amplitud pico a pico
+    const max = Math.max(...recent);
+    const min = Math.min(...recent);
+    const amplitude = max - min;
+    
+    // SNR = amplitud / desviación estándar
+    const snr = amplitude / (Math.sqrt(variance) + 0.001);
+    
+    // Convertir a porcentaje 0-100
+    return Math.min(100, Math.max(0, snr * 15));
   }
 
-  private handleError(code: string, message: string): void {
-    const error: ProcessingError = { code, message, timestamp: Date.now() };
-    if (this.onError) this.onError(error);
+  /**
+   * Calcula índice de perfusión
+   */
+  private calculatePerfusion(): number {
+    if (this.signalBuffer.length < 10) return 0;
+    
+    const recent = this.signalBuffer.slice(-20);
+    const ac = Math.max(...recent) - Math.min(...recent);
+    const dc = recent.reduce((a, b) => a + b, 0) / recent.length;
+    
+    if (dc <= 0) return 0;
+    
+    return (ac / dc) * 100;
   }
 }
