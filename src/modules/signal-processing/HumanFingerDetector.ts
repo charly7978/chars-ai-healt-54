@@ -51,37 +51,38 @@ export class HumanFingerDetector {
   private trendUp = false;
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // UMBRALES ESTRICTOS - SEÑAL VIVA OBLIGATORIA
+  // UMBRALES CALIBRADOS PARA YEMA DE DEDO REAL CON FLASH LED
   // ═══════════════════════════════════════════════════════════════════════════
   private readonly CONFIG = {
-    // === COLOR (necesario pero NO suficiente) ===
-    MIN_TOTAL_LIGHT: 150,           // Mínimo absoluto
-    MIN_RED_VALUE: 100,             // Rojo mínimo
-    GOOD_RED_VALUE: 140,            // Rojo bueno
-    IDEAL_RED_VALUE: 180,           // Rojo ideal
+    // === COLOR - Valores reales de yema iluminada por flash ===
+    // La yema con flash produce: R~160-220, G~60-120, B~40-80
+    MIN_TOTAL_LIGHT: 120,           // Reducido - yema puede tener menos luz total
+    MIN_RED_VALUE: 70,              // Reducido - yema oscura o distante
+    GOOD_RED_VALUE: 120,            // Yema bien posicionada
+    IDEAL_RED_VALUE: 160,           // Yema perfectamente iluminada
     
     // === DOMINANCIA DEL ROJO ===
-    MIN_RED_PROPORTION: 0.50,       // Rojo debe ser >50% del total
+    MIN_RED_PROPORTION: 0.42,       // Reducido - yema real: ~45-55%
     
-    // === RATIOS DE COLOR ===
-    MIN_RG_RATIO: 1.3,              // Rojo/Verde mínimo
-    MAX_RG_RATIO: 5.0,              // Máximo (evita luz roja artificial)
-    MIN_RB_RATIO: 1.4,              // Rojo/Azul mínimo
+    // === RATIOS DE COLOR - Calibrados para yema real ===
+    MIN_RG_RATIO: 1.05,             // Reducido significativamente - yema real: 1.1-2.5
+    MAX_RG_RATIO: 6.0,              // Ampliado - flash intenso puede dar ratios altos
+    MIN_RB_RATIO: 1.1,              // Reducido - yema real tiene más azul que esperado
     
-    // === LÍMITES VERDE/AZUL ===
-    MAX_GREEN_PROPORTION: 0.35,     // Verde no más del 35%
-    MAX_BLUE_PROPORTION: 0.25,      // Azul no más del 25%
+    // === LÍMITES VERDE/AZUL - Más permisivos ===
+    MAX_GREEN_PROPORTION: 0.42,     // Aumentado - yema con flash: 25-38%
+    MAX_BLUE_PROPORTION: 0.30,      // Aumentado - yema real: 15-25%
     
     // ═══════════════════════════════════════════════════════════════════════
     // PULSATILIDAD - OBLIGATORIA PARA CONFIRMAR TEJIDO VIVO
     // ═══════════════════════════════════════════════════════════════════════
-    MIN_SAMPLES_FOR_PULSE_CHECK: 45,  // 1.5 segundos mínimo para analizar
+    MIN_SAMPLES_FOR_PULSE_CHECK: 30,  // Reducido a 1 segundo para respuesta rápida
     
     // Componente AC/DC - variación por pulso sanguíneo
-    MIN_PULSATILITY_FOR_LIFE: 0.008,  // 0.8% mínimo - OBLIGATORIO
-    GOOD_PULSATILITY: 0.015,          // 1.5% bueno
-    IDEAL_PULSATILITY: 0.025,         // 2.5% ideal
-    MAX_PULSATILITY: 0.15,            // 15% máximo (evita movimiento excesivo)
+    MIN_PULSATILITY_FOR_LIFE: 0.003,  // 0.3% mínimo - más sensible a pulso débil
+    GOOD_PULSATILITY: 0.008,          // 0.8% bueno
+    IDEAL_PULSATILITY: 0.015,         // 1.5% ideal
+    MAX_PULSATILITY: 0.20,            // 20% máximo - más tolerante a movimiento leve
     
     // Frecuencia cardíaca esperada
     MIN_HEART_RATE_HZ: 0.5,           // 30 BPM mínimo
@@ -91,8 +92,8 @@ export class HumanFingerDetector {
     MIN_PEAKS_FOR_RHYTHM: 2,
     
     // === ESTABILIDAD TEMPORAL ===
-    MIN_CONSECUTIVE_FOR_DETECTION: 5,   // Más estricto
-    MAX_CONSECUTIVE_FOR_LOSS: 6,
+    MIN_CONSECUTIVE_FOR_DETECTION: 3,   // Reducido para respuesta más rápida
+    MAX_CONSECUTIVE_FOR_LOSS: 8,        // Aumentado para evitar pérdida intermitente
   };
 
   constructor() {
@@ -271,60 +272,44 @@ export class HumanFingerDetector {
   
   /**
    * Verificar que la variación tenga ritmo cardíaco
-   * Detecta picos y valida frecuencia entre 0.5-3.5 Hz (30-210 BPM)
+   * SIMPLIFICADO: solo verificar que hay variación en frecuencia razonable
    */
   private checkCardiacRhythm(): boolean {
-    if (this.redHistory.length < 45) return false;
+    if (this.redHistory.length < 30) return false;
     
-    const samples = this.redHistory.slice(-60);
-    const timestamps = this.timestampHistory.slice(-60);
+    const samples = this.redHistory.slice(-45);
+    const timestamps = this.timestampHistory.slice(-45);
     
-    if (samples.length !== timestamps.length || samples.length < 30) return false;
+    if (samples.length !== timestamps.length || samples.length < 20) return false;
     
-    // Detectar picos en la señal
-    const peaks: number[] = [];
-    const dc = samples.reduce((a, b) => a + b, 0) / samples.length;
-    const threshold = dc * 0.005; // Umbral de 0.5% sobre la media
+    // Calcular la media y desviación estándar
+    const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+    if (mean === 0) return false;
     
-    for (let i = 2; i < samples.length - 2; i++) {
-      const prev2 = samples[i-2];
-      const prev1 = samples[i-1];
-      const curr = samples[i];
-      const next1 = samples[i+1];
-      const next2 = samples[i+2];
-      
-      // Pico: mayor que vecinos y sobre umbral
-      if (curr > prev1 && curr > prev2 && curr > next1 && curr > next2) {
-        if (curr - dc > threshold) {
-          peaks.push(timestamps[i]);
-        }
+    // Contar cruces por la media (indica oscilación)
+    let crosses = 0;
+    let lastAbove = samples[0] > mean;
+    
+    for (let i = 1; i < samples.length; i++) {
+      const currentAbove = samples[i] > mean;
+      if (currentAbove !== lastAbove) {
+        crosses++;
+        lastAbove = currentAbove;
       }
     }
     
-    // Necesitamos al menos 2 picos para calcular frecuencia
-    if (peaks.length < this.CONFIG.MIN_PEAKS_FOR_RHYTHM) {
-      return false;
-    }
+    // Tiempo total de la ventana
+    const totalTime = (timestamps[timestamps.length - 1] - timestamps[0]) / 1000; // segundos
+    if (totalTime <= 0) return false;
     
-    // Calcular intervalos entre picos
-    const intervals: number[] = [];
-    for (let i = 1; i < peaks.length; i++) {
-      intervals.push(peaks[i] - peaks[i-1]);
-    }
+    // Frecuencia de cruces (cada ciclo tiene 2 cruces)
+    const cyclesPerSecond = (crosses / 2) / totalTime;
     
-    // Verificar que intervalos estén en rango cardíaco
-    const minInterval = 1000 / this.CONFIG.MAX_HEART_RATE_HZ; // ~286ms para 210 BPM
-    const maxInterval = 1000 / this.CONFIG.MIN_HEART_RATE_HZ; // ~2000ms para 30 BPM
+    // Verificar que esté en rango cardíaco (0.5-3.5 Hz = 30-210 BPM)
+    const isValidFrequency = cyclesPerSecond >= 0.4 && cyclesPerSecond <= 4.0;
     
-    let validIntervals = 0;
-    for (const interval of intervals) {
-      if (interval >= minInterval && interval <= maxInterval) {
-        validIntervals++;
-      }
-    }
-    
-    // Al menos 50% de intervalos deben ser válidos
-    return validIntervals >= intervals.length * 0.5;
+    // Si hay al menos algunos cruces y la frecuencia es razonable, aceptar
+    return crosses >= 3 && isValidFrequency;
   }
 
   private handleDetection(): void {
