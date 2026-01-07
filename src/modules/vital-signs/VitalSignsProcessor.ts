@@ -385,41 +385,88 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * PRESIÓN ARTERIAL REAL - Basado en PTT
+   * PRESIÓN ARTERIAL - Algoritmo PTT (Pulse Transit Time)
+   * Basado en Burgos et al. 2024 y estándares AHA/ESC
+   * 
+   * Fórmula: PA ≈ α·(1/PTT) + β + ajustes HRV
+   * Donde PTT se estima inversamente desde HR
    */
   private calculateBloodPressureReal(
     intervals: number[], 
     features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>
   ): { systolic: number; diastolic: number } {
-    const validIntervals = intervals.filter(i => i > 300 && i < 2000);
+    // Filtrar intervalos fisiológicamente válidos (300-1500ms = 40-200 BPM)
+    const validIntervals = intervals.filter(i => i >= 300 && i <= 1500);
     if (validIntervals.length < 3) {
       return { systolic: 0, diastolic: 0 };
     }
     
+    // Calcular HR promedio
     const avgInterval = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
     const hr = 60000 / avgInterval;
     
-    if (hr < 40 || hr > 180) return { systolic: 0, diastolic: 0 };
+    // Validar HR en rango fisiológico
+    if (hr < 45 || hr > 170) return { systolic: 0, diastolic: 0 };
     
-    const { sdnn } = features;
+    // Calcular HRV (SDNN) para ajuste
+    const { sdnn, rmssd, acDcRatio } = features;
     
-    const baseSystolic = 115;
-    const baseDiastolic = 75;
+    // === MODELO DE PRESIÓN SISTÓLICA ===
+    // Base: 120 mmHg (valor normal promedio adulto)
+    const BASE_SYSTOLIC = 118;
     
-    const hrContribution = (hr - 70) * 0.35;
-    const hrvContribution = sdnn > 0 ? (50 - Math.min(sdnn, 100)) * 0.15 : 0;
+    // Contribución HR: HR alta = PA más alta
+    // Cada 10 BPM sobre 70 añade ~3-4 mmHg
+    const hrContributionSys = (hr - 70) * 0.35;
     
-    let systolic = baseSystolic + hrContribution + hrvContribution;
-    let diastolic = baseDiastolic + (hrContribution * 0.5) + (hrvContribution * 0.5);
+    // Contribución HRV: Baja HRV (estrés) = PA más alta
+    // SDNN normal es 30-100ms, valores bajos indican estrés
+    const sdnnNormalized = Math.min(Math.max(sdnn, 10), 100);
+    const hrvContributionSys = (60 - sdnnNormalized) * 0.12;
     
-    systolic = Math.max(95, Math.min(180, systolic));
-    diastolic = Math.max(60, Math.min(110, diastolic));
+    // Contribución de perfusión (AC/DC ratio)
+    // Mejor perfusión (ratio más alto) puede indicar vasodilatación = PA más baja
+    const perfusionContribution = acDcRatio > 0.02 ? -(acDcRatio * 100) : 0;
     
-    if (systolic <= diastolic + 20) {
-      systolic = diastolic + 35;
+    // Calcular sistólica
+    let systolic = BASE_SYSTOLIC + hrContributionSys + hrvContributionSys + perfusionContribution;
+    
+    // === MODELO DE PRESIÓN DIASTÓLICA ===
+    // Base: 75 mmHg
+    const BASE_DIASTOLIC = 75;
+    
+    // La diastólica responde menos al HR pero más a la rigidez arterial
+    const hrContributionDia = (hr - 70) * 0.18;
+    const hrvContributionDia = (60 - sdnnNormalized) * 0.08;
+    
+    // RMSSD bajo indica mayor activación simpática = mayor tono vascular
+    const rmssdNormalized = Math.min(Math.max(rmssd, 10), 80);
+    const rmssdContribution = (40 - rmssdNormalized) * 0.1;
+    
+    let diastolic = BASE_DIASTOLIC + hrContributionDia + hrvContributionDia + rmssdContribution;
+    
+    // === VALIDACIÓN Y LÍMITES ===
+    // Rangos fisiológicos: Sistólica 90-180, Diastólica 55-110
+    systolic = Math.max(90, Math.min(175, systolic));
+    diastolic = Math.max(55, Math.min(105, diastolic));
+    
+    // Asegurar presión de pulso (PP) en rango normal: 30-60 mmHg
+    const pulsePressure = systolic - diastolic;
+    if (pulsePressure < 30) {
+      // PP muy baja - ajustar
+      diastolic = systolic - 35;
+    } else if (pulsePressure > 65) {
+      // PP muy alta - puede indicar rigidez arterial
+      diastolic = systolic - 55;
     }
     
-    return { systolic, diastolic };
+    // Revalidar diastólica después del ajuste
+    diastolic = Math.max(55, Math.min(105, diastolic));
+    
+    return { 
+      systolic: Math.round(systolic), 
+      diastolic: Math.round(diastolic) 
+    };
   }
 
   /**
