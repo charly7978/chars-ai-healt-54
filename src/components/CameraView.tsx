@@ -9,8 +9,12 @@ interface CameraViewProps {
 }
 
 /**
- * Cámara trasera principal + secundaria opcional para mejor PPG.
- * Prioriza SIEMPRE la cámara trasera principal con flash.
+ * SISTEMA DE CÁMARA INTELIGENTE PARA PPG
+ * 
+ * PRIORIDAD:
+ * 1. Buscar cámara con FLASH (torch) - esa es la principal
+ * 2. Si hay dos cámaras traseras, usar ambas
+ * 3. Si no hay flash, usar iluminación adaptativa (exposición alta)
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
@@ -22,6 +26,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   const s1Ref = useRef<MediaStream | null>(null);
   const s2Ref = useRef<MediaStream | null>(null);
   const startedRef = useRef(false);
+  const hasFlashRef = useRef(false);
 
   const stopStream = (stream: MediaStream | null) => {
     if (stream) {
@@ -39,18 +44,23 @@ const CameraView: React.FC<CameraViewProps> = ({
     s1Ref.current = null;
     s2Ref.current = null;
     startedRef.current = false;
+    hasFlashRef.current = false;
   };
 
   /**
-   * Configuración óptima para PPG:
-   * - Torch ON
-   * - Modos manuales
-   * - Focus cercano
+   * Verifica si un track tiene flash disponible
    */
-  const optimizeForPPG = async (track: MediaStreamTrack) => {
+  const checkFlash = (track: MediaStreamTrack): boolean => {
+    const caps: any = track.getCapabilities?.() || {};
+    return caps.torch === true;
+  };
+
+  /**
+   * Configura la cámara para PPG con flash O iluminación adaptativa
+   */
+  const optimizeForPPG = async (track: MediaStreamTrack, forceNoFlash = false) => {
     const caps: any = track.getCapabilities?.() || {};
     
-    // Aplicar cada constraint individualmente para máxima compatibilidad
     const tryConstraint = async (c: any) => {
       try {
         await track.applyConstraints({ advanced: [c] } as any);
@@ -58,59 +68,123 @@ const CameraView: React.FC<CameraViewProps> = ({
       } catch { return false; }
     };
 
-    // 1. TORCH - Lo más importante
-    if (caps.torch) await tryConstraint({ torch: true });
-    
-    // 2. Modos manuales
-    if (caps.exposureMode?.includes?.('manual')) await tryConstraint({ exposureMode: 'manual' });
-    if (caps.focusMode?.includes?.('manual')) await tryConstraint({ focusMode: 'manual' });
-    if (caps.whiteBalanceMode?.includes?.('manual')) await tryConstraint({ whiteBalanceMode: 'manual' });
-    
-    // 3. Focus cercano
-    if (caps.focusDistance?.min !== undefined) await tryConstraint({ focusDistance: caps.focusDistance.min });
-    
-    // 4. ISO bajo
-    if (caps.iso?.min !== undefined) await tryConstraint({ iso: caps.iso.min });
+    const hasFlash = caps.torch === true && !forceNoFlash;
+    hasFlashRef.current = hasFlash;
 
-    console.log('📷 Optimizado:', { torch: caps.torch, label: track.label });
+    if (hasFlash) {
+      // ===== MODO CON FLASH =====
+      console.log('🔦 Flash disponible - usando modo con torch');
+      
+      await tryConstraint({ torch: true });
+      
+      // Modos manuales para estabilidad
+      if (caps.exposureMode?.includes?.('manual')) await tryConstraint({ exposureMode: 'manual' });
+      if (caps.focusMode?.includes?.('manual')) await tryConstraint({ focusMode: 'manual' });
+      if (caps.whiteBalanceMode?.includes?.('manual')) await tryConstraint({ whiteBalanceMode: 'manual' });
+      
+      // Focus cercano
+      if (caps.focusDistance?.min !== undefined) await tryConstraint({ focusDistance: caps.focusDistance.min });
+      
+      // ISO bajo con flash
+      if (caps.iso?.min !== undefined) await tryConstraint({ iso: caps.iso.min });
+      
+    } else {
+      // ===== MODO SIN FLASH - ILUMINACIÓN ADAPTATIVA =====
+      console.log('💡 Sin flash - usando iluminación adaptativa');
+      
+      // Exposición automática continua para adaptarse a la luz
+      if (caps.exposureMode?.includes?.('continuous')) {
+        await tryConstraint({ exposureMode: 'continuous' });
+      }
+      
+      // Compensación de exposición alta para captar más luz
+      if (caps.exposureCompensation?.max !== undefined) {
+        await tryConstraint({ exposureCompensation: caps.exposureCompensation.max * 0.8 });
+      }
+      
+      // ISO alto para más sensibilidad sin flash
+      if (caps.iso?.max !== undefined) {
+        const midIso = (caps.iso.min + caps.iso.max) / 2;
+        await tryConstraint({ iso: midIso });
+      }
+      
+      // Balance de blancos automático
+      if (caps.whiteBalanceMode?.includes?.('continuous')) {
+        await tryConstraint({ whiteBalanceMode: 'continuous' });
+      }
+      
+      // Focus cercano sigue siendo importante
+      if (caps.focusDistance?.min !== undefined) {
+        await tryConstraint({ focusDistance: caps.focusDistance.min });
+      }
+    }
+
+    console.log('📷 Cámara configurada:', { 
+      label: track.label, 
+      flash: hasFlash,
+      caps: { torch: caps.torch, exposureMode: caps.exposureMode }
+    });
   };
 
   /**
-   * Encuentra cámaras traseras ordenadas por prioridad
+   * Encuentra y prueba cámaras para identificar cuál tiene flash
    */
-  const findBackCameras = async (): Promise<MediaDeviceInfo[]> => {
+  const findCameraWithFlash = async (): Promise<{
+    mainCamera: MediaDeviceInfo | null;
+    auxCamera: MediaDeviceInfo | null;
+    allCameras: MediaDeviceInfo[];
+  }> => {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const videos = devices.filter(d => d.kind === "videoinput");
     
-    // Priorizar por etiquetas comunes de cámara trasera
-    const scored = videos.map(d => {
+    // Filtrar solo cámaras traseras
+    const backCameras = videos.filter(d => {
       const label = (d.label || '').toLowerCase();
-      let score = 0;
-      
-      // Cámara principal trasera (máxima prioridad)
-      if (label.includes('back') && label.includes('0')) score += 100;
-      else if (label.includes('rear') && label.includes('0')) score += 100;
-      else if (label.includes('back camera 0')) score += 100;
-      else if (label.includes('main')) score += 90;
-      else if (label.includes('wide')) score += 80;
-      else if (label.includes('back')) score += 70;
-      else if (label.includes('rear')) score += 70;
-      else if (label.includes('environment')) score += 60;
-      
-      // Penalizar cámaras secundarias
-      if (label.includes('ultra') || label.includes('tele') || label.includes('macro')) score -= 30;
-      if (label.includes('front') || label.includes('selfie')) score -= 100;
-      if (/\b[2-9]\b/.test(label)) score -= 20; // camera 2, 3, etc.
-      
-      return { device: d, score };
+      const isBack = label.includes('back') || label.includes('rear') || label.includes('environment');
+      const isFront = label.includes('front') || label.includes('selfie') || label.includes('user');
+      return isBack || (!isFront && videos.length <= 2); // Si solo hay 2, asumir que una es trasera
     });
-    
-    // Ordenar por score descendente
-    scored.sort((a, b) => b.score - a.score);
-    
-    console.log('📷 Cámaras encontradas:', scored.map(s => ({ label: s.device.label, score: s.score })));
-    
-    return scored.map(s => s.device);
+
+    console.log('📷 Cámaras traseras detectadas:', backCameras.map(c => c.label));
+
+    // Probar cada cámara para ver cuál tiene flash
+    let cameraWithFlash: MediaDeviceInfo | null = null;
+    let cameraWithoutFlash: MediaDeviceInfo | null = null;
+
+    for (const camera of backCameras) {
+      try {
+        const testStream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { deviceId: { exact: camera.deviceId } }
+        });
+        
+        const track = testStream.getVideoTracks()[0];
+        const hasFlash = checkFlash(track);
+        
+        console.log(`📷 Probando ${camera.label}: flash=${hasFlash}`);
+        
+        // Detener el stream de prueba
+        track.stop();
+        
+        if (hasFlash && !cameraWithFlash) {
+          cameraWithFlash = camera;
+        } else if (!hasFlash && !cameraWithoutFlash) {
+          cameraWithoutFlash = camera;
+        }
+        
+        // Si ya encontramos ambas, salir
+        if (cameraWithFlash && cameraWithoutFlash) break;
+        
+      } catch (e) {
+        console.log(`⚠️ No se pudo probar ${camera.label}`);
+      }
+    }
+
+    return {
+      mainCamera: cameraWithFlash || backCameras[0] || null,
+      auxCamera: cameraWithFlash ? cameraWithoutFlash : null,
+      allCameras: backCameras
+    };
   };
 
   const startCameras = async () => {
@@ -118,64 +192,87 @@ const CameraView: React.FC<CameraViewProps> = ({
     startedRef.current = true;
 
     try {
-      const cameras = await findBackCameras();
+      // Buscar cámara con flash primero
+      const { mainCamera, auxCamera, allCameras } = await findCameraWithFlash();
       
-      // SIEMPRE intentar primero con la cámara principal trasera
-      // Usar facingMode: environment como constraint principal
-      try {
-        // OPTIMIZACIÓN: Resolución baja para PPG (menos GPU/batería)
-        const mainStream = await navigator.mediaDevices.getUserMedia({
+      if (!mainCamera && allCameras.length === 0) {
+        // Fallback: usar facingMode environment
+        console.log('⚠️ No se detectaron cámaras, usando fallback');
+        const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
-          video: {
-            facingMode: { exact: "environment" },
-            width: { ideal: 320, max: 640 },
-            height: { ideal: 240, max: 480 },
-            frameRate: { ideal: 15, max: 30 }
-          }
+          video: { facingMode: "environment" }
         });
         
-        s1Ref.current = mainStream;
+        s1Ref.current = stream;
         if (v1Ref.current) {
-          v1Ref.current.srcObject = mainStream;
+          v1Ref.current.srcObject = stream;
           await v1Ref.current.play().catch(() => {});
         }
         
-        const track = mainStream.getVideoTracks()[0];
+        const track = stream.getVideoTracks()[0];
         if (track) await optimizeForPPG(track);
-        
-        onStreamReady?.(mainStream);
-        console.log('✅ Cámara principal iniciada:', track?.label);
-        
-      } catch (e) {
-        // Fallback: intentar con deviceId específico de la primera cámara trasera
-        if (cameras.length > 0) {
-          const stream = await navigator.mediaDevices.getUserMedia({
+        onStreamReady?.(stream);
+        return;
+      }
+
+      // ===== CÁMARA PRINCIPAL (con flash si está disponible) =====
+      if (mainCamera) {
+        try {
+          const mainStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
-              deviceId: { exact: cameras[0].deviceId },
+              deviceId: { exact: mainCamera.deviceId },
               width: { ideal: 320, max: 640 },
               height: { ideal: 240, max: 480 },
               frameRate: { ideal: 15, max: 30 }
             }
           });
           
-          s1Ref.current = stream;
+          s1Ref.current = mainStream;
           if (v1Ref.current) {
-            v1Ref.current.srcObject = stream;
+            v1Ref.current.srcObject = mainStream;
             await v1Ref.current.play().catch(() => {});
           }
           
-          const track = stream.getVideoTracks()[0];
+          const track = mainStream.getVideoTracks()[0];
           if (track) await optimizeForPPG(track);
           
-          onStreamReady?.(stream);
-          console.log('✅ Cámara iniciada (fallback deviceId):', track?.label);
+          onStreamReady?.(mainStream);
+          console.log('✅ Cámara PRINCIPAL iniciada:', mainCamera.label, hasFlashRef.current ? '(con flash)' : '(sin flash)');
+          
+        } catch (e) {
+          console.error('❌ Error con cámara principal:', e);
         }
       }
 
-      // Cámara auxiliar deshabilitada para optimizar rendimiento y batería
-      if (cameras.length >= 2) {
-        console.log('ℹ️ Cámara auxiliar disponible pero omitida para optimizar rendimiento');
+      // ===== CÁMARA AUXILIAR (si hay dos traseras) =====
+      if (auxCamera && onAuxStreamReady) {
+        try {
+          const auxStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              deviceId: { exact: auxCamera.deviceId },
+              width: { ideal: 320, max: 640 },
+              height: { ideal: 240, max: 480 },
+              frameRate: { ideal: 15, max: 30 }
+            }
+          });
+          
+          s2Ref.current = auxStream;
+          if (v2Ref.current) {
+            v2Ref.current.srcObject = auxStream;
+            await v2Ref.current.play().catch(() => {});
+          }
+          
+          const track = auxStream.getVideoTracks()[0];
+          if (track) await optimizeForPPG(track, true); // Sin flash para la auxiliar
+          
+          onAuxStreamReady(auxStream);
+          console.log('✅ Cámara AUXILIAR iniciada:', auxCamera.label);
+          
+        } catch (e) {
+          console.log('ℹ️ Cámara auxiliar no disponible:', e);
+        }
       }
       
     } catch (err) {
@@ -195,16 +292,20 @@ const CameraView: React.FC<CameraViewProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMonitoring]);
 
-  // Mantener torch activa
+  // Mantener configuración activa (torch + exposición)
   useEffect(() => {
     if (!isMonitoring) return;
     
     const interval = setInterval(() => {
-      [s1Ref.current, s2Ref.current].forEach(stream => {
+      [s1Ref.current, s2Ref.current].forEach((stream, idx) => {
         const track = stream?.getVideoTracks()[0];
         if (track) {
           try {
-            track.applyConstraints({ advanced: [{ torch: true }] } as any);
+            const caps: any = track.getCapabilities?.() || {};
+            if (caps.torch && idx === 0) {
+              // Mantener torch solo en cámara principal
+              track.applyConstraints({ advanced: [{ torch: true }] } as any);
+            }
           } catch {}
         }
       });
