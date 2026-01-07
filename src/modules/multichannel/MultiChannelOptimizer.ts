@@ -53,7 +53,7 @@ export class MultiChannelOptimizer implements OptimizerAPI {
       this.channelStates[ch] = {};
       this.channelFilters[ch] = {
         kalman: new KalmanFilter(),
-        sg: new SavitzkyGolayFilter(9),
+        sg: new SavitzkyGolayFilter(),
       };
       this.channelGains[ch] = this.defaultGain(ch);
       this.channelBands[ch] = this.defaultBand(ch);
