@@ -97,8 +97,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.filteredBuffer.shift();
       }
       
-      // 4. ANÁLISIS DE CALIDAD UNIFICADO
-      const qualityResult = this.qualityAnalyzer.analyze(redValue, filtered, timestamp);
+      // 4. ANÁLISIS DE CALIDAD UNIFICADO - Ahora con datos RGB para detección de dedo
+      const qualityResult = this.qualityAnalyzer.analyze(
+        redValue, 
+        filtered, 
+        timestamp,
+        { red: redValue, green: avgGreen, blue: avgBlue } // Pasar RGB para fingerConfidence
+      );
       this.lastQualityResult = qualityResult;
       this.lastRGB.pulsatility = qualityResult.perfusionIndex / 100;
       
