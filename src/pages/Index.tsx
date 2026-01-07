@@ -517,7 +517,7 @@ const Index = () => {
     startLoop();
   };
 
-  // PROCESAMIENTO DE SEÑALES - CON VALIDACIÓN DE SANGRE REAL
+  // PROCESAMIENTO DE SEÑALES - SIEMPRE VISUALIZA, SOLO PROCESA CON SANGRE
   const vitalSignsFrameCounter = useRef<number>(0);
   const VITALS_PROCESS_EVERY_N_FRAMES = 5;
   
@@ -526,18 +526,21 @@ const Index = () => {
 
     setSignalQuality(lastSignal.quality);
     
+    // SIEMPRE actualizar la señal para el gráfico (visualización)
+    const signalValue = lastSignal.filteredValue;
+    setHeartbeatSignal(signalValue);
+    
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
     // CRÍTICO: fingerDetected ahora significa "SANGRE REAL DETECTADA"
     const hasBlood = lastSignal.fingerDetected;
     
-    // Si NO hay sangre real, degradar valores gradualmente
+    // Si NO hay sangre real, degradar BPM pero seguir mostrando señal
     if (!hasBlood) {
       setHeartRate(prev => prev > 0 ? Math.max(0, prev * 0.95) : 0);
-      return; // NO PROCESAR SIN SANGRE
+      setBeatMarker(0);
+      return; // NO PROCESAR LATIDOS SIN SANGRE
     }
-    
-    const signalValue = lastSignal.filteredValue;
 
     // PROCESAMIENTO DE LATIDOS - Solo si hay sangre
     const heartBeatResult = processHeartBeat(
@@ -547,7 +550,6 @@ const Index = () => {
     );
     
     setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(signalValue);
     setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
     
     if (heartBeatResult.rrData?.intervals) {
