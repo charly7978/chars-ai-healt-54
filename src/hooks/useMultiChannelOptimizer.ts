@@ -1,13 +1,18 @@
-import { useMemo, useRef, useCallback } from 'react';
+import { useRef, useCallback } from 'react';
 import MultiChannelOptimizer from '../modules/multichannel/MultiChannelOptimizer';
 import type { VitalChannel, ChannelFeedback, MultiChannelOutputs } from '../types/multichannel';
 
+/**
+ * HOOK OPTIMIZADO - Evita recreación innecesaria del optimizer
+ */
 export const useMultiChannelOptimizer = () => {
+  // Crear una sola vez con lazy initialization
   const optimizerRef = useRef<MultiChannelOptimizer | null>(null);
-
-  optimizerRef.current = useMemo(() => {
-    return new MultiChannelOptimizer({ samplingRateHz: 30, defaultBandpass: [0.7, 4.0] });
-  }, []);
+  
+  // Lazy init - solo se crea una vez
+  if (!optimizerRef.current) {
+    optimizerRef.current = new MultiChannelOptimizer({ samplingRateHz: 30, defaultBandpass: [0.7, 4.0] });
+  }
 
   const pushRawSample = useCallback((timestamp: number, rawValue: number, quality: number) => {
     optimizerRef.current?.pushRawSample(timestamp, rawValue, quality);
@@ -26,12 +31,7 @@ export const useMultiChannelOptimizer = () => {
     optimizerRef.current?.reset();
   }, []);
 
-  return {
-    pushRawSample,
-    compute,
-    pushFeedback,
-    reset,
-  };
+  return { pushRawSample, compute, pushFeedback, reset };
 };
 
 export default useMultiChannelOptimizer;

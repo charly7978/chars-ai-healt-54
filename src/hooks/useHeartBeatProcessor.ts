@@ -32,18 +32,14 @@ export const useHeartBeatProcessor = () => {
 
   // INICIALIZACIÓN UNIFICADA - UNA SOLA VEZ
   useEffect(() => {
-    // GENERAR SESSION ID sin aleatoriedad
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
-    sessionIdRef.current = `heartbeat_${t}_${p}`;
-
-    console.log(`💓 CREANDO PROCESADOR CARDÍACO UNIFICADO - ${sessionIdRef.current}`);
+    sessionIdRef.current = `hb_${t}_${p}`;
     
     processorRef.current = new HeartBeatProcessor();
     processingStateRef.current = 'ACTIVE';
     
     return () => {
-      console.log(`💓 DESTRUYENDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
       if (processorRef.current) {
         processorRef.current = null;
       }
@@ -136,11 +132,6 @@ export const useHeartBeatProcessor = () => {
       
       setCurrentBPM(Math.round(newBPM * 10) / 10);
       setConfidence(result.confidence);
-      
-      // LOG CADA 50 SEÑALES PARA DEBUG
-      if (processedSignalsRef.current % 50 === 0) {
-        console.log(`💓 BPM: ${newBPM.toFixed(1)} (conf: ${result.confidence.toFixed(2)}, quality: ${currentQuality}) - ${sessionIdRef.current}`);
-      }
     }
 
     return {
@@ -157,7 +148,6 @@ export const useHeartBeatProcessor = () => {
     if (processingStateRef.current === 'RESETTING') return;
     
     processingStateRef.current = 'RESETTING';
-    console.log(`🔄 RESET COMPLETO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
     
     if (processorRef.current) {
       processorRef.current.reset();
@@ -173,17 +163,12 @@ export const useHeartBeatProcessor = () => {
     processedSignalsRef.current = 0;
     
     processingStateRef.current = 'ACTIVE';
-    console.log(`✅ Reset cardíaco completado - ${sessionIdRef.current}`);
   }, []);
 
   // CONFIGURACIÓN UNIFICADA DE ESTADO DE ARRITMIA
   const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
     if (processorRef.current && processingStateRef.current === 'ACTIVE') {
       processorRef.current.setArrhythmiaDetected(isArrhythmiaDetected);
-      
-      if (isArrhythmiaDetected) {
-        console.log(`⚠️ Arritmia activada en procesador - ${sessionIdRef.current}`);
-      }
     }
   }, []);
 

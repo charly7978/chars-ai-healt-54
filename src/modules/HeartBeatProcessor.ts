@@ -237,8 +237,6 @@ export class HeartBeatProcessor {
    * Limpia buffers pero mantiene configuración aprendida
    */
   public partialReset(): void {
-    console.log("🔄 HeartBeatProcessor: Reset PARCIAL - Dedo re-detectado");
-    
     // Limpiar buffers de señal para evitar datos contaminados
     this.signalBuffer = [];
     this.medianBuffer = [];
@@ -275,8 +273,6 @@ export class HeartBeatProcessor {
       // Dedo acaba de ser RE-detectado
       const timeSinceLost = now - this.fingerLostTimestamp;
       
-      console.log(`👆 Dedo RE-DETECTADO después de ${timeSinceLost}ms`);
-      
       // Si el dedo volvió rápido (<500ms), hacer reset parcial para limpiar ruido
       // Si tardó más, hacer reset completo
       if (timeSinceLost < this.FINGER_REDETECTION_RESET_MS && this.bpmHistory.length > 0) {
@@ -292,7 +288,6 @@ export class HeartBeatProcessor {
     } else if (!detected && this.wasFingerDetected) {
       // Dedo acaba de perderse
       this.fingerLostTimestamp = now;
-      console.log("👆 Dedo PERDIDO - marcando timestamp");
     }
     
     this.wasFingerDetected = detected;
@@ -399,13 +394,14 @@ export class HeartBeatProcessor {
     // Calcular calidad de señal actual basada en varios factores (0-100)
     this.currentSignalQuality = this.calculateSignalQuality(normalizedValue, confidence);
 
-    // 🔍 DIAGNÓSTICO: Log cada 60 frames (~2s) para entender la señal
-    if (this.signalBuffer.length % 60 === 0) {
-      const range = this.signalBuffer.length > 5 
-        ? Math.max(...this.signalBuffer.slice(-20)) - Math.min(...this.signalBuffer.slice(-20))
-        : 0;
-      console.log(`🔬 DIAGNÓSTICO SEÑAL: raw=${value.toFixed(2)}, norm=${normalizedValue.toFixed(4)}, deriv=${smoothDerivative.toFixed(5)}, range=${range.toFixed(3)}, quality=${this.currentSignalQuality.toFixed(0)}, threshold=${this.adaptiveSignalThreshold.toFixed(4)}`);
-    }
+    // Diagnóstico reducido para rendimiento (cada 120 frames = ~4s)
+    // Descomentar para debug:
+    // if (this.signalBuffer.length % 120 === 0) {
+    //   const range = this.signalBuffer.length > 5 
+    //     ? Math.max(...this.signalBuffer.slice(-20)) - Math.min(...this.signalBuffer.slice(-20))
+    //     : 0;
+    //   console.log(`🔬 SEÑAL: norm=${normalizedValue.toFixed(4)}, quality=${this.currentSignalQuality.toFixed(0)}`);
+    // }
 
     if (isConfirmedPeak && !this.isInWarmup()) {
       const now = Date.now();
@@ -420,10 +416,7 @@ export class HeartBeatProcessor {
           this.previousPeakTime = this.lastPeakTime;
           this.lastPeakTime = now;
           
-          // 🎯 LOG DE LATIDO DETECTADO
-          console.log(`💓 LATIDO REAL: amp=${normalizedValue.toFixed(4)}, conf=${confidence.toFixed(2)}, BPM=${this.getSmoothBPM()}`);
-          
-          // Reproducir sonido y actualizar estado
+          // Reproducir sonido y actualizar estado (sin log para rendimiento)
           this.playHeartSound(1.0, this.isArrhythmiaDetected);
 
           this.updateBPM();
@@ -449,10 +442,7 @@ export class HeartBeatProcessor {
             this.peaksSinceLastTuning = 0;
           }
         } else {
-          // Log por qué se rechazó
-          if (this.signalBuffer.length % 30 === 0) {
-            console.log(`⚠️ Pico rechazado: amp=${normalizedValue.toFixed(4)}, conf=${confidence.toFixed(2)}, quality=${this.currentSignalQuality.toFixed(0)}`);
-          }
+          // Pico rechazado (sin log para rendimiento)
           isPeak = false;
         }
       }
@@ -642,11 +632,6 @@ export class HeartBeatProcessor {
     const heightScore = Math.min(1, relativeHeight);
     const acScore = Math.min(1, acRange / 5);
     const confidence = isPeak ? Math.max(0.4, 0.4 * heightScore + 0.6 * acScore) : 0;
-
-    // Log diagnóstico
-    if (isPotentialPeak && this.signalBuffer.length % 15 === 0) {
-      console.log(`🔍 Pico detectado: d1=${deriv1.toFixed(3)}, d2=${deriv2.toFixed(3)}, height=${(relativeHeight*100).toFixed(0)}%, AC=${acRange.toFixed(2)}`);
-    }
 
     return { isPeak, confidence, rawDerivative: derivative };
   }
