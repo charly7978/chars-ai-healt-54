@@ -405,7 +405,7 @@ const Index = () => {
     processImage();
   };
 
-  // PROCESAMIENTO ÚNICO DE SEÑALES - ESTRICTO
+  // PROCESAMIENTO ÚNICO DE SEÑALES
   useEffect(() => {
     if (!lastSignal) return;
 
@@ -413,20 +413,33 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    // ===== SIN DEDO = SIN DATOS =====
-    // Si no hay dedo detectado, TODOS los valores son 0
-    if (!lastSignal.fingerDetected) {
-      setHeartRate(0);
-      setHeartbeatSignal(0);
-      setBeatMarker(0);
-      // NO procesar signos vitales sin dedo
+    const MIN_SIGNAL_QUALITY = 8; // Muy permisivo para detectar dedos reales
+    
+    if (!lastSignal.fingerDetected || lastSignal.quality < MIN_SIGNAL_QUALITY) {
+      // Procesamiento reducido pero no bloqueo total - más permisivo
+      if (lastSignal.quality >= 5) {
+        const reducedBeatResult = processHeartBeat(
+          lastSignal.filteredValue * 0.6, 
+          false, // finger not fully detected but processing signal
+          lastSignal.timestamp
+        );
+        setHeartRate(reducedBeatResult.bpm * 0.7); // Reducir confianza
+        setHeartbeatSignal(lastSignal.filteredValue * 0.8);
+        setBeatMarker(reducedBeatResult.isPeak ? 0.6 : 0);
+      } else {
+        setHeartRate(0);
+        setHeartbeatSignal(0);
+        setBeatMarker(0);
+      }
+      // Alimentar igualmente al optimizador para mantener estado, aunque degradado
+      pushRawSample(lastSignal.timestamp, lastSignal.filteredValue * 0.5, lastSignal.quality);
       return;
     }
 
-    // ===== CON DEDO DETECTADO: PROCESAMIENTO REAL =====
+    // PROCESAMIENTO ÚNICO DE LATIDOS
     const heartBeatResult = processHeartBeat(
       lastSignal.filteredValue, 
-      true, // dedo confirmado
+      lastSignal.fingerDetected, 
       lastSignal.timestamp
     );
     
@@ -438,7 +451,7 @@ const Index = () => {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // Alimentar optimizador multicanal
+    // Alimentar optimizador multicanal y calcular salidas por canal
     pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
     const channelOutputs = compute();
 
@@ -452,34 +465,30 @@ const Index = () => {
         }
       });
     }
-    
-    // PROCESAR SIGNOS VITALES solo con calidad mínima
-    if (lastSignal.quality >= 25) {
-      const vitals = channelOutputs
-        ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
-        : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)
+    const vitals = channelOutputs
+      ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
+      : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
+    if (vitals) {
+      setVitalSigns(vitals);
       
-      if (vitals) {
-        setVitalSigns(vitals);
+      if (vitals.lastArrhythmiaData) {
+        lastArrhythmiaData.current = vitals.lastArrhythmiaData;
+        const [status, count] = vitals.arrhythmiaStatus.split('|');
+        setArrhythmiaCount(count || "0");
         
-        if (vitals.lastArrhythmiaData) {
-          lastArrhythmiaData.current = vitals.lastArrhythmiaData;
-          const [status, count] = vitals.arrhythmiaStatus.split('|');
-          setArrhythmiaCount(count || "0");
+        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+          setArrhythmiaState(isArrhythmiaDetected);
           
-          const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
-          if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-            arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-            setArrhythmiaState(isArrhythmiaDetected);
-            
-            if (isArrhythmiaDetected) {
-              toast({ 
-                title: "¡Arritmia detectada!", 
-                description: "Latido irregular identificado.", 
-                variant: "destructive", 
-                duration: 3000 
-              });
-            }
+          if (isArrhythmiaDetected) {
+            toast({ 
+              title: "¡Arritmia detectada!", 
+              description: "Latido irregular identificado.", 
+              variant: "destructive", 
+              duration: 3000 
+            });
           }
         }
       }

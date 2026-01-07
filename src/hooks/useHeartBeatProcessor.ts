@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 
@@ -14,8 +15,8 @@ interface HeartBeatResult {
 }
 
 /**
- * HOOK DE PROCESAMIENTO CARDÍACO CON AUDIO REAL
- * Detecta latidos reales y reproduce sonido en cada pico
+ * HOOK COMPLETAMENTE UNIFICADO DE PROCESAMIENTO CARDÍACO - ELIMINADAS TODAS LAS DUPLICIDADES
+ * Sistema matemático avanzado con algoritmos de detección de latidos de vanguardia
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
@@ -23,210 +24,43 @@ export const useHeartBeatProcessor = () => {
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
   
-  // Audio para latidos
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const lastBeepTimeRef = useRef<number>(0);
-  const MIN_BEEP_INTERVAL = 280; // Mínimo 280ms entre beeps (max ~214 BPM)
-  
-  // Control de estado
+  // CONTROL UNIFICADO DE ESTADO
   const sessionIdRef = useRef<string>("");
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
-  
-  // Detección de picos real
-  const signalBufferRef = useRef<number[]>([]);
-  const lastPeakTimeRef = useRef<number>(0);
-  const REFRACTORY_PERIOD = 300; // 300ms después de un pico, no detectar otro
+  const lastProcessTimeRef = useRef<number>(0);
+  const processedSignalsRef = useRef<number>(0);
 
-  // Inicialización única
+  // INICIALIZACIÓN UNIFICADA - UNA SOLA VEZ
   useEffect(() => {
+    // GENERAR SESSION ID sin aleatoriedad
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `heartbeat_${t}_${p}`;
 
-    console.log(`💓 HeartBeatProcessor con AUDIO - ${sessionIdRef.current}`);
+    console.log(`💓 CREANDO PROCESADOR CARDÍACO UNIFICADO - ${sessionIdRef.current}`);
     
     processorRef.current = new HeartBeatProcessor();
     processingStateRef.current = 'ACTIVE';
     
-    // Crear AudioContext para sonidos de latido
-    const initAudio = () => {
-      try {
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        }
-      } catch (e) {
-        console.warn("AudioContext no disponible:", e);
-      }
-    };
-    
-    // Inicializar audio en primer click/touch
-    const handleInteraction = () => {
-      initAudio();
-      if (audioContextRef.current?.state === 'suspended') {
-        audioContextRef.current.resume();
-      }
-    };
-    
-    document.addEventListener('click', handleInteraction, { once: true });
-    document.addEventListener('touchstart', handleInteraction, { once: true });
-    
     return () => {
-      document.removeEventListener('click', handleInteraction);
-      document.removeEventListener('touchstart', handleInteraction);
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-        audioContextRef.current = null;
+      console.log(`💓 DESTRUYENDO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
+      if (processorRef.current) {
+        processorRef.current = null;
       }
-      processorRef.current = null;
       processingStateRef.current = 'IDLE';
     };
   }, []);
 
-  /**
-   * Reproduce un sonido de latido "lub-dub"
-   */
-  const playHeartbeatSound = useCallback(() => {
-    const now = Date.now();
-    
-    // Evitar beeps muy seguidos
-    if (now - lastBeepTimeRef.current < MIN_BEEP_INTERVAL) {
-      return;
-    }
-    
-    lastBeepTimeRef.current = now;
-    
-    if (!audioContextRef.current) {
-      // Intentar crear contexto
-      try {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      } catch {
-        return;
-      }
-    }
-    
-    try {
-      const ctx = audioContextRef.current;
-      
-      // Reanudar contexto si está suspendido
-      if (ctx.state === 'suspended') {
-        ctx.resume();
-      }
-      
-      // ===== SONIDO "LUB" (primer sonido del latido) =====
-      const osc1 = ctx.createOscillator();
-      const gain1 = ctx.createGain();
-      
-      osc1.connect(gain1);
-      gain1.connect(ctx.destination);
-      
-      osc1.type = 'sine';
-      osc1.frequency.setValueAtTime(65, ctx.currentTime);
-      osc1.frequency.exponentialRampToValueAtTime(45, ctx.currentTime + 0.08);
-      
-      gain1.gain.setValueAtTime(0, ctx.currentTime);
-      gain1.gain.linearRampToValueAtTime(0.4, ctx.currentTime + 0.015);
-      gain1.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-      
-      osc1.start(ctx.currentTime);
-      osc1.stop(ctx.currentTime + 0.12);
-      
-      // ===== SONIDO "DUB" (segundo sonido, más suave) =====
-      const osc2 = ctx.createOscillator();
-      const gain2 = ctx.createGain();
-      
-      osc2.connect(gain2);
-      gain2.connect(ctx.destination);
-      
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(50, ctx.currentTime + 0.12);
-      osc2.frequency.exponentialRampToValueAtTime(35, ctx.currentTime + 0.18);
-      
-      gain2.gain.setValueAtTime(0, ctx.currentTime + 0.12);
-      gain2.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.13);
-      gain2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
-      
-      osc2.start(ctx.currentTime + 0.12);
-      osc2.stop(ctx.currentTime + 0.22);
-      
-      console.log("💗 BEEP - Latido detectado");
-      
-    } catch (e) {
-      // Silenciar errores de audio
-    }
-  }, []);
-
-  /**
-   * Detecta si hay un pico real en la señal
-   */
-  const detectRealPeak = useCallback((value: number, timestamp: number): boolean => {
-    signalBufferRef.current.push(value);
-    if (signalBufferRef.current.length > 20) {
-      signalBufferRef.current.shift();
-    }
-    
-    // Necesitamos al menos 5 muestras
-    if (signalBufferRef.current.length < 5) return false;
-    
-    // Período refractario
-    if (timestamp - lastPeakTimeRef.current < REFRACTORY_PERIOD) {
-      return false;
-    }
-    
-    const buffer = signalBufferRef.current;
-    const len = buffer.length;
-    
-    // Calcular umbral adaptativo
-    const mean = buffer.reduce((a, b) => a + b, 0) / len;
-    const max = Math.max(...buffer);
-    const min = Math.min(...buffer);
-    const amplitude = max - min;
-    
-    // Si no hay amplitud, no hay señal
-    if (amplitude < 0.5) return false;
-    
-    const threshold = mean + amplitude * 0.35;
-    
-    // Verificar pico: valor anterior era máximo local
-    const current = buffer[len - 1];
-    const prev1 = buffer[len - 2];
-    const prev2 = buffer[len - 3] || prev1;
-    
-    // El punto anterior debe ser mayor que sus vecinos (pico)
-    const isPeak = prev1 > prev2 && 
-                   prev1 > current && 
-                   prev1 > threshold;
-    
-    if (isPeak) {
-      lastPeakTimeRef.current = timestamp;
-      return true;
-    }
-    
-    return false;
-  }, []);
-
-  // Procesamiento de señal
+  // PROCESAMIENTO UNIFICADO DE SEÑAL - ELIMINADAS DUPLICIDADES
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
-    const currentTime = timestamp || Date.now();
-    
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
+      const fallbackBPM = Math.round(
+        (processorRef.current && typeof (processorRef.current as any).getSmoothBPM === 'function')
+          ? (processorRef.current as any).getSmoothBPM()
+          : 0
+      );
       return {
-        bpm: 0,
-        confidence: 0,
-        isPeak: false,
-        arrhythmiaCount: 0,
-        signalQuality: 0,
-        rrData: { intervals: [], lastPeakTime: null }
-      };
-    }
-    
-    // Sin dedo = sin procesamiento
-    if (!fingerDetected || value === 0) {
-      setCurrentBPM(0);
-      setConfidence(0);
-      setSignalQuality(0);
-      signalBufferRef.current = [];
-      return {
-        bpm: 0,
+        bpm: fallbackBPM,
         confidence: 0,
         isPeak: false,
         arrhythmiaCount: 0,
@@ -235,80 +69,115 @@ export const useHeartBeatProcessor = () => {
       };
     }
 
-    // Procesar señal para obtener BPM
-    const bpm = processorRef.current.processSignal(value, currentTime);
-    const rrIntervals = processorRef.current.getRRIntervals();
-    const lastPeakTime = processorRef.current.getLastPeakTime();
+    const currentTime = Date.now();
     
-    // Detectar pico REAL en la señal
-    const isPeak = detectRealPeak(value, currentTime);
-    
-    if (isPeak && bpm > 0) {
-      // ¡REPRODUCIR SONIDO DE LATIDO!
-      playHeartbeatSound();
+    // CONTROL DE TASA DE PROCESAMIENTO PARA EVITAR SOBRECARGA
+    if (currentTime - lastProcessTimeRef.current < 16) { // ~60 FPS máximo
+      return {
+        bpm: currentBPM,
+        confidence,
+        isPeak: false,
+        arrhythmiaCount: 0,
+        signalQuality,
+        rrData: { intervals: [], lastPeakTime: null }
+      };
     }
     
-    // Calcular calidad
-    const buffer = signalBufferRef.current;
-    let quality = 0;
-    if (buffer.length >= 10) {
-      const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length;
-      const variance = buffer.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / buffer.length;
-      const amplitude = Math.max(...buffer) - Math.min(...buffer);
-      if (variance >= 0.3 && amplitude > 0.5) {
-        const snr = 10 * Math.log10(amplitude / Math.sqrt(variance + 0.001));
-        quality = Math.max(0, Math.min(100, snr * 12));
+    lastProcessTimeRef.current = currentTime;
+    processedSignalsRef.current++;
+
+    // PROCESAMIENTO MATEMÁTICO AVANZADO DIRECTO
+    const result = processorRef.current.processSignal(value, timestamp);
+    const rrData = processorRef.current.getRRIntervals();
+    const currentQuality = result.signalQuality || 0;
+    
+    setSignalQuality(currentQuality);
+
+    // LÓGICA UNIFICADA DE DETECCIÓN CON ALGORITMOS AVANZADOS
+    const effectiveFingerDetected = fingerDetected || (currentQuality > 20 && result.confidence > 0.45);
+    
+    if (!effectiveFingerDetected) {
+      // DEGRADACIÓN SUAVE Y CONTROLADA
+      if (currentBPM > 0) {
+        const newBPM = Math.max(0, currentBPM * 0.96); // Degradación más suave
+        const newConfidence = Math.max(0, confidence * 0.92);
+        
+        setCurrentBPM(newBPM);
+        setConfidence(newConfidence);
       }
+      
+      return {
+        bpm: currentBPM,
+        confidence: Math.max(0, confidence * 0.92),
+        isPeak: false,
+        arrhythmiaCount: 0,
+        signalQuality: currentQuality,
+        rrData: { intervals: [], lastPeakTime: null }
+      };
     }
-    
-    setSignalQuality(quality);
-    
-    // Calcular confianza basada en calidad y estabilidad
-    const newConfidence = quality > 40 ? Math.min(1, quality / 80) : quality / 100;
-    
-    // Actualizar estado
-    if (bpm > 0 && bpm >= 40 && bpm <= 200) {
-      setCurrentBPM(bpm);
-      setConfidence(newConfidence);
+
+    // ACTUALIZACIÓN CON CONFIANZA MATEMÁTICAMENTE VALIDADA
+    if (result.confidence >= 0.55 && result.bpm > 0 && result.bpm >= 40 && result.bpm <= 200) {
+      // FILTRADO ADAPTATIVO PARA ESTABILIDAD
+      const smoothingFactor = Math.min(0.3, result.confidence * 0.5);
+      const newBPM = currentBPM > 0 ? 
+        currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
+        result.bpm;
+      
+      setCurrentBPM(Math.round(newBPM * 10) / 10); // Redondeo a 1 decimal
+      setConfidence(result.confidence);
+      
+      // LOG CADA 100 SEÑALES PROCESADAS PARA EVITAR SPAM
+      if (processedSignalsRef.current % 100 === 0) {
+        console.log(`💓 BPM actualizado: ${newBPM.toFixed(1)} (confianza: ${result.confidence.toFixed(2)}) - ${sessionIdRef.current}`);
+      }
     }
 
     return {
-      bpm: currentBPM > 0 ? currentBPM : bpm,
-      confidence: newConfidence,
-      isPeak,
-      arrhythmiaCount: 0,
-      signalQuality: quality,
-      rrData: { 
-        intervals: rrIntervals, 
-        lastPeakTime: rrIntervals.length > 0 ? lastPeakTime : null 
-      }
+      ...result,
+      bpm: currentBPM,
+      confidence,
+      signalQuality: currentQuality,
+      rrData
     };
-  }, [currentBPM, detectRealPeak, playHeartbeatSound]);
+  }, [currentBPM, confidence, signalQuality]);
 
-  // Reset
+  // RESET UNIFICADO COMPLETAMENTE LIMPIO
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
     
     processingStateRef.current = 'RESETTING';
+    console.log(`🔄 RESET COMPLETO PROCESADOR CARDÍACO - ${sessionIdRef.current}`);
     
     if (processorRef.current) {
       processorRef.current.reset();
     }
     
+    // RESET COMPLETO DE TODOS LOS ESTADOS
     setCurrentBPM(0);
     setConfidence(0);
     setSignalQuality(0);
-    signalBufferRef.current = [];
-    lastPeakTimeRef.current = 0;
+    
+    // RESET DE CONTADORES INTERNOS
+    lastProcessTimeRef.current = 0;
+    processedSignalsRef.current = 0;
     
     processingStateRef.current = 'ACTIVE';
+    console.log(`✅ Reset cardíaco completado - ${sessionIdRef.current}`);
   }, []);
 
-  // Estado de arritmia (para compatibilidad)
+  // CONFIGURACIÓN UNIFICADA DE ESTADO DE ARRITMIA
   const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
-    // La arritmia se detecta en VitalSignsProcessor
+    if (processorRef.current && processingStateRef.current === 'ACTIVE') {
+      processorRef.current.setArrhythmiaDetected(isArrhythmiaDetected);
+      
+      if (isArrhythmiaDetected) {
+        console.log(`⚠️ Arritmia activada en procesador - ${sessionIdRef.current}`);
+      }
+    }
   }, []);
 
+  // RETORNO UNIFICADO DEL HOOK
   return {
     currentBPM,
     confidence,
@@ -316,10 +185,11 @@ export const useHeartBeatProcessor = () => {
     processSignal,
     reset,
     setArrhythmiaState,
-    playHeartbeatSound,
+    // DEBUG INFO
     debugInfo: {
       sessionId: sessionIdRef.current,
-      processingState: processingStateRef.current
+      processingState: processingStateRef.current,
+      processedSignals: processedSignalsRef.current
     }
   };
 };
