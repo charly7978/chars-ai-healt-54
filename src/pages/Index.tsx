@@ -407,9 +407,9 @@ const Index = () => {
     frameLoopIdRef.current = requestAnimationFrame(processImage);
   };
 
-  // PROCESAMIENTO DE SEÑALES - SIMPLIFICADO sin MultiChannel
+  // PROCESAMIENTO DE SEÑALES - CON VALIDACIÓN DE SANGRE REAL
   const vitalSignsFrameCounter = useRef<number>(0);
-  const VITALS_PROCESS_EVERY_N_FRAMES = 5; // Procesar cada 5 frames (6 veces/segundo)
+  const VITALS_PROCESS_EVERY_N_FRAMES = 5;
   
   useEffect(() => {
     if (!lastSignal) return;
@@ -418,13 +418,24 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    // Sin factor de calidad por dedo - medición directa
+    // CRÍTICO: fingerDetected ahora significa "SANGRE REAL DETECTADA"
+    const hasBlood = lastSignal.fingerDetected;
+    
+    // Si NO hay sangre real, no procesar nada
+    if (!hasBlood) {
+      // Degradar valores gradualmente si los hay
+      if (heartRate > 0) {
+        setHeartRate(prev => Math.max(0, prev * 0.95));
+      }
+      return; // NO PROCESAR SIN SANGRE
+    }
+    
     const signalValue = lastSignal.filteredValue;
 
-    // PROCESAMIENTO DE LATIDOS - Sin verificación de dedo
+    // PROCESAMIENTO DE LATIDOS - Solo si hay sangre
     const heartBeatResult = processHeartBeat(
       signalValue,
-      true, // Siempre true - sin detección de dedo
+      true, // fingerDetected ya validado arriba
       lastSignal.timestamp
     );
     
@@ -442,35 +453,37 @@ const Index = () => {
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
-      // Procesamiento directo sin MultiChannel
-      const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-        
-      if (vitals) {
-        setVitalSigns(vitals);
-        
-        if (vitals.lastArrhythmiaData) {
-          lastArrhythmiaData.current = vitals.lastArrhythmiaData;
-          const [status, count] = vitals.arrhythmiaStatus.split('|');
-          setArrhythmiaCount(count || "0");
+      // Solo procesar signos vitales si hay sangre Y intervalos RR
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
+        const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
-          const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
-          if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-            arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-            setArrhythmiaState(isArrhythmiaDetected);
+        if (vitals) {
+          setVitalSigns(vitals);
+          
+          if (vitals.lastArrhythmiaData) {
+            lastArrhythmiaData.current = vitals.lastArrhythmiaData;
+            const [status, count] = vitals.arrhythmiaStatus.split('|');
+            setArrhythmiaCount(count || "0");
             
-            if (isArrhythmiaDetected) {
-              toast({ 
-                title: "¡Arritmia detectada!", 
-                description: "Latido irregular identificado.", 
-                variant: "destructive", 
-                duration: 3000 
-              });
+            const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+            if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+              arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+              setArrhythmiaState(isArrhythmiaDetected);
+              
+              if (isArrhythmiaDetected) {
+                toast({ 
+                  title: "¡Arritmia detectada!", 
+                  description: "Latido irregular identificado.", 
+                  variant: "destructive", 
+                  duration: 3000 
+                });
+              }
             }
           }
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, heartRate]);
 
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {
