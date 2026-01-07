@@ -82,9 +82,9 @@ export const useHeartBeatProcessor = () => {
     const rrIntervals = processorRef.current.getRRIntervals();
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };
-    const currentQuality = result.signalQuality || 0;
     
-    setSignalQuality(currentQuality);
+    // NOTA: signalQuality ahora viene de SignalQualityAnalyzer a través de PPGSignalProcessor
+    // El hook recibe la calidad ya calculada desde Index.tsx
 
     // Actualizar BPM si hay confianza y está en rango válido
     if (result.confidence >= 0.3 && result.bpm >= 40 && result.bpm <= 180) {
@@ -98,10 +98,11 @@ export const useHeartBeatProcessor = () => {
     }
 
     return {
-      ...result,
-      bpm: currentBPM,
-      confidence,
-      signalQuality: currentQuality,
+      bpm: result.bpm,
+      confidence: result.confidence,
+      isPeak: result.isPeak,
+      arrhythmiaCount: result.arrhythmiaCount,
+      signalQuality: signalQuality, // Usa el estado actual, que viene de PPG
       rrData
     };
   }, [currentBPM, confidence, signalQuality]);

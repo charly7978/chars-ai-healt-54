@@ -1,30 +1,30 @@
 import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
 import { FrameProcessor } from './FrameProcessor';
+import { SignalQualityAnalyzer, SignalQualityResult } from './SignalQualityAnalyzer';
 
 /**
- * PROCESADOR PPG - VERSIÓN DIRECTA SIN DETECCIÓN DE DEDO
+ * PROCESADOR PPG - VERSIÓN CON SQI UNIFICADO
  * 
- * PRINCIPIO: La señal entra → se procesa → sale
- * Si la señal es de sangre real: valores coherentes
- * Si la señal es de ambiente: valores erráticos/inválidos
- * 
- * NO hay "finger detection" - la calidad de la señal habla por sí misma
+ * Usa SignalQualityAnalyzer como ÚNICA fuente de verdad para calidad
+ * La calidad determina si la señal es válida para medir signos vitales
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   
   private bandpassFilter: BandpassFilter;
   private frameProcessor: FrameProcessor;
+  private qualityAnalyzer: SignalQualityAnalyzer;
   
   // Buffers
-  private readonly BUFFER_SIZE = 120;
+  private readonly BUFFER_SIZE = 150;
   private rawRedBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   
   // Diagnóstico
   private lastRGB = { r: 0, g: 0, b: 0, rgRatio: 0, redPercent: 0, pulsatility: 0 };
   private frameCount: number = 0;
+  private lastQualityResult: SignalQualityResult | null = null;
   
   // Estadísticas RGB para SpO2
   private rgbStats = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0 };
@@ -35,12 +35,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   ) {
     this.bandpassFilter = new BandpassFilter(30);
     this.frameProcessor = new FrameProcessor({ ROI_SIZE_FACTOR: 0.80 });
+    this.qualityAnalyzer = new SignalQualityAnalyzer();
   }
 
   async initialize(): Promise<void> {
     this.rawRedBuffer = [];
     this.filteredBuffer = [];
     this.bandpassFilter.reset();
+    this.qualityAnalyzer.reset();
   }
 
   start(): void {
@@ -60,14 +62,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * PROCESAMIENTO DE FRAME - DIRECTO SIN VALIDACIÓN DE DEDO
-   * Procesa todo, la señal real producirá patrones coherentes
+   * PROCESAMIENTO DE FRAME - CON SQI UNIFICADO
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
     try {
       this.frameCount++;
+      const timestamp = Date.now();
       
       // 1. Extraer valores RGB del ROI
       const frameData = this.frameProcessor.extractFrameData(imageData);
@@ -95,36 +97,29 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.filteredBuffer.shift();
       }
       
-      // 4. Calcular pulsatilidad desde la señal filtrada
-      const pulsatility = this.calculatePulsatility();
-      this.lastRGB.pulsatility = pulsatility;
+      // 4. ANÁLISIS DE CALIDAD UNIFICADO
+      const qualityResult = this.qualityAnalyzer.analyze(redValue, filtered, timestamp);
+      this.lastQualityResult = qualityResult;
+      this.lastRGB.pulsatility = qualityResult.perfusionIndex / 100;
       
       // 5. Actualizar estadísticas RGB para SpO2
       this.updateRGBStats();
       
-      // 6. Calcular calidad basada solo en características de señal
-      const quality = this.calculateSignalQuality(pulsatility);
-      
-      // 7. Log de diagnóstico cada 3 segundos
-      if (this.frameCount % 90 === 0) {
-        console.log(`📊 PPG: R=${redValue.toFixed(1)}, pulsatility=${(pulsatility * 100).toFixed(2)}%, quality=${quality}%`);
-      }
-      
-      // 8. Emitir señal procesada - SIEMPRE
+      // 6. Emitir señal procesada
       const roi = this.frameProcessor.detectROI(redValue, imageData);
       
       const processedSignal: ProcessedSignal = {
-        timestamp: Date.now(),
+        timestamp,
         rawValue: redValue,
         filteredValue: filtered,
-        quality: quality,
-        fingerDetected: true, // Siempre true, no hay validación
+        quality: qualityResult.quality,
+        fingerDetected: qualityResult.isSignalValid, // Ahora basado en SQI
         roi: roi,
-        perfusionIndex: pulsatility * 100,
+        perfusionIndex: qualityResult.perfusionIndex,
         diagnostics: {
-          message: `Pulsatility: ${(pulsatility * 100).toFixed(2)}%`,
-          hasPulsatility: pulsatility > 0.002,
-          pulsatilityValue: pulsatility
+          message: qualityResult.invalidReason || `PI: ${qualityResult.perfusionIndex.toFixed(2)}%`,
+          hasPulsatility: qualityResult.isSignalValid,
+          pulsatilityValue: qualityResult.perfusionIndex / 100
         }
       };
 
@@ -132,52 +127,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     } catch (error) {
       // Error silenciado para rendimiento
     }
-  }
-
-  /**
-   * Calcula pulsatilidad de la señal (AC/DC ratio)
-   */
-  private calculatePulsatility(): number {
-    if (this.filteredBuffer.length < 30) return 0;
-    
-    const recent = this.filteredBuffer.slice(-30);
-    const rawRecent = this.rawRedBuffer.slice(-30);
-    
-    // AC = desviación estándar de señal filtrada
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / recent.length;
-    const ac = Math.sqrt(variance);
-    
-    // DC = media del canal rojo crudo
-    const dc = rawRecent.reduce((a, b) => a + b, 0) / rawRecent.length;
-    
-    if (dc === 0) return 0;
-    
-    return ac / dc;
-  }
-
-  /**
-   * Calcula calidad basada en características de señal
-   */
-  private calculateSignalQuality(pulsatility: number): number {
-    // Señal sin pulsatilidad = baja calidad
-    if (pulsatility < 0.001) return 5;
-    
-    // Rango típico de pulsatilidad PPG: 0.5% - 10%
-    let quality = 0;
-    
-    if (pulsatility >= 0.002 && pulsatility <= 0.15) {
-      // Buena pulsatilidad
-      quality = 50 + Math.min(50, pulsatility * 500);
-    } else if (pulsatility > 0.15) {
-      // Demasiada variación = ruido o movimiento
-      quality = Math.max(10, 80 - (pulsatility - 0.15) * 300);
-    } else {
-      // Muy baja pulsatilidad
-      quality = Math.min(30, pulsatility * 5000);
-    }
-    
-    return Math.round(Math.min(100, Math.max(0, quality)));
   }
 
   /**
@@ -193,6 +142,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   getRGBStats(): typeof this.rgbStats {
     return { ...this.rgbStats };
   }
+  
+  /**
+   * Obtiene el último resultado de calidad
+   */
+  getQualityResult(): SignalQualityResult | null {
+    return this.lastQualityResult;
+  }
 
   reset(): void {
     this.rawRedBuffer = [];
@@ -200,6 +156,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount = 0;
     this.bandpassFilter.reset();
     this.frameProcessor.reset();
+    this.qualityAnalyzer.reset();
+    this.lastQualityResult = null;
     this.rgbStats = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0 };
   }
 
