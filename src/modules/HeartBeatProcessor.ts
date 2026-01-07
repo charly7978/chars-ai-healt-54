@@ -1,22 +1,22 @@
 import { KalmanFilter } from './signal-processing/KalmanFilter';
 
 export class HeartBeatProcessor {
-  // ────────── CONFIGURACIONES MÁS ESTRICTAS PARA REDUCIR FALSOS POSITIVOS ──────────
+  // ────────── CONFIGURACIONES OPTIMIZADAS PARA DETECCIÓN ROBUSTA ──────────
   private readonly DEFAULT_SAMPLE_RATE = 60;
-  private readonly DEFAULT_WINDOW_SIZE = 40;
-  private readonly DEFAULT_MIN_BPM = 40;         // Rango fisiológico mínimo
-  private readonly DEFAULT_MAX_BPM = 180;        // Rango fisiológico máximo realista
-  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.015;  // MUY SENSIBLE para captar señales débiles
-  private readonly DEFAULT_MIN_CONFIDENCE = 0.35;    // Confianza mínima muy permisiva
-  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.002; // Pendientes muy suaves permitidas
-  private readonly DEFAULT_MIN_PEAK_TIME_MS = 300;   // ~200 BPM máximo (más rápido)
-  private readonly WARMUP_TIME_MS = 1500;            // 1.5s para estabilización rápida
+  private readonly DEFAULT_WINDOW_SIZE = 60;       // Ventana más grande para mejor análisis
+  private readonly DEFAULT_MIN_BPM = 35;           // Rango fisiológico amplio
+  private readonly DEFAULT_MAX_BPM = 200;          // Rango fisiológico amplio
+  private readonly DEFAULT_SIGNAL_THRESHOLD = 0.005;  // ULTRA SENSIBLE
+  private readonly DEFAULT_MIN_CONFIDENCE = 0.20;    // Muy permisivo
+  private readonly DEFAULT_DERIVATIVE_THRESHOLD = -0.0005; // Pendientes muy suaves
+  private readonly DEFAULT_MIN_PEAK_TIME_MS = 280;   // ~215 BPM máximo
+  private readonly WARMUP_TIME_MS = 1000;            // 1s para estabilización rápida
 
-  // Parámetros de filtrado - CRÍTICO: Preservar componente AC REAL
+  // Parámetros de filtrado - PRESERVAR SEÑAL ORIGINAL
   private readonly MEDIAN_FILTER_WINDOW = 3;       // Ventana pequeña
   private readonly MOVING_AVERAGE_WINDOW = 3;      // Respuesta rápida
-  private readonly EMA_ALPHA = 0.85;               // MUY ALTA: casi sin suavizado para ver picos
-  private readonly BASELINE_FACTOR = 0.998;        // ULTRA LENTO: baseline casi no cambia
+  private readonly EMA_ALPHA = 0.6;                // MODERADO: algo de suavizado para estabilidad
+  private readonly BASELINE_FACTOR = 0.99;         // MODERADO: baseline se adapta razonablemente
 
   // Parámetros de beep OPTIMIZADOS
   private readonly BEEP_DURATION = 400; 
@@ -516,8 +516,8 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Detección de picos SIMPLIFICADA Y ROBUSTA
-   * Basada en máximos locales en la señal normalizada
+   * Detección de picos ULTRA SENSIBLE
+   * Basada en cambio de tendencia (derivada positiva -> negativa)
    */
   private enhancedPeakDetection(normalizedValue: number, derivative: number): {
     isPeak: boolean;
@@ -529,49 +529,52 @@ export class HeartBeatProcessor {
       ? now - this.lastPeakTime
       : Number.MAX_VALUE;
 
-    // Respetar intervalo mínimo entre picos (evita dobles detecciones)
+    // Respetar intervalo mínimo entre picos
     if (timeSinceLastPeak < this.DEFAULT_MIN_PEAK_TIME_MS) {
       return { isPeak: false, confidence: 0 };
     }
 
     // Necesitamos suficientes muestras
-    if (this.signalBuffer.length < 10) {
+    if (this.signalBuffer.length < 8) {
       return { isPeak: false, confidence: 0 };
     }
 
-    // DETECCIÓN SIMPLIFICADA: Buscar máximos locales
-    const recent = this.signalBuffer.slice(-7);
-    const currentIdx = recent.length - 1;
-    const currentVal = recent[currentIdx];
+    // DETECCIÓN BASADA EN CAMBIO DE TENDENCIA
+    const recent = this.signalBuffer.slice(-10);
+    const n = recent.length;
     
-    // CRITERIO PRINCIPAL: El valor actual es un máximo local
-    // (los 2 valores anteriores son menores Y la tendencia cambia a bajar)
-    const isPotentialPeak = 
-      recent.length >= 5 &&
-      currentVal > recent[currentIdx - 1] &&  // Mayor que anterior
-      currentVal > recent[currentIdx - 2] &&  // Mayor que 2 anteriores
-      derivative < 0;  // Pendiente cambia a negativa
+    // Calcular derivadas locales
+    const deriv1 = recent[n-2] - recent[n-3]; // Hace 2 frames
+    const deriv2 = recent[n-1] - recent[n-2]; // Hace 1 frame
     
-    // CRITERIO SECUNDARIO: La amplitud debe ser significativa
-    // Usar el rango reciente como referencia
-    const recentMax = Math.max(...this.signalBuffer.slice(-30));
-    const recentMin = Math.min(...this.signalBuffer.slice(-30));
+    // CRITERIO PRINCIPAL: Cambio de tendencia positiva a negativa
+    // (subía y ahora baja = pico)
+    const isPotentialPeak = deriv1 > 0 && deriv2 < 0;
+    
+    // CRITERIO SECUNDARIO MUY PERMISIVO: El valor debe tener algo de amplitud
+    const recentSamples = this.signalBuffer.slice(-20);
+    const recentMax = Math.max(...recentSamples);
+    const recentMin = Math.min(...recentSamples);
     const acRange = recentMax - recentMin;
+    const currentVal = recent[n-2]; // El pico es el frame anterior
     
-    // El valor actual debe estar cerca del máximo del rango
-    const relativeHeight = acRange > 0.5 ? (currentVal - recentMin) / acRange : 0;
-    const isNearTop = relativeHeight > 0.7; // Debe estar en el 30% superior
+    // Altura relativa (muy permisivo: > 40% del rango)
+    const relativeHeight = acRange > 0.1 ? (currentVal - recentMin) / acRange : 0.5;
+    const isNearTop = relativeHeight > 0.4;
     
-    const isPeak = isPotentialPeak && isNearTop;
+    // También aceptar si hay CUALQUIER señal AC visible
+    const hasSignificantAC = acRange > 0.3;
+    
+    const isPeak = isPotentialPeak && (isNearTop || hasSignificantAC);
 
     // Calcular confianza
     const heightScore = Math.min(1, relativeHeight);
-    const slopeScore = Math.min(1, Math.abs(derivative) * 50);
-    const confidence = isPeak ? Math.max(0.5, 0.5 * heightScore + 0.5 * slopeScore) : 0;
+    const acScore = Math.min(1, acRange / 5);
+    const confidence = isPeak ? Math.max(0.4, 0.4 * heightScore + 0.6 * acScore) : 0;
 
-    // Log diagnóstico cada vez que detectamos un pico potencial
-    if (isPotentialPeak && this.signalBuffer.length % 10 === 0) {
-      console.log(`🔍 Pico potencial: val=${currentVal.toFixed(2)}, height=${(relativeHeight*100).toFixed(0)}%, deriv=${derivative.toFixed(4)}, range=${acRange.toFixed(2)}`);
+    // Log diagnóstico
+    if (isPotentialPeak && this.signalBuffer.length % 15 === 0) {
+      console.log(`🔍 Pico detectado: d1=${deriv1.toFixed(3)}, d2=${deriv2.toFixed(3)}, height=${(relativeHeight*100).toFixed(0)}%, AC=${acRange.toFixed(2)}`);
     }
 
     return { isPeak, confidence, rawDerivative: derivative };
