@@ -27,25 +27,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     baselineEstablished: false
   };
   
-  // Configuración ESTRICTA para detección real de dedo
+  // Configuración OPTIMIZADA para detección de dedo
+  // Más permisiva para detectar dedos reales, pero estricta contra objetos
   private readonly CONFIG = {
     // Umbrales de color para dedo con flash encendido
-    MIN_RED_VALUE: 80,           // Rojo mínimo cuando hay dedo + flash
-    MAX_RED_VALUE: 240,          // Máximo antes de saturación
-    MIN_RED_RATIO: 0.42,         // Proporción R/(R+G+B) mínima
-    MAX_GREEN_RATIO: 0.35,       // Proporción G máxima
+    MIN_RED_VALUE: 60,           // Rojo mínimo - más permisivo
+    MAX_RED_VALUE: 250,          // Máximo antes de saturación
+    MIN_RED_RATIO: 0.38,         // Proporción R/(R+G+B) mínima - más permisivo
+    MAX_GREEN_RATIO: 0.38,       // Proporción G máxima - más permisivo
     
     // Detección de pulso real
-    MIN_VARIANCE: 0.5,           // Varianza mínima para señal viva
-    MAX_VARIANCE: 50,            // Varianza máxima (evitar ruido)
+    MIN_VARIANCE: 0.2,           // Varianza mínima - más sensible
+    MAX_VARIANCE: 80,            // Varianza máxima - más tolerante
     
-    // Consistencia temporal
-    MIN_CONSECUTIVE_FOR_DETECTION: 8,   // 8 frames = ~0.27s
-    MAX_CONSECUTIVE_FOR_LOSS: 5,        // 5 frames de pérdida = reset
+    // Consistencia temporal - más rápida
+    MIN_CONSECUTIVE_FOR_DETECTION: 5,   // 5 frames = ~0.17s
+    MAX_CONSECUTIVE_FOR_LOSS: 8,        // 8 frames de pérdida = reset
     
     // Luminancia
-    MIN_LUMINANCE: 50,
-    MAX_LUMINANCE: 245
+    MIN_LUMINANCE: 35,           // Más permisivo para condiciones de luz
+    MAX_LUMINANCE: 250
   };
   
   constructor(

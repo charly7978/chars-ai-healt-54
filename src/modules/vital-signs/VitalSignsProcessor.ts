@@ -1,9 +1,9 @@
 /**
  * VITAL SIGNS PROCESSOR - MEDICIÓN REAL PPG
  * Procesa señales PPG de la cámara para calcular signos vitales reales
+ * NOTA: HeartBeatProcessor se usa SOLO en useHeartBeatProcessor (evitar duplicación)
  */
 
-import { HeartBeatProcessor } from '../HeartBeatProcessor';
 import { SpO2Processor } from './spo2-processor';
 import { BloodPressureProcessor } from './blood-pressure-processor';
 import { ArrhythmiaProcessor } from './arrhythmia-processor';
@@ -23,7 +23,7 @@ export interface VitalSignsResult {
 }
 
 export class VitalSignsProcessor {
-  private heartProcessor = new HeartBeatProcessor();
+  // NO duplicar HeartBeatProcessor aquí - ya está en useHeartBeatProcessor
   private spo2Processor = new SpO2Processor();
   private bpProcessor = new BloodPressureProcessor();
   private arrhythmiaProcessor = new ArrhythmiaProcessor();
@@ -142,11 +142,16 @@ export class VitalSignsProcessor {
     rrData?: { intervals: number[]; lastPeakTime: number | null },
     channels?: MultiChannelOutputs
   ): VitalSignsResult {
-    const timestamp = Date.now();
     const heartChannel = channels?.['heart'];
     
-    const heartValue = heartChannel?.output ?? this.signalBuffer[this.signalBuffer.length - 1];
-    const bpm = this.heartProcessor.processSignal(heartValue, timestamp);
+    // BPM se calcula desde intervalos RR (viene de useHeartBeatProcessor)
+    let bpm = 0;
+    const rrIntervals = rrData?.intervals ?? [];
+    if (rrIntervals.length >= 2) {
+      const avgRR = rrIntervals.slice(-5).reduce((a, b) => a + b, 0) / Math.min(5, rrIntervals.length);
+      bpm = Math.round(60000 / avgRR);
+      if (bpm < 40 || bpm > 200) bpm = 0;
+    }
     
     const spo2Raw = this.spo2Processor.calculateSpO2(this.signalBuffer);
     const spo2 = spo2Raw > 0 ? this.applyEMA(spo2Raw, 'spo2') : (this.lastResult?.spo2 || 0);
@@ -155,7 +160,6 @@ export class VitalSignsProcessor {
     const waveAmplitude = this.calculateWaveAmplitude();
     const bp = this.bpProcessor.process(bpm, waveAmplitude, quality);
     
-    const rrIntervals = rrData?.intervals ?? this.heartProcessor.getRRIntervals();
     const arrhythmiaResult = this.arrhythmiaProcessor.processRRData({
       intervals: rrIntervals,
       lastPeakTime: rrData?.lastPeakTime ?? null
@@ -338,7 +342,6 @@ export class VitalSignsProcessor {
     this.signalBuffer = [];
     this.isCalibrating = true;
     this.calibrationProgress = 0;
-    this.heartProcessor.reset();
     this.spo2Processor.reset();
     this.bpProcessor.reset();
     this.arrhythmiaProcessor.reset();
@@ -359,7 +362,6 @@ export class VitalSignsProcessor {
     this.hemoglobinEMA = 0;
     this.cholesterolEMA = 0;
     this.triglyceridesEMA = 0;
-    this.heartProcessor.reset();
     this.spo2Processor.reset();
     this.bpProcessor.reset();
     this.arrhythmiaProcessor.reset();
