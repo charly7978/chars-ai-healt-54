@@ -116,14 +116,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         : 0;
       
       // 7. Emitir señal procesada con diagnósticos completos
+      // IMPORTANTE: Solo emitir valores de calidad si hay dedo detectado
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,
-        filteredValue: filteredValue,
-        quality: detection.quality,
+        filteredValue: detection.isFingerDetected ? filteredValue : 0,
+        quality: detection.isFingerDetected ? detection.quality : 0,
         fingerDetected: detection.isFingerDetected,
         roi: roi,
-        perfusionIndex: perfusionIndex,
+        perfusionIndex: detection.isFingerDetected ? perfusionIndex : 0,
         diagnostics: {
           message: detection.diagnostics.message,
           hasPulsatility: detection.diagnostics.hasPulsatility,
