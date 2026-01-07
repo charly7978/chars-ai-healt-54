@@ -125,35 +125,62 @@ export class HeartBeatProcessor {
         navigator.vibrate([50, 30, 80]);
       }
       
-      const currentTime = this.audioContext.currentTime;
+      const t = this.audioContext.currentTime;
       
-      // BEEP claro
-      const osc = this.audioContext.createOscillator();
-      const gain = this.audioContext.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0, currentTime);
-      gain.gain.linearRampToValueAtTime(this.BEEP_VOLUME, currentTime + 0.01);
-      gain.gain.setValueAtTime(this.BEEP_VOLUME, currentTime + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.15);
-      osc.connect(gain);
-      gain.connect(this.audioContext.destination);
-      osc.start(currentTime);
-      osc.stop(currentTime + 0.2);
+      // ===== SONIDO DE LATIDO CARDÍACO REALISTA =====
+      // LUB (S1) - Cierre de válvulas mitral y tricúspide
+      // Frecuencia baja ~60-80Hz, duración ~0.15s
+      const lub = this.audioContext.createOscillator();
+      const lubGain = this.audioContext.createGain();
+      const lubFilter = this.audioContext.createBiquadFilter();
       
-      // Segundo tono
-      const osc2 = this.audioContext.createOscillator();
-      const gain2 = this.audioContext.createGain();
-      osc2.type = 'sine';
-      osc2.frequency.value = 660;
-      const dubTime = currentTime + 0.12;
-      gain2.gain.setValueAtTime(0, dubTime);
-      gain2.gain.linearRampToValueAtTime(this.BEEP_VOLUME * 0.7, dubTime + 0.01);
-      gain2.gain.exponentialRampToValueAtTime(0.001, dubTime + 0.12);
-      osc2.connect(gain2);
-      gain2.connect(this.audioContext.destination);
-      osc2.start(dubTime);
-      osc2.stop(dubTime + 0.15);
+      lub.type = 'sine';
+      lub.frequency.setValueAtTime(65, t);
+      lub.frequency.exponentialRampToValueAtTime(45, t + 0.1);
+      
+      lubFilter.type = 'lowpass';
+      lubFilter.frequency.value = 150;
+      lubFilter.Q.value = 1;
+      
+      lubGain.gain.setValueAtTime(0, t);
+      lubGain.gain.linearRampToValueAtTime(this.BEEP_VOLUME, t + 0.02);
+      lubGain.gain.setValueAtTime(this.BEEP_VOLUME, t + 0.05);
+      lubGain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+      
+      lub.connect(lubFilter);
+      lubFilter.connect(lubGain);
+      lubGain.connect(this.audioContext.destination);
+      
+      lub.start(t);
+      lub.stop(t + 0.18);
+      
+      // DUB (S2) - Cierre de válvulas aórtica y pulmonar
+      // Frecuencia ligeramente más alta ~80-100Hz, más corto
+      const dub = this.audioContext.createOscillator();
+      const dubGain = this.audioContext.createGain();
+      const dubFilter = this.audioContext.createBiquadFilter();
+      
+      const dubStart = t + 0.12;
+      
+      dub.type = 'sine';
+      dub.frequency.setValueAtTime(85, dubStart);
+      dub.frequency.exponentialRampToValueAtTime(55, dubStart + 0.08);
+      
+      dubFilter.type = 'lowpass';
+      dubFilter.frequency.value = 180;
+      dubFilter.Q.value = 0.8;
+      
+      dubGain.gain.setValueAtTime(0, dubStart);
+      dubGain.gain.linearRampToValueAtTime(this.BEEP_VOLUME * 0.7, dubStart + 0.015);
+      dubGain.gain.setValueAtTime(this.BEEP_VOLUME * 0.7, dubStart + 0.04);
+      dubGain.gain.exponentialRampToValueAtTime(0.01, dubStart + 0.12);
+      
+      dub.connect(dubFilter);
+      dubFilter.connect(dubGain);
+      dubGain.connect(this.audioContext.destination);
+      
+      dub.start(dubStart);
+      dub.stop(dubStart + 0.15);
       
       this.lastBeepTime = now;
       

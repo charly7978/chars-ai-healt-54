@@ -18,6 +18,7 @@ interface PPGSignalMeterProps {
   } | null;
   preserveResults?: boolean;
   diagnosticMessage?: string;
+  isPeak?: boolean; // NUEVO: sincronizado con HeartBeatProcessor
 }
 
 const PPGSignalMeter = ({ 
@@ -29,7 +30,8 @@ const PPGSignalMeter = ({
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false,
-  diagnosticMessage
+  diagnosticMessage,
+  isPeak = false
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -52,6 +54,8 @@ const PPGSignalMeter = ({
   const isFingerDetectedRef = useRef(isFingerDetected);
   const arrhythmiaStatusRef = useRef(arrhythmiaStatus);
   const preserveResultsRef = useRef(preserveResults);
+  const isPeakRef = useRef(isPeak);
+  const lastPeakTimeRef = useRef(0);
   
   // CRÍTICO: Flag para controlar UN SOLO loop de animación
   const animationLoopActiveRef = useRef<boolean>(false);
@@ -71,14 +75,39 @@ const PPGSignalMeter = ({
   const MIN_PEAK_DISTANCE_MS = 300;
   const MAX_PEAKS_TO_DISPLAY = 30; // REDUCIDO de 25 a 15
 
-  // Actualizar refs cuando props cambian (sin recrear funciones)
+  // Actualizar refs cuando props cambian
   useEffect(() => {
     valueRef.current = value;
     qualityRef.current = quality;
     isFingerDetectedRef.current = isFingerDetected;
     arrhythmiaStatusRef.current = arrhythmiaStatus;
     preserveResultsRef.current = preserveResults;
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults]);
+    isPeakRef.current = isPeak;
+  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak]);
+
+  // SINCRONIZACIÓN: Agregar pico cuando HeartBeatProcessor detecta uno
+  useEffect(() => {
+    if (isPeak && isFingerDetected) {
+      const now = Date.now();
+      // Evitar picos duplicados (mínimo 300ms entre ellos)
+      if (now - lastPeakTimeRef.current > 300) {
+        lastPeakTimeRef.current = now;
+        const currentValue = valueRef.current;
+        
+        // Agregar pico sincronizado
+        peaksRef.current.push({
+          time: now,
+          value: currentValue * 95, // Escalar para visualización
+          isArrhythmia: arrhythmiaStatus?.includes("ARRITMIA") || false
+        });
+        
+        // Limpiar picos viejos
+        peaksRef.current = peaksRef.current
+          .filter(p => now - p.time < 3300)
+          .slice(-30);
+      }
+    }
+  }, [isPeak, isFingerDetected, arrhythmiaStatus]);
 
   // Inicializar buffer UNA SOLA VEZ
   useEffect(() => {
