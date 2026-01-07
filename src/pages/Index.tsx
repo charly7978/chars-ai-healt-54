@@ -387,12 +387,12 @@ const Index = () => {
     console.log('📹 Video encontrado:', videoElement.videoWidth, 'x', videoElement.videoHeight);
     
     let lastProcessTime = 0;
-    // AUMENTAR A 30 FPS para mejor detección
-    const targetFrameInterval = 1000 / 30;
+    // 60 FPS para máxima precisión PPG
+    const targetFrameInterval = 1000 / 60;
     
-    // RESOLUCIÓN MAYOR para mejor detección de dedo
-    const PPG_WIDTH = 160;
-    const PPG_HEIGHT = 120;
+    // RESOLUCIÓN 720p para mejor detección
+    const PPG_WIDTH = 1280;
+    const PPG_HEIGHT = 720;
     tempCanvas.width = PPG_WIDTH;
     tempCanvas.height = PPG_HEIGHT;
     
