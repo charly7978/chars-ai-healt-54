@@ -71,7 +71,7 @@ export class HumanFingerDetector {
     // El ruido de cámara es típicamente <0.2%
     MIN_SAMPLES_FOR_ANALYSIS: 60,   // 2 segundos mínimo para análisis serio
     
-    MIN_PULSATILITY: 0.004,         // 0.4% mínimo - pulso débil pero real
+    MIN_PULSATILITY: 0.003,         // 0.3% mínimo - pulso débil pero real
     GOOD_PULSATILITY: 0.010,        // 1.0% - buena señal
     IDEAL_PULSATILITY: 0.020,       // 2.0% - señal excelente
     MAX_PULSATILITY: 0.08,          // 8% máximo - más es movimiento, no pulso
