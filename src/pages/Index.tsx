@@ -607,6 +607,7 @@ const Index = () => {
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
+              diagnosticMessage={lastSignal?.diagnostics?.message}
             />
           </div>
 
