@@ -30,8 +30,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private bandpassFilter: BandpassFilter;
   private frameProcessor: FrameProcessor;
   
-  // Buffers para análisis
-  private readonly BUFFER_SIZE = 150; // 5 segundos a 30fps
+  // Buffers - REDUCIDOS para menor memoria y CPU
+  private readonly BUFFER_SIZE = 90; // 3 segundos a 30fps (antes 150)
   private rawRedBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   
@@ -180,16 +180,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 8. Calcular calidad de señal
       const quality = this.calculateQuality(hasBloodCharacteristics, hasPulsatility, pulsatility);
       
-      // 9. Log de diagnóstico cada 60 frames (~2s)
-      if (this.frameCount % 60 === 0) {
-        const status = hasConfirmedBlood ? '✓ SANGRE' : '✗ NO SANGRE';
-        console.log(
-          `🩸 PPG [${this.frameCount}]: R=${redValue.toFixed(0)} G=${avgGreen.toFixed(0)} ` +
-          `| R/G=${this.lastRGB.rgRatio.toFixed(2)} ` +
-          `| Puls=${(pulsatility * 100).toFixed(2)}% ` +
-          `| Valid=${this.validBloodFrameCount.toFixed(0)} ` +
-          `| ${status}`
-        );
+      // 9. Log de diagnóstico cada 3 segundos (reducido de 2s)
+      if (this.frameCount % 45 === 0) {
+        const status = hasConfirmedBlood ? '✓ SANGRE' : '✗ NO';
+        console.log(`🩸 R/G=${this.lastRGB.rgRatio.toFixed(2)} Puls=${(pulsatility * 100).toFixed(1)}% ${status}`);
       }
       
       // 10. Emitir señal procesada

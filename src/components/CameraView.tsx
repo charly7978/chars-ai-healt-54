@@ -123,13 +123,14 @@ const CameraView: React.FC<CameraViewProps> = ({
       // SIEMPRE intentar primero con la cámara principal trasera
       // Usar facingMode: environment como constraint principal
       try {
+        // OPTIMIZACIÓN: Resolución baja para PPG (menos GPU/batería)
         const mainStream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
             facingMode: { exact: "environment" },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 30 }
+            width: { ideal: 320, max: 640 },
+            height: { ideal: 240, max: 480 },
+            frameRate: { ideal: 15, max: 30 }
           }
         });
         
@@ -152,9 +153,9 @@ const CameraView: React.FC<CameraViewProps> = ({
             audio: false,
             video: {
               deviceId: { exact: cameras[0].deviceId },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 }
+              width: { ideal: 320, max: 640 },
+              height: { ideal: 240, max: 480 },
+              frameRate: { ideal: 15, max: 30 }
             }
           });
           
@@ -172,34 +173,9 @@ const CameraView: React.FC<CameraViewProps> = ({
         }
       }
 
-      // Intentar cámara auxiliar si hay más de una trasera
-      if (cameras.length >= 2 && onAuxStreamReady) {
-        try {
-          const auxStream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              deviceId: { exact: cameras[1].deviceId },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 }
-            }
-          });
-          
-          s2Ref.current = auxStream;
-          if (v2Ref.current) {
-            v2Ref.current.srcObject = auxStream;
-            await v2Ref.current.play().catch(() => {});
-          }
-          
-          const track = auxStream.getVideoTracks()[0];
-          if (track) await optimizeForPPG(track);
-          
-          onAuxStreamReady(auxStream);
-          console.log('✅ Cámara auxiliar iniciada:', track?.label);
-          
-        } catch (e) {
-          console.log('ℹ️ Cámara auxiliar no disponible');
-        }
+      // Cámara auxiliar deshabilitada para optimizar rendimiento y batería
+      if (cameras.length >= 2) {
+        console.log('ℹ️ Cámara auxiliar disponible pero omitida para optimizar rendimiento');
       }
       
     } catch (err) {
