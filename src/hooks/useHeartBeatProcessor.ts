@@ -47,19 +47,16 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  // REFERENCIA PARA TRACKING DE ESTADO DEL DEDO
+  // REFERENCIA PARA TRACKING DE ESTADO DEL DEDO - CON DEBOUNCE
   const lastFingerStateRef = useRef<boolean>(false);
+  const fingerLostTimeRef = useRef<number>(0);
+  const FINGER_DEBOUNCE_MS = 300; // Ignorar cortes < 300ms
 
-  // PROCESAMIENTO UNIFICADO DE SEÑAL - ELIMINADAS DUPLICIDADES
+  // PROCESAMIENTO UNIFICADO DE SEÑAL
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
-      const fallbackBPM = Math.round(
-        (processorRef.current && typeof (processorRef.current as any).getSmoothBPM === 'function')
-          ? (processorRef.current as any).getSmoothBPM()
-          : 0
-      );
       return {
-        bpm: fallbackBPM,
+        bpm: currentBPM,
         confidence: 0,
         isPeak: false,
         arrhythmiaCount: 0,
@@ -70,8 +67,8 @@ export const useHeartBeatProcessor = () => {
 
     const currentTime = Date.now();
     
-    // CONTROL DE TASA DE PROCESAMIENTO PARA EVITAR SOBRECARGA
-    if (currentTime - lastProcessTimeRef.current < 16) { // ~60 FPS máximo
+    // CONTROL DE TASA DE PROCESAMIENTO (~60 FPS)
+    if (currentTime - lastProcessTimeRef.current < 16) {
       return {
         bpm: currentBPM,
         confidence,
@@ -85,35 +82,46 @@ export const useHeartBeatProcessor = () => {
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
-    // CRÍTICO: Notificar cambio de estado del dedo para reset inteligente
-    if (fingerDetected !== lastFingerStateRef.current) {
-      processorRef.current.setFingerDetected(fingerDetected);
-      lastFingerStateRef.current = fingerDetected;
+    // DEBOUNCE INTELIGENTE: Ignorar cortes muy breves del dedo
+    let effectiveFingerDetected = fingerDetected;
+    
+    if (!fingerDetected && lastFingerStateRef.current) {
+      // Dedo acaba de "perderse" - registrar tiempo
+      if (fingerLostTimeRef.current === 0) {
+        fingerLostTimeRef.current = currentTime;
+      }
+      // Si el corte es muy breve, seguir considerando como detectado
+      if (currentTime - fingerLostTimeRef.current < FINGER_DEBOUNCE_MS) {
+        effectiveFingerDetected = true; // Ignorar corte breve
+      }
+    } else if (fingerDetected) {
+      // Dedo detectado - resetear timer de pérdida
+      fingerLostTimeRef.current = 0;
     }
 
-    // PROCESAMIENTO MATEMÁTICO AVANZADO DIRECTO
+    // Notificar al procesador SOLO si hay cambio real (después de debounce)
+    if (effectiveFingerDetected !== lastFingerStateRef.current) {
+      processorRef.current.setFingerDetected(effectiveFingerDetected);
+      lastFingerStateRef.current = effectiveFingerDetected;
+    }
+
+    // PROCESAR SEÑAL SIEMPRE (incluso sin dedo, para mantener buffers actualizados)
     const result = processorRef.current.processSignal(value, timestamp);
     const rrData = processorRef.current.getRRIntervals();
     const currentQuality = result.signalQuality || 0;
     
     setSignalQuality(currentQuality);
 
-    // LÓGICA UNIFICADA DE DETECCIÓN - MÁS PERMISIVA
-    const effectiveFingerDetected = fingerDetected || (currentQuality > 15 && result.confidence > 0.35);
-    
+    // Si no hay dedo efectivo, degradar suavemente pero NO bloquear
     if (!effectiveFingerDetected) {
-      // DEGRADACIÓN SUAVE Y CONTROLADA
       if (currentBPM > 0) {
-        const newBPM = Math.max(0, currentBPM * 0.96); // Degradación más suave
-        const newConfidence = Math.max(0, confidence * 0.92);
-        
-        setCurrentBPM(newBPM);
-        setConfidence(newConfidence);
+        setCurrentBPM(prev => Math.max(0, prev * 0.98)); // Degradación muy suave
+        setConfidence(prev => Math.max(0, prev * 0.95));
       }
       
       return {
         bpm: currentBPM,
-        confidence: Math.max(0, confidence * 0.92),
+        confidence: Math.max(0, confidence * 0.95),
         isPeak: false,
         arrhythmiaCount: 0,
         signalQuality: currentQuality,
@@ -121,14 +129,13 @@ export const useHeartBeatProcessor = () => {
       };
     }
 
-    // ACTUALIZACIÓN CON CONFIANZA VALIDADA - CORREGIDO PARA INICIALIZACIÓN
-    // Antes: requería result.bpm > 0, pero al inicio siempre es 0
-    if (result.confidence >= 0.4 && result.bpm >= 40 && result.bpm <= 200) {
-      // FILTRADO ADAPTATIVO PARA ESTABILIDAD
-      const smoothingFactor = Math.min(0.4, result.confidence * 0.6);
+    // ACTUALIZACIÓN DE BPM - MÁS PERMISIVA
+    // Aceptar si: confianza >= 0.3 (antes 0.4) Y bpm en rango válido
+    if (result.confidence >= 0.3 && result.bpm >= 40 && result.bpm <= 200) {
+      const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
       const newBPM = currentBPM > 0 ? 
         currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
-        result.bpm; // Si currentBPM es 0, tomar directamente el nuevo valor
+        result.bpm;
       
       setCurrentBPM(Math.round(newBPM * 10) / 10);
       setConfidence(result.confidence);

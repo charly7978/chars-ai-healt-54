@@ -233,38 +233,41 @@ export class HeartBeatProcessor {
   private lastProcessedValue: number | null = null;
 
   /**
-   * NUEVO: Reset parcial cuando el dedo vuelve a ser detectado
-   * Limpia buffers pero mantiene configuración aprendida
+   * Reset SUAVE cuando el dedo vuelve - NO reinicia warmup ni buffers completos
+   * Solo limpia datos que podrían estar contaminados
    */
   public partialReset(): void {
-    // Limpiar buffers de señal para evitar datos contaminados
-    this.signalBuffer = [];
+    // SOLO limpiar buffers que podrían tener datos viejos/contaminados
+    // MANTENER signalBuffer parcialmente para no perder contexto
+    if (this.signalBuffer.length > 10) {
+      this.signalBuffer = this.signalBuffer.slice(-10); // Mantener últimos 10
+    }
+    
     this.medianBuffer = [];
     this.movingAverageBuffer = [];
     this.peakConfirmationBuffer = [];
-    this.values = [];
     this.peakValidationBuffer = [];
     
-    // Reset de baseline para recalibrarse con nueva señal
-    this.baseline = 0;
-    this.lastValue = 0;
-    this.smoothedValue = 0;
+    // NO resetear baseline ni lastValue - mantener contexto
+    // NO resetear startTime - NO queremos reiniciar warmup
     
-    // Reset de tiempos de pico para no arrastrar tiempos viejos
-    this.lastPeakTime = null;
-    this.previousPeakTime = null;
+    // Solo resetear tiempos de pico si son muy viejos (>3s)
+    const now = Date.now();
+    if (this.lastPeakTime && now - this.lastPeakTime > 3000) {
+      this.lastPeakTime = null;
+      this.previousPeakTime = null;
+    }
+    
     this.lastConfirmedPeak = false;
-    this.lastBeepTime = 0;
-    
-    // Mantener historial de BPM y umbrales adaptativos (ya aprendidos)
-    // NO resetear: bpmHistory, smoothBPM, adaptiveSignalThreshold, etc.
-    
     this.lowSignalCount = 0;
-    this.startTime = Date.now();
+    
+    // CRÍTICO: No resetear lastBeepTime para evitar beeps duplicados inmediatos
+    // CRÍTICO: Mantener bpmHistory, smoothBPM, umbrales adaptativos
   }
 
   /**
-   * NUEVO: Notificar cambio de estado del dedo
+   * Notificar cambio de estado del dedo - SIMPLIFICADO
+   * Solo hace reset suave si el dedo estuvo ausente por mucho tiempo
    */
   public setFingerDetected(detected: boolean): void {
     const now = Date.now();
@@ -273,20 +276,19 @@ export class HeartBeatProcessor {
       // Dedo acaba de ser RE-detectado
       const timeSinceLost = now - this.fingerLostTimestamp;
       
-      // Si el dedo volvió rápido (<500ms), hacer reset parcial para limpiar ruido
-      // Si tardó más, hacer reset completo
-      if (timeSinceLost < this.FINGER_REDETECTION_RESET_MS && this.bpmHistory.length > 0) {
+      // Solo hacer reset si el dedo estuvo ausente por más de 2 segundos
+      // Esto evita resets innecesarios por cortes momentáneos
+      if (timeSinceLost > 2000) {
         this.partialReset();
-      } else if (timeSinceLost >= this.FINGER_REDETECTION_RESET_MS) {
-        // Reset más agresivo si estuvo mucho tiempo sin dedo
-        this.partialReset();
-        // Limpiar también parte del historial de BPM viejo
-        if (this.bpmHistory.length > 5) {
-          this.bpmHistory = this.bpmHistory.slice(-5);
+        // Solo limpiar historial BPM si estuvo mucho tiempo sin dedo (>5s)
+        if (timeSinceLost > 5000 && this.bpmHistory.length > 3) {
+          this.bpmHistory = this.bpmHistory.slice(-3);
         }
       }
+      // Si el dedo volvió rápido (<2s), NO hacer nada, continuar normalmente
+      
     } else if (!detected && this.wasFingerDetected) {
-      // Dedo acaba de perderse
+      // Dedo acaba de perderse - registrar timestamp
       this.fingerLostTimestamp = now;
     }
     
@@ -336,14 +338,16 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
 
-    if (this.signalBuffer.length < 25) { // Aumentado para requerir más datos
+    // REDUCIDO: Solo necesitamos 8 frames para empezar (~0.25s)
+    // Esto permite recuperación rápida después de cortes
+    if (this.signalBuffer.length < 8) {
       return {
         bpm: Math.round(this.getSmoothBPM()),
-        confidence: 0,
+        confidence: 0.3, // Dar algo de confianza base
         isPeak: false,
         filteredValue: filteredValue,
         arrhythmiaCount: 0,
-        signalQuality: 0
+        signalQuality: 20 // Calidad base para que UI no muestre 0
       };
     }
 
