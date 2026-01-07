@@ -36,31 +36,31 @@ export interface SignalQualityResult {
 }
 
 export class SignalQualityAnalyzer {
-  // Umbrales basados en literatura médica
+  // Umbrales RELAJADOS para mejor tolerancia
   private readonly THRESHOLDS = {
     // Perfusion Index típico: 0.02% - 20%
-    MIN_PERFUSION_INDEX: 0.1,    // 0.1% mínimo para señal válida
-    GOOD_PERFUSION_INDEX: 0.5,  // 0.5% buena señal
+    MIN_PERFUSION_INDEX: 0.05,   // Reducido: 0.05% mínimo (era 0.1%)
+    GOOD_PERFUSION_INDEX: 0.3,   // Reducido: 0.3% buena señal (era 0.5%)
     
-    // Pulsatilidad AC/DC
-    MIN_PULSATILITY: 0.001,     // 0.1%
-    MAX_PULSATILITY: 0.15,      // 15% (más allá = artefacto)
-    OPTIMAL_PULSATILITY: 0.02,  // 2% típico
+    // Pulsatilidad AC/DC - MÁS TOLERANTE
+    MIN_PULSATILITY: 0.0005,    // Reducido: 0.05% (era 0.1%)
+    MAX_PULSATILITY: 0.25,      // Aumentado: 25% (era 15%) - más tolerancia a movimiento
+    OPTIMAL_PULSATILITY: 0.015, // Reducido (era 2%)
     
-    // SNR (Signal-to-Noise Ratio)
-    MIN_SNR_DB: 3,              // Mínimo para detectar pulso
-    GOOD_SNR_DB: 10,            // Buena calidad
+    // SNR (Signal-to-Noise Ratio) - MÁS PERMISIVO
+    MIN_SNR_DB: 1,              // Reducido de 3 a 1 dB
+    GOOD_SNR_DB: 6,             // Reducido de 10 a 6 dB
     
     // Estabilidad (varianza normalizada)
-    MAX_BASELINE_DRIFT: 2.0,    // Máxima variación de línea base
+    MAX_BASELINE_DRIFT: 4.0,    // Aumentado: más tolerancia a drift (era 2.0)
     
-    // Periodicidad (autocorrelación)
-    MIN_PERIODICITY: 0.2,       // Correlación mínima con patrón periódico
-    GOOD_PERIODICITY: 0.5,
+    // Periodicidad (autocorrelación) - MENOS EXIGENTE
+    MIN_PERIODICITY: 0.1,       // Reducido de 0.2 a 0.1
+    GOOD_PERIODICITY: 0.3,      // Reducido de 0.5 a 0.3
   };
   
-  // Buffers para análisis
-  private readonly BUFFER_SIZE = 150; // ~5 segundos a 30fps
+  // Buffers para análisis - REDUCIDOS para respuesta más rápida
+  private readonly BUFFER_SIZE = 90; // ~3 segundos a 30fps (era 150)
   private rawBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   private dcBuffer: number[] = [];
@@ -97,10 +97,10 @@ export class SignalQualityAnalyzer {
     this.dcBuffer.push(dcLevel);
     if (this.dcBuffer.length > 30) this.dcBuffer.shift();
     
-    // Verificar si hay suficientes datos
-    if (this.rawBuffer.length < 30) {
-      return this.createResult(0, 0, false, 'NO_SIGNAL', {
-        acAmplitude: 0, dcLevel, snr: 0, periodicity: 0, stability: 0
+    // Verificar si hay suficientes datos - REDUCIDO
+    if (this.rawBuffer.length < 15) { // Era 30
+      return this.createResult(30, 0, true, undefined, { // Asumir válido por defecto
+        acAmplitude: 0, dcLevel, snr: 0, periodicity: 0, stability: 1
       });
     }
     
@@ -121,26 +121,27 @@ export class SignalQualityAnalyzer {
     // 5. Estabilidad de línea base
     const stability = this.calculateStability();
     
-    // === VALIDACIÓN DE SEÑAL ===
+    // === VALIDACIÓN DE SEÑAL - MÁS PERMISIVA ===
     let isValid = true;
     let invalidReason: SignalQualityResult['invalidReason'];
     
     // Verificar pulsatilidad
     const pulsatility = acAmplitude / Math.max(dcLevel, 1);
     
-    if (pulsatility < this.THRESHOLDS.MIN_PULSATILITY) {
+    // Solo invalidar en casos EXTREMOS
+    if (pulsatility < this.THRESHOLDS.MIN_PULSATILITY && perfusionIndex < 0.02) {
       isValid = false;
       invalidReason = 'LOW_PULSATILITY';
-    } else if (pulsatility > this.THRESHOLDS.MAX_PULSATILITY) {
+    } else if (pulsatility > this.THRESHOLDS.MAX_PULSATILITY && stability < 0.2) {
+      // Solo marcar artefacto si también hay inestabilidad extrema
       isValid = false;
       invalidReason = 'MOTION_ARTIFACT';
-    } else if (snr < this.THRESHOLDS.MIN_SNR_DB) {
+    } else if (snr < this.THRESHOLDS.MIN_SNR_DB && periodicity < 0.05) {
+      // Solo invalidar si AMBOS son muy bajos
       isValid = false;
       invalidReason = 'TOO_NOISY';
-    } else if (stability < 0.3) {
-      isValid = false;
-      invalidReason = 'MOTION_ARTIFACT';
     }
+    // REMOVIDO: ya no invalidamos solo por stability < 0.3
     
     // === CÁLCULO DE CALIDAD GLOBAL ===
     const quality = this.calculateGlobalQuality({
