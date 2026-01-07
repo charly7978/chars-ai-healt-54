@@ -268,31 +268,60 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * DETECCIÓN DE PICOS - VERSIÓN MÁS TOLERANTE
+   * DETECCIÓN DE PICOS - CON VALIDACIÓN DE VARIACIÓN REAL
+   * 
+   * CRÍTICO: Una pared tiene variación casi CERO
+   * Un dedo tiene variación significativa (al menos 0.5-1% de la señal)
    */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
     const n = this.normalizedBuffer.length;
-    if (n < 20) return { isPeak: false, confidence: 0 }; // Era 30
+    if (n < 20) return { isPeak: false, confidence: 0 };
     
     const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
     if (timeSinceLastPeak < this.MIN_PEAK_INTERVAL_MS) {
       return { isPeak: false, confidence: 0 };
     }
     
-    const window = this.normalizedBuffer.slice(-20); // Era -30
+    const window = this.normalizedBuffer.slice(-20);
     
-    // === UMBRAL ADAPTATIVO - MÁS PERMISIVO ===
+    // === VALIDACIÓN CRÍTICA: ¿HAY VARIACIÓN REAL? ===
+    // Una pared/ambiente tiene variación casi nula
+    // Un dedo tiene variación significativa por el pulso
+    const windowMin = Math.min(...window);
+    const windowMax = Math.max(...window);
+    const windowRange = windowMax - windowMin;
+    
+    // El baseline indica la intensidad de luz reflejada
+    const baselineIntensity = Math.abs(this.baseline);
+    
+    // Coeficiente de variación: variación / intensidad base
+    // Dedo típico: CV > 0.5% (0.005)
+    // Pared/ambiente: CV < 0.1% (0.001)
+    const coefficientOfVariation = baselineIntensity > 10 ? windowRange / baselineIntensity : 0;
+    
+    // REQUISITO MÍNIMO: Debe haber variación REAL
+    // Si CV < 0.003 (0.3%), NO es pulso real
+    if (coefficientOfVariation < 0.003) {
+      return { isPeak: false, confidence: 0 };
+    }
+    
+    // También validar variación absoluta mínima
+    // Muy poca variación absoluta = probablemente no es pulso
+    if (windowRange < 0.1) {
+      return { isPeak: false, confidence: 0 };
+    }
+    
+    // === UMBRAL ADAPTATIVO ===
     const windowMean = window.reduce((a, b) => a + b, 0) / window.length;
     const windowStd = Math.sqrt(
       window.reduce((sum, v) => sum + Math.pow(v - windowMean, 2), 0) / window.length
     );
     
-    // Umbral más bajo
-    const adaptiveThreshold = windowMean + windowStd * 0.25; // Era 0.4
+    const adaptiveThreshold = windowMean + windowStd * 0.25;
     
-    // Buscar máximo en región central - AMPLIADA
-    const searchStart = 4;  // Era 8
-    const searchEnd = 16;   // Era 22
+    // Buscar máximo en región central
+    const searchStart = 4;
+    const searchEnd = 16;
     
     let maxIdx = searchStart;
     let maxVal = window[searchStart];
@@ -303,45 +332,36 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Umbral más bajo para aceptar picos
     if (maxVal < adaptiveThreshold && maxVal < windowMean + 0.1) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // === VALIDACIÓN DE PROMINENCIA - MÁS SIMPLE ===
+    // === VALIDACIÓN DE PROMINENCIA ===
     const leftVal = window[Math.max(0, maxIdx - 2)] ?? 0;
     const rightVal = window[Math.min(window.length - 1, maxIdx + 2)] ?? 0;
     
-    // Solo verificar que sea un pico local
     if (maxVal <= leftVal && maxVal <= rightVal) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Calcular prominencia de forma simple
     const prominence = maxVal - Math.min(leftVal, rightVal);
+    const minProminence = Math.max(0.01, windowStd * 0.15);
     
-    // Prominencia mínima muy baja
-    const minProminence = Math.max(0.01, windowStd * 0.15); // Era 0.25
     if (prominence < minProminence) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Rango de ventana más tolerante
-    const windowMin = Math.min(...window);
-    const windowMax = Math.max(...window);
-    const windowRange = windowMax - windowMin;
-    
-    if (windowRange < 0.02 || windowRange > 60) { // Era 0.05 y 40
+    // Rango máximo (evitar artefactos extremos)
+    if (windowRange > 60) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // === VALIDACIÓN TEMPORAL - MÁS TOLERANTE ===
-    if (this.rrIntervals.length >= 5 && this.lastPeakTime) { // Era 3
+    // === VALIDACIÓN TEMPORAL ===
+    if (this.rrIntervals.length >= 5 && this.lastPeakTime) {
       const expectedInterval = this.expectedPeakInterval;
       const currentInterval = now - this.lastPeakTime;
       const deviation = Math.abs(currentInterval - expectedInterval) / expectedInterval;
       
-      // Solo rechazar si la desviación es EXTREMA (>80%)
       if (deviation > 0.8 && prominence < minProminence * 3) {
         return { isPeak: false, confidence: 0 };
       }
@@ -364,10 +384,11 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Confianza basada en prominencia y consistencia
+    // Confianza basada en CV + prominencia
+    const cvScore = Math.min(1, coefficientOfVariation / 0.02);
     const prominenceScore = Math.min(1, prominence / (windowStd * 2));
     const consistencyScore = this.validPeakCount > 5 ? 0.2 : 0;
-    const confidence = Math.min(1, 0.4 + prominenceScore * 0.4 + consistencyScore);
+    const confidence = Math.min(1, cvScore * 0.3 + prominenceScore * 0.3 + 0.2 + consistencyScore);
     
     return { isPeak: true, confidence };
   }
