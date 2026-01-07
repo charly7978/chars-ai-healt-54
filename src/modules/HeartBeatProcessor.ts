@@ -265,6 +265,13 @@ export class HeartBeatProcessor {
     };
   }
 
+  /**
+   * DETECCIÓN DE PICOS MEJORADA
+   * Basado en Vadrevu & Manikandan 2019 (IEEE Trans. Instrum. Meas.)
+   * "A Robust Pulse Onset and Peak Detection Method"
+   * 
+   * Usa umbral adaptativo y validación de prominencia
+   */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
     const n = this.normalizedBuffer.length;
     if (n < 30) return { isPeak: false, confidence: 0 };
@@ -275,8 +282,20 @@ export class HeartBeatProcessor {
     }
     
     const window = this.normalizedBuffer.slice(-30);
-    const searchStart = 10;
-    const searchEnd = 25;
+    
+    // === UMBRAL ADAPTATIVO (Vadrevu 2019) ===
+    // Calcular estadísticas de ventana
+    const windowMean = window.reduce((a, b) => a + b, 0) / window.length;
+    const windowStd = Math.sqrt(
+      window.reduce((sum, v) => sum + Math.pow(v - windowMean, 2), 0) / window.length
+    );
+    
+    // Umbral dinámico: media + k*desviación
+    const adaptiveThreshold = windowMean + windowStd * 0.5;
+    
+    // Buscar máximo en región central
+    const searchStart = 8;
+    const searchEnd = 22;
     
     let maxIdx = searchStart;
     let maxVal = window[searchStart];
@@ -287,30 +306,65 @@ export class HeartBeatProcessor {
       }
     }
     
-    const leftNeighbor = Math.max(window[maxIdx - 3] || 0, window[maxIdx - 2] || 0);
-    const rightNeighbor = Math.max(window[maxIdx + 2] || 0, window[maxIdx + 3] || 0);
-    
-    if (maxVal <= leftNeighbor || maxVal <= rightNeighbor) {
+    // Debe superar umbral adaptativo
+    if (maxVal < adaptiveThreshold) {
       return { isPeak: false, confidence: 0 };
     }
     
-    const prominence = maxVal - Math.max(leftNeighbor, rightNeighbor);
+    // === VALIDACIÓN DE PROMINENCIA ===
+    // Usar vecinos más cercanos para mejor precisión
+    const leftNeighbors = [
+      window[maxIdx - 4] ?? 0,
+      window[maxIdx - 3] ?? 0,
+      window[maxIdx - 2] ?? 0
+    ];
+    const rightNeighbors = [
+      window[maxIdx + 2] ?? 0,
+      window[maxIdx + 3] ?? 0,
+      window[maxIdx + 4] ?? 0
+    ];
     
-    if (prominence < 0.05 || prominence > 15) {
+    const leftMax = Math.max(...leftNeighbors);
+    const rightMax = Math.max(...rightNeighbors);
+    
+    // Debe ser mayor que ambos lados
+    if (maxVal <= leftMax || maxVal <= rightMax) {
       return { isPeak: false, confidence: 0 };
     }
     
+    // Calcular prominencia
+    const prominence = maxVal - Math.max(leftMax, rightMax);
+    
+    // Prominencia mínima relativa a la señal
+    const minProminence = Math.max(0.03, windowStd * 0.3);
+    if (prominence < minProminence || prominence > 20) {
+      return { isPeak: false, confidence: 0 };
+    }
+    
+    // Validar rango de ventana
     const windowMin = Math.min(...window);
     const windowMax = Math.max(...window);
     const windowRange = windowMax - windowMin;
     
-    if (windowRange < 0.15 || windowRange > 25) {
+    if (windowRange < 0.1 || windowRange > 30) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Pico válido
+    // === VALIDACIÓN TEMPORAL ===
+    // Si tenemos historial, verificar consistencia con intervalos previos
+    if (this.rrIntervals.length >= 3 && this.lastPeakTime) {
+      const expectedInterval = this.expectedPeakInterval;
+      const currentInterval = now - this.lastPeakTime;
+      const deviation = Math.abs(currentInterval - expectedInterval) / expectedInterval;
+      
+      // Si el intervalo es muy diferente al esperado, ser más estricto
+      if (deviation > 0.5 && prominence < minProminence * 2) {
+        return { isPeak: false, confidence: 0 };
+      }
+    }
+    
+    // === PICO VÁLIDO ===
     this.validPeakCount++;
-    console.log(`✓ PICO #${this.validPeakCount}`);
     
     this.previousPeakTime = this.lastPeakTime;
     this.lastPeakTime = now;
@@ -322,11 +376,16 @@ export class HeartBeatProcessor {
         if (this.rrIntervals.length > 30) {
           this.rrIntervals.shift();
         }
-        this.expectedPeakInterval = this.expectedPeakInterval * 0.8 + rr * 0.2;
+        // Actualizar intervalo esperado con más peso al nuevo
+        this.expectedPeakInterval = this.expectedPeakInterval * 0.7 + rr * 0.3;
       }
     }
     
-    const confidence = Math.min(1, 0.5 + (prominence / 5) * 0.3 + (this.validPeakCount > 5 ? 0.2 : 0));
+    // Confianza basada en prominencia y consistencia
+    const prominenceScore = Math.min(1, prominence / (windowStd * 2));
+    const consistencyScore = this.validPeakCount > 5 ? 0.2 : 0;
+    const confidence = Math.min(1, 0.4 + prominenceScore * 0.4 + consistencyScore);
+    
     return { isPeak: true, confidence };
   }
 
