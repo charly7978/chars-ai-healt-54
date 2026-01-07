@@ -158,13 +158,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // 6. Actualizar estadísticas RGB para SpO2
       this.updateRGBStats();
       
-      // 7. Actualizar contador de frames válidos
+      // 7. Actualizar contador de frames válidos - MÁS TOLERANTE
       if (hasBloodCharacteristics && hasPulsatility) {
-        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 1, 100);
-      } else if (hasBloodCharacteristics && !hasPulsatility) {
-        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 0.5, 30);
+        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 1.5, 100);
+      } else if (hasBloodCharacteristics) {
+        // Tiene sangre pero sin pulso visible - mantener estable
+        this.validBloodFrameCount = Math.max(this.validBloodFrameCount - 0.1, 0);
+      } else if (hasPulsatility) {
+        // Tiene pulso pero no características de sangre - degradar suave
+        this.validBloodFrameCount = Math.max(this.validBloodFrameCount - 0.3, 0);
       } else {
-        this.validBloodFrameCount = Math.max(0, this.validBloodFrameCount - 2);
+        // Sin sangre ni pulso - degradar MUY suave
+        this.validBloodFrameCount = Math.max(0, this.validBloodFrameCount - 0.5);
       }
       
       // 8. Determinar si hay sangre confirmada
