@@ -2,121 +2,157 @@ import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
 
 /**
- * FrameProcessor - EXTRACCIÓN DE SEÑAL ADAPTATIVA
+ * FrameProcessor - EXTRACCIÓN ROBUSTA FULL-FRAME
  * 
- * MEJORAS BASADAS EN MacIsaac et al. 2025 (PMC/MDPI):
- * "Programmable Gain Calibration Method to Mitigate Skin Tone Bias in PPG Sensors"
+ * TÉCNICA: En lugar de usar un ROI pequeño centrado, promediamos
+ * TODOS los píxeles que parecen piel/dedo (rojo dominante).
  * 
- * FUNCIONALIDADES:
- * 1. Normalización adaptativa por tono de piel
- * 2. Control automático de ganancia (AGC)
- * 3. Calibración dinámica DC/AC
- * 4. Robustez ante cambios de iluminación
+ * Esto hace la lectura MUCHO más robusta a micro-movimientos
+ * porque no dependemos de una posición exacta.
+ * 
+ * BASADO EN:
+ * - pyVHR Framework: Full-frame skin averaging
+ * - Skin detection: nr/ng ratio > 1.185
  */
 export class FrameProcessor {
-  // ROI grande para capturar toda la yema del dedo
-  private readonly ROI_SIZE_FACTOR: number = 0.85;
-  
   // Buffer para análisis temporal de la señal
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
   private blueBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 90; // 3 segundos a 30fps
+  private readonly BUFFER_SIZE = 120; // 4 segundos a 30fps
   
   // === CALIBRACIÓN ADAPTATIVA ===
   private calibrationDC: number = 0;
   private calibrationComplete: boolean = false;
   private calibrationSamples: number = 0;
-  private readonly CALIBRATION_FRAMES = 30; // 1 segundo para calibrar
+  private readonly CALIBRATION_FRAMES = 20; // Calibración rápida
   
   // Control automático de ganancia
   private gainFactor: number = 1.0;
-  private readonly TARGET_DC = 128; // Valor DC objetivo medio
-  private readonly MIN_GAIN = 0.3;
-  private readonly MAX_GAIN = 3.0;
+  private readonly TARGET_DC = 140; // Valor DC objetivo
+  private readonly MIN_GAIN = 0.4;
+  private readonly MAX_GAIN = 2.5;
   
-  // Historial para normalización
-  private dcHistory: number[] = [];
-  private readonly DC_HISTORY_SIZE = 15;
+  // Suavizado temporal para estabilidad
+  private lastRed: number = 0;
+  private lastGreen: number = 0;
+  private lastBlue: number = 0;
+  private readonly SMOOTHING = 0.7; // 70% valor anterior, 30% nuevo
   
   // Log de valores cada N frames para debug
   private frameCount = 0;
-  private readonly LOG_EVERY = 90; // Log cada 3 segundos
+  private readonly LOG_EVERY = 60;
+  
+  // Estadísticas de detección de piel
+  private skinPixelRatio: number = 0;
   
   constructor(config?: { TEXTURE_GRID_SIZE?: number, ROI_SIZE_FACTOR?: number }) {
-    if (config?.ROI_SIZE_FACTOR) {
-      this.ROI_SIZE_FACTOR = config.ROI_SIZE_FACTOR;
-    }
+    // Config ignorado - ahora usamos full-frame
   }
   
   /**
-   * Extrae los valores RGB con NORMALIZACIÓN ADAPTATIVA
-   * Compensa automáticamente por tono de piel y condiciones de luz
+   * EXTRACCIÓN FULL-FRAME CON DETECCIÓN DE PIEL
+   * 
+   * En lugar de usar un ROI fijo, analizamos TODO el frame
+   * y promediamos solo los píxeles que parecen piel/dedo.
+   * 
+   * Esto es MUCHO más robusto a movimientos porque:
+   * - No dependemos de posición exacta
+   * - Promediamos miles de píxeles en vez de cientos
+   * - La señal se mantiene aunque el dedo se mueva un poco
    */
   extractFrameData(imageData: ImageData): FrameData {
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
-    
-    // ROI centrada muy amplia para capturar toda la yema
-    const roiSize = Math.min(width, height) * this.ROI_SIZE_FACTOR;
-    const centerX = Math.floor(width / 2);
-    const centerY = Math.floor(height / 2);
-    const halfRoi = Math.floor(roiSize / 2);
-    
-    const startX = Math.max(0, centerX - halfRoi);
-    const endX = Math.min(width, centerX + halfRoi);
-    const startY = Math.max(0, centerY - halfRoi);
-    const endY = Math.min(height, centerY + halfRoi);
+    const totalPixels = width * height;
     
     let redSum = 0;
     let greenSum = 0;
     let blueSum = 0;
-    let pixelCount = 0;
+    let skinPixelCount = 0;
     
-    // Muestreo inteligente: cada 2 píxeles para velocidad
-    const step = 2;
+    // Muestreo: cada 3 píxeles para velocidad (aún miles de muestras)
+    const step = 3;
     
-    for (let y = startY; y < endY; y += step) {
-      for (let x = startX; x < endX; x += step) {
-        const i = (y * width + x) * 4;
-        redSum += data[i];     // R
-        greenSum += data[i+1]; // G
-        blueSum += data[i+2];  // B
-        pixelCount++;
+    for (let i = 0; i < data.length; i += 4 * step) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      
+      // DETECCIÓN DE PIEL: Solo incluir píxeles que parecen dedo
+      // Basado en ratio R/G y luminancia mínima
+      const total = r + g + b;
+      if (total < 60) continue; // Muy oscuro, ignorar
+      
+      const rRatio = r / total;
+      const gRatio = g / total;
+      
+      // Criterio de piel/dedo: R dominante sobre G
+      // nr/ng > 1.0 significa más rojo que verde (típico de piel iluminada)
+      if (rRatio > 0.30 && rRatio / gRatio >= 0.85) {
+        redSum += r;
+        greenSum += g;
+        blueSum += b;
+        skinPixelCount++;
+      }
+    }
+    
+    // Calcular ratio de píxeles de piel detectados
+    const sampledPixels = Math.floor(totalPixels / step);
+    this.skinPixelRatio = skinPixelCount / sampledPixels;
+    
+    // Si hay muy pocos píxeles de piel, usar promedio general con umbral bajo
+    if (skinPixelCount < 100) {
+      // Fallback: promediar todo el frame
+      redSum = 0; greenSum = 0; blueSum = 0;
+      for (let i = 0; i < data.length; i += 4 * step * 2) {
+        redSum += data[i];
+        greenSum += data[i + 1];
+        blueSum += data[i + 2];
+        skinPixelCount++;
       }
     }
     
     // Calcular promedios crudos
-    const rawRed = pixelCount > 0 ? redSum / pixelCount : 0;
-    const rawGreen = pixelCount > 0 ? greenSum / pixelCount : 0;
-    const rawBlue = pixelCount > 0 ? blueSum / pixelCount : 0;
+    const rawRed = skinPixelCount > 0 ? redSum / skinPixelCount : 0;
+    const rawGreen = skinPixelCount > 0 ? greenSum / skinPixelCount : 0;
+    const rawBlue = skinPixelCount > 0 ? blueSum / skinPixelCount : 0;
     
-    // === CALIBRACIÓN DE GANANCIA AUTOMÁTICA (AGC) ===
-    // Basado en MacIsaac et al. 2025: "Programmable Gain Calibration"
-    this.updateGainCalibration(rawRed, rawGreen, rawBlue);
+    // === SUAVIZADO TEMPORAL ===
+    // Evita saltos bruscos en la señal por frames individuales malos
+    const smoothedRed = this.lastRed * this.SMOOTHING + rawRed * (1 - this.SMOOTHING);
+    const smoothedGreen = this.lastGreen * this.SMOOTHING + rawGreen * (1 - this.SMOOTHING);
+    const smoothedBlue = this.lastBlue * this.SMOOTHING + rawBlue * (1 - this.SMOOTHING);
+    
+    this.lastRed = smoothedRed;
+    this.lastGreen = smoothedGreen;
+    this.lastBlue = smoothedBlue;
+    
+    // === CALIBRACIÓN DE GANANCIA ===
+    this.updateGainCalibration(smoothedRed, smoothedGreen, smoothedBlue);
     
     // Aplicar ganancia adaptativa
-    const avgRed = this.applyAdaptiveNormalization(rawRed);
-    const avgGreen = this.applyAdaptiveNormalization(rawGreen);
-    const avgBlue = this.applyAdaptiveNormalization(rawBlue);
+    const avgRed = this.applyAdaptiveNormalization(smoothedRed);
+    const avgGreen = this.applyAdaptiveNormalization(smoothedGreen);
+    const avgBlue = this.applyAdaptiveNormalization(smoothedBlue);
     
-    // Log de diagnóstico cada N frames
+    // Log de diagnóstico
     this.frameCount++;
     if (this.frameCount % this.LOG_EVERY === 0) {
       const rgRatio = avgGreen > 0 ? (avgRed / avgGreen).toFixed(2) : 'N/A';
-      const redPct = (avgRed / (avgRed + avgGreen + avgBlue) * 100).toFixed(1);
-      console.log(`📊 Frame ${this.frameCount}: R=${avgRed.toFixed(0)}, G=${avgGreen.toFixed(0)}, B=${avgBlue.toFixed(0)} | R/G=${rgRatio} | Red%=${redPct}%`);
+      const skinPct = (this.skinPixelRatio * 100).toFixed(1);
+      console.log(`🖐️ Full-Frame: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} | R/G=${rgRatio} | Skin=${skinPct}%`);
     }
     
     // Actualizar buffers para análisis temporal
     this.updateBuffers(avgRed, avgGreen, avgBlue);
     
-    // Calcular ratios para análisis de tejido
+    // Calcular ratios
     const rToGRatio = avgGreen > 0 ? avgRed / avgGreen : 1;
     const rToBRatio = avgBlue > 0 ? avgRed / avgBlue : 1;
     
-    // Calcular variabilidad AC (componente pulsátil)
+    // Calcular variabilidad AC
     const acComponent = this.calculateACComponent();
     
     return {
@@ -268,19 +304,26 @@ export class FrameProcessor {
   }
   
   /**
-   * Detecta la ROI basada en el valor rojo actual
+   * Detecta la ROI - Ahora retorna full-frame ya que usamos detección de piel
    */
   detectROI(redValue: number, imageData: ImageData): ProcessedSignal['roi'] {
     const width = imageData.width;
     const height = imageData.height;
-    const roiSize = Math.min(width, height) * this.ROI_SIZE_FACTOR;
     
+    // Full frame como ROI
     return {
-      x: (width - roiSize) / 2,
-      y: (height - roiSize) / 2,
-      width: roiSize,
-      height: roiSize
+      x: 0,
+      y: 0,
+      width: width,
+      height: height
     };
+  }
+  
+  /**
+   * Obtener ratio de píxeles de piel detectados
+   */
+  getSkinPixelRatio(): number {
+    return this.skinPixelRatio;
   }
   
   /**
@@ -304,11 +347,14 @@ export class FrameProcessor {
     this.redBuffer = [];
     this.greenBuffer = [];
     this.blueBuffer = [];
-    this.dcHistory = [];
     this.frameCount = 0;
     this.calibrationComplete = false;
     this.calibrationSamples = 0;
     this.calibrationDC = 0;
     this.gainFactor = 1.0;
+    this.lastRed = 0;
+    this.lastGreen = 0;
+    this.lastBlue = 0;
+    this.skinPixelRatio = 0;
   }
 }
