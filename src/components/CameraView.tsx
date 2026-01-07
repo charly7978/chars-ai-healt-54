@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useCallback } from "react";
+import { globalCalibrator } from "@/modules/camera/CameraAutoCalibrator";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -35,44 +36,54 @@ const CameraView: React.FC<CameraViewProps> = ({
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    
+    globalCalibrator.reset();
   }, []);
 
   const startCamera = useCallback(async () => {
-    if (isActiveRef.current || streamRef.current) return;
+    // Evitar múltiples inicios
+    if (isActiveRef.current) return;
+    
+    // Limpiar stream anterior si existe
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      streamRef.current = null;
+    }
+    
     isActiveRef.current = true;
 
     try {
-      // Obtener lista de cámaras
-      const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      tempStream.getTracks().forEach(t => t.stop());
+      // Intentar obtener cámara trasera directamente (sin tempStream)
+      let stream: MediaStream | null = null;
       
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cameras = devices.filter(d => d.kind === 'videoinput');
-      
-      // Buscar cámara trasera principal
-      let deviceId: string | undefined;
-      const rearCam = cameras.find(cam => {
-        const label = cam.label.toLowerCase();
-        return (label.includes('back') || label.includes('rear') || label.includes('environment')) &&
-               !label.includes('tele') && !label.includes('wide') && !label.includes('ultra');
-      });
-      
-      if (rearCam) {
-        deviceId = rearCam.deviceId;
-      } else if (cameras.length > 0) {
-        deviceId = cameras[cameras.length - 1].deviceId;
+      // Primer intento: cámara trasera con facingMode
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { exact: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+          }
+        });
+      } catch {
+        // Segundo intento: cualquier cámara
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 30 }
+          }
+        });
       }
-
-      // Obtener stream con configuración PPG óptima
-      const constraints: MediaStreamConstraints = {
-        audio: false,
-        video: deviceId 
-          ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
-          : { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       
+      if (!stream) {
+        throw new Error('No se pudo obtener stream');
+      }
+      
+      // Verificar que seguimos activos
       if (!isActiveRef.current) {
         stream.getTracks().forEach(t => t.stop());
         return;
@@ -90,21 +101,26 @@ const CameraView: React.FC<CameraViewProps> = ({
       if (track) {
         const caps: any = track.getCapabilities?.() || {};
         
-        // Aplicar configuración UNA VEZ
-        const settings: any[] = [];
+        // Configurar calibrador con el track
+        globalCalibrator.setTrack(track);
         
-        // Torch
+        // Aplicar torch primero (separado para mayor compatibilidad)
         if (caps.torch === true) {
-          settings.push({ torch: true });
+          try {
+            await track.applyConstraints({ advanced: [{ torch: true }] } as any);
+          } catch {}
         }
         
-        // Exposición media (30% del rango, no máxima para evitar saturación)
+        // Aplicar resto de configuración
+        const settings: any[] = [];
+        
+        // Exposición media (30% del rango)
         if (caps.exposureCompensation) {
           const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
           settings.push({ exposureCompensation: caps.exposureCompensation.min + range * 0.3 });
         }
         
-        // ISO bajo (menos ruido)
+        // ISO bajo
         if (caps.iso) {
           settings.push({ iso: Math.min(caps.iso.min + 200, caps.iso.max) });
         }
@@ -114,17 +130,17 @@ const CameraView: React.FC<CameraViewProps> = ({
           settings.push({ focusDistance: caps.focusDistance.min });
         }
         
-        // Aplicar TODO de una vez
         if (settings.length > 0) {
           try {
             await track.applyConstraints({ advanced: settings } as any);
           } catch {}
         }
         
+        const s = track.getSettings?.() || {};
         console.log('📷 Cámara lista:', {
-          label: track.label.slice(0, 30),
-          torch: caps.torch === true,
-          fps: track.getSettings?.()?.frameRate || 30
+          res: `${s.width}x${s.height}`,
+          fps: s.frameRate,
+          torch: caps.torch === true
         });
       }
 
