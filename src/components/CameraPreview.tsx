@@ -1,10 +1,10 @@
 /**
  * @file CameraPreview.tsx
- * @description INDICADOR DE CALIDAD - VALORES REALES INSTANTÁNEOS
- * Muestra el valor EXACTO del sensor sin suavizado ni animaciones
+ * @description INDICADOR DE CALIDAD CON VISTA DE CÁMARA
+ * Muestra el dedo en tiempo real + calidad instantánea
  */
 
-import React from "react";
+import React, { useRef, useEffect } from "react";
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
@@ -14,12 +14,29 @@ interface CameraPreviewProps {
 }
 
 const CameraPreview: React.FC<CameraPreviewProps> = ({
+  stream,
   signalQuality,
   isVisible
 }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Conectar stream al video
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => {});
+    }
+    
+    return () => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [stream]);
+
   if (!isVisible) return null;
 
-  // Valor REAL sin modificar - exactamente lo que viene del sensor
+  // Valor REAL sin modificar
   const realQuality = Math.round(signalQuality);
 
   // Color basado en rangos reales
@@ -31,7 +48,7 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
     return "#10b981"; // verde brillante
   };
 
-  // Etiqueta descriptiva basada en el valor real
+  // Etiqueta descriptiva
   const getLabel = () => {
     if (realQuality < 20) return "Muy Baja";
     if (realQuality < 40) return "Baja";
@@ -42,33 +59,50 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
 
   return (
     <div className="absolute top-14 left-3 z-40">
-      {/* Indicador compacto y elegante */}
+      {/* Contenedor con video del dedo + indicador */}
       <div 
-        className="rounded-lg px-3 py-2 flex items-center gap-2 backdrop-blur-sm"
+        className="rounded-xl overflow-hidden shadow-lg"
         style={{ 
-          backgroundColor: 'rgba(0,0,0,0.7)',
+          backgroundColor: 'rgba(0,0,0,0.85)',
           border: `2px solid ${getColor()}`,
-          boxShadow: `0 0 10px ${getColor()}40`
+          boxShadow: `0 0 15px ${getColor()}50`,
+          width: '110px'
         }}
       >
-        {/* Punto indicador de color */}
-        <div 
-          className="w-3 h-3 rounded-full"
-          style={{ backgroundColor: getColor() }}
+        {/* Video del dedo - muestra el rojo */}
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          autoPlay
+          className="w-full h-20 object-cover"
+          style={{ 
+            transform: 'scaleX(-1)',
+            filter: 'saturate(1.2) contrast(1.1)'
+          }}
         />
         
-        {/* Valor numérico REAL */}
-        <span 
-          className="text-lg font-bold font-mono"
-          style={{ color: getColor() }}
-        >
-          {realQuality}%
-        </span>
-        
-        {/* Etiqueta */}
-        <span className="text-xs text-white/70">
-          {getLabel()}
-        </span>
+        {/* Indicador de calidad debajo del video */}
+        <div className="px-2 py-1.5 flex items-center justify-between">
+          {/* Punto de color */}
+          <div 
+            className="w-2.5 h-2.5 rounded-full animate-pulse"
+            style={{ backgroundColor: getColor() }}
+          />
+          
+          {/* Valor numérico */}
+          <span 
+            className="text-base font-bold font-mono"
+            style={{ color: getColor() }}
+          >
+            {realQuality}%
+          </span>
+          
+          {/* Etiqueta corta */}
+          <span className="text-[10px] text-white/60">
+            {getLabel()}
+          </span>
+        </div>
       </div>
     </div>
   );
