@@ -149,8 +149,9 @@ export class VitalSignsProcessor {
     const hasRealPulse = this.validateRealPulse(rrData);
     
     if (!hasRealPulse) {
-      // SIN PULSO REAL = NO CALCULAR NADA
-      // Mantener valores anteriores si los hay, o cero
+      // SIN PULSO REAL = DEGRADAR VALORES GRADUALMENTE
+      // Esto evita que los valores se queden "pegados" cuando se retira el dedo
+      this.degradeValues();
       return this.getFormattedResult();
     }
 
@@ -537,6 +538,38 @@ export class VitalSignsProcessor {
     this.calibrationSamples = 0;
     this.baselineDC = 0;
     this.baselineEstablished = false;
+  }
+
+  /**
+   * Degradar valores gradualmente cuando no hay pulso
+   * Esto asegura que los displays no muestren valores estáticos cuando
+   * el dedo se retira o la señal se pierde
+   */
+  private degradeValues(): void {
+    const DECAY_RATE = 0.92; // Degradar 8% por frame
+    
+    // Si ya están en 0, no hacer nada
+    if (this.measurements.spo2 === 0 && this.measurements.glucose === 0) {
+      return;
+    }
+    
+    // Degradar todos los valores
+    this.measurements.spo2 = this.measurements.spo2 * DECAY_RATE;
+    this.measurements.glucose = this.measurements.glucose * DECAY_RATE;
+    this.measurements.hemoglobin = this.measurements.hemoglobin * DECAY_RATE;
+    this.measurements.systolicPressure = this.measurements.systolicPressure * DECAY_RATE;
+    this.measurements.diastolicPressure = this.measurements.diastolicPressure * DECAY_RATE;
+    this.measurements.totalCholesterol = this.measurements.totalCholesterol * DECAY_RATE;
+    this.measurements.triglycerides = this.measurements.triglycerides * DECAY_RATE;
+    
+    // Si están muy bajos, llevar a 0
+    if (this.measurements.spo2 < 80) this.measurements.spo2 = 0;
+    if (this.measurements.glucose < 60) this.measurements.glucose = 0;
+    if (this.measurements.hemoglobin < 7) this.measurements.hemoglobin = 0;
+    if (this.measurements.systolicPressure < 80) this.measurements.systolicPressure = 0;
+    if (this.measurements.diastolicPressure < 50) this.measurements.diastolicPressure = 0;
+    if (this.measurements.totalCholesterol < 100) this.measurements.totalCholesterol = 0;
+    if (this.measurements.triglycerides < 40) this.measurements.triglycerides = 0;
   }
 
   private getWeightedFinalResult(): VitalSignsResult | null {
