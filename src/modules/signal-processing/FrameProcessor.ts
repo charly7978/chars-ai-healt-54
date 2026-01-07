@@ -192,6 +192,10 @@ export class FrameProcessor {
       avgRed,
       avgGreen,
       avgBlue,
+      // NUEVO: Valores crudos sin normalizar para detección de dedo
+      rawRed: smoothedRed,
+      rawGreen: smoothedGreen,
+      rawBlue: smoothedBlue,
       textureScore: acComponent,
       rToGRatio,
       rToBRatio

@@ -254,48 +254,51 @@ export class VitalSignsProcessor {
     // 1. SpO2 - Ratio-of-Ratios (Beer-Lambert)
     const newSpo2 = this.calculateSpO2Real(features);
     if (newSpo2 > 0) {
-      // Rango: 70-100% para detectar hipoxemia
-      this.measurements.spo2 = this.smoothValue(this.measurements.spo2 || newSpo2, newSpo2, 70, 100);
+      // *** SIN CLAMP - VALOR CRUDO ***
+      this.measurements.spo2 = this.smoothValueRaw(this.measurements.spo2 || newSpo2, newSpo2);
       this.storeValue('spo2', this.measurements.spo2);
     }
 
     // 2. Glucosa - Basado en Satter et al. 2024
     const newGlucose = this.calculateGlucoseReal(features, rrData.intervals);
     if (newGlucose > 0) {
-      // Rango ajustado: 55-250 mg/dL
-      this.measurements.glucose = this.smoothValue(this.measurements.glucose || newGlucose, newGlucose, 55, 250);
+      // *** SIN CLAMP - VALOR CRUDO ***
+      this.measurements.glucose = this.smoothValueRaw(this.measurements.glucose || newGlucose, newGlucose);
       this.storeValue('glucose', this.measurements.glucose);
     }
 
     // 3. Hemoglobina - Basado en HemaApp/MDPI 2025
     const newHemoglobin = this.calculateHemoglobinReal(features);
     if (newHemoglobin > 0) {
-      this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin || newHemoglobin, newHemoglobin, 7, 20);
+      // *** SIN CLAMP - VALOR CRUDO ***
+      this.measurements.hemoglobin = this.smoothValueRaw(this.measurements.hemoglobin || newHemoglobin, newHemoglobin);
     }
 
     // 4. Presión arterial - Basado en PTT (Burgos et al. 2024)
     const pressure = this.calculateBloodPressureReal(rrData.intervals, features);
     if (pressure.systolic > 0) {
-      this.measurements.systolicPressure = this.smoothValue(
+      // *** SIN CLAMP - VALORES CRUDOS ***
+      this.measurements.systolicPressure = this.smoothValueRaw(
         this.measurements.systolicPressure || pressure.systolic, 
-        pressure.systolic, 90, 200
+        pressure.systolic
       );
-      this.measurements.diastolicPressure = this.smoothValue(
+      this.measurements.diastolicPressure = this.smoothValueRaw(
         this.measurements.diastolicPressure || pressure.diastolic, 
-        pressure.diastolic, 60, 120
+        pressure.diastolic
       );
     }
 
     // 5. Lípidos - Basado en Arguello-Prada et al. 2025
     const lipids = this.calculateLipidsReal(features, rrData.intervals);
     if (lipids.totalCholesterol > 0) {
-      this.measurements.totalCholesterol = this.smoothValue(
+      // *** SIN CLAMP - VALORES CRUDOS ***
+      this.measurements.totalCholesterol = this.smoothValueRaw(
         this.measurements.totalCholesterol || lipids.totalCholesterol, 
-        lipids.totalCholesterol, 100, 280
+        lipids.totalCholesterol
       );
-      this.measurements.triglycerides = this.smoothValue(
+      this.measurements.triglycerides = this.smoothValueRaw(
         this.measurements.triglycerides || lipids.triglycerides, 
-        lipids.triglycerides, 50, 350
+        lipids.triglycerides
       );
     }
 
@@ -381,9 +384,7 @@ export class VitalSignsProcessor {
       spo2 = Math.max(spo2, 94); // Mínimo 94% con buena señal
     }
     
-    // Rango fisiológico: 70-100%
-    if (spo2 < 70 || spo2 > 100) return 0;
-    
+    // *** SIN CLAMP - Valor real calculado ***
     return spo2;
   }
 
@@ -460,7 +461,8 @@ export class VitalSignsProcessor {
                     hrContribution +
                     elasticityContribution;
     
-    return Math.max(55, Math.min(250, glucose));
+    // *** SIN CLAMP - Valor real calculado ***
+    return glucose;
   }
 
   /**
@@ -629,33 +631,8 @@ export class VitalSignsProcessor {
     
     let diastolic = systolic * pdpsRatio;
     
-    // === VALIDACIÓN FISIOLÓGICA ===
-    // Rangos extremos pero posibles: Sistólica 70-260, Diastólica 40-150
-    // NO LIMITAR artificialmente - solo validar que sea fisiológicamente posible
-    
-    if (systolic < 70) {
-      // Señal muy débil, escalar proporcionalmente
-      const scale = 85 / systolic;
-      systolic *= scale;
-      diastolic *= scale;
-    }
-    
-    if (systolic > 260) {
-      // Posible artefacto, pero reportar
-      systolic = 260;
-    }
-    
-    // Presión de pulso (PP) debe estar en rango 20-100 mmHg
-    const pulsePressure = systolic - diastolic;
-    if (pulsePressure < 20) {
-      diastolic = systolic - 25;
-    } else if (pulsePressure > 100) {
-      diastolic = systolic - 70;
-    }
-    
-    // Validar diastólica final
-    diastolic = Math.max(35, Math.min(150, diastolic));
-    systolic = Math.max(70, Math.min(260, systolic));
+    // *** SIN CLAMP - Valores crudos reales ***
+    // Si la señal es de una pared, estos valores serán absurdos y eso es correcto
     
     return { 
       systolic: Math.round(systolic), 
@@ -755,9 +732,10 @@ export class VitalSignsProcessor {
                           metabolicContribution + 
                           hrContribution;
     
+    // *** SIN CLAMP - Valores crudos reales ***
     return {
-      totalCholesterol: Math.max(100, Math.min(280, Math.round(totalCholesterol))),
-      triglycerides: Math.max(50, Math.min(350, Math.round(triglycerides)))
+      totalCholesterol: Math.round(totalCholesterol),
+      triglycerides: Math.round(triglycerides)
     };
   }
 
@@ -765,6 +743,12 @@ export class VitalSignsProcessor {
     const clamped = Math.max(min, Math.min(max, newVal));
     if (current === 0 || isNaN(current)) return clamped;
     return current * (1 - this.EMA_ALPHA) + clamped * this.EMA_ALPHA;
+  }
+  
+  // *** NUEVO: Suavizado SIN clamp - valores crudos reales ***
+  private smoothValueRaw(current: number, newVal: number): number {
+    if (current === 0 || isNaN(current)) return newVal;
+    return current * (1 - this.EMA_ALPHA) + newVal * this.EMA_ALPHA;
   }
 
   private storeValue(type: 'spo2' | 'glucose' | 'pressure', value: number): void {
@@ -775,39 +759,35 @@ export class VitalSignsProcessor {
     if (arr.length > 20) arr.shift();
   }
 
+  // *** SIN CLAMPS - VALORES CRUDOS REALES ***
   private formatSpO2(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
-    // Rango: 70-100% para detectar hipoxemia
-    return Math.round(Math.max(70, Math.min(100, value)));
+    return Math.round(value * 10) / 10; // SIN CLAMP - valor real
   }
 
   private formatGlucose(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
-    // Rango ajustado: 55-250 mg/dL
-    return Math.round(Math.max(55, Math.min(250, value)));
+    return Math.round(value); // SIN CLAMP - valor real
   }
 
   private formatHemoglobin(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
-    // Rango: 7-20 g/dL
-    return Math.round(Math.max(7, Math.min(20, value)) * 10) / 10;
+    return Math.round(value * 10) / 10; // SIN CLAMP - valor real
   }
 
   private formatPressure(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
-    return Math.round(Math.max(40, Math.min(220, value)));
+    return Math.round(value); // SIN CLAMP - valor real
   }
 
   private formatCholesterol(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
-    // Rango: 100-280 mg/dL
-    return Math.round(Math.max(100, Math.min(280, value)));
+    return Math.round(value); // SIN CLAMP - valor real
   }
 
   private formatTriglycerides(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
-    // Rango: 50-350 mg/dL
-    return Math.round(Math.max(50, Math.min(350, value)));
+    return Math.round(value); // SIN CLAMP - valor real
   }
 
   getCalibrationProgress(): number {
