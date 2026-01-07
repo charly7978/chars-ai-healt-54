@@ -542,17 +542,7 @@ const Index = () => {
       )}
 
       <div className="flex-1 relative">
-        {/* PANEL DE DIAGNÓSTICO VISUAL */}
-        {isMonitoring && (
-          <SignalDiagnostics
-            rawValue={lastSignal?.rawValue || 0}
-            filteredValue={lastSignal?.filteredValue || 0}
-            quality={signalQuality}
-            fingerDetected={lastSignal?.fingerDetected || false}
-            bpm={heartRate}
-            pulsatility={lastSignal?.diagnostics?.pulsatilityValue || 0}
-          />
-        )}
+        {/* Panel de diagnóstico removido - tapaba los displays */}
         
         {/* VENTANA DE PREVISUALIZACIÓN DE CÁMARA */}
         <CameraPreview 
