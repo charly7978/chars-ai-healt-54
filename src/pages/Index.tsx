@@ -185,28 +185,44 @@ const Index = () => {
 
   // INICIO
   const startMonitoring = () => {
-    if (systemState.current !== 'IDLE') return;
+    if (systemState.current !== 'IDLE') {
+      console.log('⚠️ No se puede iniciar, estado actual:', systemState.current);
+      return;
+    }
     
+    console.log('🚀 Iniciando monitoreo...');
     systemState.current = 'STARTING';
     
     if (navigator.vibrate) {
       navigator.vibrate([200]);
     }
     
+    // Reset previo para asegurar estado limpio
+    frameLoopActiveRef.current = false;
+    if (frameLoopIdRef.current) {
+      cancelAnimationFrame(frameLoopIdRef.current);
+      frameLoopIdRef.current = null;
+    }
+    videoElementRef.current = null;
+    
     enterFullScreen();
-    setIsMonitoring(true);
-    setIsCameraOn(true);
     setShowResults(false);
-    
-    startProcessing();
-    
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
+    // Iniciar procesador ANTES de encender cámara
+    startProcessing();
+    
+    // Encender cámara (esto disparará handleStreamReady)
+    setIsCameraOn(true);
+    setIsMonitoring(true);
+    
     startAutoCalibration();
     
+    // Limpiar timer previo si existe
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
+      measurementTimerRef.current = null;
     }
     
     measurementTimerRef.current = window.setInterval(() => {
@@ -221,6 +237,7 @@ const Index = () => {
     }, 1000);
     
     systemState.current = 'ACTIVE';
+    console.log('✅ Monitoreo activo');
   };
 
   const startAutoCalibration = () => {
@@ -243,28 +260,46 @@ const Index = () => {
     }
     
     systemState.current = 'STOPPING';
+    console.log('🛑 Finalizando medición...');
     
+    // 1. PRIMERO: Detener el loop de frames
     frameLoopActiveRef.current = false;
     if (frameLoopIdRef.current) {
       cancelAnimationFrame(frameLoopIdRef.current);
       frameLoopIdRef.current = null;
     }
     
-    if (isCalibrating) {
-      forceCalibrationCompletion();
-    }
-    
-    setIsMonitoring(false);
-    setIsCameraOn(false);
-    setIsCalibrating(false);
-    stopProcessing();
-    
+    // 2. Detener timer
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
     }
     
+    // 3. Detener procesadores ANTES de cambiar estados
+    stopProcessing();
+    
+    if (isCalibrating) {
+      forceCalibrationCompletion();
+    }
+    
+    // 4. Guardar resultados antes de resetear
     const savedResults = resetVitalSigns();
+    
+    // 5. Detener cámara (cambiando isCameraOn)
+    setIsCameraOn(false);
+    
+    // 6. Limpiar stream manualmente
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => {
+        try { track.stop(); } catch {}
+      });
+      setCameraStream(null);
+    }
+    
+    // 7. Actualizar estados UI
+    setIsMonitoring(false);
+    setIsCalibrating(false);
+    
     if (savedResults) {
       setVitalSigns(savedResults);
       setShowResults(true);
@@ -274,36 +309,58 @@ const Index = () => {
     setSignalQuality(0);
     setCalibrationProgress(0);
     
+    // 8. Limpiar video ref
+    videoElementRef.current = null;
+    
     systemState.current = 'IDLE';
+    console.log('✅ Medición finalizada correctamente');
   };
 
   const handleReset = () => {
+    console.log('🔄 Reset completo iniciando...');
     systemState.current = 'STOPPING';
     
+    // 1. PRIMERO: Detener el loop de frames
     frameLoopActiveRef.current = false;
     if (frameLoopIdRef.current) {
       cancelAnimationFrame(frameLoopIdRef.current);
       frameLoopIdRef.current = null;
     }
     
-    setIsMonitoring(false);
-    setIsCameraOn(false);
-    setShowResults(false);
-    setIsCalibrating(false);
-    stopProcessing();
-    
+    // 2. Detener timer
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
     }
     
+    // 3. Detener procesadores PRIMERO
+    stopProcessing();
     fullResetVitalSigns();
     resetHeartBeat();
     
+    // 4. Detener cámara
+    setIsCameraOn(false);
+    
+    // 5. Limpiar stream manualmente
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => {
+        try { track.stop(); } catch {}
+      });
+      setCameraStream(null);
+    }
+    
+    // 6. Limpiar canvas
     if (tempCtxRef.current && tempCanvasRef.current) {
       tempCtxRef.current.clearRect(0, 0, tempCanvasRef.current.width, tempCanvasRef.current.height);
     }
     
+    // 7. Limpiar video ref
+    videoElementRef.current = null;
+    
+    // 8. Reset todos los estados
+    setIsMonitoring(false);
+    setShowResults(false);
+    setIsCalibrating(false);
     setElapsedTime(0);
     setHeartRate(0);
     setHeartbeatSignal(0);
@@ -328,6 +385,7 @@ const Index = () => {
     arrhythmiaDetectedRef.current = false;
     
     systemState.current = 'IDLE';
+    console.log('✅ Reset completado');
   };
 
   // MANEJO DEL STREAM - MEJORADO PARA ROBUSTEZ
@@ -399,11 +457,17 @@ const Index = () => {
     frameLoopActiveRef.current = true;
     
     const processImage = () => {
-      if (!frameLoopActiveRef.current) return;
+      // SOLO usar refs para evitar closures stale
+      if (!frameLoopActiveRef.current) {
+        console.log('🛑 Loop detenido por frameLoopActiveRef');
+        return;
+      }
       
       const video = videoElementRef.current;
-      if (!isMonitoring || systemState.current !== 'ACTIVE' || !video) {
+      // Usar systemState.current en lugar de isMonitoring (closure)
+      if (systemState.current !== 'ACTIVE' || !video) {
         frameLoopActiveRef.current = false;
+        console.log('🛑 Loop detenido por estado:', systemState.current);
         return;
       }
       
@@ -421,23 +485,33 @@ const Index = () => {
           }
         } catch (error) {
           console.error('Error capturando frame:', error);
+          frameLoopActiveRef.current = false;
+          return;
         }
       }
       
-      if (frameLoopActiveRef.current && isMonitoring && systemState.current === 'ACTIVE') {
+      // SOLO usar refs para la siguiente iteración
+      if (frameLoopActiveRef.current && systemState.current === 'ACTIVE') {
         frameLoopIdRef.current = requestAnimationFrame(processImage);
       } else {
         frameLoopActiveRef.current = false;
+        frameLoopIdRef.current = null;
       }
     };
 
     // Esperar a que el video esté listo antes de iniciar el loop
+    let startLoopTimeout: number | null = null;
     const startLoop = () => {
+      // Verificar estado antes de continuar
+      if (systemState.current !== 'ACTIVE' || !frameLoopActiveRef.current) {
+        return;
+      }
+      
       if (videoElement && videoElement.readyState >= 2) {
         console.log('✅ Iniciando captura de frames');
         frameLoopIdRef.current = requestAnimationFrame(processImage);
       } else {
-        setTimeout(startLoop, 100);
+        startLoopTimeout = window.setTimeout(startLoop, 100);
       }
     };
     

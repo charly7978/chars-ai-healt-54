@@ -84,15 +84,18 @@ export const useSignalProcessor = () => {
     processorRef.current.start();
   }, [isProcessing]);
 
-  // PARADA ÚNICA Y LIMPIA
+  // PARADA ÚNICA Y LIMPIA - SIN DEPENDER DE isProcessing STATE
   const stopProcessing = useCallback(() => {
-    if (!processorRef.current || !isProcessing) {
+    if (!processorRef.current) {
       return;
     }
     
-    setIsProcessing(false);
+    // Primero detener el procesador, luego actualizar estado
     processorRef.current.stop();
-  }, [isProcessing]);
+    setIsProcessing(false);
+    setLastSignal(null);
+    setFramesProcessed(0);
+  }, []);
 
   // CALIBRACIÓN ÚNICA
   const calibrate = useCallback(async () => {
