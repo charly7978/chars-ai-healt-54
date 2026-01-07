@@ -74,7 +74,7 @@ export class HumanFingerDetector {
     MIN_PULSATILITY: 0.003,         // 0.3% mínimo - pulso débil pero real
     GOOD_PULSATILITY: 0.010,        // 1.0% - buena señal
     IDEAL_PULSATILITY: 0.020,       // 2.0% - señal excelente
-    MAX_PULSATILITY: 0.12,          // 12% máximo - tolera movimiento moderado
+    MAX_PULSATILITY: 0.15,          // 15% máximo - tolera movimiento considerable
     
     // === RITMO CARDÍACO ===
     MIN_HEART_RATE_BPM: 40,         // Bradicardia extrema
@@ -85,9 +85,9 @@ export class HumanFingerDetector {
     // Los intervalos R-R deben ser relativamente consistentes
     MAX_RR_VARIATION: 0.40,         // 40% de variación máxima entre intervalos
     
-    // === ESTABILIDAD TEMPORAL (HISTÉRESIS ASIMÉTRICA) ===
-    FRAMES_TO_CONFIRM: 8,           // 8 frames para confirmar (~0.27s)
-    FRAMES_TO_LOSE: 60,             // 60 frames para perder (~2s) - MUY TOLERANTE una vez detectado
+    // === ESTABILIDAD TEMPORAL (HISTÉRESIS ASIMÉTRICA - MÁS ROBUSTA) ===
+    FRAMES_TO_CONFIRM: 6,           // 6 frames para confirmar (~0.20s) - más responsivo
+    FRAMES_TO_LOSE: 75,             // 75 frames para perder (~2.5s) - MUY TOLERANTE una vez detectado
   };
 
   constructor() {
