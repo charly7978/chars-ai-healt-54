@@ -380,26 +380,25 @@ export class HumanFingerDetector {
   private handleNonDetection(): void {
     this.consecutiveNonDetections++;
     
-    // MÁXIMA ESTABILIDAD: Una vez confirmado, casi NUNCA decrementar
-    // Solo decrementar muy gradualmente después de MUCHAS no-detecciones consecutivas
-    if (this.consecutiveDetections > 0) {
-      if (this.lastDetectionState) {
-        // Ya confirmado: decrementar solo cada 10 no-detecciones (ultra firme)
-        if (this.consecutiveNonDetections % 10 === 0) {
-          this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
-        }
-      } else {
-        // Aún no confirmado: decrementar cada 3 (más permisivo)
-        if (this.consecutiveNonDetections % 3 === 0) {
-          this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
-        }
+    // ULTRA ESTABLE: Una vez confirmado, mantener detección por mucho más tiempo
+    // Solo decrementar MUY gradualmente después de MUCHAS no-detecciones
+    if (this.consecutiveDetections > 0 && this.lastDetectionState) {
+      // Ya confirmado: decrementar solo cada 15 no-detecciones (ultra firme)
+      if (this.consecutiveNonDetections % 15 === 0) {
+        this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
+      }
+    } else if (this.consecutiveDetections > 0) {
+      // Aún no confirmado: decrementar cada 5 (más permisivo que antes)
+      if (this.consecutiveNonDetections % 5 === 0) {
+        this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
       }
     }
     
+    // Solo perder detección después de MUCHOS frames sin dedo
     if (this.consecutiveNonDetections >= this.CONFIG.FRAMES_TO_LOSE) {
       if (this.lastDetectionState) {
-        // Limpiar historial para empezar fresco cuando vuelva el dedo
-        this.softReset();
+        // NO hacer softReset aquí - dejar historial para recuperación rápida
+        this.consecutiveDetections = 0; // Solo resetear contador
       }
       this.lastDetectionState = false;
     }
