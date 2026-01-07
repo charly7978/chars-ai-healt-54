@@ -67,6 +67,7 @@ export class HeartBeatProcessor {
   private audioContext: AudioContext | null = null;
   private heartSoundOscillator: OscillatorNode | null = null;
   private lastBeepTime = 0;
+  private audioInitialized: boolean = false; // CRÍTICO: Evitar beep repetido
   private lastPeakTime: number | null = null;
   private previousPeakTime: number | null = null;
   private bpmHistory: number[] = [];
@@ -112,13 +113,17 @@ export class HeartBeatProcessor {
   }
 
   private async initAudio() {
+    // CRÍTICO: Solo inicializar UNA VEZ
+    if (this.audioInitialized) return;
+    
     try {
       this.audioContext = new AudioContext();
       await this.audioContext.resume();
       console.log("HeartBeatProcessor: Audio Context Initialized and resumed");
       
-      // Reproducir un sonido de prueba audible para desbloquear el audio
-      await this.playTestSound(0.3); // Volumen incrementado
+      // Reproducir un sonido de prueba audible para desbloquear el audio - SOLO UNA VEZ
+      await this.playTestSound(0.3);
+      this.audioInitialized = true;
     } catch (error) {
       console.error("HeartBeatProcessor: Error initializing audio", error);
     }
@@ -820,6 +825,27 @@ export class HeartBeatProcessor {
     
     // CRÍTICO: Reset del filtro Kalman interno
     this.kalmanFilterInstance.reset();
+    
+    // NOTA: NO cerrar audioContext en reset() - solo en dispose()
+    // audioInitialized se mantiene true para no volver a hacer beep de prueba
+  }
+
+  /**
+   * CRÍTICO: Método para liberar recursos del AudioContext
+   * Llamar cuando el procesador ya no se necesita
+   */
+  public dispose(): void {
+    if (this.audioContext) {
+      try {
+        this.audioContext.close();
+        console.log("HeartBeatProcessor: AudioContext cerrado correctamente");
+      } catch (error) {
+        console.error("HeartBeatProcessor: Error cerrando AudioContext", error);
+      }
+      this.audioContext = null;
+    }
+    this.audioInitialized = false;
+    this.reset();
   }
 
   public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {

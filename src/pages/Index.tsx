@@ -507,15 +507,32 @@ const Index = () => {
       pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
       const channelOutputs = compute();
 
-      // Feedback multicanal cuando calidad baja
+      // Feedback multicanal cuando calidad baja - OPTIMIZADO: evitar crear array cada vez
       if (channelOutputs) {
-        const channels: Array<'heart' | 'spo2' | 'bloodPressure' | 'hemoglobin' | 'glucose' | 'lipids'> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
-        for (let i = 0; i < channels.length; i++) {
-          const ch = channels[i];
-          const out = channelOutputs[ch];
-          if (out && out.quality < 55) {
-            pushFeedback(ch, out.feedback || { desiredGain: 1.05, confidence: 0.3 });
-          }
+        const co = channelOutputs as Record<string, { output: number; quality: number; feedback?: { desiredGain?: number; confidence?: number } } | undefined>;
+        const heartOut = co['heart'];
+        if (heartOut && heartOut.quality < 55) {
+          pushFeedback('heart', heartOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
+        }
+        const spo2Out = co['spo2'];
+        if (spo2Out && spo2Out.quality < 55) {
+          pushFeedback('spo2', spo2Out.feedback || { desiredGain: 1.05, confidence: 0.3 });
+        }
+        const bpOut = co['bloodPressure'];
+        if (bpOut && bpOut.quality < 55) {
+          pushFeedback('bloodPressure', bpOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
+        }
+        const hbOut = co['hemoglobin'];
+        if (hbOut && hbOut.quality < 55) {
+          pushFeedback('hemoglobin', hbOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
+        }
+        const glOut = co['glucose'];
+        if (glOut && glOut.quality < 55) {
+          pushFeedback('glucose', glOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
+        }
+        const lipOut = co['lipids'];
+        if (lipOut && lipOut.quality < 55) {
+          pushFeedback('lipids', lipOut.feedback || { desiredGain: 1.05, confidence: 0.3 });
         }
       }
       
