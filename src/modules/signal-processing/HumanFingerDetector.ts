@@ -42,6 +42,10 @@ export class HumanFingerDetector {
   private timestampHistory: number[] = [];
   private readonly HISTORY_SIZE = 150; // 5 segundos a 30fps
   
+  // NUEVO: Buffer de pulsatilidad para suavizado (evita cortes por micro-movimientos)
+  private pulsatilityHistory: number[] = [];
+  private readonly PULSATILITY_SMOOTH_SIZE = 8; // Suavizar últimos 8 valores (~0.27s)
+  
   // Análisis de picos cardíacos
   private detectedPeaks: number[] = [];
   private detectedValleys: number[] = [];
@@ -176,8 +180,18 @@ export class HumanFingerDetector {
       );
     }
     
-    // Calcular pulsatilidad (componente AC/DC)
-    const pulsatility = this.calculateRealPulsatility();
+    // Calcular pulsatilidad instantánea
+    const rawPulsatility = this.calculateRealPulsatility();
+    
+    // SUAVIZADO: Agregar al historial y calcular promedio móvil
+    this.pulsatilityHistory.push(rawPulsatility);
+    if (this.pulsatilityHistory.length > this.PULSATILITY_SMOOTH_SIZE) {
+      this.pulsatilityHistory.shift();
+    }
+    
+    // Usar MEDIANA (más robusta que promedio contra picos aislados)
+    const sortedPulsatility = [...this.pulsatilityHistory].sort((a, b) => a - b);
+    const pulsatility = sortedPulsatility[Math.floor(sortedPulsatility.length / 2)];
     
     // Log de diagnóstico cada 30 frames (~1s)
     if (this.redHistory.length % 30 === 0) {
@@ -483,6 +497,7 @@ export class HumanFingerDetector {
     this.lastDetectionState = false;
     this.redHistory = [];
     this.timestampHistory = [];
+    this.pulsatilityHistory = []; // Limpiar buffer de suavizado
     this.detectedPeaks = [];
     this.detectedValleys = [];
     console.log("🔄 HumanFingerDetector: Reset completo");
