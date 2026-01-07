@@ -1,23 +1,42 @@
 import React, { useRef, useEffect } from "react";
+import { CameraAutoCalibrator } from "@/modules/camera/CameraAutoCalibrator";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
+  onCalibrationUpdate?: (state: { brightness: number; recommendation: string }) => void;
   isMonitoring: boolean;
 }
 
 /**
- * CÁMARA PPG - SELECCIÓN ROBUSTA POR DEVICE ID
+ * CÁMARA PPG - CON AUTO-CALIBRACIÓN INTELIGENTE
  * 
- * Estrategia: enumerar cámaras, filtrar traseras por label,
- * seleccionar la PRIMERA (principal), NO la segunda (telefoto/wide)
+ * Basado en HKUST 2023: "Optimizing Camera Exposure Control Settings"
+ * 
+ * CAMBIOS CLAVE:
+ * 1. NO maximizar exposición (causa saturación)
+ * 2. Buscar brillo óptimo: 80-160 (no saturado ni oscuro)
+ * 3. Auto-ajustar según señal PPG recibida
+ * 4. Priorizar exposición sobre ISO (menos ruido)
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
+  onCalibrationUpdate,
   isMonitoring,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const startedRef = useRef(false);
+  const calibratorRef = useRef<CameraAutoCalibrator | null>(null);
+
+  // Inicializar calibrador
+  useEffect(() => {
+    if (!calibratorRef.current) {
+      calibratorRef.current = new CameraAutoCalibrator();
+    }
+    return () => {
+      calibratorRef.current?.reset();
+    };
+  }, []);
 
   const stopCamera = () => {
     if (streamRef.current) {
@@ -30,18 +49,14 @@ const CameraView: React.FC<CameraViewProps> = ({
       videoRef.current.srcObject = null;
     }
     startedRef.current = false;
+    calibratorRef.current?.reset();
   };
 
   /**
    * OBTENER LA CÁMARA TRASERA PRINCIPAL
-   * 1. Enumerar todos los dispositivos
-   * 2. Filtrar cámaras traseras por label (back, rear, environment, trasera, 0)
-   * 3. Excluir cámaras secundarias (telephoto, wide, ultra, 2, 3)
-   * 4. Seleccionar la PRIMERA que quede
    */
   const getPrimaryRearCameraId = async (): Promise<string | null> => {
     try {
-      // Primero pedir permiso genérico para obtener labels
       const tempStream = await navigator.mediaDevices.getUserMedia({ 
         video: true, audio: false 
       });
@@ -58,18 +73,16 @@ const CameraView: React.FC<CameraViewProps> = ({
       // Filtrar cámaras traseras
       const rearCameras = cameras.filter(cam => {
         const label = cam.label.toLowerCase();
-        // Es trasera si contiene estas palabras
-        const isRear = label.includes('back') || 
-                       label.includes('rear') || 
-                       label.includes('environment') ||
-                       label.includes('trasera') ||
-                       label.includes('facing back') ||
-                       label.includes('camera 0') ||
-                       label.includes('camera0');
-        return isRear;
+        return label.includes('back') || 
+               label.includes('rear') || 
+               label.includes('environment') ||
+               label.includes('trasera') ||
+               label.includes('facing back') ||
+               label.includes('camera 0') ||
+               label.includes('camera0');
       });
       
-      // Excluir cámaras secundarias (telefoto, wide, ultra)
+      // Excluir cámaras secundarias
       const primaryCameras = rearCameras.filter(cam => {
         const label = cam.label.toLowerCase();
         const isSecondary = label.includes('telephoto') ||
@@ -86,24 +99,10 @@ const CameraView: React.FC<CameraViewProps> = ({
         return !isSecondary;
       });
       
-      console.log('📷 Cámaras traseras principales:', primaryCameras.map(c => c.label));
-      
-      // Retornar la primera cámara principal, o la primera trasera, o null
-      if (primaryCameras.length > 0) {
-        return primaryCameras[0].deviceId;
-      }
-      if (rearCameras.length > 0) {
-        return rearCameras[0].deviceId;
-      }
-      
-      // Si no encontramos trasera por label, intentar la primera cámara
-      // (en móviles suele ser la frontal, así que usamos la última)
-      if (cameras.length > 1) {
-        return cameras[cameras.length - 1].deviceId;
-      }
-      if (cameras.length === 1) {
-        return cameras[0].deviceId;
-      }
+      if (primaryCameras.length > 0) return primaryCameras[0].deviceId;
+      if (rearCameras.length > 0) return rearCameras[0].deviceId;
+      if (cameras.length > 1) return cameras[cameras.length - 1].deviceId;
+      if (cameras.length === 1) return cameras[0].deviceId;
       
       return null;
     } catch (err) {
@@ -117,16 +116,13 @@ const CameraView: React.FC<CameraViewProps> = ({
     startedRef.current = true;
 
     try {
-      console.log('📷 Buscando cámara trasera principal...');
+      console.log('📷 Iniciando cámara con auto-calibración...');
       
-      // PASO 1: Obtener ID de cámara principal
       const primaryCameraId = await getPrimaryRearCameraId();
       
       let stream: MediaStream;
       
       if (primaryCameraId) {
-        console.log('📷 Usando cámara por deviceId:', primaryCameraId.slice(0, 8));
-        // Usar deviceId exacto - esto GARANTIZA la cámara correcta
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -137,8 +133,6 @@ const CameraView: React.FC<CameraViewProps> = ({
           }
         });
       } else {
-        console.log('⚠️ No se encontró cámara por ID, usando facingMode');
-        // Fallback a facingMode
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -157,13 +151,17 @@ const CameraView: React.FC<CameraViewProps> = ({
         await videoRef.current.play().catch(() => {});
       }
       
-      // Configurar para PPG
+      // Configurar con AUTO-CALIBRADOR
       const track = stream.getVideoTracks()[0];
-      if (track) {
-        await configurePPG(track);
+      if (track && calibratorRef.current) {
+        // Detectar capacidades
+        await calibratorRef.current.detectCapabilities(track);
+        
+        // Aplicar configuración óptima (NO máxima)
+        await calibratorRef.current.applyOptimalPPGSettings(track);
         
         const settings = track.getSettings?.() || {};
-        console.log('✅ Cámara iniciada:', {
+        console.log('✅ Cámara PPG calibrada:', {
           label: track.label,
           resolution: `${settings.width}x${settings.height}`,
           fps: settings.frameRate
@@ -178,78 +176,6 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
   };
 
-  const configurePPG = async (track: MediaStreamTrack) => {
-    const caps: any = track.getCapabilities?.() || {};
-    
-    console.log('📷 Capacidades de cámara:', caps);
-    
-    const applyConstraint = async (name: string, constraint: any) => {
-      try {
-        await track.applyConstraints({ advanced: [constraint] } as any);
-        console.log(`✅ ${name} aplicado`);
-        return true;
-      } catch (err) { 
-        console.log(`⚠️ ${name} no disponible`);
-        return false; 
-      }
-    };
-
-    // 1. FLASH (torch) - Fundamental para PPG
-    if (caps.torch === true) {
-      await applyConstraint('torch', { torch: true });
-      console.log('🔦 Flash/Torch ACTIVADO');
-    } else {
-      console.log('💡 Sin flash disponible');
-    }
-    
-    // 2. EXPOSICIÓN ALTA - Para imagen más brillante
-    if (caps.exposureCompensation) {
-      const maxExp = caps.exposureCompensation.max || 2;
-      await applyConstraint('exposureCompensation', { exposureCompensation: maxExp });
-    }
-    
-    // 3. EXPOSICIÓN MANUAL con tiempo largo (más luz)
-    if (caps.exposureTime) {
-      // Tiempo de exposición más largo = más luz (en microsegundos)
-      const maxTime = Math.min(caps.exposureTime.max || 33333, 33333); // máx 30fps
-      await applyConstraint('exposureTime', { exposureTime: maxTime });
-    }
-    
-    // 4. ISO ALTO - Más sensibilidad a la luz
-    if (caps.iso) {
-      const highIso = Math.min(caps.iso.max || 800, 1600);
-      await applyConstraint('iso', { iso: highIso });
-    }
-    
-    // 5. BRILLO si está disponible
-    if (caps.brightness) {
-      const maxBright = caps.brightness.max || 128;
-      await applyConstraint('brightness', { brightness: maxBright });
-    }
-    
-    // 6. BALANCE DE BLANCOS - Incandescente es mejor para piel+flash
-    if (caps.whiteBalanceMode?.includes?.('incandescent')) {
-      await applyConstraint('whiteBalanceMode', { whiteBalanceMode: 'incandescent' });
-    } else if (caps.colorTemperature) {
-      // Temperatura cálida (3000-4000K) para tono de piel
-      const warmTemp = Math.min(Math.max(caps.colorTemperature.min, 3500), caps.colorTemperature.max);
-      await applyConstraint('colorTemperature', { colorTemperature: warmTemp });
-    }
-    
-    // 7. FOCUS cercano para dedo
-    if (caps.focusDistance?.min !== undefined) {
-      await applyConstraint('focusDistance', { focusDistance: caps.focusDistance.min });
-    }
-    
-    // 8. Modos manuales para estabilidad
-    if (caps.exposureMode?.includes?.('manual')) {
-      await applyConstraint('exposureMode', { exposureMode: 'manual' });
-    }
-    if (caps.focusMode?.includes?.('manual')) {
-      await applyConstraint('focusMode', { focusMode: 'manual' });
-    }
-  };
-
   useEffect(() => {
     if (isMonitoring) {
       startCamera();
@@ -259,7 +185,7 @@ const CameraView: React.FC<CameraViewProps> = ({
     return () => stopCamera();
   }, [isMonitoring]);
 
-  // Mantener torch activo
+  // Mantener torch activo y reportar estado de calibración
   useEffect(() => {
     if (!isMonitoring) return;
     
@@ -270,10 +196,33 @@ const CameraView: React.FC<CameraViewProps> = ({
         if (caps.torch === true) {
           track.applyConstraints({ advanced: [{ torch: true }] } as any).catch(() => {});
         }
+        
+        // Reportar estado de calibración
+        if (calibratorRef.current && onCalibrationUpdate) {
+          const state = calibratorRef.current.getState();
+          onCalibrationUpdate({
+            brightness: state.currentBrightness,
+            recommendation: state.recommendation
+          });
+        }
       }
-    }, 3000);
+    }, 2000);
 
     return () => clearInterval(interval);
+  }, [isMonitoring, onCalibrationUpdate]);
+
+  // Exponer calibrador para uso externo
+  useEffect(() => {
+    if (streamRef.current && calibratorRef.current) {
+      const track = streamRef.current.getVideoTracks()[0];
+      if (track) {
+        // Guardar referencia global para que FrameProcessor pueda usarlo
+        (window as any).__cameraCalibrator = calibratorRef.current;
+      }
+    }
+    return () => {
+      delete (window as any).__cameraCalibrator;
+    };
   }, [isMonitoring]);
 
   return (
@@ -282,7 +231,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       playsInline
       muted
       autoPlay
-      // Atributos para reducir delay
       disablePictureInPicture
       disableRemotePlayback
       style={{
@@ -293,7 +241,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         objectFit: "cover",
         opacity: 0.001,
         pointerEvents: "none",
-        // Sin transformaciones que causen distorsión
         transform: "none",
         filter: "none",
       }}
@@ -302,3 +249,6 @@ const CameraView: React.FC<CameraViewProps> = ({
 };
 
 export default CameraView;
+
+// Exportar tipo del calibrador para uso en otros módulos
+export type { CameraAutoCalibrator };

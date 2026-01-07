@@ -2,14 +2,14 @@ import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
 
 /**
- * FrameProcessor - EXTRACCIÓN PPG ROBUSTA BASADA EN LITERATURA CIENTÍFICA
+ * FrameProcessor - EXTRACCIÓN PPG CON AUTO-CALIBRACIÓN
  * 
- * MEJORES PRÁCTICAS APLICADAS (PMC9136485, Sensors 2017):
- * 1. Full-frame averaging con detección de piel adaptativa
- * 2. Fórmula de detección de piel: nr/ng > 1.185 (VideoAudit)
- * 3. Suavizado temporal moderado para preservar pulsatilidad
- * 4. Sin step de muestreo - usar TODOS los píxeles para máxima robustez
- * 5. Usar canal VERDE para mejor señal PPG en reflectancia (Matsumura 2020)
+ * MEJORAS BASADAS EN LITERATURA:
+ * - HKUST 2023: Control de exposición óptimo para rPPG
+ * - PMC9136485: Full-frame averaging con detección de piel
+ * - Matsumura 2020: Canal verde para reflectancia
+ * 
+ * NUEVO: Integración con CameraAutoCalibrator para ajuste dinámico
  */
 export class FrameProcessor {
   // Buffer para análisis temporal - 240 frames para 4s @ 60fps
@@ -22,38 +22,41 @@ export class FrameProcessor {
   private calibrationDC: number = 0;
   private calibrationComplete: boolean = false;
   private calibrationSamples: number = 0;
-  private readonly CALIBRATION_FRAMES = 30; // 0.5s @ 60fps
+  private readonly CALIBRATION_FRAMES = 30;
   
-  // Control automático de ganancia
+  // Control automático de ganancia - AJUSTADO para evitar saturación
   private gainFactor: number = 1.0;
-  private readonly TARGET_DC = 140;
-  private readonly MIN_GAIN = 0.5;
-  private readonly MAX_GAIN = 2.0;
+  private readonly TARGET_DC = 120; // Reducido de 140 a 120 (menos saturación)
+  private readonly MIN_GAIN = 0.3; // Permitir más reducción
+  private readonly MAX_GAIN = 1.5; // Limitar ganancia máxima
   
   // Suavizado temporal REDUCIDO para preservar pulsatilidad
-  // Según literatura: demasiado suavizado elimina la señal de pulso
   private lastRed: number = 0;
   private lastGreen: number = 0;
   private lastBlue: number = 0;
-  private readonly SMOOTHING = 0.3; // 30% anterior, 70% nuevo - MÁS REACTIVO
+  private readonly SMOOTHING = 0.25; // 25% anterior, 75% nuevo - MÁS REACTIVO
   
   // Log
   private frameCount = 0;
-  private readonly LOG_EVERY = 120; // cada 2s @ 60fps
+  private readonly LOG_EVERY = 90; // cada 1.5s @ 60fps
   
   // Estadísticas
   private skinPixelRatio: number = 0;
   private lastSkinCount: number = 0;
   
+  // Detección de saturación
+  private saturationCount: number = 0;
+  private readonly SATURATION_THRESHOLD = 245; // Píxeles casi blancos
+  
   constructor(config?: { TEXTURE_GRID_SIZE?: number, ROI_SIZE_FACTOR?: number }) {}
   
   /**
-   * EXTRACCIÓN FULL-FRAME OPTIMIZADA
+   * EXTRACCIÓN FULL-FRAME CON DETECCIÓN DE SATURACIÓN
    * 
-   * Basado en literatura científica:
-   * - Promediar TODOS los píxeles de piel detectados
-   * - Usar fórmula de detección de piel robusta
-   * - NO usar step de muestreo para máxima cobertura
+   * MEJORAS:
+   * - Detectar píxeles saturados (>245) y reportar
+   * - Notificar al auto-calibrador para ajustar exposición
+   * - Usar canal verde para PPG (mejor SNR según literatura)
    */
   extractFrameData(imageData: ImageData): FrameData {
     const data = imageData.data;
@@ -65,27 +68,25 @@ export class FrameProcessor {
     let greenSum = 0;
     let blueSum = 0;
     let skinPixelCount = 0;
+    let saturatedPixels = 0;
     
-    // PROCESAR TODOS LOS PÍXELES - Sin step para máxima robustez
-    // En 720p (921,600 píxeles) esto es ~3.6MB pero JavaScript moderno lo maneja
+    // PROCESAR TODOS LOS PÍXELES
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
       
-      // DETECCIÓN DE PIEL CIENTÍFICA
-      // Basado en: nr/ng > 1.185 AND r*b/(r+g+b)² > 0.107 AND r*g/(r+g+b)² > 0.112
-      // Simplificado para velocidad pero manteniendo robustez
+      // DETECTAR SATURACIÓN
+      if (r > this.SATURATION_THRESHOLD || g > this.SATURATION_THRESHOLD) {
+        saturatedPixels++;
+      }
+      
+      // DETECCIÓN DE PIEL
       const total = r + g + b;
-      if (total < 50) continue; // Muy oscuro
+      if (total < 50) continue;
       
       const nr = r / total;
       const ng = g / total;
-      
-      // Criterio simplificado pero robusto:
-      // 1. Rojo normalizado > 0.33 (debe ser al menos 1/3)
-      // 2. nr/ng > 1.0 (rojo domina sobre verde - típico de piel con flash)
-      // 3. Luminancia mínima para evitar ruido
       const nrng = ng > 0.01 ? nr / ng : 0;
       
       if (nr > 0.33 && nrng > 1.0 && r > 40) {
@@ -95,6 +96,10 @@ export class FrameProcessor {
         skinPixelCount++;
       }
     }
+    
+    // Calcular ratio de saturación
+    const saturationRatio = saturatedPixels / totalPixels;
+    this.saturationCount = saturatedPixels;
     
     // Calcular ratio de cobertura
     this.skinPixelRatio = skinPixelCount / totalPixels;
@@ -147,24 +152,40 @@ export class FrameProcessor {
     const avgGreen = this.applyAdaptiveNormalization(smoothedGreen);
     const avgBlue = this.applyAdaptiveNormalization(smoothedBlue);
     
-    // Log de diagnóstico
-    this.frameCount++;
-    if (this.frameCount % this.LOG_EVERY === 0) {
-      const rgRatio = avgGreen > 0 ? (avgRed / avgGreen).toFixed(2) : 'N/A';
-      const skinPct = (this.skinPixelRatio * 100).toFixed(1);
-      const skinK = (this.lastSkinCount / 1000).toFixed(0);
-      console.log(`🖐️ PPG: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} | R/G=${rgRatio} | Skin=${skinPct}% (${skinK}K px)`);
-    }
-    
-    // Actualizar buffers
+    // Actualizar buffers PRIMERO (necesario para calcular AC)
     this.updateBuffers(avgRed, avgGreen, avgBlue);
     
     // Calcular ratios
     const rToGRatio = avgGreen > 0 ? avgRed / avgGreen : 1;
     const rToBRatio = avgBlue > 0 ? avgRed / avgBlue : 1;
     
-    // Calcular AC
+    // Calcular AC (pulsatilidad)
     const acComponent = this.calculateACComponent();
+    
+    // Log de diagnóstico con saturación
+    this.frameCount++;
+    if (this.frameCount % this.LOG_EVERY === 0) {
+      const rgRatio = avgGreen > 0 ? (avgRed / avgGreen).toFixed(2) : 'N/A';
+      const skinPct = (this.skinPixelRatio * 100).toFixed(1);
+      const satPct = (this.saturationCount / (imageData.width * imageData.height) * 100).toFixed(1);
+      const brightness = ((avgRed + avgGreen + avgBlue) / 3).toFixed(0);
+      console.log(`🖐️ PPG: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} B=${brightness} | R/G=${rgRatio} | Skin=${skinPct}% | Sat=${satPct}%`);
+      
+      // Si hay mucha saturación, notificar
+      if (parseFloat(satPct) > 20) {
+        console.warn('⚠️ SATURACIÓN ALTA - Reducir exposición');
+        const calibrator = (window as any).__cameraCalibrator;
+        if (calibrator?.forceReduceExposure) {
+          calibrator.forceReduceExposure();
+        }
+      }
+    }
+    
+    // Notificar al auto-calibrador para ajuste continuo
+    const calibrator = (window as any).__cameraCalibrator;
+    if (calibrator?.analyzeAndAdjust && this.frameCount % 5 === 0) {
+      calibrator.analyzeAndAdjust(avgRed, avgGreen, avgBlue, acComponent);
+    }
     
     return {
       redValue: avgRed,
