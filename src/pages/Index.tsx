@@ -467,7 +467,10 @@ const Index = () => {
     frameLoopIdRef.current = requestAnimationFrame(processImage);
   };
 
-  // PROCESAMIENTO ÚNICO DE SEÑALES
+  // PROCESAMIENTO ÚNICO DE SEÑALES - CON THROTTLING PARA SIGNOS VITALES
+  const vitalSignsFrameCounter = useRef<number>(0);
+  const VITALS_PROCESS_EVERY_N_FRAMES = 3; // Procesar signos vitales cada 3 frames
+  
   useEffect(() => {
     if (!lastSignal) return;
 
@@ -475,19 +478,12 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    // CRÍTICO: NUNCA bloquear el procesamiento de señal
-    // El HeartBeatProcessor tiene su propia lógica de validación
-    // Pasar SIEMPRE la señal, aunque fingerDetected sea false
-    // Esto permite recuperación rápida después de cortes momentáneos
-    
-    // PROCESAR SEÑAL INCLUSO CON CALIDAD REDUCIDA
-    // El HeartBeatProcessor tiene su propia validación robusta
     const qualityFactor = lastSignal.fingerDetected ? 1 : 0.7;
     const signalValue = lastSignal.filteredValue * qualityFactor;
 
-    // PROCESAMIENTO ÚNICO DE LATIDOS - USANDO SEÑAL AJUSTADA
+    // PROCESAMIENTO DE LATIDOS - Cada frame (necesario para detección precisa)
     const heartBeatResult = processHeartBeat(
-      signalValue,  // Usar señal con factor de calidad aplicado
+      signalValue,
       lastSignal.fingerDetected, 
       lastSignal.timestamp
     );
@@ -500,49 +496,60 @@ const Index = () => {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // Alimentar optimizador multicanal y calcular salidas por canal
-    pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
-    const channelOutputs = compute();
-
-    // Feedback multicanal cuando calidad baja
-    if (channelOutputs) {
-      const channels: Array<'heart' | 'spo2' | 'bloodPressure' | 'hemoglobin' | 'glucose' | 'lipids'> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
-      channels.forEach((ch) => {
-        const out = channelOutputs[ch];
-        if (out && out.quality < 55) {
-          pushFeedback(ch, out.feedback || { desiredGain: 1.05, confidence: 0.3 });
-        }
-      });
-    }
-    // PROCESAMIENTO ÚNICO DE SIGNOS VITALES (por canales optimizados)
-    const vitals = channelOutputs
-      ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
-      : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-    if (vitals) {
-      setVitalSigns(vitals);
+    // CRÍTICO: THROTTLE del procesamiento de signos vitales
+    // Solo procesar cada N frames para reducir carga y objetos temporales
+    vitalSignsFrameCounter.current++;
+    
+    if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
+      vitalSignsFrameCounter.current = 0;
       
-      if (vitals.lastArrhythmiaData) {
-        lastArrhythmiaData.current = vitals.lastArrhythmiaData;
-        const [status, count] = vitals.arrhythmiaStatus.split('|');
-        setArrhythmiaCount(count || "0");
+      // Alimentar optimizador multicanal
+      pushRawSample(lastSignal.timestamp, lastSignal.filteredValue, lastSignal.quality);
+      const channelOutputs = compute();
+
+      // Feedback multicanal cuando calidad baja
+      if (channelOutputs) {
+        const channels: Array<'heart' | 'spo2' | 'bloodPressure' | 'hemoglobin' | 'glucose' | 'lipids'> = ['heart','spo2','bloodPressure','hemoglobin','glucose','lipids'];
+        for (let i = 0; i < channels.length; i++) {
+          const ch = channels[i];
+          const out = channelOutputs[ch];
+          if (out && out.quality < 55) {
+            pushFeedback(ch, out.feedback || { desiredGain: 1.05, confidence: 0.3 });
+          }
+        }
+      }
+      
+      // PROCESAMIENTO DE SIGNOS VITALES
+      const vitals = channelOutputs
+        ? processVitalChannels(channelOutputs, heartBeatResult.rrData)
+        : processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
         
-        const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
-        if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-          arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-          setArrhythmiaState(isArrhythmiaDetected);
+      if (vitals) {
+        setVitalSigns(vitals);
+        
+        if (vitals.lastArrhythmiaData) {
+          lastArrhythmiaData.current = vitals.lastArrhythmiaData;
+          const [status, count] = vitals.arrhythmiaStatus.split('|');
+          setArrhythmiaCount(count || "0");
           
-          if (isArrhythmiaDetected) {
-            toast({ 
-              title: "¡Arritmia detectada!", 
-              description: "Latido irregular identificado.", 
-              variant: "destructive", 
-              duration: 3000 
-            });
+          const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+          if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+            arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+            setArrhythmiaState(isArrhythmiaDetected);
+            
+            if (isArrhythmiaDetected) {
+              toast({ 
+                title: "¡Arritmia detectada!", 
+                description: "Latido irregular identificado.", 
+                variant: "destructive", 
+                duration: 3000 
+              });
+            }
           }
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, processVitalChannels, setArrhythmiaState, pushRawSample, compute, pushFeedback]);
 
   // CONTROL DE CALIBRACIÓN ÚNICO
   useEffect(() => {
