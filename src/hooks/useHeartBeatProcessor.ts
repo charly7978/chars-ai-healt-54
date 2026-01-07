@@ -94,7 +94,9 @@ export const useHeartBeatProcessor = () => {
 
     // PROCESAR SEÑAL SIEMPRE - CRÍTICO para mantener continuidad
     const result = processorRef.current.processSignal(value, timestamp);
-    const rrData = processorRef.current.getRRIntervals();
+    const rrIntervals = processorRef.current.getRRIntervals();
+    const lastPeakTime = processorRef.current.getLastPeakTime();
+    const rrData = { intervals: rrIntervals, lastPeakTime };
     const currentQuality = result.signalQuality || 0;
     
     setSignalQuality(currentQuality);
