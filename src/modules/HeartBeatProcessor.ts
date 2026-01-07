@@ -11,18 +11,18 @@ export class HeartBeatProcessor {
   // Configuración fisiológica
   private readonly MIN_BPM = 40;
   private readonly MAX_BPM = 180;
-  private readonly MIN_PEAK_INTERVAL_MS = 333;  // 180 BPM máx
-  private readonly MAX_PEAK_INTERVAL_MS = 1500; // 40 BPM mín
-  private readonly WARMUP_TIME_MS = 2000;       // 2 segundos warmup
+  private readonly MIN_PEAK_INTERVAL_MS = 300;  // 200 BPM máx (era 333)
+  private readonly MAX_PEAK_INTERVAL_MS = 2000; // 30 BPM mín (era 1500) - más tolerante
+  private readonly WARMUP_TIME_MS = 1000;       // 1 segundo warmup (era 2)
   
-  // Buffers
+  // Buffers - REDUCIDOS para respuesta más rápida
   private signalBuffer: number[] = [];
   private normalizedBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 90;
+  private readonly BUFFER_SIZE = 60; // Era 90
   
-  // Baseline
+  // Baseline - MÁS RÁPIDO
   private baselineBuffer: number[] = [];
-  private readonly BASELINE_SIZE = 45;
+  private readonly BASELINE_SIZE = 30; // Era 45
   private baseline: number = 0;
   
   // Detección de picos
@@ -39,12 +39,12 @@ export class HeartBeatProcessor {
   // RR intervals
   private rrIntervals: number[] = [];
   
-  // Detección de movimiento
-  private readonly MOTION_THRESHOLD = 12;
-  private readonly MOTION_COOLDOWN_MS = 400;
+  // Detección de movimiento - MÁS TOLERANTE
+  private readonly MOTION_THRESHOLD = 25;      // Era 12 - mucho más tolerante
+  private readonly MOTION_COOLDOWN_MS = 200;   // Era 400 - más rápido
   private lastMotionTime: number = 0;
   private consecutiveStableFrames: number = 0;
-  private readonly MIN_STABLE_FRAMES = 10;
+  private readonly MIN_STABLE_FRAMES = 4;      // Era 10 - mucho menos exigente
   private lastNormalizedValue: number = 0;
   
   // Audio
@@ -237,12 +237,13 @@ export class HeartBeatProcessor {
       this.normalizedBuffer.shift();
     }
     
-    // Detectar picos si hay estabilidad
+    // Detectar picos con menos restricciones
     const isStable = this.consecutiveStableFrames >= this.MIN_STABLE_FRAMES;
     const cooledDown = (now - this.lastMotionTime) > this.MOTION_COOLDOWN_MS;
     
     let peakResult = { isPeak: false, confidence: 0 };
-    if (isStable && cooledDown && this.normalizedBuffer.length >= 30) {
+    // REDUCIDO: solo necesitamos 20 frames en buffer (era 30)
+    if ((isStable || cooledDown) && this.normalizedBuffer.length >= 20) {
       peakResult = this.detectPeak(now);
     }
     
@@ -267,32 +268,31 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * DETECCIÓN DE PICOS MEJORADA
-   * Basado en Vadrevu & Manikandan 2019 (IEEE Trans. Instrum. Meas.)
+   * DETECCIÓN DE PICOS - VERSIÓN MÁS TOLERANTE
    */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
     const n = this.normalizedBuffer.length;
-    if (n < 30) return { isPeak: false, confidence: 0 };
+    if (n < 20) return { isPeak: false, confidence: 0 }; // Era 30
     
     const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
     if (timeSinceLastPeak < this.MIN_PEAK_INTERVAL_MS) {
       return { isPeak: false, confidence: 0 };
     }
     
-    const window = this.normalizedBuffer.slice(-30);
+    const window = this.normalizedBuffer.slice(-20); // Era -30
     
-    // === UMBRAL ADAPTATIVO ===
+    // === UMBRAL ADAPTATIVO - MÁS PERMISIVO ===
     const windowMean = window.reduce((a, b) => a + b, 0) / window.length;
     const windowStd = Math.sqrt(
       window.reduce((sum, v) => sum + Math.pow(v - windowMean, 2), 0) / window.length
     );
     
-    // Umbral dinámico
-    const adaptiveThreshold = windowMean + windowStd * 0.4;
+    // Umbral más bajo
+    const adaptiveThreshold = windowMean + windowStd * 0.25; // Era 0.4
     
-    // Buscar máximo en región central
-    const searchStart = 8;
-    const searchEnd = 22;
+    // Buscar máximo en región central - AMPLIADA
+    const searchStart = 4;  // Era 8
+    const searchEnd = 16;   // Era 22
     
     let maxIdx = searchStart;
     let maxVal = window[searchStart];
@@ -303,56 +303,46 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Debe superar umbral adaptativo
-    if (maxVal < adaptiveThreshold) {
+    // Umbral más bajo para aceptar picos
+    if (maxVal < adaptiveThreshold && maxVal < windowMean + 0.1) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // === VALIDACIÓN DE PROMINENCIA ===
-    const leftNeighbors = [
-      window[maxIdx - 4] ?? 0,
-      window[maxIdx - 3] ?? 0,
-      window[maxIdx - 2] ?? 0
-    ];
-    const rightNeighbors = [
-      window[maxIdx + 2] ?? 0,
-      window[maxIdx + 3] ?? 0,
-      window[maxIdx + 4] ?? 0
-    ];
+    // === VALIDACIÓN DE PROMINENCIA - MÁS SIMPLE ===
+    const leftVal = window[Math.max(0, maxIdx - 2)] ?? 0;
+    const rightVal = window[Math.min(window.length - 1, maxIdx + 2)] ?? 0;
     
-    const leftMax = Math.max(...leftNeighbors);
-    const rightMax = Math.max(...rightNeighbors);
-    
-    // Debe ser mayor que ambos lados
-    if (maxVal <= leftMax || maxVal <= rightMax) {
+    // Solo verificar que sea un pico local
+    if (maxVal <= leftVal && maxVal <= rightVal) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Calcular prominencia
-    const prominence = maxVal - Math.max(leftMax, rightMax);
+    // Calcular prominencia de forma simple
+    const prominence = maxVal - Math.min(leftVal, rightVal);
     
-    // Prominencia mínima relativa a la señal
-    const minProminence = Math.max(0.02, windowStd * 0.25);
-    if (prominence < minProminence || prominence > 25) {
+    // Prominencia mínima muy baja
+    const minProminence = Math.max(0.01, windowStd * 0.15); // Era 0.25
+    if (prominence < minProminence) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Validar rango de ventana
+    // Rango de ventana más tolerante
     const windowMin = Math.min(...window);
     const windowMax = Math.max(...window);
     const windowRange = windowMax - windowMin;
     
-    if (windowRange < 0.05 || windowRange > 40) {
+    if (windowRange < 0.02 || windowRange > 60) { // Era 0.05 y 40
       return { isPeak: false, confidence: 0 };
     }
     
-    // === VALIDACIÓN TEMPORAL ===
-    if (this.rrIntervals.length >= 3 && this.lastPeakTime) {
+    // === VALIDACIÓN TEMPORAL - MÁS TOLERANTE ===
+    if (this.rrIntervals.length >= 5 && this.lastPeakTime) { // Era 3
       const expectedInterval = this.expectedPeakInterval;
       const currentInterval = now - this.lastPeakTime;
       const deviation = Math.abs(currentInterval - expectedInterval) / expectedInterval;
       
-      if (deviation > 0.5 && prominence < minProminence * 2) {
+      // Solo rechazar si la desviación es EXTREMA (>80%)
+      if (deviation > 0.8 && prominence < minProminence * 3) {
         return { isPeak: false, confidence: 0 };
       }
     }
