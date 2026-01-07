@@ -181,38 +181,72 @@ const CameraView: React.FC<CameraViewProps> = ({
   const configurePPG = async (track: MediaStreamTrack) => {
     const caps: any = track.getCapabilities?.() || {};
     
-    const applyConstraint = async (constraint: any) => {
+    console.log('📷 Capacidades de cámara:', caps);
+    
+    const applyConstraint = async (name: string, constraint: any) => {
       try {
         await track.applyConstraints({ advanced: [constraint] } as any);
+        console.log(`✅ ${name} aplicado`);
         return true;
-      } catch { return false; }
+      } catch (err) { 
+        console.log(`⚠️ ${name} no disponible`);
+        return false; 
+      }
     };
 
-    // FLASH (torch) - Lo más importante para PPG
+    // 1. FLASH (torch) - Fundamental para PPG
     if (caps.torch === true) {
-      await applyConstraint({ torch: true });
+      await applyConstraint('torch', { torch: true });
       console.log('🔦 Flash/Torch ACTIVADO');
     } else {
-      console.log('💡 Sin flash - compensando con exposición');
-      if (caps.exposureCompensation?.max) {
-        await applyConstraint({ exposureCompensation: caps.exposureCompensation.max });
-      }
-      if (caps.iso?.max) {
-        await applyConstraint({ iso: Math.min(caps.iso.max, 1600) });
-      }
+      console.log('💡 Sin flash disponible');
     }
     
-    // Focus cercano para dedo
+    // 2. EXPOSICIÓN ALTA - Para imagen más brillante
+    if (caps.exposureCompensation) {
+      const maxExp = caps.exposureCompensation.max || 2;
+      await applyConstraint('exposureCompensation', { exposureCompensation: maxExp });
+    }
+    
+    // 3. EXPOSICIÓN MANUAL con tiempo largo (más luz)
+    if (caps.exposureTime) {
+      // Tiempo de exposición más largo = más luz (en microsegundos)
+      const maxTime = Math.min(caps.exposureTime.max || 33333, 33333); // máx 30fps
+      await applyConstraint('exposureTime', { exposureTime: maxTime });
+    }
+    
+    // 4. ISO ALTO - Más sensibilidad a la luz
+    if (caps.iso) {
+      const highIso = Math.min(caps.iso.max || 800, 1600);
+      await applyConstraint('iso', { iso: highIso });
+    }
+    
+    // 5. BRILLO si está disponible
+    if (caps.brightness) {
+      const maxBright = caps.brightness.max || 128;
+      await applyConstraint('brightness', { brightness: maxBright });
+    }
+    
+    // 6. BALANCE DE BLANCOS - Incandescente es mejor para piel+flash
+    if (caps.whiteBalanceMode?.includes?.('incandescent')) {
+      await applyConstraint('whiteBalanceMode', { whiteBalanceMode: 'incandescent' });
+    } else if (caps.colorTemperature) {
+      // Temperatura cálida (3000-4000K) para tono de piel
+      const warmTemp = Math.min(Math.max(caps.colorTemperature.min, 3500), caps.colorTemperature.max);
+      await applyConstraint('colorTemperature', { colorTemperature: warmTemp });
+    }
+    
+    // 7. FOCUS cercano para dedo
     if (caps.focusDistance?.min !== undefined) {
-      await applyConstraint({ focusDistance: caps.focusDistance.min });
+      await applyConstraint('focusDistance', { focusDistance: caps.focusDistance.min });
     }
     
-    // Modo manual para estabilidad
+    // 8. Modos manuales para estabilidad
     if (caps.exposureMode?.includes?.('manual')) {
-      await applyConstraint({ exposureMode: 'manual' });
+      await applyConstraint('exposureMode', { exposureMode: 'manual' });
     }
     if (caps.focusMode?.includes?.('manual')) {
-      await applyConstraint({ focusMode: 'manual' });
+      await applyConstraint('focusMode', { focusMode: 'manual' });
     }
   };
 
@@ -248,6 +282,9 @@ const CameraView: React.FC<CameraViewProps> = ({
       playsInline
       muted
       autoPlay
+      // Atributos para reducir delay
+      disablePictureInPicture
+      disableRemotePlayback
       style={{
         position: "absolute",
         inset: 0,
@@ -256,6 +293,9 @@ const CameraView: React.FC<CameraViewProps> = ({
         objectFit: "cover",
         opacity: 0.001,
         pointerEvents: "none",
+        // Sin transformaciones que causen distorsión
+        transform: "none",
+        filter: "none",
       }}
     />
   );
