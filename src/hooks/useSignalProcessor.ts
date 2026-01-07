@@ -39,7 +39,8 @@ export const useSignalProcessor = () => {
       
       setLastSignal(signal);
       setError(null);
-      setFramesProcessed(prev => prev + 1);
+      // CRÍTICO: Limitar contador para evitar números infinitos que afectan rendimiento
+      setFramesProcessed(prev => (prev + 1) % 10000);
     };
 
     const onError = (error: ProcessingError) => {

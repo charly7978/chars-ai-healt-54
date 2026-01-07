@@ -184,6 +184,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.kalmanFilter.reset();
     this.sgFilter.reset();
     this.fingerDetector.reset();
+    // CRÍTICO: Reset del FrameProcessor para limpiar sus buffers internos
+    this.frameProcessor.reset();
   }
 
   getLastNSamples(n: number): number[] {
