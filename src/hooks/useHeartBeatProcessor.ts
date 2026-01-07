@@ -93,8 +93,8 @@ export const useHeartBeatProcessor = () => {
     
     setSignalQuality(currentQuality);
 
-    // LÓGICA UNIFICADA DE DETECCIÓN CON ALGORITMOS AVANZADOS
-    const effectiveFingerDetected = fingerDetected || (currentQuality > 20 && result.confidence > 0.45);
+    // LÓGICA UNIFICADA DE DETECCIÓN - MÁS PERMISIVA
+    const effectiveFingerDetected = fingerDetected || (currentQuality > 15 && result.confidence > 0.35);
     
     if (!effectiveFingerDetected) {
       // DEGRADACIÓN SUAVE Y CONTROLADA
@@ -116,20 +116,21 @@ export const useHeartBeatProcessor = () => {
       };
     }
 
-    // ACTUALIZACIÓN CON CONFIANZA MATEMÁTICAMENTE VALIDADA
-    if (result.confidence >= 0.55 && result.bpm > 0 && result.bpm >= 40 && result.bpm <= 200) {
+    // ACTUALIZACIÓN CON CONFIANZA VALIDADA - CORREGIDO PARA INICIALIZACIÓN
+    // Antes: requería result.bpm > 0, pero al inicio siempre es 0
+    if (result.confidence >= 0.4 && result.bpm >= 40 && result.bpm <= 200) {
       // FILTRADO ADAPTATIVO PARA ESTABILIDAD
-      const smoothingFactor = Math.min(0.3, result.confidence * 0.5);
+      const smoothingFactor = Math.min(0.4, result.confidence * 0.6);
       const newBPM = currentBPM > 0 ? 
         currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
-        result.bpm;
+        result.bpm; // Si currentBPM es 0, tomar directamente el nuevo valor
       
-      setCurrentBPM(Math.round(newBPM * 10) / 10); // Redondeo a 1 decimal
+      setCurrentBPM(Math.round(newBPM * 10) / 10);
       setConfidence(result.confidence);
       
-      // LOG CADA 100 SEÑALES PROCESADAS PARA EVITAR SPAM
-      if (processedSignalsRef.current % 100 === 0) {
-        console.log(`💓 BPM actualizado: ${newBPM.toFixed(1)} (confianza: ${result.confidence.toFixed(2)}) - ${sessionIdRef.current}`);
+      // LOG CADA 50 SEÑALES PARA DEBUG
+      if (processedSignalsRef.current % 50 === 0) {
+        console.log(`💓 BPM: ${newBPM.toFixed(1)} (conf: ${result.confidence.toFixed(2)}, quality: ${currentQuality}) - ${sessionIdRef.current}`);
       }
     }
 
