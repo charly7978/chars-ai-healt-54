@@ -28,6 +28,11 @@ export class HeartBeatProcessor {
   private readonly LOW_SIGNAL_THRESHOLD = 0.02; // Umbral más alto
   private readonly LOW_SIGNAL_FRAMES = 15; // Reducido para reset más rápido
   private lowSignalCount = 0;
+  
+  // NUEVO: Estado de detección de dedo para reset inteligente
+  private wasFingerDetected = false;
+  private fingerLostTimestamp = 0;
+  private readonly FINGER_REDETECTION_RESET_MS = 500; // Reset parcial si dedo vuelve en <500ms
 
   // ────────── PARÁMETROS ADAPTATIVOS MÉDICAMENTE VÁLIDOS ──────────
   private adaptiveSignalThreshold: number;
@@ -226,6 +231,72 @@ export class HeartBeatProcessor {
 
   private lastProcessedTimestamp = 0;
   private lastProcessedValue: number | null = null;
+
+  /**
+   * NUEVO: Reset parcial cuando el dedo vuelve a ser detectado
+   * Limpia buffers pero mantiene configuración aprendida
+   */
+  public partialReset(): void {
+    console.log("🔄 HeartBeatProcessor: Reset PARCIAL - Dedo re-detectado");
+    
+    // Limpiar buffers de señal para evitar datos contaminados
+    this.signalBuffer = [];
+    this.medianBuffer = [];
+    this.movingAverageBuffer = [];
+    this.peakConfirmationBuffer = [];
+    this.values = [];
+    this.peakValidationBuffer = [];
+    
+    // Reset de baseline para recalibrarse con nueva señal
+    this.baseline = 0;
+    this.lastValue = 0;
+    this.smoothedValue = 0;
+    
+    // Reset de tiempos de pico para no arrastrar tiempos viejos
+    this.lastPeakTime = null;
+    this.previousPeakTime = null;
+    this.lastConfirmedPeak = false;
+    this.lastBeepTime = 0;
+    
+    // Mantener historial de BPM y umbrales adaptativos (ya aprendidos)
+    // NO resetear: bpmHistory, smoothBPM, adaptiveSignalThreshold, etc.
+    
+    this.lowSignalCount = 0;
+    this.startTime = Date.now();
+  }
+
+  /**
+   * NUEVO: Notificar cambio de estado del dedo
+   */
+  public setFingerDetected(detected: boolean): void {
+    const now = Date.now();
+    
+    if (detected && !this.wasFingerDetected) {
+      // Dedo acaba de ser RE-detectado
+      const timeSinceLost = now - this.fingerLostTimestamp;
+      
+      console.log(`👆 Dedo RE-DETECTADO después de ${timeSinceLost}ms`);
+      
+      // Si el dedo volvió rápido (<500ms), hacer reset parcial para limpiar ruido
+      // Si tardó más, hacer reset completo
+      if (timeSinceLost < this.FINGER_REDETECTION_RESET_MS && this.bpmHistory.length > 0) {
+        this.partialReset();
+      } else if (timeSinceLost >= this.FINGER_REDETECTION_RESET_MS) {
+        // Reset más agresivo si estuvo mucho tiempo sin dedo
+        this.partialReset();
+        // Limpiar también parte del historial de BPM viejo
+        if (this.bpmHistory.length > 5) {
+          this.bpmHistory = this.bpmHistory.slice(-5);
+        }
+      }
+    } else if (!detected && this.wasFingerDetected) {
+      // Dedo acaba de perderse
+      this.fingerLostTimestamp = now;
+      console.log("👆 Dedo PERDIDO - marcando timestamp");
+    }
+    
+    this.wasFingerDetected = detected;
+  }
 
   public processSignal(value: number, timestamp?: number): {
     bpm: number;
