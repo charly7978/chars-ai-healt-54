@@ -418,13 +418,13 @@ const Index = () => {
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
-    const qualityFactor = lastSignal.fingerDetected ? 1 : 0.7;
-    const signalValue = lastSignal.filteredValue * qualityFactor;
+    // Sin factor de calidad por dedo - medición directa
+    const signalValue = lastSignal.filteredValue;
 
-    // PROCESAMIENTO DE LATIDOS
+    // PROCESAMIENTO DE LATIDOS - Sin verificación de dedo
     const heartBeatResult = processHeartBeat(
       signalValue,
-      lastSignal.fingerDetected, 
+      true, // Siempre true - sin detección de dedo
       lastSignal.timestamp
     );
     
@@ -559,16 +559,16 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER DE ESTADO */}
+          {/* HEADER DE ESTADO - Sin detección de dedo */}
           <div className="px-4 py-2 flex justify-around items-center bg-black/20">
             <div className="text-white text-lg">
-              Calidad: {signalQuality}
-            </div>
-            <div className="text-white text-lg">
-              {lastSignal?.fingerDetected ? "Huella Detectada" : "Huella No Detectada"}
+              Calidad: {signalQuality}%
             </div>
             <div className="text-white text-lg">
               Estado: {systemState.current}
+            </div>
+            <div className="text-white text-lg">
+              {isMonitoring ? `${60 - elapsedTime}s` : "Listo"}
             </div>
           </div>
 
