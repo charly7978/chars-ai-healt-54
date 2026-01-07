@@ -256,17 +256,34 @@ const CameraView: React.FC<CameraViewProps> = ({
         return;
       }
 
-      // ===== CÁMARA PRINCIPAL (siempre camera 0) =====
+      // ===== CÁMARA PRINCIPAL - HD 720p @ 60fps (adaptativa) =====
       try {
-        const mainStream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            deviceId: { exact: primaryCamera.deviceId },
-            width: { ideal: 640, max: 1280 },
-            height: { ideal: 480, max: 720 },
-            frameRate: { ideal: 30, max: 60 }
-          }
-        });
+        // Intentar primero HD 720p @ 60fps
+        let mainStream: MediaStream;
+        try {
+          mainStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              deviceId: { exact: primaryCamera.deviceId },
+              width: { ideal: 1280, min: 640 },
+              height: { ideal: 720, min: 480 },
+              frameRate: { ideal: 60, min: 30 }
+            }
+          });
+          console.log('📹 HD 720p @ 60fps activado');
+        } catch (hdError) {
+          // Fallback: resolución media si HD falla
+          console.log('⚠️ HD no disponible, usando resolución media');
+          mainStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              deviceId: { exact: primaryCamera.deviceId },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 30 }
+            }
+          });
+        }
         
         s1Ref.current = mainStream;
         if (v1Ref.current) {
@@ -292,9 +309,9 @@ const CameraView: React.FC<CameraViewProps> = ({
             audio: false,
             video: {
               deviceId: { exact: secondaryCamera.deviceId },
-              width: { ideal: 640, max: 1280 },
-              height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, max: 60 }
+              width: { ideal: 1280, min: 640 },
+              height: { ideal: 720, min: 480 },
+              frameRate: { ideal: 60, min: 30 }
             }
           });
           
