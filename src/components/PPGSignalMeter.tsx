@@ -60,12 +60,12 @@ const PPGSignalMeter = ({
   // CRÍTICO: Flag para controlar UN SOLO loop de animación
   const animationLoopActiveRef = useRef<boolean>(false);
 
-  const WINDOW_WIDTH_MS = 2300;
+  const WINDOW_WIDTH_MS = 5300;
   const CANVAS_WIDTH = 1000;
   const CANVAS_HEIGHT = 800;
   const GRID_SIZE_X = 35;
   const GRID_SIZE_Y = 10;
-  const verticalScale = 5;
+  const verticalScale = 55;
   const SMOOTHING_FACTOR = 1.9;
   const TARGET_FPS = 120; // REDUCIDO de 60 a 30 para mejor rendimiento
   const FRAME_TIME = 1000 / TARGET_FPS;
