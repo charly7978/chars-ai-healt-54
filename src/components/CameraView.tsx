@@ -40,6 +40,10 @@ const CameraView: React.FC<CameraViewProps> = ({
   }, []);
 
   const stopCamera = () => {
+    // Limpiar refs PRIMERO para evitar race conditions
+    startedRef.current = false;
+    torchAppliedRef.current = false;
+    
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => {
         try { track.stop(); } catch {}
@@ -49,7 +53,6 @@ const CameraView: React.FC<CameraViewProps> = ({
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    startedRef.current = false;
     calibratorRef.current?.reset();
   };
 
@@ -186,27 +189,39 @@ const CameraView: React.FC<CameraViewProps> = ({
     return () => stopCamera();
   }, [isMonitoring]);
 
+  // Aplicar torch y mantenerlo activo
   useEffect(() => {
     if (!isMonitoring) {
       torchAppliedRef.current = false;
       return;
     }
     
-    // Aplicar torch UNA SOLA VEZ cuando inicia
-    if (!torchAppliedRef.current && streamRef.current) {
+    // Función para aplicar torch
+    const applyTorch = () => {
+      if (!streamRef.current) return;
       const track = streamRef.current.getVideoTracks()[0];
-      if (track) {
-        const caps: any = track.getCapabilities?.() || {};
-        if (caps.torch === true) {
-          track.applyConstraints({ advanced: [{ torch: true }] } as any)
-            .then(() => { torchAppliedRef.current = true; })
-            .catch(() => {});
-        }
+      if (!track) return;
+      
+      const caps: any = track.getCapabilities?.() || {};
+      if (caps.torch === true) {
+        track.applyConstraints({ advanced: [{ torch: true }] } as any)
+          .then(() => { torchAppliedRef.current = true; })
+          .catch(() => {});
       }
-    }
+    };
     
-    // Reportar calibración cada 5 segundos (no cada 2s)
-    const interval = setInterval(() => {
+    // Aplicar torch inicialmente con pequeño delay para asegurar stream listo
+    const initialTimeout = setTimeout(applyTorch, 100);
+    
+    // Re-verificar torch cada 3 segundos (por si se apaga)
+    const torchInterval = setInterval(() => {
+      if (streamRef.current && !torchAppliedRef.current) {
+        applyTorch();
+      }
+    }, 3000);
+    
+    // Reportar calibración cada 5 segundos
+    const calibrationInterval = setInterval(() => {
       if (calibratorRef.current && onCalibrationUpdate) {
         const state = calibratorRef.current.getState();
         onCalibrationUpdate({
@@ -216,7 +231,11 @@ const CameraView: React.FC<CameraViewProps> = ({
       }
     }, 5000);
 
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(initialTimeout);
+      clearInterval(torchInterval);
+      clearInterval(calibrationInterval);
+    };
   }, [isMonitoring, onCalibrationUpdate]);
 
   // Exponer calibrador para uso externo
