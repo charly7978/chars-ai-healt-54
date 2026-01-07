@@ -1,15 +1,16 @@
 /**
- * PROCESADOR DE LATIDOS CARDÍACOS - CON AUDIO MEJORADO
+ * PROCESADOR DE LATIDOS CARDÍACOS - ANTI FALSOS POSITIVOS
  * 
- * Calibración v2: Umbrales ajustados para BPM más precisos
+ * CRÍTICO: Solo procesa señales que YA fueron validadas como dedo humano real
+ * El HeartBeatProcessor NO debe generar BPM de ruido ambiental
  */
 export class HeartBeatProcessor {
-  // Configuración fisiológica - MÁS ESTRICTA
+  // Configuración fisiológica - ESTRICTA
   private readonly MIN_BPM = 45;
-  private readonly MAX_BPM = 150; // Reducido de 170
-  private readonly MIN_PEAK_INTERVAL_MS = 400;  // Aumentado de 353 (150 BPM máx)
-  private readonly MAX_PEAK_INTERVAL_MS = 1333;
-  private readonly WARMUP_TIME_MS = 2500; // Aumentado de 2000
+  private readonly MAX_BPM = 150;
+  private readonly MIN_PEAK_INTERVAL_MS = 400;  // 150 BPM máx
+  private readonly MAX_PEAK_INTERVAL_MS = 1333; // 45 BPM mín
+  private readonly WARMUP_TIME_MS = 3000;       // 3 segundos warmup
   
   // Buffers
   private signalBuffer: number[] = [];
@@ -35,13 +36,19 @@ export class HeartBeatProcessor {
   // RR intervals
   private rrIntervals: number[] = [];
   
-  // Detección de movimiento - MÁS SENSIBLE
-  private readonly MOTION_THRESHOLD = 12;  // Reducido de 15
-  private readonly MOTION_COOLDOWN_MS = 500; // Aumentado de 400
+  // Detección de movimiento - SENSIBLE
+  private readonly MOTION_THRESHOLD = 10;     // Más sensible
+  private readonly MOTION_COOLDOWN_MS = 600;  // Más cooldown
   private lastMotionTime: number = 0;
   private consecutiveStableFrames: number = 0;
-  private readonly MIN_STABLE_FRAMES = 12; // Aumentado de 8
+  private readonly MIN_STABLE_FRAMES = 15;    // Más frames requeridos
   private lastNormalizedValue: number = 0;
+  
+  // === ANTI FALSOS POSITIVOS ===
+  private isFingerConfirmed: boolean = false;  // Solo procesar si dedo confirmado
+  private signalVarianceHistory: number[] = [];
+  private readonly MIN_SIGNAL_VARIANCE = 0.5;  // Señal debe tener variación mínima
+  private readonly MAX_SIGNAL_VARIANCE = 50;   // Pero no demasiada (ruido)
   
   // Audio
   private audioContext: AudioContext | null = null;
@@ -206,6 +213,25 @@ export class HeartBeatProcessor {
     this.frameCount++;
     const now = timestamp || Date.now();
     
+    // ═══════════════════════════════════════════════════════════════════════
+    // ANTI FALSOS POSITIVOS: Si no hay dedo confirmado, NO procesar
+    // ═══════════════════════════════════════════════════════════════════════
+    if (!this.isFingerConfirmed) {
+      // Degradar BPM gradualmente
+      if (this.smoothBPM > 0) {
+        this.smoothBPM *= 0.95;
+        if (this.smoothBPM < 30) this.smoothBPM = 0;
+      }
+      return {
+        bpm: 0,
+        confidence: 0,
+        isPeak: false,
+        filteredValue: 0,
+        arrhythmiaCount: 0,
+        signalQuality: 0
+      };
+    }
+    
     // Actualizar baseline
     this.baselineBuffer.push(value);
     if (this.baselineBuffer.length > this.BASELINE_SIZE) {
@@ -215,6 +241,28 @@ export class HeartBeatProcessor {
     
     // Normalizar
     const normalized = value - this.baseline;
+    
+    // ═══════════════════════════════════════════════════════════════════════
+    // VALIDAR VARIANZA DE SEÑAL (anti ruido/ambiente)
+    // ═══════════════════════════════════════════════════════════════════════
+    this.signalVarianceHistory.push(Math.abs(normalized));
+    if (this.signalVarianceHistory.length > 30) {
+      this.signalVarianceHistory.shift();
+    }
+    
+    const avgVariance = this.signalVarianceHistory.reduce((a, b) => a + b, 0) / this.signalVarianceHistory.length;
+    
+    // Si la señal es demasiado plana o demasiado ruidosa, no procesar
+    if (avgVariance < this.MIN_SIGNAL_VARIANCE || avgVariance > this.MAX_SIGNAL_VARIANCE) {
+      return {
+        bpm: Math.round(this.smoothBPM),
+        confidence: 0,
+        isPeak: false,
+        filteredValue: normalized,
+        arrhythmiaCount: 0,
+        signalQuality: 10
+      };
+    }
     
     // Detección de movimiento
     const jump = Math.abs(normalized - this.lastNormalizedValue);
@@ -254,7 +302,7 @@ export class HeartBeatProcessor {
     
     // Log cada 3 segundos
     if (this.frameCount % 45 === 0) {
-      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.validPeakCount}, estable=${isStable}`);
+      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.validPeakCount}, estable=${isStable}, dedoOK=${this.isFingerConfirmed}`);
     }
     
     return {
@@ -458,11 +506,23 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * MANEJO DE DETECCIÓN DE DEDO - SIN RESET AGRESIVO
-   * Ya no resetea al perder el dedo momentáneamente
-   * Solo degrada suavemente los valores
+   * MANEJO DE DETECCIÓN DE DEDO - CRÍTICO ANTI FALSOS POSITIVOS
+   * 
+   * Si NO hay dedo confirmado, el procesador NO genera BPM
+   * Esto evita que el ruido ambiental genere valores falsos
    */
   setFingerDetected(detected: boolean): void {
+    this.isFingerConfirmed = detected;
+    
+    // Si se pierde el dedo, degradar valores más agresivamente
+    if (!detected) {
+      this.smoothBPM *= 0.9;
+      if (this.smoothBPM < 40) {
+        this.smoothBPM = 0;
+        this.validPeakCount = 0;
+        this.rrIntervals = [];
+      }
+    }
     // NO hacer reset agresivo - causa pérdida de señal
     // El procesador mantiene su estado y degrada suavemente
     this.wasFingerDetected = detected;
