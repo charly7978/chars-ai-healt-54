@@ -66,10 +66,10 @@ const PPGSignalMeter = ({
   const TARGET_FPS = 120; // REDUCIDO de 60 a 30 para mejor rendimiento
   const FRAME_TIME = 1000 / TARGET_FPS;
   const BUFFER_SIZE = 600; // REDUCIDO de 600 a 300
-  const PEAK_DETECTION_WINDOW = 8;
-  const PEAK_THRESHOLD = 3;
-  const MIN_PEAK_DISTANCE_MS = 250;
-  const MAX_PEAKS_TO_DISPLAY = 15; // REDUCIDO de 25 a 15
+  const PEAK_DETECTION_WINDOW = 6;
+  const PEAK_THRESHOLD = 2;
+  const MIN_PEAK_DISTANCE_MS = 200;
+  const MAX_PEAKS_TO_DISPLAY = 30; // REDUCIDO de 25 a 15
 
   // Actualizar refs cuando props cambian (sin recrear funciones)
   useEffect(() => {
