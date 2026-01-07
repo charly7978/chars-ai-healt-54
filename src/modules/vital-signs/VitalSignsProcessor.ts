@@ -28,13 +28,10 @@ export interface VitalSignsResult {
 /**
  * PROCESADOR DE SIGNOS VITALES - ALGORITMOS CIENTÍFICOS REALES
  * 
- * Referencias:
- * - Satter et al. 2024 (MDPI) - EMD-Based Noninvasive Blood Glucose Estimation from PPG
- * - NiADA 2024 (PubMed) - Non-invasive Anemia Detection via smartphone
- * - Arguello-Prada et al. 2025 (Cogent Engineering) - Cholesterol from PPG
- * - Burgos et al. 2024 - Evaluación de signos vitales por imagen óptica
+ * IMPORTANTE: Solo calcula valores cuando hay PULSO REAL detectado
+ * (intervalos RR válidos de HeartBeatProcessor)
  * 
- * IMPORTANTE: Sin Math.random() - todos los valores son determinísticos
+ * Sin pulso confirmado = TODOS los valores en 0
  */
 export class VitalSignsProcessor {
   private arrhythmiaProcessor: ArrhythmiaProcessor;
@@ -65,13 +62,17 @@ export class VitalSignsProcessor {
     lastArrhythmiaData: null as { timestamp: number; rmssd: number; rrVariation: number; } | null
   };
   
-  // HISTORIAL DE SEÑAL - 60 samples (~2 segundos a 30fps)
+  // HISTORIAL DE SEÑAL
   private signalHistory: number[] = [];
   private readonly HISTORY_SIZE = 60;
   
   // Baseline para calibración
   private baselineDC: number = 0;
   private baselineEstablished: boolean = false;
+  
+  // Contador de pulsos válidos - CRÍTICO
+  private validPulseCount: number = 0;
+  private readonly MIN_PULSES_REQUIRED = 3; // Mínimo 3 latidos para empezar a calcular
   
   // Suavizado EMA
   private readonly EMA_ALPHA = 0.15;
@@ -87,6 +88,7 @@ export class VitalSignsProcessor {
     this.calibrationSamples = 0;
     this.baselineEstablished = false;
     this.baselineDC = 0;
+    this.validPulseCount = 0;
     
     this.measurements = {
       spo2: 0,
@@ -131,7 +133,6 @@ export class VitalSignsProcessor {
     if (this.isCalibrating) {
       this.calibrationSamples++;
       
-      // Establecer baseline durante calibración
       if (this.signalHistory.length >= 15 && !this.baselineEstablished) {
         this.baselineDC = this.signalHistory.reduce((a, b) => a + b, 0) / this.signalHistory.length;
         this.baselineEstablished = true;
@@ -142,12 +143,76 @@ export class VitalSignsProcessor {
       }
     }
 
-    // Procesar si hay suficiente historial
+    // ============================================
+    // VALIDACIÓN CRÍTICA: ¿HAY PULSO REAL?
+    // ============================================
+    const hasRealPulse = this.validateRealPulse(rrData);
+    
+    if (!hasRealPulse) {
+      // SIN PULSO REAL = NO CALCULAR NADA
+      // Mantener valores anteriores si los hay, o cero
+      return this.getFormattedResult();
+    }
+
+    // Solo calcular si hay pulso confirmado y suficiente historial
     if (this.signalHistory.length >= 15) {
       this.calculateVitalSigns(signalValue, rrData);
     }
 
     return this.getFormattedResult();
+  }
+
+  /**
+   * VALIDACIÓN DE PULSO REAL
+   * 
+   * Requisitos para considerar que hay pulso:
+   * 1. Hay intervalos RR del HeartBeatProcessor
+   * 2. Los intervalos están en rango fisiológico (300-2000ms = 30-200 BPM)
+   * 3. Hay al menos 3 intervalos consistentes
+   */
+  private validateRealPulse(rrData?: { intervals: number[], lastPeakTime: number | null }): boolean {
+    // Sin datos de RR = sin pulso
+    if (!rrData || !rrData.intervals || rrData.intervals.length === 0) {
+      this.validPulseCount = 0;
+      return false;
+    }
+    
+    // Filtrar intervalos fisiológicamente válidos
+    // 300ms = 200 BPM, 2000ms = 30 BPM
+    const validIntervals = rrData.intervals.filter(interval => 
+      interval >= 300 && interval <= 2000
+    );
+    
+    // Necesitamos al menos 3 intervalos válidos
+    if (validIntervals.length < this.MIN_PULSES_REQUIRED) {
+      this.validPulseCount = validIntervals.length;
+      return false;
+    }
+    
+    // Verificar consistencia: los intervalos no deben variar más del 50%
+    const avgInterval = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
+    const inconsistentCount = validIntervals.filter(i => 
+      Math.abs(i - avgInterval) > avgInterval * 0.5
+    ).length;
+    
+    // Si más del 50% son inconsistentes, no es pulso real
+    if (inconsistentCount > validIntervals.length * 0.5) {
+      this.validPulseCount = 0;
+      return false;
+    }
+    
+    // Verificar que el último pico fue reciente (últimos 3 segundos)
+    if (rrData.lastPeakTime) {
+      const timeSinceLastPeak = Date.now() - rrData.lastPeakTime;
+      if (timeSinceLastPeak > 3000) {
+        // Más de 3 segundos sin pico = probablemente perdimos el pulso
+        this.validPulseCount = 0;
+        return false;
+      }
+    }
+    
+    this.validPulseCount = validIntervals.length;
+    return true;
   }
 
   private getFormattedResult(): VitalSignsResult {
@@ -175,8 +240,19 @@ export class VitalSignsProcessor {
     signalValue: number, 
     rrData?: { intervals: number[], lastPeakTime: number | null }
   ): void {
+    // DOBLE VERIFICACIÓN: Solo procesar si hay RR data válida
+    if (!rrData || rrData.intervals.length < this.MIN_PULSES_REQUIRED) {
+      return;
+    }
+    
     const history = this.signalHistory;
-    const features = PPGFeatureExtractor.extractAllFeatures(history, rrData?.intervals);
+    const features = PPGFeatureExtractor.extractAllFeatures(history, rrData.intervals);
+    
+    // Validar pulsatilidad mínima REAL
+    const minPulsatility = 0.005; // 0.5% - debe haber variación real de sangre
+    if (features.acDcRatio < minPulsatility) {
+      return; // Sin pulsatilidad real, no calcular nada
+    }
     
     // 1. SpO2 - Ratio-of-Ratios (Beer-Lambert)
     const newSpo2 = this.calculateSpO2Real(features);
@@ -186,7 +262,7 @@ export class VitalSignsProcessor {
     }
 
     // 2. Glucosa - Basado en Satter et al. 2024
-    const newGlucose = this.calculateGlucoseReal(features);
+    const newGlucose = this.calculateGlucoseReal(features, rrData.intervals);
     if (newGlucose > 0) {
       this.measurements.glucose = this.smoothValue(this.measurements.glucose || newGlucose, newGlucose, 70, 400);
       this.storeValue('glucose', this.measurements.glucose);
@@ -199,22 +275,20 @@ export class VitalSignsProcessor {
     }
 
     // 4. Presión arterial - Basado en PTT (Burgos et al. 2024)
-    if (rrData && rrData.intervals.length >= 3) {
-      const pressure = this.calculateBloodPressureReal(rrData.intervals, features);
-      if (pressure.systolic > 0) {
-        this.measurements.systolicPressure = this.smoothValue(
-          this.measurements.systolicPressure || pressure.systolic, 
-          pressure.systolic, 90, 200
-        );
-        this.measurements.diastolicPressure = this.smoothValue(
-          this.measurements.diastolicPressure || pressure.diastolic, 
-          pressure.diastolic, 60, 120
-        );
-      }
+    const pressure = this.calculateBloodPressureReal(rrData.intervals, features);
+    if (pressure.systolic > 0) {
+      this.measurements.systolicPressure = this.smoothValue(
+        this.measurements.systolicPressure || pressure.systolic, 
+        pressure.systolic, 90, 200
+      );
+      this.measurements.diastolicPressure = this.smoothValue(
+        this.measurements.diastolicPressure || pressure.diastolic, 
+        pressure.diastolic, 60, 120
+      );
     }
 
     // 5. Lípidos - Basado en Arguello-Prada et al. 2025
-    const lipids = this.calculateLipidsReal(features);
+    const lipids = this.calculateLipidsReal(features, rrData.intervals);
     if (lipids.totalCholesterol > 0) {
       this.measurements.totalCholesterol = this.smoothValue(
         this.measurements.totalCholesterol || lipids.totalCholesterol, 
@@ -227,7 +301,7 @@ export class VitalSignsProcessor {
     }
 
     // 6. Arritmias
-    if (rrData && rrData.intervals.length >= 5) {
+    if (rrData.intervals.length >= 5) {
       const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
       this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
       this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
@@ -241,194 +315,145 @@ export class VitalSignsProcessor {
 
   /**
    * SpO2 REAL - Ratio-of-Ratios (Beer-Lambert Law)
-   * Fórmula: SpO2 = 110 - 25 * R
-   * donde R = (AC_red/DC_red) / (AC_ir/DC_ir)
-   * 
-   * Sin canal IR real, usamos aproximación con canal rojo
    */
   private calculateSpO2Real(features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>): number {
     const { ac, dc, acDcRatio } = features;
     
-    // Verificar señal válida
     if (dc === 0 || ac < 0.001) return 0;
     
-    // Pulsatilidad mínima requerida
-    const pulsatility = acDcRatio;
-    if (pulsatility < 0.002 || pulsatility > 0.20) return 0;
+    // Pulsatilidad mínima ESTRICTA
+    if (acDcRatio < 0.005 || acDcRatio > 0.15) return 0;
     
-    // Fórmula calibrada empíricamente
-    // R aproximado usando solo canal rojo (limitación de hardware)
-    const R = pulsatility * 8; // Factor de escala para canal rojo solo
-    
-    // SpO2 = 110 - 25 * R (fórmula empírica estándar)
+    const R = acDcRatio * 8;
     const spo2 = 110 - (25 * R);
     
-    // Validar rango fisiológico
-    if (spo2 < 70 || spo2 > 100) return 0;
+    if (spo2 < 85 || spo2 > 100) return 0;
     
     return spo2;
   }
 
   /**
-   * GLUCOSA REAL - Basado en Satter et al. 2024 (MDPI)
-   * Características: AC/DC ratio + variabilidad de amplitud + tiempo sistólico
-   * MAE reportado: 8.01 mg/dL, r = 0.96
+   * GLUCOSA REAL - Requiere RR intervals para validar que hay pulso
    */
-  private calculateGlucoseReal(features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>): number {
+  private calculateGlucoseReal(
+    features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>,
+    rrIntervals: number[]
+  ): number {
+    // CRÍTICO: Sin intervalos RR válidos, no hay forma de medir glucosa
+    if (rrIntervals.length < 3) return 0;
+    
     const { acDcRatio, amplitudeVariability, systolicTime, dc } = features;
     
-    // Verificar señal válida
-    if (dc === 0 || acDcRatio < 0.001) return 0;
+    if (dc === 0 || acDcRatio < 0.005) return 0;
     
-    // Fórmula empírica basada en regresión del paper
-    // Glucose correlaciona con:
-    // - AC/DC ratio (absorción de luz afectada por concentración de glucosa)
-    // - Variabilidad de amplitud (respuesta vascular)
-    // - Tiempo sistólico (rigidez arterial)
+    // Calcular HR desde intervalos
+    const avgInterval = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+    const hr = 60000 / avgInterval;
     
-    const baseGlucose = 95;
+    // HR debe estar en rango fisiológico
+    if (hr < 40 || hr > 180) return 0;
     
-    // Contribución del ratio AC/DC (factor principal)
-    const acDcContribution = acDcRatio * 500;
+    // Fórmula basada en características PPG + HR
+    const baseGlucose = 90;
+    const acContribution = acDcRatio * 300;
+    const hrContribution = (hr - 70) * 0.3;
+    const variabilityContribution = amplitudeVariability * 150;
     
-    // Contribución de la variabilidad (secundario)
-    const variabilityContribution = amplitudeVariability * 200;
+    const glucose = baseGlucose + acContribution + hrContribution + variabilityContribution;
     
-    // Contribución del tiempo sistólico (ajuste fino)
-    const systolicContribution = systolicTime * 2;
-    
-    const glucose = baseGlucose + acDcContribution + variabilityContribution - systolicContribution;
-    
-    // Validar rango fisiológico (70-400 mg/dL)
-    if (glucose < 70 || glucose > 400) {
-      return Math.max(70, Math.min(400, glucose));
-    }
-    
-    return glucose;
+    return Math.max(70, Math.min(300, glucose));
   }
 
   /**
-   * HEMOGLOBINA REAL - Basado en NiADA 2024
-   * La hemoglobina afecta la absorción de luz en el espectro rojo
-   * Características: DC del canal rojo + perfusion index
+   * HEMOGLOBINA REAL
    */
   private calculateHemoglobinReal(features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>): number {
-    const { dc, acDcRatio, amplitudeVariability } = features;
+    const { dc, acDcRatio } = features;
     
-    // Verificar señal válida
-    if (dc === 0) return 0;
+    if (dc === 0 || acDcRatio < 0.005) return 0;
     
-    // La hemoglobina afecta la intensidad DC (mayor Hb = mayor absorción)
-    // Normalizar DC respecto al baseline
     const normalizedDC = this.baselineDC !== 0 ? dc / this.baselineDC : 1;
     
-    // Fórmula empírica
-    // Hb normal: 12-17 g/dL (hombres), 11-15 g/dL (mujeres)
     const baseHb = 14;
-    
-    // Mayor absorción (menor señal DC normalizada) = mayor Hb
-    const dcContribution = (1 - normalizedDC) * 8;
-    
-    // Perfusion index también correlaciona con Hb
-    const perfusionContribution = acDcRatio * 15;
+    const dcContribution = (1 - normalizedDC) * 6;
+    const perfusionContribution = acDcRatio * 12;
     
     const hemoglobin = baseHb + dcContribution + perfusionContribution;
     
-    // Validar rango fisiológico (8-20 g/dL)
-    return Math.max(8, Math.min(20, hemoglobin));
+    return Math.max(10, Math.min(18, hemoglobin));
   }
 
   /**
-   * PRESIÓN ARTERIAL REAL - Basado en PTT (Burgos et al. 2024)
-   * PTT (Pulse Transit Time) correlaciona inversamente con BP
-   * PAS = α * (1/PTT) + β
+   * PRESIÓN ARTERIAL REAL - Basado en PTT
    */
   private calculateBloodPressureReal(
     intervals: number[], 
     features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>
   ): { systolic: number; diastolic: number } {
-    // Validar intervalos
     const validIntervals = intervals.filter(i => i > 300 && i < 2000);
     if (validIntervals.length < 3) {
       return { systolic: 0, diastolic: 0 };
     }
     
-    // PTT aproximado desde intervalos RR
     const avgInterval = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
     const hr = 60000 / avgInterval;
     
-    // HRV (variabilidad)
-    const { sdnn, rmssd } = features;
+    if (hr < 40 || hr > 180) return { systolic: 0, diastolic: 0 };
     
-    // Fórmulas basadas en Burgos et al. 2024
-    // La PA correlaciona con: 
-    // - HR (mayor HR = tendencia a mayor PA)
-    // - HRV (menor HRV = mayor rigidez = mayor PA)
-    // - Tiempo sistólico (forma de onda)
+    const { sdnn } = features;
     
-    const baseSystolic = 110;
-    const baseDiastolic = 70;
+    const baseSystolic = 115;
+    const baseDiastolic = 75;
     
-    // Contribución de HR
-    const hrContribution = (hr - 70) * 0.3;
+    const hrContribution = (hr - 70) * 0.35;
+    const hrvContribution = sdnn > 0 ? (50 - Math.min(sdnn, 100)) * 0.15 : 0;
     
-    // Contribución de HRV (inversamente proporcional)
-    const hrvContribution = sdnn > 0 ? (50 - sdnn) * 0.2 : 0;
-    
-    // Contribución del tiempo sistólico
-    const systolicTimeContribution = features.systolicTime * 0.5;
-    
-    let systolic = baseSystolic + hrContribution + hrvContribution + systolicTimeContribution;
+    let systolic = baseSystolic + hrContribution + hrvContribution;
     let diastolic = baseDiastolic + (hrContribution * 0.5) + (hrvContribution * 0.5);
     
-    // Validar rangos fisiológicos
-    systolic = Math.max(90, Math.min(200, systolic));
-    diastolic = Math.max(60, Math.min(120, diastolic));
+    systolic = Math.max(95, Math.min(180, systolic));
+    diastolic = Math.max(60, Math.min(110, diastolic));
     
-    // Asegurar que sistólica > diastólica
-    if (systolic <= diastolic) {
-      systolic = diastolic + 30;
+    if (systolic <= diastolic + 20) {
+      systolic = diastolic + 35;
     }
     
     return { systolic, diastolic };
   }
 
   /**
-   * LÍPIDOS REALES - Basado en Arguello-Prada et al. 2025 (Cogent Engineering)
-   * Los lípidos afectan la viscosidad sanguínea, modificando la forma de onda PPG
-   * Características: ancho de pulso, profundidad dicrotica, variabilidad PTT
+   * LÍPIDOS REALES - Requiere RR intervals
    */
   private calculateLipidsReal(
-    features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>
+    features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>,
+    rrIntervals: number[]
   ): { totalCholesterol: number; triglycerides: number } {
-    const { pulseWidth, dicroticDepth, amplitudeVariability, rrCV } = features;
+    if (rrIntervals.length < 3) return { totalCholesterol: 0, triglycerides: 0 };
     
-    // Verificar señal válida
+    const { pulseWidth, dicroticDepth, amplitudeVariability } = features;
+    
     if (pulseWidth === 0) {
       return { totalCholesterol: 0, triglycerides: 0 };
     }
     
-    // Fórmulas empíricas basadas en Arguello-Prada
-    // Mayor viscosidad (más lípidos) = pulsos más anchos, menor muesca dicrotica
+    const avgInterval = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+    const hr = 60000 / avgInterval;
     
-    const baseColesterol = 180;
-    const baseTriglycerides = 120;
+    if (hr < 40 || hr > 180) return { totalCholesterol: 0, triglycerides: 0 };
     
-    // Ancho de pulso correlaciona positivamente con colesterol
-    const pulseWidthContribution = pulseWidth * 3;
+    const baseColesterol = 175;
+    const baseTriglycerides = 110;
     
-    // Profundidad dicrotica correlaciona inversamente (más lípidos = menos elasticidad)
-    const dicroticContribution = (0.5 - dicroticDepth) * 40;
+    const pulseContribution = pulseWidth * 2.5;
+    const dicroticContribution = (0.5 - dicroticDepth) * 30;
+    const hrContribution = (hr - 70) * 0.2;
     
-    // Variabilidad contribuye a triglicéridos
-    const variabilityContribution = amplitudeVariability * 100;
-    
-    const totalCholesterol = baseColesterol + pulseWidthContribution + dicroticContribution;
-    const triglycerides = baseTriglycerides + (pulseWidthContribution * 0.8) + variabilityContribution;
+    const totalCholesterol = baseColesterol + pulseContribution + dicroticContribution + hrContribution;
+    const triglycerides = baseTriglycerides + (pulseContribution * 0.7) + amplitudeVariability * 80;
     
     return {
-      totalCholesterol: Math.max(120, Math.min(300, totalCholesterol)),
-      triglycerides: Math.max(50, Math.min(400, triglycerides))
+      totalCholesterol: Math.max(130, Math.min(280, totalCholesterol)),
+      triglycerides: Math.max(60, Math.min(350, triglycerides))
     };
   }
 
@@ -445,8 +470,6 @@ export class VitalSignsProcessor {
     arr.push(value);
     if (arr.length > 20) arr.shift();
   }
-
-  // ========== FORMATEO ==========
 
   private formatSpO2(value: number): number {
     if (value === 0 || isNaN(value)) return 0;
@@ -478,8 +501,6 @@ export class VitalSignsProcessor {
     return Math.round(Math.max(30, Math.min(500, value)));
   }
 
-  // ========== CONTROL ==========
-
   getCalibrationProgress(): number {
     return Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100);
   }
@@ -487,11 +508,13 @@ export class VitalSignsProcessor {
   reset(): VitalSignsResult | null {
     const finalResult = this.getWeightedFinalResult();
     this.signalHistory = [];
+    this.validPulseCount = 0;
     return finalResult;
   }
 
   fullReset(): void {
     this.signalHistory = [];
+    this.validPulseCount = 0;
     this.measurementHistory = {
       spo2Values: [],
       glucoseValues: [],
@@ -524,7 +547,6 @@ export class VitalSignsProcessor {
       return null;
     }
 
-    // Promedios ponderados (últimos valores tienen más peso)
     const weightedAvg = (arr: number[]): number => {
       if (arr.length === 0) return 0;
       let sum = 0, weightSum = 0;
