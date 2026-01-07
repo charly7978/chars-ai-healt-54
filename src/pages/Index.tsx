@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
+import SignalDiagnostics from "@/components/SignalDiagnostics";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
@@ -553,6 +554,18 @@ const Index = () => {
       )}
 
       <div className="flex-1 relative">
+        {/* PANEL DE DIAGNÓSTICO VISUAL */}
+        {isMonitoring && (
+          <SignalDiagnostics
+            rawValue={lastSignal?.rawValue || 0}
+            filteredValue={lastSignal?.filteredValue || 0}
+            quality={signalQuality}
+            fingerDetected={lastSignal?.fingerDetected || false}
+            bpm={heartRate}
+            pulsatility={lastSignal?.diagnostics?.pulsatilityValue || 0}
+          />
+        )}
+        
         {/* VENTANA DE PREVISUALIZACIÓN DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
