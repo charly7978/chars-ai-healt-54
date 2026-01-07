@@ -1,87 +1,69 @@
 import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
+import { globalCalibrator } from '../camera/CameraAutoCalibrator';
 
 /**
- * FrameProcessor - EXTRACCIÓN PPG CON AUTO-CALIBRACIÓN
+ * FrameProcessor - EXTRACCIÓN PPG ULTRA-LIGERA
  * 
- * MEJORAS BASADAS EN LITERATURA:
- * - HKUST 2023: Control de exposición óptimo para rPPG
- * - PMC9136485: Full-frame averaging con detección de piel
- * - Matsumura 2020: Canal verde para reflectancia
- * 
- * NUEVO: Integración con CameraAutoCalibrator para ajuste dinámico
+ * PRINCIPIOS:
+ * 1. Buffers PEQUEÑOS y fijos
+ * 2. Calibración llamada cada 15 frames (NO cada 5)
+ * 3. Logs mínimos
+ * 4. Sin acumulación de memoria
  */
 export class FrameProcessor {
-  // Buffer para análisis temporal - REDUCIDO: 90 frames (~3s @ 30fps)
-  private redBuffer: number[] = [];
-  private greenBuffer: number[] = [];
-  private blueBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 90; // Reducido de 240 - suficiente para AC/DC
+  // Buffers PEQUEÑOS - 60 frames = 2s @ 30fps
+  private redBuffer: Float32Array;
+  private greenBuffer: Float32Array;
+  private blueBuffer: Float32Array;
+  private bufferIndex = 0;
+  private bufferFilled = false;
+  private readonly BUFFER_SIZE = 60;
   
-  // === CALIBRACIÓN ADAPTATIVA ===
-  private calibrationDC: number = 0;
-  private calibrationComplete: boolean = false;
-  private calibrationSamples: number = 0;
+  // Calibración
+  private calibrationDC = 0;
+  private calibrationComplete = false;
+  private calibrationSamples = 0;
   private readonly CALIBRATION_FRAMES = 30;
   
-  // Control automático de ganancia - AJUSTADO para evitar saturación
-  private gainFactor: number = 1.0;
-  private readonly TARGET_DC = 120; // Reducido de 140 a 120 (menos saturación)
-  private readonly MIN_GAIN = 0.3; // Permitir más reducción
-  private readonly MAX_GAIN = 1.5; // Limitar ganancia máxima
+  // Ganancia
+  private gainFactor = 1.0;
+  private readonly TARGET_DC = 120;
   
-  // Suavizado temporal REDUCIDO para preservar pulsatilidad
-  private lastRed: number = 0;
-  private lastGreen: number = 0;
-  private lastBlue: number = 0;
-  private readonly SMOOTHING = 0.25; // 25% anterior, 75% nuevo - MÁS REACTIVO
+  // Suavizado
+  private lastRed = 0;
+  private lastGreen = 0;
+  private lastBlue = 0;
+  private readonly SMOOTHING = 0.2;
   
-  // Log - REDUCIDO para menos overhead
+  // Contadores
   private frameCount = 0;
-  private readonly LOG_EVERY = 150; // cada 5s @ 30fps (era 1.5s)
+  private skinPixelRatio = 0;
   
-  // Estadísticas
-  private skinPixelRatio: number = 0;
-  private lastSkinCount: number = 0;
-  
-  // Detección de saturación
-  private saturationCount: number = 0;
-  private readonly SATURATION_THRESHOLD = 245; // Píxeles casi blancos
-  
-  constructor(config?: { TEXTURE_GRID_SIZE?: number, ROI_SIZE_FACTOR?: number }) {}
+  constructor() {
+    this.redBuffer = new Float32Array(this.BUFFER_SIZE);
+    this.greenBuffer = new Float32Array(this.BUFFER_SIZE);
+    this.blueBuffer = new Float32Array(this.BUFFER_SIZE);
+  }
   
   /**
-   * EXTRACCIÓN FULL-FRAME CON DETECCIÓN DE SATURACIÓN
-   * 
-   * MEJORAS:
-   * - Detectar píxeles saturados (>245) y reportar
-   * - Notificar al auto-calibrador para ajustar exposición
-   * - Usar canal verde para PPG (mejor SNR según literatura)
+   * Extraer datos del frame
    */
   extractFrameData(imageData: ImageData): FrameData {
     const data = imageData.data;
-    const width = imageData.width;
-    const height = imageData.height;
-    const totalPixels = width * height;
+    const totalPixels = imageData.width * imageData.height;
     
     let redSum = 0;
     let greenSum = 0;
     let blueSum = 0;
     let skinPixelCount = 0;
-    let saturatedPixels = 0;
     
-    // PROCESAR TODOS LOS PÍXELES
-    for (let i = 0; i < data.length; i += 4) {
+    // Procesar con step de 4 para velocidad
+    for (let i = 0; i < data.length; i += 16) {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
       
-      // DETECTAR SATURACIÓN
-      if (r > this.SATURATION_THRESHOLD || g > this.SATURATION_THRESHOLD) {
-        saturatedPixels++;
-      }
-      
-      // DETECCIÓN DE PIEL
       const total = r + g + b;
       if (total < 50) continue;
       
@@ -97,21 +79,10 @@ export class FrameProcessor {
       }
     }
     
-    // Calcular ratio de saturación
-    const saturationRatio = saturatedPixels / totalPixels;
-    this.saturationCount = saturatedPixels;
-    
-    // Calcular ratio de cobertura
-    this.skinPixelRatio = skinPixelCount / totalPixels;
-    this.lastSkinCount = skinPixelCount;
-    
-    // Si hay muy pocos píxeles de piel (<5% del frame), usar todo el frame
-    // Esto previene fallos cuando el dedo cubre parcialmente
-    if (skinPixelCount < totalPixels * 0.05) {
+    // Fallback si no hay piel detectada
+    if (skinPixelCount < 100) {
       redSum = 0; greenSum = 0; blueSum = 0; skinPixelCount = 0;
-      
-      // Fallback: promediar todo con step para velocidad
-      for (let i = 0; i < data.length; i += 16) { // step de 4 píxeles
+      for (let i = 0; i < data.length; i += 16) {
         redSum += data[i];
         greenSum += data[i + 1];
         blueSum += data[i + 2];
@@ -119,22 +90,21 @@ export class FrameProcessor {
       }
     }
     
-    // Calcular promedios
+    this.skinPixelRatio = skinPixelCount / (totalPixels / 4);
+    
+    // Promedios crudos
     const rawRed = skinPixelCount > 0 ? redSum / skinPixelCount : 0;
     const rawGreen = skinPixelCount > 0 ? greenSum / skinPixelCount : 0;
     const rawBlue = skinPixelCount > 0 ? blueSum / skinPixelCount : 0;
     
-    // === SUAVIZADO TEMPORAL MODERADO ===
-    // Importante: No suavizar demasiado o se pierde la pulsatilidad
+    // Suavizado temporal
     let smoothedRed: number, smoothedGreen: number, smoothedBlue: number;
     
     if (this.lastRed === 0) {
-      // Primera muestra - sin suavizado
       smoothedRed = rawRed;
       smoothedGreen = rawGreen;
       smoothedBlue = rawBlue;
     } else {
-      // Suavizado ligero: 30% anterior + 70% nuevo
       smoothedRed = this.lastRed * this.SMOOTHING + rawRed * (1 - this.SMOOTHING);
       smoothedGreen = this.lastGreen * this.SMOOTHING + rawGreen * (1 - this.SMOOTHING);
       smoothedBlue = this.lastBlue * this.SMOOTHING + rawBlue * (1 - this.SMOOTHING);
@@ -144,50 +114,30 @@ export class FrameProcessor {
     this.lastGreen = smoothedGreen;
     this.lastBlue = smoothedBlue;
     
-    // === CALIBRACIÓN DE GANANCIA ===
+    // Calibración
     this.updateGainCalibration(smoothedRed, smoothedGreen, smoothedBlue);
     
     // Aplicar ganancia
-    const avgRed = this.applyAdaptiveNormalization(smoothedRed);
-    const avgGreen = this.applyAdaptiveNormalization(smoothedGreen);
-    const avgBlue = this.applyAdaptiveNormalization(smoothedBlue);
+    const avgRed = this.applyNormalization(smoothedRed);
+    const avgGreen = this.applyNormalization(smoothedGreen);
+    const avgBlue = this.applyNormalization(smoothedBlue);
     
-    // Actualizar buffers PRIMERO (necesario para calcular AC)
-    this.updateBuffers(avgRed, avgGreen, avgBlue);
+    // Actualizar buffer circular
+    this.updateBuffer(avgRed, avgGreen, avgBlue);
     
-    // Calcular ratios
-    const rToGRatio = avgGreen > 0 ? avgRed / avgGreen : 1;
-    const rToBRatio = avgBlue > 0 ? avgRed / avgBlue : 1;
+    // Calcular AC
+    const acComponent = this.calculateAC();
     
-    // Calcular AC (pulsatilidad)
-    const acComponent = this.calculateACComponent();
-    
-    // Log de diagnóstico con saturación
+    // Calibrador de cámara cada 15 frames (~500ms)
     this.frameCount++;
-    if (this.frameCount % this.LOG_EVERY === 0) {
-      const rgRatio = avgGreen > 0 ? (avgRed / avgGreen).toFixed(2) : 'N/A';
-      const skinPct = (this.skinPixelRatio * 100).toFixed(1);
-      const satPct = (this.saturationCount / (imageData.width * imageData.height) * 100).toFixed(1);
-      const brightness = ((avgRed + avgGreen + avgBlue) / 3).toFixed(0);
-      console.log(`🖐️ PPG: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} B=${brightness} | R/G=${rgRatio} | Skin=${skinPct}% | Sat=${satPct}%`);
-      
-      // Si hay mucha saturación, notificar
-      if (parseFloat(satPct) > 20) {
-        console.warn('⚠️ SATURACIÓN ALTA - Reducir exposición');
-        const calibrator = (window as any).__cameraCalibrator;
-        if (calibrator?.forceReduceExposure) {
-          calibrator.forceReduceExposure();
-        }
-      }
+    if (this.frameCount % 15 === 0) {
+      globalCalibrator.analyze(avgRed, avgGreen, avgBlue);
     }
     
-    // Notificar al auto-calibrador CADA 5 FRAMES (~166ms @ 30fps)
-    // MUY frecuente para reaccionar rápido a cambios de luz
-    if (this.frameCount % 5 === 0) {
-      const calibrator = (window as any).__cameraCalibrator;
-      if (calibrator?.analyzeAndAdjust) {
-        calibrator.analyzeAndAdjust(avgRed, avgGreen, avgBlue, acComponent);
-      }
+    // Log cada 5 segundos
+    if (this.frameCount % 150 === 0) {
+      const brightness = ((avgRed + avgGreen + avgBlue) / 3).toFixed(0);
+      console.log(`📷 PPG: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} B=${brightness} | AC=${(acComponent * 100).toFixed(2)}%`);
     }
     
     return {
@@ -195,19 +145,15 @@ export class FrameProcessor {
       avgRed,
       avgGreen,
       avgBlue,
-      // NUEVO: Valores crudos sin normalizar para detección de dedo
       rawRed: smoothedRed,
       rawGreen: smoothedGreen,
       rawBlue: smoothedBlue,
       textureScore: acComponent,
-      rToGRatio,
-      rToBRatio
+      rToGRatio: avgGreen > 0 ? avgRed / avgGreen : 1,
+      rToBRatio: avgBlue > 0 ? avgRed / avgBlue : 1
     };
   }
   
-  /**
-   * CALIBRACIÓN DE GANANCIA FIJA
-   */
   private updateGainCalibration(r: number, g: number, b: number): void {
     if (this.calibrationComplete) return;
     
@@ -221,77 +167,85 @@ export class FrameProcessor {
       
       if (this.calibrationDC > 0) {
         this.gainFactor = this.TARGET_DC / this.calibrationDC;
-        this.gainFactor = Math.max(this.MIN_GAIN, Math.min(this.MAX_GAIN, this.gainFactor));
+        this.gainFactor = Math.max(0.3, Math.min(1.5, this.gainFactor));
       }
-      
-      console.log(`🎚️ Calibración: DC=${this.calibrationDC.toFixed(1)}, Gain=${this.gainFactor.toFixed(2)}`);
     }
   }
   
-  /**
-   * NORMALIZACIÓN
-   */
-  private applyAdaptiveNormalization(rawValue: number): number {
+  private applyNormalization(rawValue: number): number {
     if (!this.calibrationComplete) return rawValue;
-    const normalized = rawValue * this.gainFactor;
-    return Math.max(0, Math.min(255, normalized));
+    return Math.max(0, Math.min(255, rawValue * this.gainFactor));
   }
   
-  /**
-   * Actualizar buffers circulares
-   */
-  private updateBuffers(red: number, green: number, blue: number): void {
-    this.redBuffer.push(red);
-    this.greenBuffer.push(green);
-    this.blueBuffer.push(blue);
+  private updateBuffer(red: number, green: number, blue: number): void {
+    this.redBuffer[this.bufferIndex] = red;
+    this.greenBuffer[this.bufferIndex] = green;
+    this.blueBuffer[this.bufferIndex] = blue;
     
-    while (this.redBuffer.length > this.BUFFER_SIZE) {
-      this.redBuffer.shift();
-      this.greenBuffer.shift();
-      this.blueBuffer.shift();
+    this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
+    if (this.bufferIndex === 0) this.bufferFilled = true;
+  }
+  
+  private calculateAC(): number {
+    const count = this.bufferFilled ? this.BUFFER_SIZE : this.bufferIndex;
+    if (count < 30) return 0;
+    
+    let sum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    
+    for (let i = 0; i < count; i++) {
+      const val = this.redBuffer[i];
+      sum += val;
+      if (val < min) min = val;
+      if (val > max) max = val;
     }
-  }
-  
-  /**
-   * Calcular componente AC (pulsatilidad)
-   */
-  private calculateACComponent(): number {
-    if (this.redBuffer.length < 30) return 0;
     
-    const recent = this.redBuffer.slice(-60);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const mean = sum / count;
     if (mean === 0) return 0;
     
-    const variance = recent.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / recent.length;
-    const stdDev = Math.sqrt(variance);
-    
-    return stdDev / mean;
+    return (max - min) / mean;
   }
   
   getRedBuffer(): number[] {
-    return [...this.redBuffer];
+    const count = this.bufferFilled ? this.BUFFER_SIZE : this.bufferIndex;
+    return Array.from(this.redBuffer.slice(0, count));
   }
   
   getAllChannelBuffers(): { red: number[], green: number[], blue: number[] } {
+    const count = this.bufferFilled ? this.BUFFER_SIZE : this.bufferIndex;
     return {
-      red: [...this.redBuffer],
-      green: [...this.greenBuffer],
-      blue: [...this.blueBuffer]
+      red: Array.from(this.redBuffer.slice(0, count)),
+      green: Array.from(this.greenBuffer.slice(0, count)),
+      blue: Array.from(this.blueBuffer.slice(0, count))
     };
   }
   
   getRGBStats(): { redAC: number; redDC: number; greenAC: number; greenDC: number; rgRatio: number } {
-    if (this.redBuffer.length < 30) {
+    const count = this.bufferFilled ? this.BUFFER_SIZE : this.bufferIndex;
+    if (count < 30) {
       return { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0 };
     }
     
-    const recentRed = this.redBuffer.slice(-60);
-    const recentGreen = this.greenBuffer.slice(-60);
+    let redSum = 0, greenSum = 0;
+    let redMin = Infinity, redMax = -Infinity;
+    let greenMin = Infinity, greenMax = -Infinity;
     
-    const redDC = recentRed.reduce((a, b) => a + b, 0) / recentRed.length;
-    const greenDC = recentGreen.reduce((a, b) => a + b, 0) / recentGreen.length;
-    const redAC = Math.max(...recentRed) - Math.min(...recentRed);
-    const greenAC = Math.max(...recentGreen) - Math.min(...recentGreen);
+    for (let i = 0; i < count; i++) {
+      const r = this.redBuffer[i];
+      const g = this.greenBuffer[i];
+      redSum += r;
+      greenSum += g;
+      if (r < redMin) redMin = r;
+      if (r > redMax) redMax = r;
+      if (g < greenMin) greenMin = g;
+      if (g > greenMax) greenMax = g;
+    }
+    
+    const redDC = redSum / count;
+    const greenDC = greenSum / count;
+    const redAC = redMax - redMin;
+    const greenAC = greenMax - greenMin;
     
     const rgRatio = (redDC > 0 && greenDC > 0) ? (redAC / redDC) / (greenAC / greenDC) : 0;
     
@@ -315,9 +269,11 @@ export class FrameProcessor {
   }
   
   reset(): void {
-    this.redBuffer = [];
-    this.greenBuffer = [];
-    this.blueBuffer = [];
+    this.redBuffer.fill(0);
+    this.greenBuffer.fill(0);
+    this.blueBuffer.fill(0);
+    this.bufferIndex = 0;
+    this.bufferFilled = false;
     this.frameCount = 0;
     this.calibrationComplete = false;
     this.calibrationSamples = 0;
@@ -327,6 +283,6 @@ export class FrameProcessor {
     this.lastGreen = 0;
     this.lastBlue = 0;
     this.skinPixelRatio = 0;
-    this.lastSkinCount = 0;
+    globalCalibrator.reset();
   }
 }

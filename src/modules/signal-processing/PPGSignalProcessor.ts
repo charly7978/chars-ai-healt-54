@@ -34,7 +34,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onError?: (error: ProcessingError) => void
   ) {
     this.bandpassFilter = new BandpassFilter(30);
-    this.frameProcessor = new FrameProcessor({ ROI_SIZE_FACTOR: 0.80 });
+    this.frameProcessor = new FrameProcessor();
     this.qualityAnalyzer = new SignalQualityAnalyzer();
   }
 
