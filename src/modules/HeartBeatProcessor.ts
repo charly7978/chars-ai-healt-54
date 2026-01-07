@@ -776,6 +776,7 @@ export class HeartBeatProcessor {
   }
 
   public reset() {
+    // LIMPIEZA COMPLETA DE TODOS LOS BUFFERS
     this.signalBuffer = [];
     this.medianBuffer = [];
     this.movingAverageBuffer = [];
@@ -803,6 +804,19 @@ export class HeartBeatProcessor {
     
     this.isArrhythmiaDetected = false;
     this.peakValidationBuffer = [];
+    
+    // CRÍTICO: Limpiar arrays que faltaban - CAUSA DE MEMORY LEAK
+    this.recentSignalStrengths = [];
+    this.peakCandidateIndex = null;
+    this.peakCandidateValue = 0;
+    this.lastProcessedTimestamp = 0;
+    this.lastProcessedValue = null;
+    this.currentSignalQuality = 0;
+    this.lastSignalStrength = 0;
+    
+    // Reset estado del dedo
+    this.wasFingerDetected = false;
+    this.fingerLostTimestamp = 0;
   }
 
   public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {

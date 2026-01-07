@@ -40,7 +40,9 @@ export const useHeartBeatProcessor = () => {
     processingStateRef.current = 'ACTIVE';
     
     return () => {
+      // CRÍTICO: Hacer reset antes de destruir para liberar memoria
       if (processorRef.current) {
+        processorRef.current.reset();
         processorRef.current = null;
       }
       processingStateRef.current = 'IDLE';
