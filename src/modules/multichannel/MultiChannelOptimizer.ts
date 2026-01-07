@@ -99,6 +99,11 @@ export class MultiChannelOptimizer implements OptimizerAPI {
   }
 
   reset(): void {
+    // CRÍTICO: Limpiar valores internos primero
+    this.lastTimestamp = 0;
+    this.lastRawValue = 0;
+    this.lastQuality = 0;
+    
     for (const ch of this.channels) {
       this.channelStates[ch] = {};
       this.channelFilters[ch].kalman.reset();

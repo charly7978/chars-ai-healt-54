@@ -817,6 +817,9 @@ export class HeartBeatProcessor {
     // Reset estado del dedo
     this.wasFingerDetected = false;
     this.fingerLostTimestamp = 0;
+    
+    // CRÍTICO: Reset del filtro Kalman interno
+    this.kalmanFilterInstance.reset();
   }
 
   public getRRIntervals(): { intervals: number[]; lastPeakTime: number | null } {

@@ -1,28 +1,52 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 import type { MultiChannelOutputs } from '../types/multichannel';
 
 /**
- * HOOK ÚNICO DE SIGNOS VITALES - OPTIMIZADO
+ * HOOK ÚNICO DE SIGNOS VITALES - OPTIMIZADO CON useRef
+ * CRÍTICO: Cambiado de useState a useRef para evitar recreación
  */
 export const useVitalSignsProcessor = () => {
-  const [processor] = useState(() => new VitalSignsProcessor());
+  const processorRef = useRef<VitalSignsProcessor | null>(null);
   const [lastValidResults, setLastValidResults] = useState<VitalSignsResult | null>(null);
   const sessionId = useRef<string>(`${Date.now().toString(36)}${(performance.now() | 0).toString(36)}`);
   const processedSignals = useRef<number>(0);
   
+  // Lazy initialization - solo crear una vez
+  if (!processorRef.current) {
+    processorRef.current = new VitalSignsProcessor();
+  }
+  
+  // Cleanup al desmontar
+  useEffect(() => {
+    return () => {
+      if (processorRef.current) {
+        processorRef.current.fullReset();
+        processorRef.current = null;
+      }
+    };
+  }, []);
+  
   const startCalibration = useCallback(() => {
-    processor.startCalibration();
-  }, [processor]);
+    processorRef.current?.startCalibration();
+  }, []);
   
   const forceCalibrationCompletion = useCallback(() => {
-    processor.forceCalibrationCompletion();
-  }, [processor]);
+    processorRef.current?.forceCalibrationCompletion();
+  }, []);
   
   const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+    if (!processorRef.current) return {
+      spo2: 0, glucose: 0, hemoglobin: 0,
+      pressure: { systolic: 0, diastolic: 0 },
+      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined
+    };
+    
     processedSignals.current++;
     
-    const result = processor.processSignal(value, rrData);
+    const result = processorRef.current.processSignal(value, rrData);
     
     // Guardar resultados válidos
     if (result.spo2 > 0 && result.glucose > 0) {
@@ -30,30 +54,39 @@ export const useVitalSignsProcessor = () => {
     }
     
     return result;
-  }, [processor]);
+  }, []);
 
   const processChannels = useCallback((channels: MultiChannelOutputs, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+    if (!processorRef.current) return {
+      spo2: 0, glucose: 0, hemoglobin: 0,
+      pressure: { systolic: 0, diastolic: 0 },
+      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined
+    };
+    
     processedSignals.current++;
-    const result = processor.processChannels(channels, rrData);
+    const result = processorRef.current.processChannels(channels, rrData);
     if (result.spo2 > 0 && result.glucose > 0) {
       setLastValidResults(result);
     }
     return result;
-  }, [processor]);
+  }, []);
 
   const reset = useCallback(() => {
-    const savedResults = processor.reset();
+    if (!processorRef.current) return null;
+    const savedResults = processorRef.current.reset();
     if (savedResults) {
       setLastValidResults(savedResults);
     }
     return savedResults;
-  }, [processor]);
+  }, []);
   
   const fullReset = useCallback(() => {
-    processor.fullReset();
+    processorRef.current?.fullReset();
     setLastValidResults(null);
     processedSignals.current = 0;
-  }, [processor]);
+  }, []);
 
   return {
     processSignal,
@@ -63,7 +96,7 @@ export const useVitalSignsProcessor = () => {
     startCalibration,
     forceCalibrationCompletion,
     lastValidResults,
-    getCalibrationProgress: useCallback(() => processor.getCalibrationProgress(), [processor]),
+    getCalibrationProgress: useCallback(() => processorRef.current?.getCalibrationProgress() ?? 0, []),
     debugInfo: {
       processedSignals: processedSignals.current,
       sessionId: sessionId.current
