@@ -1,17 +1,14 @@
 /**
  * @file HumanFingerDetector.ts
- * @description DETECTOR SERIO Y PROFESIONAL DE DEDO HUMANO VIVO
+ * @description DETECTOR ROBUSTO Y ESTABLE DE DEDO HUMANO
  * 
- * REQUISITOS ESTRICTOS PARA DETECCIÓN:
- * 1. COLOR: Rojo dominante característico de tejido humano con flash LED
- * 2. PULSATILIDAD REAL: Variación rítmica del 0.5-5% causada por flujo sanguíneo
- * 3. FRECUENCIA CARDÍACA: La variación debe estar en rango 40-200 BPM
- * 4. CONSISTENCIA: Múltiples ciclos cardíacos detectados
+ * ARQUITECTURA SIMPLIFICADA:
+ * 1. COLOR: Rojo dominante (validación rápida)
+ * 2. ESTABILIDAD TEMPORAL: Una vez detectado, muy difícil perder
+ * 3. PULSATILIDAD: Cálculo robusto con EMA (Exponential Moving Average)
  * 
- * Una pared, madera u objeto inerte NUNCA pasará porque:
- * - No tiene variación rítmica (solo ruido aleatorio)
- * - No tiene frecuencia en rango cardíaco
- * - El ruido de cámara es ~0.1%, el pulso real es ~0.5-3%
+ * PRINCIPIO CLAVE: Si el color es bueno, CONFIAR.
+ * El pulso cardíaco es variable - no basar detección en él.
  */
 
 export interface FingerDetectionResult {
@@ -32,86 +29,53 @@ export interface FingerDetectionResult {
 }
 
 export class HumanFingerDetector {
-  // Estado de detección con histéresis
-  private consecutiveDetections = 0;
-  private consecutiveNonDetections = 0;
-  private lastDetectionState = false;
-  
-  // Historial para análisis de pulsatilidad - OPTIMIZADO
-  private redHistory: number[] = [];
-  private timestampHistory: number[] = [];
-  private readonly HISTORY_SIZE = 45; // 1.5 segundos a 30fps - REDUCIDO de 90
-  
-  // SUAVIZADO: Buffer de pulsatilidad
-  private pulsatilityHistory: number[] = [];
-  private readonly PULSATILITY_SMOOTH_SIZE = 5; // REDUCIDO de 8
-  
-  // CACHE: Evitar recalcular cada frame
-  private cachedResult: FingerDetectionResult | null = null;
-  private lastAnalysisTime: number = 0;
-  private readonly ANALYSIS_CACHE_MS = 50; // Cache por 50ms
-  
-  // Análisis de picos cardíacos
-  private detectedPeaks: number[] = [];
-  private detectedValleys: number[] = [];
-  
-  // TRACKING: Para detectar solo cambios REALMENTE bruscos (dedo puesto/quitado, NO variación de pulso)
-  private lastRedValue: number = 0;
-  // CRÍTICO: Umbral MUCHO más alto - la variación normal del pulso es 20-60 unidades
-  // Solo limpiar si hay un cambio de >100 unidades (transición real dedo on/off)
-  private readonly RED_TRANSITION_THRESHOLD = 100;
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ESTADO PRINCIPAL - Máquina de estados simple
+  // ═══════════════════════════════════════════════════════════════════════════
+  private isConfirmed = false;           // ¿Dedo confirmado?
+  private goodFrameCount = 0;            // Frames consecutivos con buen color
+  private badFrameCount = 0;             // Frames consecutivos sin dedo
   
   // ═══════════════════════════════════════════════════════════════════════════
-  // UMBRALES PERMISIVOS PARA DETECCIÓN ROBUSTA DE DEDO HUMANO
-  // Prioriza ESTABILIDAD sobre estrictez
+  // HISTORIAL DE SEÑAL - Para pulsatilidad
+  // ═══════════════════════════════════════════════════════════════════════════
+  private readonly HISTORY_SIZE = 60;    // 2 segundos a 30fps
+  private redHistory: number[] = [];
+  private lastTimestamp = 0;
+  
+  // EMA de pulsatilidad (suavizado exponencial)
+  private pulsatilityEMA = 0;
+  private readonly EMA_ALPHA = 0.15;     // Factor de suavizado (0.1-0.2 es estable)
+  
+  // ═══════════════════════════════════════════════════════════════════════════
+  // UMBRALES - MUY PERMISIVOS
   // ═══════════════════════════════════════════════════════════════════════════
   private readonly CONFIG = {
-    // === COLOR DE TEJIDO HUMANO CON FLASH LED ===
-    MIN_RED_VALUE: 80,              // MÁS PERMISIVO - acepta iluminación variable
-    GOOD_RED_VALUE: 140,            // Buena señal
-    IDEAL_RED_VALUE: 180,           // Señal excelente
+    // COLOR
+    MIN_RED: 70,                  // Mínimo valor rojo
+    MIN_RED_GREEN_DIFF: 15,       // Rojo debe superar verde por esto
+    MIN_RED_BLUE_DIFF: 20,        // Rojo debe superar azul por esto
+    MIN_RED_PROPORTION: 0.38,     // Rojo mínimo 38% del total
     
-    // Diferencias de color más permisivas
-    MIN_RED_GREEN_DIFF: 20,         // R debe superar G por al menos 20
-    MIN_RED_BLUE_DIFF: 30,          // R debe superar B por al menos 30
+    // CONFIRMACIÓN
+    FRAMES_TO_CONFIRM: 4,         // 4 frames buenos = confirmado (~130ms)
+    FRAMES_TO_LOSE: 120,          // 4 segundos sin señal para perder
     
-    // Proporciones de color (R debe dominar)
-    MIN_RED_PROPORTION: 0.40,       // Rojo mínimo 40% del total
-    MAX_GREEN_PROPORTION: 0.40,     // Verde máximo 40%
-    MAX_BLUE_PROPORTION: 0.30,      // Azul máximo 30%
+    // PULSATILIDAD (solo informativo, NO bloquea detección)
+    MIN_PULSATILITY: 0.001,       // 0.1% mínimo
+    GOOD_PULSATILITY: 0.005,      // 0.5% bueno
+    MAX_PULSATILITY: 0.30,        // 30% máximo (mucho movimiento)
     
-    // === PULSATILIDAD - MÁS RÁPIDA ===
-    MIN_SAMPLES_FOR_ANALYSIS: 20,   // Reducido de 30 para respuesta más rápida
-    
-    MIN_PULSATILITY: 0.0008,        // 0.08% - ULTRA sensible para captar pulso débil
-    GOOD_PULSATILITY: 0.005,        // 0.5% - buena señal
-    IDEAL_PULSATILITY: 0.015,       // 1.5% - señal excelente
-    MAX_PULSATILITY: 0.25,          // 25% máximo - tolera más movimiento
-    
-    // === RITMO CARDÍACO ===
-    MIN_HEART_RATE_BPM: 35,         // Más permisivo
-    MAX_HEART_RATE_BPM: 220,        // Más permisivo
-    MIN_PEAKS_FOR_RHYTHM: 2,        // Solo 2 picos para confirmar
-    
-    // === CONSISTENCIA DE INTERVALOS ===
-    MAX_RR_VARIATION: 0.60,         // 60% de variación permitida
-    
-    // === ESTABILIDAD TEMPORAL (EQUILIBRADA) ===
-    FRAMES_TO_CONFIRM: 3,           // 3 frames para confirmar (~0.1s) - MÁS RÁPIDO
-    FRAMES_TO_LOSE: 90,             // 90 frames para perder (~3s) - REDUCIDO de 180
+    // TRANSICIÓN
+    TRANSITION_THRESHOLD: 80,     // Cambio de >80 en rojo = posible transición
   };
 
-  // Limitar logs para mejor rendimiento
-  private logCounter = 0;
-  private readonly LOG_INTERVAL = 60; // Log cada 60 frames (~2s)
-
   constructor() {
-    // Log inicial silenciado para producción
+    // Silencioso
   }
 
   /**
-   * DETECCIÓN ESTRICTA DE DEDO HUMANO VIVO
-   * Requiere: color correcto + pulsatilidad real + ritmo cardíaco
+   * DETECCIÓN PRINCIPAL - Simple y robusta
    */
   detectFinger(
     redValue: number,
@@ -120,465 +84,230 @@ export class HumanFingerDetector {
   ): FingerDetectionResult {
     const now = Date.now();
     
-    // CACHE: Retornar resultado anterior si fue calculado recientemente
-    if (this.cachedResult && (now - this.lastAnalysisTime) < this.ANALYSIS_CACHE_MS) {
-      return this.cachedResult;
-    }
-    
-    // Actualizar historial
-    this.updateHistory(redValue, now);
-    
-    // Calcular métricas de color
-    const totalLight = redValue + greenValue + blueValue;
-    const redProportion = totalLight > 0 ? redValue / totalLight : 0;
-    const greenProportion = totalLight > 0 ? greenValue / totalLight : 0;
-    const blueProportion = totalLight > 0 ? blueValue / totalLight : 0;
-    const rgRatio = greenValue > 0 ? redValue / greenValue : 0;
+    // ═══════════════════════════════════════════════════════════════════════
+    // PASO 1: VALIDACIÓN DE COLOR (RÁPIDA)
+    // ═══════════════════════════════════════════════════════════════════════
+    const colorCheck = this.checkColor(redValue, greenValue, blueValue);
     
     // ═══════════════════════════════════════════════════════════════════════
-    // FASE 1: VALIDACIÓN DE COLOR ESTRICTA
+    // PASO 2: ACTUALIZAR HISTORIAL (solo si color OK)
     // ═══════════════════════════════════════════════════════════════════════
+    if (colorCheck.isValid) {
+      this.updateHistory(redValue, now);
+    }
     
-    // 1. Valor rojo mínimo para tejido iluminado
-    if (redValue < this.CONFIG.MIN_RED_VALUE) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⚠️ Rojo=${redValue.toFixed(0)} (mín ${this.CONFIG.MIN_RED_VALUE}) - Acerque la YEMA al flash`
-      );
-    }
-
-    // 2. Rojo debe ser el canal dominante por margen significativo
-    if (redValue - greenValue < this.CONFIG.MIN_RED_GREEN_DIFF) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⚠️ Diferencia R-G=${(redValue-greenValue).toFixed(0)} (mín ${this.CONFIG.MIN_RED_GREEN_DIFF}) - No es tejido humano`
-      );
-    }
-
-    if (redValue - blueValue < this.CONFIG.MIN_RED_BLUE_DIFF) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⚠️ Diferencia R-B=${(redValue-blueValue).toFixed(0)} (mín ${this.CONFIG.MIN_RED_BLUE_DIFF}) - No es tejido humano`
-      );
-    }
-
-    // 3. Proporciones de color correctas
-    if (redProportion < this.CONFIG.MIN_RED_PROPORTION) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⚠️ Rojo ${(redProportion*100).toFixed(0)}% (mín ${this.CONFIG.MIN_RED_PROPORTION*100}%) - Cubra el flash completamente`
-      );
-    }
-
-    if (greenProportion > this.CONFIG.MAX_GREEN_PROPORTION) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⚠️ Verde ${(greenProportion*100).toFixed(0)}% (máx ${this.CONFIG.MAX_GREEN_PROPORTION*100}%) - Superficie no es piel`
-      );
-    }
-
-    if (blueProportion > this.CONFIG.MAX_BLUE_PROPORTION) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⚠️ Azul ${(blueProportion*100).toFixed(0)}% (máx ${this.CONFIG.MAX_BLUE_PROPORTION*100}%) - Luz ambiental interferente`
-      );
-    }
-
     // ═══════════════════════════════════════════════════════════════════════
-    // FASE 2: ANÁLISIS DE PULSATILIDAD (SEÑAL DE VIDA)
+    // PASO 3: CALCULAR PULSATILIDAD (informativo)
     // ═══════════════════════════════════════════════════════════════════════
+    const pulsatility = this.calculatePulsatility();
     
-    // Necesitamos suficiente historial para análisis serio
-    if (this.redHistory.length < this.CONFIG.MIN_SAMPLES_FOR_ANALYSIS) {
-      const progress = Math.round((this.redHistory.length / this.CONFIG.MIN_SAMPLES_FOR_ANALYSIS) * 100);
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, 0,
-        `⏳ Color OK (R=${redValue.toFixed(0)}) - Analizando pulso ${progress}%`
-      );
-    }
-    
-    // Calcular pulsatilidad instantánea
-    const rawPulsatility = this.calculateRealPulsatility();
-    
-    // SUAVIZADO: Agregar al historial y calcular promedio móvil
-    this.pulsatilityHistory.push(rawPulsatility);
-    if (this.pulsatilityHistory.length > this.PULSATILITY_SMOOTH_SIZE) {
-      this.pulsatilityHistory.shift();
-    }
-    
-    // Usar MEDIANA (más robusta que promedio contra picos aislados)
-    const sortedPulsatility = [...this.pulsatilityHistory].sort((a, b) => a - b);
-    const pulsatility = sortedPulsatility[Math.floor(sortedPulsatility.length / 2)];
-    
-    // Log reducido para rendimiento
-    this.logCounter++;
-    // Silenciado para producción - descomentar para debug:
-    // if (this.logCounter % this.LOG_INTERVAL === 0) {
-    //   console.log(`📈 Pulsatilidad: ${(pulsatility*100).toFixed(3)}%`);
-    // }
-    
-    // Verificar pulsatilidad mínima
-    if (pulsatility < this.CONFIG.MIN_PULSATILITY) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, pulsatility,
-        `❌ Pulsatilidad ${(pulsatility*100).toFixed(2)}% (mín ${this.CONFIG.MIN_PULSATILITY*100}%) - OBJETO INERTE, no hay pulso`
-      );
-    }
-    
-    // Verificar pulsatilidad no excesiva (sería movimiento, no pulso)
-    if (pulsatility > this.CONFIG.MAX_PULSATILITY) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, pulsatility,
-        `❌ Variación ${(pulsatility*100).toFixed(1)}% excesiva - Movimiento detectado, mantenga quieto`
-      );
-    }
-
     // ═══════════════════════════════════════════════════════════════════════
-    // FASE 3: VERIFICAR RITMO CARDÍACO REAL
+    // PASO 4: MÁQUINA DE ESTADOS
     // ═══════════════════════════════════════════════════════════════════════
-    
-    const rhythmAnalysis = this.analyzeCardiacRhythm();
-    
-    if (!rhythmAnalysis.isValid) {
-      this.handleNonDetection();
-      return this.createResult(false, 0, 0, redValue, greenValue, blueValue, rgRatio, false, pulsatility,
-        `❌ ${rhythmAnalysis.message} - No es ritmo cardíaco válido`
-      );
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // TODAS LAS VALIDACIONES PASARON - DEDO HUMANO VIVO CONFIRMADO
-    // ═══════════════════════════════════════════════════════════════════════
-    this.handleDetection();
-    
-    const confidence = this.calculateConfidence(redValue, pulsatility, rhythmAnalysis.bpm);
-    const quality = this.calculateQuality(redValue, pulsatility, rhythmAnalysis.consistency);
-    
-    const message = this.lastDetectionState 
-      ? `✅ DEDO VIVO (R=${redValue.toFixed(0)}, AC=${(pulsatility*100).toFixed(2)}%, ~${rhythmAnalysis.bpm.toFixed(0)} BPM)`
-      : `⏳ Confirmando (${this.consecutiveDetections}/${this.CONFIG.FRAMES_TO_CONFIRM})...`;
-    
-    const result = this.createResult(
-      this.lastDetectionState, 
-      confidence, 
-      quality, 
-      redValue, greenValue, blueValue, rgRatio, 
-      true, pulsatility,
-      message
-    );
-    
-    // CACHE: Guardar resultado
-    this.cachedResult = result;
-    this.lastAnalysisTime = now;
-    
-    return result;
-  }
-
-  /**
-   * Calcular pulsatilidad REAL usando análisis de componentes AC/DC
-   * Filtra ruido y detecta solo variación rítmica
-   */
-  private calculateRealPulsatility(): number {
-    if (this.redHistory.length < 30) return 0;
-    
-    const samples = this.redHistory.slice(-90); // Últimos 3 segundos
-    
-    // Calcular componente DC (media móvil)
-    const dc = samples.reduce((a, b) => a + b, 0) / samples.length;
-    if (dc < 10) return 0;
-    
-    // Calcular componente AC usando desviación estándar robusta
-    // Esto es más resistente al ruido que max-min
-    const squaredDiffs = samples.map(s => Math.pow(s - dc, 2));
-    const variance = squaredDiffs.reduce((a, b) => a + b, 0) / samples.length;
-    const stdDev = Math.sqrt(variance);
-    
-    // La amplitud AC es aproximadamente 2 * stdDev para señal sinusoidal
-    const acEstimate = stdDev * 2;
-    
-    // Pulsatilidad = AC / DC
-    return acEstimate / dc;
-  }
-
-  /**
-   * Analizar si hay ritmo cardíaco real en la señal
-   * Detecta picos y verifica frecuencia en rango fisiológico
-   * MODIFICADO: Más permisivo con menos muestras para recuperación rápida
-   */
-  private analyzeCardiacRhythm(): { isValid: boolean; bpm: number; consistency: number; message: string } {
-    // REDUCIDO: Solo necesitar 30 muestras (~1s) en lugar de 60
-    // Esto permite recuperación mucho más rápida después de cortes
-    if (this.redHistory.length < 30 || this.timestampHistory.length < 30) {
-      // Si ya teníamos detección confirmada, ser MÁS permisivo
-      if (this.lastDetectionState && this.redHistory.length >= 15) {
-        // Con detección previa, aceptar con menos datos
-        return { isValid: true, bpm: 70, consistency: 0.5, message: "Recuperando..." };
-      }
-      return { isValid: false, bpm: 0, consistency: 0, message: "Datos insuficientes" };
-    }
-    
-    const samples = this.redHistory.slice(-90);
-    const timestamps = this.timestampHistory.slice(-90);
-    
-    // Calcular media y umbral para detección de picos
-    const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
-    const stdDev = Math.sqrt(
-      samples.reduce((sum, s) => sum + Math.pow(s - mean, 2), 0) / samples.length
-    );
-    
-    // Umbral adaptativo: media + 0.3 * desviación
-    const peakThreshold = mean + stdDev * 0.3;
-    
-    // Detectar picos (máximos locales sobre el umbral)
-    const peakIndices: number[] = [];
-    for (let i = 3; i < samples.length - 3; i++) {
-      const window = samples.slice(i - 3, i + 4);
-      const maxInWindow = Math.max(...window);
+    if (colorCheck.isValid) {
+      this.badFrameCount = 0;
+      this.goodFrameCount++;
       
-      // Es pico si es el máximo local y está sobre el umbral
-      if (samples[i] === maxInWindow && samples[i] > peakThreshold) {
-        // Evitar picos muy cercanos (mínimo 250ms = 240 BPM)
-        if (peakIndices.length === 0 || 
-            timestamps[i] - timestamps[peakIndices[peakIndices.length - 1]] > 250) {
-          peakIndices.push(i);
-        }
+      // Confirmar si suficientes frames buenos
+      if (this.goodFrameCount >= this.CONFIG.FRAMES_TO_CONFIRM) {
+        this.isConfirmed = true;
       }
-    }
-    
-    // Necesitamos mínimo 3 picos para calcular ritmo
-    if (peakIndices.length < this.CONFIG.MIN_PEAKS_FOR_RHYTHM) {
-      return { 
-        isValid: false, 
-        bpm: 0, 
-        consistency: 0, 
-        message: `Solo ${peakIndices.length} picos (mín ${this.CONFIG.MIN_PEAKS_FOR_RHYTHM})` 
-      };
-    }
-    
-    // Calcular intervalos entre picos (R-R intervals)
-    const intervals: number[] = [];
-    for (let i = 1; i < peakIndices.length; i++) {
-      const interval = timestamps[peakIndices[i]] - timestamps[peakIndices[i-1]];
-      intervals.push(interval);
-    }
-    
-    // Calcular BPM promedio
-    const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const bpm = 60000 / avgInterval;
-    
-    // Verificar que BPM esté en rango fisiológico
-    if (bpm < this.CONFIG.MIN_HEART_RATE_BPM || bpm > this.CONFIG.MAX_HEART_RATE_BPM) {
-      return { 
-        isValid: false, 
-        bpm, 
-        consistency: 0, 
-        message: `BPM=${bpm.toFixed(0)} fuera de rango (${this.CONFIG.MIN_HEART_RATE_BPM}-${this.CONFIG.MAX_HEART_RATE_BPM})` 
-      };
-    }
-    
-    // Verificar consistencia de intervalos (HRV no debe ser extrema)
-    const intervalVariation = Math.sqrt(
-      intervals.reduce((sum, i) => sum + Math.pow(i - avgInterval, 2), 0) / intervals.length
-    ) / avgInterval;
-    
-    if (intervalVariation > this.CONFIG.MAX_RR_VARIATION) {
-      return { 
-        isValid: false, 
-        bpm, 
-        consistency: 1 - intervalVariation, 
-        message: `Ritmo irregular (var=${(intervalVariation*100).toFixed(0)}%)` 
-      };
-    }
-    
-    // Ritmo cardíaco válido
-    const consistency = 1 - intervalVariation;
-    return { isValid: true, bpm, consistency, message: "OK" };
-  }
-
-  private handleDetection(): void {
-    this.consecutiveDetections++;
-    this.consecutiveNonDetections = 0;
-    
-    if (this.consecutiveDetections >= this.CONFIG.FRAMES_TO_CONFIRM) {
-      // Log solo en cambio de estado
-      if (!this.lastDetectionState && this.logCounter % this.LOG_INTERVAL === 0) {
-        console.log("✅ DEDO DETECTADO");
-      }
-      this.lastDetectionState = true;
-    }
-  }
-
-  private handleNonDetection(): void {
-    this.consecutiveNonDetections++;
-    
-    // ULTRA ESTABLE: Una vez confirmado, mantener detección por mucho más tiempo
-    // Solo decrementar MUY gradualmente después de MUCHAS no-detecciones
-    if (this.consecutiveDetections > 0 && this.lastDetectionState) {
-      // Ya confirmado: decrementar solo cada 15 no-detecciones (ultra firme)
-      if (this.consecutiveNonDetections % 15 === 0) {
-        this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
-      }
-    } else if (this.consecutiveDetections > 0) {
-      // Aún no confirmado: decrementar cada 5 (más permisivo que antes)
-      if (this.consecutiveNonDetections % 5 === 0) {
-        this.consecutiveDetections = Math.max(0, this.consecutiveDetections - 1);
-      }
-    }
-    
-    // Solo perder detección después de MUCHOS frames sin dedo
-    if (this.consecutiveNonDetections >= this.CONFIG.FRAMES_TO_LOSE) {
-      if (this.lastDetectionState) {
-        // NO hacer softReset aquí - dejar historial para recuperación rápida
-        this.consecutiveDetections = 0; // Solo resetear contador
-      }
-      this.lastDetectionState = false;
-    }
-  }
-
-  /**
-   * Reset suave - limpia historial pero mantiene estado de detección
-   */
-  softReset(): void {
-    this.redHistory = [];
-    this.timestampHistory = [];
-    this.pulsatilityHistory = [];
-    this.detectedPeaks = [];
-    this.detectedValleys = [];
-    this.lastRedValue = 0; // CRÍTICO: También resetear para nueva detección limpia
-  }
-
-  private updateHistory(redValue: number, timestamp: number): void {
-    // CRÍTICO: Solo limpiar historial en transiciones MUY claras
-    // La variación normal de pulso es 20-80 unidades - NO debe limpiar
-    const redDelta = Math.abs(redValue - this.lastRedValue);
-    
-    // Solo limpiar si:
-    // 1. El cambio es ENORME (>150 unidades)
-    // 2. Y hay una transición clara ON->OFF o OFF->ON
-    const wasFingerOff = this.lastRedValue > 0 && this.lastRedValue < this.CONFIG.MIN_RED_VALUE * 0.4;
-    const isFingerNowOn = redValue >= this.CONFIG.MIN_RED_VALUE;
-    const wasFingerOn = this.lastRedValue >= this.CONFIG.MIN_RED_VALUE;
-    const isFingerNowOff = redValue < this.CONFIG.MIN_RED_VALUE * 0.4;
-    
-    // SOLO limpiar en transiciones REALES y con cambio muy grande
-    if (this.lastRedValue > 0 && redDelta > 150) {
-      if ((wasFingerOff && isFingerNowOn) || (wasFingerOn && isFingerNowOff)) {
-        // Transición REAL detectada - limpiar historial contaminado
-        this.redHistory = [];
-        this.timestampHistory = [];
-        this.pulsatilityHistory = [];
-      }
-    }
-    
-    this.lastRedValue = redValue;
-    
-    // SIEMPRE agregar al historial si es un valor razonable
-    // Esto asegura que el historial se mantenga para análisis de ritmo
-    if (redValue >= this.CONFIG.MIN_RED_VALUE * 0.5) {
-      this.redHistory.push(redValue);
-      this.timestampHistory.push(timestamp);
+    } else {
+      this.goodFrameCount = Math.max(0, this.goodFrameCount - 1);
+      this.badFrameCount++;
       
-      if (this.redHistory.length > this.HISTORY_SIZE) {
-        this.redHistory.shift();
-        this.timestampHistory.shift();
+      // Perder detección solo después de MUCHOS frames malos
+      if (this.badFrameCount >= this.CONFIG.FRAMES_TO_LOSE) {
+        this.isConfirmed = false;
+        this.softReset();
       }
     }
-  }
-
-  private calculateConfidence(redValue: number, pulsatility: number, bpm: number): number {
-    let confidence = 0;
     
-    // Score por calidad de rojo (0-30)
-    if (redValue >= this.CONFIG.IDEAL_RED_VALUE) {
-      confidence += 30;
-    } else if (redValue >= this.CONFIG.GOOD_RED_VALUE) {
-      confidence += 22;
+    // ═══════════════════════════════════════════════════════════════════════
+    // PASO 5: GENERAR RESULTADO
+    // ═══════════════════════════════════════════════════════════════════════
+    const isDetected = this.isConfirmed || this.goodFrameCount >= this.CONFIG.FRAMES_TO_CONFIRM;
+    
+    const confidence = isDetected ? this.calculateConfidence(redValue, pulsatility) : 0;
+    const quality = isDetected ? this.calculateQuality(redValue, pulsatility) : 0;
+    
+    let message: string;
+    if (!colorCheck.isValid) {
+      message = colorCheck.message;
+    } else if (!isDetected) {
+      message = `⏳ Confirmando... (${this.goodFrameCount}/${this.CONFIG.FRAMES_TO_CONFIRM})`;
     } else {
-      confidence += 15;
+      const pulsMsg = pulsatility > this.CONFIG.MIN_PULSATILITY 
+        ? `AC=${(pulsatility * 100).toFixed(2)}%` 
+        : 'analizando pulso';
+      message = `✅ DEDO DETECTADO (R=${redValue.toFixed(0)}, ${pulsMsg})`;
     }
     
-    // Score por pulsatilidad (0-40)
-    if (pulsatility >= this.CONFIG.IDEAL_PULSATILITY) {
-      confidence += 40;
-    } else if (pulsatility >= this.CONFIG.GOOD_PULSATILITY) {
-      confidence += 28;
-    } else {
-      confidence += 15;
-    }
-    
-    // Score por BPM en rango normal 60-100 (0-30)
-    if (bpm >= 55 && bpm <= 100) {
-      confidence += 30;
-    } else if (bpm >= 45 && bpm <= 120) {
-      confidence += 20;
-    } else {
-      confidence += 10;
-    }
-    
-    return Math.min(100, confidence);
-  }
-
-  private calculateQuality(redValue: number, pulsatility: number, consistency: number): number {
-    let quality = 0;
-    
-    // Calidad por valor rojo (0-25)
-    quality += Math.min(25, (redValue / this.CONFIG.IDEAL_RED_VALUE) * 25);
-    
-    // Calidad por pulsatilidad (0-35)
-    const pulsScore = Math.min(1, pulsatility / this.CONFIG.IDEAL_PULSATILITY);
-    quality += pulsScore * 35;
-    
-    // Calidad por consistencia del ritmo (0-40)
-    quality += consistency * 40;
-    
-    return Math.min(100, Math.max(0, quality));
-  }
-
-  private createResult(
-    detected: boolean,
-    confidence: number,
-    quality: number,
-    redValue: number,
-    greenValue: number,
-    blueValue: number,
-    rgRatio: number,
-    hasPulsatility: boolean,
-    pulsatilityValue: number,
-    message: string
-  ): FingerDetectionResult {
     return {
-      isFingerDetected: detected,
+      isFingerDetected: isDetected,
       confidence,
       quality,
       diagnostics: {
         redValue,
         greenValue,
         blueValue,
-        redRatio: rgRatio,
+        redRatio: greenValue > 0 ? redValue / greenValue : 0,
         isRedDominant: redValue > greenValue && redValue > blueValue,
-        isProperlyIlluminated: redValue >= this.CONFIG.GOOD_RED_VALUE,
-        hasPulsatility,
-        pulsatilityValue,
+        isProperlyIlluminated: redValue >= 140,
+        hasPulsatility: pulsatility > this.CONFIG.MIN_PULSATILITY,
+        pulsatilityValue: pulsatility,
         message
       }
     };
   }
 
-  reset(): void {
-    this.consecutiveDetections = 0;
-    this.consecutiveNonDetections = 0;
-    this.lastDetectionState = false;
-    this.redHistory = [];
-    this.timestampHistory = [];
-    this.pulsatilityHistory = [];
-    this.detectedPeaks = [];
-    this.detectedValleys = [];
-    this.logCounter = 0;
-    // CRÍTICO: Limpiar lastRedValue - CAUSA DE MEMORY LEAK
-    this.lastRedValue = 0;
+  /**
+   * VALIDACIÓN DE COLOR - Simple y directa
+   */
+  private checkColor(r: number, g: number, b: number): { isValid: boolean; message: string } {
+    // 1. Valor rojo mínimo
+    if (r < this.CONFIG.MIN_RED) {
+      return { isValid: false, message: `⚠️ Rojo=${r.toFixed(0)} bajo - Acerque la YEMA al flash` };
+    }
+    
+    // 2. Rojo debe dominar sobre verde
+    if (r - g < this.CONFIG.MIN_RED_GREEN_DIFF) {
+      return { isValid: false, message: `⚠️ Diferencia R-G=${(r-g).toFixed(0)} - No es tejido humano` };
+    }
+    
+    // 3. Rojo debe dominar sobre azul
+    if (r - b < this.CONFIG.MIN_RED_BLUE_DIFF) {
+      return { isValid: false, message: `⚠️ Diferencia R-B=${(r-b).toFixed(0)} - No es tejido humano` };
+    }
+    
+    // 4. Proporción de rojo
+    const total = r + g + b;
+    const redProp = total > 0 ? r / total : 0;
+    if (redProp < this.CONFIG.MIN_RED_PROPORTION) {
+      return { isValid: false, message: `⚠️ Rojo ${(redProp*100).toFixed(0)}% - Cubra el flash` };
+    }
+    
+    return { isValid: true, message: 'OK' };
   }
 
+  /**
+   * ACTUALIZAR HISTORIAL - Sin limpiezas innecesarias
+   */
+  private updateHistory(redValue: number, timestamp: number): void {
+    // Detectar transición muy grande (dedo puesto/quitado)
+    if (this.redHistory.length > 0) {
+      const lastRed = this.redHistory[this.redHistory.length - 1];
+      const delta = Math.abs(redValue - lastRed);
+      
+      // Solo limpiar en cambio EXTREMO (transición real)
+      if (delta > this.CONFIG.TRANSITION_THRESHOLD && this.redHistory.length > 10) {
+        // Verificar si es transición real (no variación de pulso)
+        const recentAvg = this.redHistory.slice(-10).reduce((a,b) => a+b, 0) / 10;
+        const changeFromAvg = Math.abs(redValue - recentAvg);
+        
+        if (changeFromAvg > this.CONFIG.TRANSITION_THRESHOLD) {
+          // Transición real - limpiar parcialmente (mantener algunos datos)
+          this.redHistory = this.redHistory.slice(-15);
+        }
+      }
+    }
+    
+    // Agregar al historial
+    this.redHistory.push(redValue);
+    this.lastTimestamp = timestamp;
+    
+    // Mantener tamaño
+    if (this.redHistory.length > this.HISTORY_SIZE) {
+      this.redHistory.shift();
+    }
+  }
+
+  /**
+   * CALCULAR PULSATILIDAD - EMA robusto
+   */
+  private calculatePulsatility(): number {
+    if (this.redHistory.length < 15) {
+      return this.pulsatilityEMA; // Retornar último valor conocido
+    }
+    
+    const samples = this.redHistory.slice(-30);
+    
+    // DC = promedio
+    const dc = samples.reduce((a, b) => a + b, 0) / samples.length;
+    if (dc < 10) return 0;
+    
+    // AC = desviación estándar * 2
+    const variance = samples.reduce((sum, s) => sum + Math.pow(s - dc, 2), 0) / samples.length;
+    const ac = Math.sqrt(variance) * 2;
+    
+    // Pulsatilidad instantánea
+    const instantPulsatility = ac / dc;
+    
+    // Suavizar con EMA
+    this.pulsatilityEMA = this.EMA_ALPHA * instantPulsatility + (1 - this.EMA_ALPHA) * this.pulsatilityEMA;
+    
+    return this.pulsatilityEMA;
+  }
+
+  /**
+   * CALCULAR CONFIANZA (0-100)
+   */
+  private calculateConfidence(redValue: number, pulsatility: number): number {
+    let confidence = 50; // Base
+    
+    // Por valor rojo (hasta +25)
+    if (redValue >= 180) confidence += 25;
+    else if (redValue >= 140) confidence += 18;
+    else if (redValue >= 100) confidence += 10;
+    
+    // Por pulsatilidad (hasta +25)
+    if (pulsatility >= this.CONFIG.GOOD_PULSATILITY) confidence += 25;
+    else if (pulsatility >= this.CONFIG.MIN_PULSATILITY) confidence += 15;
+    
+    return Math.min(100, confidence);
+  }
+
+  /**
+   * CALCULAR CALIDAD (0-100)
+   */
+  private calculateQuality(redValue: number, pulsatility: number): number {
+    let quality = 40; // Base
+    
+    // Por valor rojo (hasta +30)
+    quality += Math.min(30, (redValue / 200) * 30);
+    
+    // Por pulsatilidad (hasta +30)
+    const pulsScore = Math.min(1, pulsatility / this.CONFIG.GOOD_PULSATILITY);
+    quality += pulsScore * 30;
+    
+    return Math.min(100, Math.max(0, quality));
+  }
+
+  /**
+   * RESET SUAVE - Mantiene estado de confirmación
+   */
+  private softReset(): void {
+    this.redHistory = [];
+    this.pulsatilityEMA = 0;
+  }
+
+  /**
+   * RESET COMPLETO
+   */
+  reset(): void {
+    this.isConfirmed = false;
+    this.goodFrameCount = 0;
+    this.badFrameCount = 0;
+    this.redHistory = [];
+    this.pulsatilityEMA = 0;
+    this.lastTimestamp = 0;
+  }
+
+  /**
+   * GETTERS
+   */
   isCurrentlyDetected(): boolean {
-    return this.lastDetectionState;
+    return this.isConfirmed;
   }
   
   getRedHistory(): number[] {
@@ -586,6 +315,6 @@ export class HumanFingerDetector {
   }
   
   getPulsatility(): number {
-    return this.calculateRealPulsatility();
+    return this.pulsatilityEMA;
   }
 }
