@@ -1,13 +1,15 @@
 /**
  * PROCESADOR DE LATIDOS CARDÍACOS - CON AUDIO MEJORADO
+ * 
+ * Calibración v2: Umbrales ajustados para BPM más precisos
  */
 export class HeartBeatProcessor {
-  // Configuración fisiológica
+  // Configuración fisiológica - MÁS ESTRICTA
   private readonly MIN_BPM = 45;
-  private readonly MAX_BPM = 170;
-  private readonly MIN_PEAK_INTERVAL_MS = 353;
+  private readonly MAX_BPM = 150; // Reducido de 170
+  private readonly MIN_PEAK_INTERVAL_MS = 400;  // Aumentado de 353 (150 BPM máx)
   private readonly MAX_PEAK_INTERVAL_MS = 1333;
-  private readonly WARMUP_TIME_MS = 2000;
+  private readonly WARMUP_TIME_MS = 2500; // Aumentado de 2000
   
   // Buffers
   private signalBuffer: number[] = [];
@@ -33,12 +35,12 @@ export class HeartBeatProcessor {
   // RR intervals
   private rrIntervals: number[] = [];
   
-  // Detección de movimiento
-  private readonly MOTION_THRESHOLD = 15;
-  private readonly MOTION_COOLDOWN_MS = 400;
+  // Detección de movimiento - MÁS SENSIBLE
+  private readonly MOTION_THRESHOLD = 12;  // Reducido de 15
+  private readonly MOTION_COOLDOWN_MS = 500; // Aumentado de 400
   private lastMotionTime: number = 0;
   private consecutiveStableFrames: number = 0;
-  private readonly MIN_STABLE_FRAMES = 8;
+  private readonly MIN_STABLE_FRAMES = 12; // Aumentado de 8
   private lastNormalizedValue: number = 0;
   
   // Audio
