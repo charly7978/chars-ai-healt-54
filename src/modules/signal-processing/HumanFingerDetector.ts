@@ -179,6 +179,11 @@ export class HumanFingerDetector {
     // Calcular pulsatilidad (componente AC/DC)
     const pulsatility = this.calculateRealPulsatility();
     
+    // Log de diagnóstico cada 30 frames (~1s)
+    if (this.redHistory.length % 30 === 0) {
+      console.log(`📈 Pulsatilidad: ${(pulsatility*100).toFixed(3)}% (mín: ${this.CONFIG.MIN_PULSATILITY*100}%, máx: ${this.CONFIG.MAX_PULSATILITY*100}%)`);
+    }
+    
     // Verificar pulsatilidad mínima
     if (pulsatility < this.CONFIG.MIN_PULSATILITY) {
       this.handleNonDetection();
