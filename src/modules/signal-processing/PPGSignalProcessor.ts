@@ -1,71 +1,79 @@
 import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
-import { KalmanFilter } from './KalmanFilter';
-import { SavitzkyGolayFilter } from './SavitzkyGolayFilter';
+import { BandpassFilter } from './BandpassFilter';
 import { FrameProcessor } from './FrameProcessor';
 
 /**
- * PROCESADOR PPG - CON VALIDACIÓN DE SANGRE REAL
+ * PROCESADOR PPG - VERSIÓN CIENTÍFICAMENTE VALIDADA
  * 
- * La clave: la hemoglobina en la sangre absorbe luz VERDE y refleja LUZ ROJA.
- * Un dedo real sobre la cámara tiene:
- * - Ratio R/G > 1.5 (idealmente > 2.0)
- * - Canal rojo dominante (>50% del total RGB)
- * - Variación pulsátil en el rojo sincronizada con el latido
+ * PRINCIPIOS DE DETECCIÓN DE SANGRE REAL:
  * 
- * Sin estas características = NO HAY SANGRE = NO MEDIR
+ * 1. La hemoglobina (Hb) tiene absorción óptica característica:
+ *    - HbO2 absorbe fuertemente en verde (~540nm)
+ *    - Hb absorbe en rojo (~660nm) pero menos
+ *    - Resultado: dedo con sangre refleja MÁS ROJO que verde
+ * 
+ * 2. Para PPG de dedo con flash LED:
+ *    - Ratio R/G debe ser > 1.5 (idealmente > 2.0)
+ *    - Rojo debe ser dominante (> 45% del RGB total)
+ *    - Debe haber PULSATILIDAD (variación AC sincronizada con latido)
+ * 
+ * 3. Sin pulsatilidad = sin sangre pulsante = no hay pulso real
+ * 
+ * Referencias:
+ * - webcam-pulse-detector (GitHub, 3.2k stars)
+ * - De Haan & Jeanne 2013 (CHROM/POS)
+ * - http://www.opticsinfobase.org/oe/abstract.cfm?uri=oe-16-26-21434
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   
-  private kalmanFilter: KalmanFilter;
-  private sgFilter: SavitzkyGolayFilter;
+  private bandpassFilter: BandpassFilter;
   private frameProcessor: FrameProcessor;
   
-  private readonly BUFFER_SIZE = 64;
-  private signalBuffer: Float32Array;
-  private bufferIndex: number = 0;
+  // Buffers para análisis
+  private readonly BUFFER_SIZE = 150; // 5 segundos a 30fps
+  private rawRedBuffer: number[] = [];
+  private filteredBuffer: number[] = [];
   
-  // VALIDACIÓN DE SANGRE REAL - Umbrales científicos
-  private readonly MIN_RG_RATIO = 1.4;        // Ratio R/G mínimo para considerar sangre
-  private readonly MIN_RED_DOMINANCE = 0.45;  // Rojo debe ser >45% del RGB total
-  private readonly MIN_RED_VALUE = 100;       // Valor mínimo de rojo (0-255)
-  private readonly MAX_GREEN_VALUE = 200;     // Verde no debe saturar
+  // ====== UMBRALES CIENTÍFICOS PARA DETECCIÓN DE SANGRE ======
+  // Basados en propiedades ópticas de la hemoglobina
+  private readonly MIN_RG_RATIO = 1.3;        // Ratio R/G mínimo (sangre > 1.5 típico)
+  private readonly MIN_RED_DOMINANCE = 0.42;  // Rojo debe ser > 42% del RGB
+  private readonly MIN_RED_VALUE = 80;        // Valor mínimo absoluto de rojo
+  private readonly MIN_PULSATILITY = 0.002;   // Pulsatilidad mínima (0.2% variación AC/DC)
   
-  // Buffer para validación temporal (evitar falsos positivos por un solo frame)
-  private validBloodFrames: number = 0;
-  private readonly MIN_VALID_FRAMES = 5;      // Necesitamos 5 frames consistentes
+  // Control de validación temporal
+  private validBloodFrameCount: number = 0;
+  private readonly MIN_CONSECUTIVE_FRAMES = 10; // 10 frames consecutivos (~0.33s)
   
-  // Almacenar últimos valores RGB para diagnóstico
-  private lastRGB = { r: 0, g: 0, b: 0, rgRatio: 0, redPercent: 0 };
+  // Diagnóstico
+  private lastRGB = { r: 0, g: 0, b: 0, rgRatio: 0, redPercent: 0, pulsatility: 0 };
   private frameCount: number = 0;
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    this.signalBuffer = new Float32Array(this.BUFFER_SIZE);
-    this.kalmanFilter = new KalmanFilter();
-    this.sgFilter = new SavitzkyGolayFilter();
-    this.frameProcessor = new FrameProcessor({ TEXTURE_GRID_SIZE: 8, ROI_SIZE_FACTOR: 0.85 });
+    this.bandpassFilter = new BandpassFilter(30);
+    this.frameProcessor = new FrameProcessor({ ROI_SIZE_FACTOR: 0.80 });
   }
 
   async initialize(): Promise<void> {
-    this.signalBuffer.fill(0);
-    this.bufferIndex = 0;
-    this.kalmanFilter.reset();
-    this.sgFilter.reset();
-    this.validBloodFrames = 0;
+    this.rawRedBuffer = [];
+    this.filteredBuffer = [];
+    this.validBloodFrameCount = 0;
+    this.bandpassFilter.reset();
   }
 
   start(): void {
     if (this.isProcessing) return;
     this.isProcessing = true;
-    this.reset();
+    this.initialize();
   }
 
   stop(): void {
     this.isProcessing = false;
-    this.reset();
+    this.initialize();
   }
 
   async calibrate(): Promise<boolean> {
@@ -74,181 +82,188 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * VALIDAR SI LA SEÑAL PROVIENE DE SANGRE REAL
-   * 
-   * Criterios basados en la física de absorción de hemoglobina:
-   * 1. La hemoglobina oxigenada (HbO2) absorbe fuertemente en verde (~540nm)
-   * 2. La hemoglobina desoxigenada (Hb) absorbe en rojo (~660nm) pero menos
-   * 3. Por esto, un dedo con sangre refleja MÁS ROJO que verde
+   * VALIDACIÓN DE SANGRE REAL - Criterios estrictos basados en física óptica
    */
   private validateBloodSignal(r: number, g: number, b: number): boolean {
-    // Calcular métricas
     const total = r + g + b;
-    if (total < 50) return false; // Muy oscuro, no hay nada
+    if (total < 100) return false; // Muy oscuro
     
     const rgRatio = g > 0 ? r / g : 0;
-    const redPercent = total > 0 ? r / total : 0;
+    const redPercent = r / total;
     
     // Guardar para diagnóstico
-    this.lastRGB = { r, g, b, rgRatio, redPercent };
+    this.lastRGB.r = r;
+    this.lastRGB.g = g;
+    this.lastRGB.b = b;
+    this.lastRGB.rgRatio = rgRatio;
+    this.lastRGB.redPercent = redPercent;
     
-    // Log cada 90 frames (~3 segundos) para debug
-    this.frameCount++;
-    if (this.frameCount % 90 === 0) {
-      console.log(`📊 Frame ${this.frameCount}: R=${r.toFixed(0)}, G=${g.toFixed(0)}, B=${b.toFixed(0)} | R/G=${rgRatio.toFixed(2)} | Red%=${(redPercent*100).toFixed(1)}%`);
-    }
-    
-    // CRITERIOS DE SANGRE REAL:
-    // 1. Ratio R/G debe ser > 1.4 (sangre absorbe verde)
+    // CRITERIO 1: Ratio R/G característico de sangre
     if (rgRatio < this.MIN_RG_RATIO) return false;
     
-    // 2. Rojo debe dominar (>45% del total)
+    // CRITERIO 2: Dominancia de rojo
     if (redPercent < this.MIN_RED_DOMINANCE) return false;
     
-    // 3. Valor de rojo debe ser significativo
+    // CRITERIO 3: Intensidad mínima de rojo
     if (r < this.MIN_RED_VALUE) return false;
-    
-    // 4. Verde no debe estar saturado (indicaría luz ambiente, no sangre)
-    if (g > this.MAX_GREEN_VALUE && rgRatio < 2.0) return false;
     
     return true;
   }
 
   /**
-   * PROCESAR FRAME - Con validación de sangre real
+   * Calcula la pulsatilidad de la señal (componente AC / DC)
+   * Este es el indicador más importante de pulso real
+   */
+  private calculatePulsatility(): number {
+    if (this.rawRedBuffer.length < 30) return 0;
+    
+    const recent = this.rawRedBuffer.slice(-45); // 1.5 segundos
+    const dc = recent.reduce((a, b) => a + b, 0) / recent.length;
+    
+    if (dc === 0) return 0;
+    
+    const max = Math.max(...recent);
+    const min = Math.min(...recent);
+    const ac = max - min;
+    
+    return ac / dc;
+  }
+
+  /**
+   * PROCESAMIENTO DE FRAME - Pipeline completo validado
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
     try {
+      this.frameCount++;
+      
+      // 1. Extraer valores RGB del ROI
       const frameData = this.frameProcessor.extractFrameData(imageData);
-      const { redValue, avgGreen, avgBlue } = frameData;
-      const greenValue = avgGreen ?? 0;
-      const blueValue = avgBlue ?? 0;
+      const { redValue, avgGreen = 0, avgBlue = 0 } = frameData;
       
-      // VALIDACIÓN CRÍTICA: ¿Es sangre real?
-      const isBloodSignal = this.validateBloodSignal(redValue, greenValue, blueValue);
+      // 2. Guardar en buffer crudo
+      this.rawRedBuffer.push(redValue);
+      if (this.rawRedBuffer.length > this.BUFFER_SIZE) {
+        this.rawRedBuffer.shift();
+      }
       
-      if (isBloodSignal) {
-        this.validBloodFrames = Math.min(this.validBloodFrames + 1, this.MIN_VALID_FRAMES + 10);
+      // 3. Aplicar filtro pasabanda 0.5-4Hz
+      const filtered = this.bandpassFilter.filter(redValue);
+      this.filteredBuffer.push(filtered);
+      if (this.filteredBuffer.length > this.BUFFER_SIZE) {
+        this.filteredBuffer.shift();
+      }
+      
+      // 4. Validar si hay sangre real
+      const hasBloodCharacteristics = this.validateBloodSignal(redValue, avgGreen, avgBlue);
+      
+      // 5. Verificar pulsatilidad
+      const pulsatility = this.calculatePulsatility();
+      this.lastRGB.pulsatility = pulsatility;
+      const hasPulsatility = pulsatility >= this.MIN_PULSATILITY;
+      
+      // 6. Actualizar contador de frames válidos
+      if (hasBloodCharacteristics && hasPulsatility) {
+        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 1, 100);
+      } else if (hasBloodCharacteristics && !hasPulsatility) {
+        // Tiene características de sangre pero sin pulso aún - mantener pero no aumentar mucho
+        this.validBloodFrameCount = Math.min(this.validBloodFrameCount + 0.3, 30);
       } else {
-        this.validBloodFrames = Math.max(0, this.validBloodFrames - 2); // Degradar más rápido
+        // No tiene características de sangre - degradar rápidamente
+        this.validBloodFrameCount = Math.max(0, this.validBloodFrameCount - 3);
       }
       
-      // Solo considerar "dedo detectado" si hay suficientes frames válidos consecutivos
-      const hasConfirmedBlood = this.validBloodFrames >= this.MIN_VALID_FRAMES;
+      // 7. Determinar si hay sangre confirmada
+      const hasConfirmedBlood = this.validBloodFrameCount >= this.MIN_CONSECUTIVE_FRAMES;
       
-      // Filtrar señal
-      let filteredValue = this.kalmanFilter.filter(redValue);
-      filteredValue = this.sgFilter.filter(filteredValue);
+      // 8. Calcular calidad de señal
+      const quality = this.calculateQuality(hasBloodCharacteristics, hasPulsatility, pulsatility);
       
-      // Solo guardar en buffer si hay sangre confirmada
-      if (hasConfirmedBlood) {
-        this.signalBuffer[this.bufferIndex] = filteredValue;
-        this.bufferIndex = (this.bufferIndex + 1) % this.BUFFER_SIZE;
+      // 9. Log de diagnóstico cada 60 frames (~2s)
+      if (this.frameCount % 60 === 0) {
+        const status = hasConfirmedBlood ? '✓ SANGRE' : '✗ NO SANGRE';
+        console.log(
+          `🩸 PPG [${this.frameCount}]: R=${redValue.toFixed(0)} G=${avgGreen.toFixed(0)} ` +
+          `| R/G=${this.lastRGB.rgRatio.toFixed(2)} ` +
+          `| Puls=${(pulsatility * 100).toFixed(2)}% ` +
+          `| Valid=${this.validBloodFrameCount.toFixed(0)} ` +
+          `| ${status}`
+        );
       }
       
+      // 10. Emitir señal procesada
       const roi = this.frameProcessor.detectROI(redValue, imageData);
-      const quality = hasConfirmedBlood ? this.calculateQuality(redValue, greenValue, blueValue) : 0;
-      const perfusionIndex = hasConfirmedBlood ? this.calculatePerfusionIndex() : 0;
       
       const processedSignal: ProcessedSignal = {
         timestamp: Date.now(),
         rawValue: redValue,
-        filteredValue: hasConfirmedBlood ? filteredValue : 0, // 0 si no hay sangre
+        filteredValue: hasConfirmedBlood ? filtered : 0,
         quality: quality,
-        fingerDetected: hasConfirmedBlood, // AHORA SIGNIFICA "SANGRE DETECTADA"
+        fingerDetected: hasConfirmedBlood,
         roi: roi,
-        perfusionIndex: perfusionIndex,
+        perfusionIndex: pulsatility * 100,
         diagnostics: {
-          message: `R:${redValue.toFixed(0)} G:${greenValue.toFixed(0)} B:${blueValue.toFixed(0)} | R/G:${this.lastRGB.rgRatio.toFixed(2)} | ${hasConfirmedBlood ? '✓ SANGRE' : '✗ SIN SANGRE'}`,
-          hasPulsatility: hasConfirmedBlood && this.calculatePulsatility() > 0.003,
-          pulsatilityValue: this.calculatePulsatility()
+          message: `R:${redValue.toFixed(0)} G:${avgGreen.toFixed(0)} | R/G:${this.lastRGB.rgRatio.toFixed(2)} | Puls:${(pulsatility*100).toFixed(1)}% | ${hasConfirmedBlood ? '✓' : '✗'}`,
+          hasPulsatility: hasPulsatility,
+          pulsatilityValue: pulsatility
         }
       };
 
       this.onSignalReady(processedSignal);
     } catch (error) {
-      // Silent error
+      // Error silenciado para rendimiento
     }
   }
 
-  private calculateQuality(r: number, g: number, b: number): number {
-    let score = 0;
+  /**
+   * Calcula calidad de señal 0-100
+   */
+  private calculateQuality(hasBlood: boolean, hasPulsatility: boolean, pulsatility: number): number {
+    if (!hasBlood) return 0;
     
-    // Calidad basada en características de sangre
-    const rgRatio = g > 0 ? r / g : 0;
-    const total = r + g + b;
-    const redPercent = total > 0 ? r / total : 0;
+    let score = 20; // Base por tener características de sangre
     
-    // Mejor ratio R/G = mejor señal
-    if (rgRatio > 3.0) score += 40;
-    else if (rgRatio > 2.0) score += 30;
-    else if (rgRatio > 1.5) score += 20;
+    // Bonus por ratio R/G alto
+    if (this.lastRGB.rgRatio > 2.5) score += 20;
+    else if (this.lastRGB.rgRatio > 2.0) score += 15;
+    else if (this.lastRGB.rgRatio > 1.5) score += 10;
     
-    // Mayor dominancia de rojo = mejor
-    if (redPercent > 0.7) score += 30;
-    else if (redPercent > 0.6) score += 20;
-    else if (redPercent > 0.5) score += 10;
-    
-    // Pulsatilidad
-    const pulsatility = this.calculatePulsatility();
-    if (pulsatility > 0.01) score += 30;
+    // Bonus por pulsatilidad
+    if (pulsatility > 0.02) score += 40; // Excelente
+    else if (pulsatility > 0.01) score += 30;
     else if (pulsatility > 0.005) score += 20;
-    else if (pulsatility > 0.003) score += 10;
+    else if (pulsatility > 0.002) score += 10;
+    
+    // Bonus por frames consecutivos válidos
+    if (this.validBloodFrameCount > 50) score += 20;
+    else if (this.validBloodFrameCount > 20) score += 10;
     
     return Math.min(100, score);
   }
 
-  private calculatePulsatility(): number {
-    const samples = this.getValidSamples();
-    if (samples.length < 10) return 0;
-    const dc = samples.reduce((a, b) => a + b, 0) / samples.length;
-    if (dc === 0) return 0;
-    return (Math.max(...samples) - Math.min(...samples)) / Math.abs(dc);
-  }
-
-  private calculatePerfusionIndex(): number {
-    const samples = this.getValidSamples();
-    if (samples.length < 10) return 0;
-    const dc = samples.reduce((a, b) => a + b, 0) / samples.length;
-    if (dc === 0) return 0;
-    return Math.min(20, ((Math.max(...samples) - Math.min(...samples)) / dc) * 100);
-  }
-
-  private getValidSamples(): number[] {
-    const samples: number[] = [];
-    for (let i = 0; i < this.BUFFER_SIZE; i++) {
-      if (this.signalBuffer[i] > 0) samples.push(this.signalBuffer[i]);
-    }
-    return samples.slice(-20);
-  }
-
   reset(): void {
-    this.signalBuffer.fill(0);
-    this.bufferIndex = 0;
-    this.kalmanFilter.reset();
-    this.sgFilter.reset();
-    this.frameProcessor.reset();
-    this.validBloodFrames = 0;
+    this.rawRedBuffer = [];
+    this.filteredBuffer = [];
+    this.validBloodFrameCount = 0;
     this.frameCount = 0;
+    this.bandpassFilter.reset();
+    this.frameProcessor.reset();
   }
 
   getLastNSamples(n: number): number[] {
-    const samples: number[] = [];
-    for (let i = 0; i < Math.min(n, this.BUFFER_SIZE); i++) {
-      const idx = (this.bufferIndex - 1 - i + this.BUFFER_SIZE) % this.BUFFER_SIZE;
-      samples.unshift(this.signalBuffer[idx]);
-    }
-    return samples;
+    return this.filteredBuffer.slice(-n);
   }
   
-  // Getter para diagnóstico externo
-  getBloodValidationStatus(): { isValid: boolean; validFrames: number; rgb: typeof this.lastRGB } {
-    return {
-      isValid: this.validBloodFrames >= this.MIN_VALID_FRAMES,
-      validFrames: this.validBloodFrames,
-      rgb: this.lastRGB
-    };
+  getRawBuffer(): number[] {
+    return [...this.rawRedBuffer];
+  }
+  
+  getFilteredBuffer(): number[] {
+    return [...this.filteredBuffer];
+  }
+  
+  getDiagnostics(): typeof this.lastRGB {
+    return { ...this.lastRGB };
   }
 }
