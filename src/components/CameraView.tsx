@@ -27,6 +27,7 @@ const CameraView: React.FC<CameraViewProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const startedRef = useRef(false);
   const calibratorRef = useRef<CameraAutoCalibrator | null>(null);
+  const torchAppliedRef = useRef(false);
 
   // Inicializar calibrador
   useEffect(() => {
@@ -185,28 +186,35 @@ const CameraView: React.FC<CameraViewProps> = ({
     return () => stopCamera();
   }, [isMonitoring]);
 
-  // Mantener torch activo y reportar estado de calibración
   useEffect(() => {
-    if (!isMonitoring) return;
+    if (!isMonitoring) {
+      torchAppliedRef.current = false;
+      return;
+    }
     
-    const interval = setInterval(() => {
-      const track = streamRef.current?.getVideoTracks()[0];
+    // Aplicar torch UNA SOLA VEZ cuando inicia
+    if (!torchAppliedRef.current && streamRef.current) {
+      const track = streamRef.current.getVideoTracks()[0];
       if (track) {
         const caps: any = track.getCapabilities?.() || {};
         if (caps.torch === true) {
-          track.applyConstraints({ advanced: [{ torch: true }] } as any).catch(() => {});
-        }
-        
-        // Reportar estado de calibración
-        if (calibratorRef.current && onCalibrationUpdate) {
-          const state = calibratorRef.current.getState();
-          onCalibrationUpdate({
-            brightness: state.currentBrightness,
-            recommendation: state.recommendation
-          });
+          track.applyConstraints({ advanced: [{ torch: true }] } as any)
+            .then(() => { torchAppliedRef.current = true; })
+            .catch(() => {});
         }
       }
-    }, 2000);
+    }
+    
+    // Reportar calibración cada 5 segundos (no cada 2s)
+    const interval = setInterval(() => {
+      if (calibratorRef.current && onCalibrationUpdate) {
+        const state = calibratorRef.current.getState();
+        onCalibrationUpdate({
+          brightness: state.currentBrightness,
+          recommendation: state.recommendation
+        });
+      }
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [isMonitoring, onCalibrationUpdate]);

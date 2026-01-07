@@ -53,14 +53,14 @@ export class CameraAutoCalibrator {
     recommendation: ''
   };
   
-  // Historial para análisis - REDUCIDO para respuesta más rápida
+  // Historial para análisis - MÍNIMO para bajo overhead
   private brightnessHistory: number[] = [];
   private pulsatilityHistory: number[] = [];
-  private readonly HISTORY_SIZE = 10; // ~166ms @ 60fps - RESPUESTA RÁPIDA
+  private readonly HISTORY_SIZE = 5; // Reducido de 10 a 5
   
-  // Timing para ajustes inmediatos
+  // Timing para ajustes - MENOS FRECUENTE para evitar bloqueos
   private lastAdjustmentTime = 0;
-  private readonly ADJUSTMENT_COOLDOWN = 100; // Solo 100ms entre ajustes
+  private readonly ADJUSTMENT_COOLDOWN = 2000; // 2 segundos entre ajustes (era 100ms)
   
   // Capacidades detectadas
   private capabilities: CameraCapabilities | null = null;
@@ -221,17 +221,16 @@ export class CameraAutoCalibrator {
     // Generar recomendación
     this.state.recommendation = this.generateRecommendation(avgBrightness, avgPulsatility);
     
-    // Auto-ajustar INMEDIATAMENTE si hay problema
+    // Auto-ajustar SOLO si hay problema CRÍTICO y suficiente tiempo ha pasado
     const now = Date.now();
     const timeSinceLastAdjust = now - this.lastAdjustmentTime;
     
-    // Ajuste RÁPIDO: cada 100ms si hay problema, sin esperar historial completo
+    // Solo ajustar si: cooldown pasó Y hay problema crítico
     if (this.currentTrack && timeSinceLastAdjust >= this.ADJUSTMENT_COOLDOWN) {
-      const needsUrgentAdjust = brightness > 200 || brightness < 40 || 
-                                avgBrightness > this.TARGET_BRIGHTNESS_MAX ||
-                                avgBrightness < this.TARGET_BRIGHTNESS_MIN;
+      // SOLO ajustar en casos CRÍTICOS (saturación extrema)
+      const needsUrgentAdjust = brightness > 220 || brightness < 30;
       
-      if (needsUrgentAdjust || this.brightnessHistory.length >= 5) {
+      if (needsUrgentAdjust) {
         this.autoAdjustExposure(avgBrightness, avgPulsatility, brightness);
         this.lastAdjustmentTime = now;
       }
