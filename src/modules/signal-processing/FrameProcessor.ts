@@ -181,10 +181,13 @@ export class FrameProcessor {
       }
     }
     
-    // Notificar al auto-calibrador para ajuste continuo
-    const calibrator = (window as any).__cameraCalibrator;
-    if (calibrator?.analyzeAndAdjust && this.frameCount % 5 === 0) {
-      calibrator.analyzeAndAdjust(avgRed, avgGreen, avgBlue, acComponent);
+    // Notificar al auto-calibrador SOLO cada 30 frames (~1s @ 30fps)
+    // Reducido de 5 a 30 para evitar overhead
+    if (this.frameCount % 30 === 0) {
+      const calibrator = (window as any).__cameraCalibrator;
+      if (calibrator?.analyzeAndAdjust) {
+        calibrator.analyzeAndAdjust(avgRed, avgGreen, avgBlue, acComponent);
+      }
     }
     
     return {
