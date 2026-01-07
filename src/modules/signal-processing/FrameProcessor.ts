@@ -14,13 +14,17 @@ import { ProcessedSignal } from '../../types/signal';
  */
 export class FrameProcessor {
   // ROI grande para capturar toda la yema del dedo
-  private readonly ROI_SIZE_FACTOR: number = 0.95;
+  private readonly ROI_SIZE_FACTOR: number = 0.85;
   
   // Buffer para análisis temporal de la señal
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
   private blueBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 30;
+  private readonly BUFFER_SIZE = 60; // 2 segundos a 30fps
+  
+  // Log de valores cada N frames para debug
+  private frameCount = 0;
+  private readonly LOG_EVERY = 90; // Log cada 3 segundos
   
   constructor(config?: { TEXTURE_GRID_SIZE?: number, ROI_SIZE_FACTOR?: number }) {
     if (config?.ROI_SIZE_FACTOR) {
@@ -70,6 +74,14 @@ export class FrameProcessor {
     const avgRed = pixelCount > 0 ? redSum / pixelCount : 0;
     const avgGreen = pixelCount > 0 ? greenSum / pixelCount : 0;
     const avgBlue = pixelCount > 0 ? blueSum / pixelCount : 0;
+    
+    // Log de diagnóstico cada N frames
+    this.frameCount++;
+    if (this.frameCount % this.LOG_EVERY === 0) {
+      const rgRatio = avgGreen > 0 ? (avgRed / avgGreen).toFixed(2) : 'N/A';
+      const redPct = (avgRed / (avgRed + avgGreen + avgBlue) * 100).toFixed(1);
+      console.log(`📊 Frame ${this.frameCount}: R=${avgRed.toFixed(0)}, G=${avgGreen.toFixed(0)}, B=${avgBlue.toFixed(0)} | R/G=${rgRatio} | Red%=${redPct}%`);
+    }
     
     // Actualizar buffers para análisis temporal
     this.updateBuffers(avgRed, avgGreen, avgBlue);
@@ -165,5 +177,6 @@ export class FrameProcessor {
     this.redBuffer = [];
     this.greenBuffer = [];
     this.blueBuffer = [];
+    this.frameCount = 0;
   }
 }
