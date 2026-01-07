@@ -314,83 +314,76 @@ export class SignalQualityAnalyzer {
     dcLevel: number
   ): number {
     // Sin RGB no podemos detectar dedo físicamente
-    if (!rgbData || this.redBuffer.length < 15) {
-      return 0.3; // Valor neutro
+    if (!rgbData || this.redBuffer.length < 10) {
+      return 0.2; // Valor bajo por defecto - NO asumir que hay dedo
     }
     
     let confidence = 0;
     const { red, green, blue } = rgbData;
     
-    // === 1. SATURACIÓN ROJA (35% del peso) ===
-    // Dedo con flash: rojo > 220 típicamente (sensor casi saturado)
-    // Pared: rojo variable, raramente tan alto
-    if (red >= 245) {
-      confidence += 0.35; // Rojo muy saturado = muy probable dedo
-    } else if (red >= 220) {
+    // === 1. RATIO R/G EXTREMO (40% del peso) ===
+    // Dedo con flash: R/G > 10-20 (sangre absorbe verde fuertemente)
+    // Pared iluminada: R/G típico 0.8-3 (refleja todos los colores más parejo)
+    const rgRatio = green > 0.1 ? red / green : (green === 0 && red > 200 ? 50 : 1);
+    
+    if (rgRatio >= 15) {
+      confidence += 0.40; // Ratio muy alto = definitivamente dedo
+    } else if (rgRatio >= 8) {
       confidence += 0.30;
-    } else if (red >= 180) {
-      confidence += 0.15;
-    } else {
-      confidence += 0; // Rojo bajo = probablemente NO es dedo
+    } else if (rgRatio >= 4) {
+      confidence += 0.10; // Zona gris
     }
+    // rgRatio < 4 = 0 puntos (probablemente NO es dedo)
     
-    // === 2. RATIO R/G (30% del peso) ===
-    // Dedo con flash: R/G típico > 10 (verde muy bajo porque la sangre lo absorbe)
-    // Pared iluminada: R/G típico 1-4
-    const rgRatio = green > 1 ? red / green : red;
-    
-    if (rgRatio >= 20) {
-      confidence += 0.30; // Ratio muy alto = definitivamente dedo
-    } else if (rgRatio >= 10) {
-      confidence += 0.25;
-    } else if (rgRatio >= 5) {
-      confidence += 0.15;
-    } else if (rgRatio >= 2) {
-      confidence += 0.05; // Ratio bajo = probablemente NO es dedo
-    }
-    // rgRatio < 2 = 0 puntos (definitivamente no es dedo)
-    
-    // === 3. VERDE MUY BAJO (15% del peso) ===
+    // === 2. VERDE MUY BAJO EN VALOR ABSOLUTO (25% del peso) ===
     // Dedo: verde < 30 típicamente (absorbido por hemoglobina)
-    // Pared: verde generalmente > 50
-    if (green <= 15) {
-      confidence += 0.15; // Verde muy bajo = dedo absorbiéndolo
+    // Pared: verde generalmente > 80 con flash
+    if (green <= 10) {
+      confidence += 0.25; // Verde casi cero = dedo absorbiéndolo
     } else if (green <= 30) {
-      confidence += 0.10;
+      confidence += 0.18;
     } else if (green <= 60) {
-      confidence += 0.05;
-    }
-    // green > 60 = 0 puntos (no es dedo)
-    
-    // === 4. PULSATILIDAD REAL (20% del peso) ===
-    // Dedo: tiene pulsatilidad AC/DC > 0.005 (0.5%)
-    // Pared: pulsatilidad ~0 (constante)
-    const pulsatility = dcLevel > 0 ? acAmplitude / dcLevel : 0;
-    
-    if (pulsatility >= 0.02) {
-      confidence += 0.20; // Buena pulsatilidad = sangre real
-    } else if (pulsatility >= 0.008) {
-      confidence += 0.15;
-    } else if (pulsatility >= 0.003) {
       confidence += 0.08;
     }
-    // pulsatility < 0.003 = 0 puntos (sin pulso real)
+    // green > 60 = 0 puntos (superficie reflectante, no dedo)
     
-    // === BONUS: Consistencia de saturación roja ===
-    // Dedo mantiene rojo alto constantemente
-    if (this.redBuffer.length >= 15) {
-      const avgRed = this.redBuffer.reduce((a, b) => a + b, 0) / this.redBuffer.length;
-      const minRed = Math.min(...this.redBuffer.slice(-15));
-      
-      // Rojo consistentemente alto
-      if (avgRed >= 240 && minRed >= 200) {
-        confidence += 0.10;
-      }
+    // === 3. PULSATILIDAD REAL Y PERIÓDICA (35% del peso) ===
+    // Dedo: tiene pulsatilidad AC/DC > 0.5% Y periodicidad > 0.2
+    // Pared: pulsatilidad ~0 o ruido sin periodicidad
+    const pulsatility = dcLevel > 0 ? acAmplitude / dcLevel : 0;
+    
+    // Combinación de pulsatilidad Y periodicidad
+    const hasPulse = pulsatility >= 0.005 && periodicity >= 0.15;
+    const hasWeakPulse = pulsatility >= 0.002 && periodicity >= 0.08;
+    
+    if (hasPulse) {
+      confidence += 0.35; // Pulso real con ritmo = sangre fluyendo
+    } else if (hasWeakPulse) {
+      confidence += 0.18; // Pulso débil pero presente
+    }
+    // Sin pulso periódico = 0 puntos (no hay sangre)
+    
+    // === PENALIZACIÓN: Señales que NO son de dedo ===
+    
+    // Si verde es alto Y ratio R/G es bajo → definitivamente NO es dedo
+    if (green > 100 && rgRatio < 3) {
+      confidence *= 0.3; // Penalización severa
+    }
+    
+    // Si todos los canales son similares (pared blanca) → NO es dedo
+    const rgbSpread = Math.max(red, green, blue) - Math.min(red, green, blue);
+    if (rgbSpread < 50 && red < 200) {
+      confidence *= 0.2; // Superficie uniforme, no es dedo
+    }
+    
+    // Si hay saturación en TODOS los canales → NO es dedo (luz directa)
+    if (red > 250 && green > 250 && blue > 250) {
+      confidence = 0.1; // Luz directa saturando sensor
     }
     
     // Log para debug (cada 3 segundos)
     if (this.frameCount % 90 === 0) {
-      console.log(`🖐️ Dedo: R=${red} G=${green} R/G=${rgRatio.toFixed(1)} puls=${(pulsatility*100).toFixed(2)}% → conf=${(confidence*100).toFixed(0)}%`);
+      console.log(`🖐️ Dedo: R=${red.toFixed(0)} G=${green.toFixed(2)} R/G=${rgRatio.toFixed(1)} puls=${(pulsatility*100).toFixed(2)}% → conf=${(confidence*100).toFixed(0)}%`);
     }
     
     return Math.max(0, Math.min(1, confidence));

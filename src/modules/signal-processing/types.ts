@@ -39,6 +39,10 @@ export interface FrameData {
   avgRed?: number;
   avgGreen?: number;
   avgBlue?: number;
+  // Valores crudos sin normalizar para detección de dedo
+  rawRed?: number;
+  rawGreen?: number;
+  rawBlue?: number;
   textureScore: number;
   rToGRatio: number;
   rToBRatio: number;
