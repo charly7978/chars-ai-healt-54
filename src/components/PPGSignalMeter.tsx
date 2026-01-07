@@ -39,23 +39,23 @@ const CONFIG = {
   GRID_MAJOR: 100,   // Líneas principales cada 100px
   GRID_MINOR: 20,    // Líneas menores cada 20px
   
-  // Procesamiento de señal PPG - CALIBRADO PARA VALORES REALES
+  // Procesamiento de señal PPG - AMPLIFICACIÓN MÁXIMA
   SIGNAL: {
-    // Normalización automática - VALORES MUY AMPLIOS para capturar cualquier señal
-    MIN_RANGE: 0.001,    // Rango mínimo muy pequeño para señales débiles
+    // Normalización automática
+    MIN_RANGE: 0.0001,   // Rango mínimo muy pequeño
     MAX_RANGE: 200,      // Rango máximo amplio
     
-    // Suavizado exponencial (0.1 = muy suave, 0.5 = más reactivo)
-    SMOOTHING: 0.12,     // Más suave para ondas limpias
+    // Suavizado exponencial (más reactivo)
+    SMOOTHING: 0.25,     // Más reactivo para ver ondas
     
-    // Línea base adaptativa (velocidad de adaptación) - MÁS LENTA
-    BASELINE_SPEED: 0.003,
+    // Línea base adaptativa
+    BASELINE_SPEED: 0.001, // Muy lenta
     
-    // Altura de onda objetivo (% del canvas) - ONDAS MÁS GRANDES
-    TARGET_AMPLITUDE: 0.35,  // 35% del alto para ondas bien visibles
+    // Altura de onda objetivo (% del canvas)
+    TARGET_AMPLITUDE: 0.40,  // 40% del alto
     
-    // AMPLIFICACIÓN FIJA para señales muy pequeñas
-    AMPLIFICATION: 150,   // Multiplicador base
+    // AMPLIFICACIÓN FIJA - MUY ALTA para señales pequeñas
+    AMPLIFICATION: 500,   // Multiplicador alto
   },
   
   // Detección de picos
@@ -291,50 +291,57 @@ const PPGSignalMeter = ({
         return;
       }
       
-      // ========== PROCESAMIENTO DE SEÑAL PPG - SIMPLIFICADO Y ROBUSTO ==========
+      // ========== PROCESAMIENTO DE SEÑAL PPG - AMPLIFICACIÓN ROBUSTA ==========
       const S = CONFIG.SIGNAL;
       
       // 1. Inicializar línea base (DC) con el primer valor
       if (proc.baseline === null) {
         proc.baseline = rawValue;
-        proc.signalMin = rawValue;
-        proc.signalMax = rawValue;
+        proc.signalMin = 0;
+        proc.signalMax = 0;
       }
       
-      // 2. Actualizar línea base MUY LENTAMENTE (sigue cambios de iluminación)
+      // 2. Actualizar línea base MUY LENTAMENTE
       proc.baseline = proc.baseline * (1 - S.BASELINE_SPEED) + rawValue * S.BASELINE_SPEED;
       
-      // 3. Suavizado exponencial de la señal
+      // 3. Suavizado exponencial
       const smoothed = proc.lastSmoothed === null 
         ? rawValue 
         : proc.lastSmoothed + S.SMOOTHING * (rawValue - proc.lastSmoothed);
       proc.lastSmoothed = smoothed;
       
-      // 4. Extraer componente AC (variación pulsátil) = señal - línea base
-      const ac = smoothed - proc.baseline;
+      // 4. Extraer componente AC (ya viene filtrado, centrado en ~0)
+      // El valor ya es la variación pulsátil, no necesitamos restar baseline
+      const ac = smoothed; // La señal filtrada YA está centrada en 0
       
-      // 5. Tracking del rango dinámico con decay
-      proc.signalMin = Math.min(proc.signalMin * 0.9995 + ac * 0.0005, ac);
-      proc.signalMax = Math.max(proc.signalMax * 0.9995 + ac * 0.0005, ac);
+      // 5. Tracking del rango dinámico con decay LENTO
+      const decayFactor = 0.998;
+      proc.signalMin = Math.min(proc.signalMin * decayFactor, ac);
+      proc.signalMax = Math.max(proc.signalMax * decayFactor, ac);
       
-      // 6. Calcular amplitud dinámica
-      const dynamicRange = Math.max(proc.signalMax - proc.signalMin, S.MIN_RANGE);
+      // 6. Calcular rango dinámico
+      const dynamicRange = Math.max(Math.abs(proc.signalMax - proc.signalMin), S.MIN_RANGE);
       
-      // 7. AMPLIFICACIÓN ADAPTATIVA: escalar para llenar TARGET_AMPLITUDE del canvas
+      // 7. AMPLIFICACIÓN para llenar el canvas
       const targetHeight = CONFIG.CANVAS_HEIGHT * S.TARGET_AMPLITUDE;
       
-      // Calcular factor de escala necesario
-      let scaleFactor = targetHeight / Math.max(dynamicRange, 0.001);
+      // Factor de escala adaptativo
+      let scaleFactor: number;
+      if (dynamicRange < 0.01) {
+        // Señal muy pequeña - usar amplificación máxima
+        scaleFactor = S.AMPLIFICATION;
+      } else {
+        // Escalar para que el rango llene targetHeight
+        scaleFactor = targetHeight / dynamicRange;
+        scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
+        scaleFactor = Math.max(scaleFactor, 20);
+      }
       
-      // Limitar el factor para evitar ruido excesivo
-      scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
-      scaleFactor = Math.max(scaleFactor, 10); // Mínimo de amplificación
-      
-      // 8. Aplicar escala (invertido: valores positivos de AC van hacia ARRIBA)
+      // 8. Aplicar escala (invertido: positivo en señal = arriba en canvas)
       const scaledValue = -ac * scaleFactor;
       
-      // 9. Clamp para evitar valores extremos
-      const maxAmplitude = targetHeight * 1.2;
+      // 9. Clamp
+      const maxAmplitude = targetHeight * 1.5;
       const clampedValue = Math.max(-maxAmplitude, Math.min(maxAmplitude, scaledValue));
       
       // Agregar punto al buffer

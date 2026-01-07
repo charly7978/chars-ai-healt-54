@@ -2,35 +2,36 @@
  * PROCESADOR DE LATIDOS CARDÍACOS - ALGORITMO ROBUSTO
  * 
  * Basado en:
- * - Umbral adaptativo (media + k*desviación)
- * - Verificación de máximo local real
- * - Período refractario fisiológico
+ * - Ventana deslizante para encontrar máximos reales
+ * - Umbral basado en percentil de amplitud
+ * - Período refractario estricto
  * 
- * Referencias:
- * - Pan-Tompkins adaptado para PPG
- * - NeuroKit2 ppg_findpeaks
+ * El algoritmo SOLO detecta un pico cuando:
+ * 1. El valor actual es el MÁXIMO en una ventana de ~200ms
+ * 2. Ha pasado el período refractario (>300ms desde último pico)
+ * 3. La amplitud supera el umbral dinámico
  */
 export class HeartBeatProcessor {
   // Configuración fisiológica
   private readonly MIN_BPM = 40;
-  private readonly MAX_BPM = 200;
-  private readonly MIN_PEAK_INTERVAL_MS = 300;  // 200 BPM máx
+  private readonly MAX_BPM = 180;
+  private readonly MIN_PEAK_INTERVAL_MS = 333;  // 180 BPM máx
   private readonly MAX_PEAK_INTERVAL_MS = 1500; // 40 BPM mín
-  private readonly WARMUP_TIME_MS = 1500;       // Warmup para acumular señal
+  private readonly WARMUP_TIME_MS = 2000;       // 2s warmup
   
-  // Buffers
-  private signalBuffer: number[] = [];
+  // Buffer de señal - guarda valores con timestamp
+  private signalBuffer: Array<{value: number, time: number}> = [];
   private readonly BUFFER_SIZE = 90; // ~3s a 30fps
+  private readonly WINDOW_SIZE = 7;  // Ventana para máximo local (~230ms a 30fps)
   
-  // Umbral adaptativo
-  private threshold: number = 0;
-  private readonly THRESHOLD_FACTOR = 0.6; // Factor del máximo reciente
-  
-  // Estado de picos
+  // Estado de detección
   private lastPeakTime: number = 0;
   private lastPeakValue: number = 0;
   private peakCount: number = 0;
-  private inRefractoryPeriod: boolean = false;
+  
+  // Umbral adaptativo
+  private amplitudeHistory: number[] = [];
+  private readonly AMPLITUDE_HISTORY_SIZE = 30;
   
   // BPM
   private bpmHistory: number[] = [];
@@ -129,7 +130,7 @@ export class HeartBeatProcessor {
       
       const t = this.audioContext.currentTime;
       
-      // LUB (S1)
+      // LUB (S1) - MÁS FUERTE
       const lub = this.audioContext.createOscillator();
       const lubGain = this.audioContext.createGain();
       const lubFilter = this.audioContext.createBiquadFilter();
@@ -142,7 +143,7 @@ export class HeartBeatProcessor {
       lubFilter.frequency.value = 150;
       
       lubGain.gain.setValueAtTime(0, t);
-      lubGain.gain.linearRampToValueAtTime(1, t + 0.02);
+      lubGain.gain.linearRampToValueAtTime(1.5, t + 0.02); // Más volumen
       lubGain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
       
       lub.connect(lubFilter);
@@ -152,7 +153,7 @@ export class HeartBeatProcessor {
       lub.start(t);
       lub.stop(t + 0.18);
       
-      // DUB (S2)
+      // DUB (S2) - MÁS FUERTE
       const dub = this.audioContext.createOscillator();
       const dubGain = this.audioContext.createGain();
       const dubFilter = this.audioContext.createBiquadFilter();
@@ -167,7 +168,7 @@ export class HeartBeatProcessor {
       dubFilter.frequency.value = 180;
       
       dubGain.gain.setValueAtTime(0, dubStart);
-      dubGain.gain.linearRampToValueAtTime(0.7, dubStart + 0.015);
+      dubGain.gain.linearRampToValueAtTime(1.2, dubStart + 0.015); // Más volumen
       dubGain.gain.exponentialRampToValueAtTime(0.01, dubStart + 0.12);
       
       dub.connect(dubFilter);
@@ -186,7 +187,7 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * PROCESAMIENTO PRINCIPAL - Algoritmo de umbral adaptativo
+   * PROCESAMIENTO PRINCIPAL - Detección robusta por ventana deslizante
    */
   processSignal(value: number, timestamp?: number): {
     bpm: number;
@@ -198,77 +199,77 @@ export class HeartBeatProcessor {
     this.frameCount++;
     const now = timestamp || Date.now();
     
-    // === 1. GUARDAR EN BUFFER ===
-    this.signalBuffer.push(value);
+    // === 1. GUARDAR EN BUFFER CON TIMESTAMP ===
+    this.signalBuffer.push({ value, time: now });
     if (this.signalBuffer.length > this.BUFFER_SIZE) {
       this.signalBuffer.shift();
     }
     
     // No procesar hasta tener suficientes muestras
-    if (this.signalBuffer.length < 30) {
+    if (this.signalBuffer.length < this.WINDOW_SIZE * 2 + 1) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: value, arrhythmiaCount: 0 };
     }
     
-    // === 2. CALCULAR UMBRAL ADAPTATIVO ===
-    const recentWindow = this.signalBuffer.slice(-60); // últimos 2 segundos
-    const windowMax = Math.max(...recentWindow);
-    const windowMin = Math.min(...recentWindow);
-    const windowRange = windowMax - windowMin;
+    // === 2. CALCULAR AMPLITUD DEL BUFFER RECIENTE ===
+    const recentValues = this.signalBuffer.slice(-30).map(s => s.value);
+    const recentMax = Math.max(...recentValues);
+    const recentMin = Math.min(...recentValues);
+    const amplitude = recentMax - recentMin;
     
-    // El umbral es un porcentaje del rango, centrado
-    const windowMean = recentWindow.reduce((a, b) => a + b, 0) / recentWindow.length;
-    this.threshold = windowMean + (windowRange * this.THRESHOLD_FACTOR * 0.5);
-    
-    // === 3. DETECTAR SI ESTAMOS POR ENCIMA DEL UMBRAL ===
-    const isAboveThreshold = value > this.threshold;
-    
-    // === 4. VERIFICAR SI ES UN MÁXIMO LOCAL REAL ===
-    // Necesitamos al menos 5 muestras para verificar
-    const lookback = 4;
-    let isLocalMax = false;
-    
-    if (this.signalBuffer.length >= lookback + 1) {
-      const currentIdx = this.signalBuffer.length - 1;
-      const currentValue = this.signalBuffer[currentIdx];
-      
-      // Verificar que las 2 muestras anteriores son menores
-      // Y que la muestra actual es mayor o igual que las siguientes potenciales
-      let isMaximum = true;
-      for (let i = 1; i <= lookback; i++) {
-        if (this.signalBuffer[currentIdx - i] >= currentValue) {
-          isMaximum = false;
-          break;
-        }
-      }
-      
-      // Verificar que la pendiente era positiva y ahora es negativa
-      const prev1 = this.signalBuffer[currentIdx - 1] || 0;
-      const prev2 = this.signalBuffer[currentIdx - 2] || 0;
-      const wasRising = prev1 > prev2;
-      
-      isLocalMax = isMaximum && wasRising;
+    // Guardar historial de amplitudes para umbral
+    this.amplitudeHistory.push(amplitude);
+    if (this.amplitudeHistory.length > this.AMPLITUDE_HISTORY_SIZE) {
+      this.amplitudeHistory.shift();
     }
     
-    // === 5. DETECTAR PICO ===
+    // === 3. CALCULAR UMBRAL DINÁMICO ===
+    // Umbral = 30% de la amplitud mediana reciente
+    const sortedAmps = [...this.amplitudeHistory].sort((a, b) => a - b);
+    const medianAmp = sortedAmps[Math.floor(sortedAmps.length / 2)] || 0;
+    const threshold = medianAmp * 0.30;
+    
+    // === 4. VERIFICAR SI HAY UN PICO EN EL CENTRO DE LA VENTANA ===
+    // Miramos el punto que está WINDOW_SIZE muestras atrás (para tener contexto a ambos lados)
+    const centerIdx = this.signalBuffer.length - 1 - this.WINDOW_SIZE;
+    if (centerIdx < this.WINDOW_SIZE) {
+      return { bpm: 0, confidence: 0, isPeak: false, filteredValue: value, arrhythmiaCount: 0 };
+    }
+    
+    const centerSample = this.signalBuffer[centerIdx];
+    const centerValue = centerSample.value;
+    const centerTime = centerSample.time;
+    
+    // Verificar si es máximo local en la ventana
+    let isLocalMax = true;
+    const windowStart = centerIdx - this.WINDOW_SIZE;
+    const windowEnd = centerIdx + this.WINDOW_SIZE;
+    
+    for (let i = windowStart; i <= windowEnd; i++) {
+      if (i !== centerIdx && this.signalBuffer[i].value >= centerValue) {
+        isLocalMax = false;
+        break;
+      }
+    }
+    
+    // === 5. VALIDAR PICO ===
     let isPeak = false;
     let confidence = 0;
     
-    const timeSinceLastPeak = this.lastPeakTime > 0 ? now - this.lastPeakTime : 10000;
+    const timeSinceLastPeak = this.lastPeakTime > 0 ? centerTime - this.lastPeakTime : 10000;
     
-    // Condiciones para un pico válido:
-    // 1. Estamos por encima del umbral
-    // 2. Es un máximo local
-    // 3. Ha pasado el período refractario
-    // 4. La amplitud es significativa (al menos 20% del rango)
-    const minAmplitude = windowRange * 0.2;
-    const peakAmplitude = value - windowMin;
+    // Condiciones para pico válido:
+    // 1. Es máximo local en la ventana
+    // 2. Ha pasado el período refractario
+    // 3. La amplitud supera el umbral mínimo
+    // 4. El valor está en la parte superior del rango (> 60% del rango)
+    const valueInRange = amplitude > 0 ? (centerValue - recentMin) / amplitude : 0;
     
     if (
-      isAboveThreshold && 
       isLocalMax && 
       timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS &&
-      peakAmplitude >= minAmplitude &&
-      windowRange > 0.5 // Mínima variación de señal para considerar válida
+      amplitude >= threshold &&
+      valueInRange > 0.6 && // El pico debe estar en el 40% superior
+      amplitude > 0.5 // Amplitud absoluta mínima
     ) {
       isPeak = true;
       this.peakCount++;
@@ -289,12 +290,12 @@ export class HeartBeatProcessor {
         }
       }
       
-      // Actualizar estado del último pico
-      this.lastPeakTime = now;
-      this.lastPeakValue = value;
+      // Actualizar estado
+      this.lastPeakTime = centerTime;
+      this.lastPeakValue = centerValue;
       
       // Calcular confianza
-      confidence = this.calculateConfidence(windowRange);
+      confidence = this.calculateConfidence(amplitude);
       
       // Reproducir sonido
       if (!this.isInWarmup()) {
@@ -304,7 +305,7 @@ export class HeartBeatProcessor {
     
     // Log cada 3 segundos
     if (this.frameCount % 90 === 0) {
-      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.peakCount}, RR=${this.rrIntervals.length}, range=${windowRange.toFixed(2)}, thr=${this.threshold.toFixed(2)}`);
+      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.peakCount}, RR=${this.rrIntervals.length}, amp=${amplitude.toFixed(2)}`);
     }
     
     return {
@@ -317,7 +318,7 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Actualiza BPM con suavizado adaptativo
+   * Actualiza BPM con suavizado
    */
   private updateBPM(instantBPM: number): void {
     if (instantBPM < this.MIN_BPM || instantBPM > this.MAX_BPM) return;
@@ -327,44 +328,35 @@ export class HeartBeatProcessor {
       this.bpmHistory.shift();
     }
     
-    if (this.smoothBPM === 0) {
+    if (this.bpmHistory.length < 2) {
       this.smoothBPM = instantBPM;
-    } else {
-      // Suavizado más agresivo para valores cercanos
-      const diff = Math.abs(instantBPM - this.smoothBPM);
-      let alpha: number;
-      
-      if (diff > 30) {
-        alpha = 0.1;  // Cambio grande = suavizar mucho
-      } else if (diff > 15) {
-        alpha = 0.2;
-      } else {
-        alpha = 0.4;  // Cambio pequeño = responder rápido
-      }
-      
-      this.smoothBPM = this.smoothBPM * (1 - alpha) + instantBPM * alpha;
+      return;
     }
     
+    // Usar mediana para ser robusto a outliers
+    const sorted = [...this.bpmHistory].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    
+    // Suavizado hacia la mediana
+    const alpha = 0.3;
+    this.smoothBPM = this.smoothBPM * (1 - alpha) + median * alpha;
     this.smoothBPM = Math.max(this.MIN_BPM, Math.min(this.MAX_BPM, this.smoothBPM));
   }
 
   /**
-   * Calcula confianza basada en consistencia de RR
+   * Calcula confianza
    */
   private calculateConfidence(amplitude: number): number {
-    let confidence = 0.5; // Base
+    let confidence = 0.5;
     
-    // Más picos detectados = más confianza
     if (this.peakCount > 3) confidence += 0.1;
     if (this.peakCount > 6) confidence += 0.1;
     
-    // Consistencia de RR intervals
     if (this.rrIntervals.length >= 3) {
       const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
       const variance = this.rrIntervals.reduce((sum, rr) => sum + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
-      const cv = Math.sqrt(variance) / mean; // Coeficiente de variación
+      const cv = Math.sqrt(variance) / mean;
       
-      // CV bajo = ritmo consistente = mayor confianza
       if (cv < 0.1) confidence += 0.2;
       else if (cv < 0.2) confidence += 0.1;
     }
@@ -388,20 +380,17 @@ export class HeartBeatProcessor {
     this.isArrhythmiaDetected = isDetected;
   }
   
-  setFingerDetected(_detected: boolean): void {
-    // No-op
-  }
+  setFingerDetected(_detected: boolean): void {}
 
   reset(): void {
     this.signalBuffer = [];
+    this.amplitudeHistory = [];
     this.bpmHistory = [];
     this.rrIntervals = [];
     this.smoothBPM = 0;
     this.lastPeakTime = 0;
     this.lastPeakValue = 0;
     this.peakCount = 0;
-    this.threshold = 0;
-    this.inRefractoryPeriod = false;
     this.startTime = Date.now();
     this.frameCount = 0;
   }
