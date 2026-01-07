@@ -29,12 +29,9 @@ export const useSignalProcessor = () => {
     instanceLock.current = true;
     initializationState.current = 'INITIALIZING';
     
-    // SESSION ID ÚNICO
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
-    sessionIdRef.current = `unified_${t}_${p}`;
-
-    console.log(`🔬 INICIALIZACIÓN ÚNICA Y DEFINITIVA - ${sessionIdRef.current}`);
+    sessionIdRef.current = `sig_${t}_${p}`;
 
     // CALLBACKS ÚNICOS SIN MEMORY LEAKS
     const onSignalReady = (signal: ProcessedSignal) => {
@@ -46,7 +43,7 @@ export const useSignalProcessor = () => {
     };
 
     const onError = (error: ProcessingError) => {
-      console.error(`❌ Error procesador único: ${error.code} - ${error.message} - ${sessionIdRef.current}`);
+      console.error(`Error procesador: ${error.code}`);
       setError(error);
     };
 
@@ -54,15 +51,12 @@ export const useSignalProcessor = () => {
     try {
       processorRef.current = new PPGSignalProcessor(onSignalReady, onError);
       initializationState.current = 'READY';
-      console.log(`✅ Procesador único inicializado - ${sessionIdRef.current}`);
     } catch (err) {
-      console.error(`❌ Error creando procesador: ${err} - ${sessionIdRef.current}`);
       initializationState.current = 'ERROR';
       instanceLock.current = false;
     }
     
     return () => {
-      console.log(`🔬 DESTRUYENDO PROCESADOR ÚNICO - ${sessionIdRef.current}`);
       if (processorRef.current) {
         processorRef.current.stop();
         processorRef.current = null;
@@ -75,24 +69,18 @@ export const useSignalProcessor = () => {
   // INICIO ÚNICO SIN DUPLICIDADES
   const startProcessing = useCallback(() => {
     if (!processorRef.current || initializationState.current !== 'READY') {
-      console.warn(`⚠️ Procesador no listo - Estado: ${initializationState.current} - ${sessionIdRef.current}`);
       return;
     }
 
     if (isProcessing) {
-      console.warn(`⚠️ Ya procesando - ${sessionIdRef.current}`);
       return;
     }
-
-    console.log(`🚀 INICIO ÚNICO DEFINITIVO - ${sessionIdRef.current}`);
     
     setIsProcessing(true);
     setFramesProcessed(0);
     setError(null);
     
     processorRef.current.start();
-    
-    console.log(`✅ Procesamiento único iniciado - ${sessionIdRef.current}`);
   }, [isProcessing]);
 
   // PARADA ÚNICA Y LIMPIA
@@ -100,13 +88,9 @@ export const useSignalProcessor = () => {
     if (!processorRef.current || !isProcessing) {
       return;
     }
-
-    console.log(`🛑 PARADA ÚNICA - ${sessionIdRef.current}`);
     
     setIsProcessing(false);
     processorRef.current.stop();
-    
-    console.log(`✅ Procesamiento detenido - ${sessionIdRef.current}`);
   }, [isProcessing]);
 
   // CALIBRACIÓN ÚNICA
@@ -116,11 +100,9 @@ export const useSignalProcessor = () => {
     }
 
     try {
-      console.log(`🎯 CALIBRACIÓN ÚNICA - ${sessionIdRef.current}`);
       const success = await processorRef.current.calibrate();
       return success;
     } catch (error) {
-      console.error(`❌ Error calibración: ${error} - ${sessionIdRef.current}`);
       return false;
     }
   }, []);
@@ -134,7 +116,7 @@ export const useSignalProcessor = () => {
     try {
       processorRef.current.processFrame(imageData);
     } catch (error) {
-      console.error(`❌ Error procesando frame: ${error} - ${sessionIdRef.current}`);
+      // Error silenciado para rendimiento
     }
   }, [isProcessing]);
 

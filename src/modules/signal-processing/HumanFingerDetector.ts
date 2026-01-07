@@ -37,14 +37,14 @@ export class HumanFingerDetector {
   private consecutiveNonDetections = 0;
   private lastDetectionState = false;
   
-  // Historial para análisis de pulsatilidad
+  // Historial para análisis de pulsatilidad - REDUCIDO PARA MEJOR RENDIMIENTO
   private redHistory: number[] = [];
   private timestampHistory: number[] = [];
-  private readonly HISTORY_SIZE = 150; // 5 segundos a 30fps
+  private readonly HISTORY_SIZE = 90; // 3 segundos a 30fps (reducido de 150)
   
-  // SUAVIZADO: Buffer de pulsatilidad para evitar cortes por micro-movimientos
+  // SUAVIZADO: Buffer de pulsatilidad - REDUCIDO
   private pulsatilityHistory: number[] = [];
-  private readonly PULSATILITY_SMOOTH_SIZE = 12; // Suavizar últimos 12 valores (~0.4s)
+  private readonly PULSATILITY_SMOOTH_SIZE = 8; // Reducido de 12
   
   // Análisis de picos cardíacos
   private detectedPeaks: number[] = [];
@@ -69,8 +69,8 @@ export class HumanFingerDetector {
     MAX_GREEN_PROPORTION: 0.40,     // Verde máximo 40%
     MAX_BLUE_PROPORTION: 0.30,      // Azul máximo 30%
     
-    // === PULSATILIDAD - MÁS PERMISIVA ===
-    MIN_SAMPLES_FOR_ANALYSIS: 30,   // 1 segundo para análisis inicial
+    // === PULSATILIDAD - MÁS RÁPIDA ===
+    MIN_SAMPLES_FOR_ANALYSIS: 20,   // Reducido de 30 para respuesta más rápida
     
     MIN_PULSATILITY: 0.0008,        // 0.08% - ULTRA sensible para captar pulso débil
     GOOD_PULSATILITY: 0.005,        // 0.5% - buena señal
@@ -85,13 +85,17 @@ export class HumanFingerDetector {
     // === CONSISTENCIA DE INTERVALOS ===
     MAX_RR_VARIATION: 0.60,         // 60% de variación permitida
     
-    // === ESTABILIDAD TEMPORAL (MÁXIMA FIRMEZA) ===
-    FRAMES_TO_CONFIRM: 4,           // 4 frames para confirmar (~0.13s) - MÁS RÁPIDO
-    FRAMES_TO_LOSE: 180,            // 180 frames para perder (~6s) - ULTRA ESTABLE
+    // === ESTABILIDAD TEMPORAL (EQUILIBRADA) ===
+    FRAMES_TO_CONFIRM: 3,           // 3 frames para confirmar (~0.1s) - MÁS RÁPIDO
+    FRAMES_TO_LOSE: 90,             // 90 frames para perder (~3s) - REDUCIDO de 180
   };
 
+  // Limitar logs para mejor rendimiento
+  private logCounter = 0;
+  private readonly LOG_INTERVAL = 60; // Log cada 60 frames (~2s)
+
   constructor() {
-    console.log("🔴 HumanFingerDetector: Modo ESTRICTO - Solo detecta dedo humano VIVO");
+    // Log inicial silenciado para producción
   }
 
   /**
@@ -189,10 +193,12 @@ export class HumanFingerDetector {
     const sortedPulsatility = [...this.pulsatilityHistory].sort((a, b) => a - b);
     const pulsatility = sortedPulsatility[Math.floor(sortedPulsatility.length / 2)];
     
-    // Log de diagnóstico cada 30 frames (~1s)
-    if (this.redHistory.length % 30 === 0) {
-      console.log(`📈 Pulsatilidad: ${(pulsatility*100).toFixed(3)}% (mín: ${this.CONFIG.MIN_PULSATILITY*100}%, máx: ${this.CONFIG.MAX_PULSATILITY*100}%)`);
-    }
+    // Log reducido para rendimiento
+    this.logCounter++;
+    // Silenciado para producción - descomentar para debug:
+    // if (this.logCounter % this.LOG_INTERVAL === 0) {
+    //   console.log(`📈 Pulsatilidad: ${(pulsatility*100).toFixed(3)}%`);
+    // }
     
     // Verificar pulsatilidad mínima
     if (pulsatility < this.CONFIG.MIN_PULSATILITY) {
@@ -363,8 +369,9 @@ export class HumanFingerDetector {
     this.consecutiveNonDetections = 0;
     
     if (this.consecutiveDetections >= this.CONFIG.FRAMES_TO_CONFIRM) {
-      if (!this.lastDetectionState) {
-        console.log("✅ DEDO HUMANO VIVO CONFIRMADO - Pulso cardíaco detectado");
+      // Log solo en cambio de estado
+      if (!this.lastDetectionState && this.logCounter % this.LOG_INTERVAL === 0) {
+        console.log("✅ DEDO DETECTADO");
       }
       this.lastDetectionState = true;
     }
@@ -391,8 +398,7 @@ export class HumanFingerDetector {
     
     if (this.consecutiveNonDetections >= this.CONFIG.FRAMES_TO_LOSE) {
       if (this.lastDetectionState) {
-        console.log("❌ SEÑAL PERDIDA - No hay pulso cardíaco");
-        // NUEVO: Limpiar historial para empezar fresco cuando vuelva el dedo
+        // Limpiar historial para empezar fresco cuando vuelva el dedo
         this.softReset();
       }
       this.lastDetectionState = false;
@@ -400,18 +406,14 @@ export class HumanFingerDetector {
   }
 
   /**
-   * NUEVO: Reset suave - limpia historial pero mantiene estado de detección
-   * Se llama cuando se pierde la señal para evitar datos contaminados
+   * Reset suave - limpia historial pero mantiene estado de detección
    */
   softReset(): void {
-    console.log("🧹 HumanFingerDetector: Reset SUAVE - limpiando historial");
     this.redHistory = [];
     this.timestampHistory = [];
     this.pulsatilityHistory = [];
     this.detectedPeaks = [];
     this.detectedValleys = [];
-    // NO resetear: consecutiveDetections, consecutiveNonDetections, lastDetectionState
-    // Eso lo maneja handleNonDetection/handleDetection
   }
 
   private updateHistory(redValue: number, timestamp: number): void {
@@ -509,10 +511,10 @@ export class HumanFingerDetector {
     this.lastDetectionState = false;
     this.redHistory = [];
     this.timestampHistory = [];
-    this.pulsatilityHistory = []; // Limpiar buffer de suavizado
+    this.pulsatilityHistory = [];
     this.detectedPeaks = [];
     this.detectedValleys = [];
-    console.log("🔄 HumanFingerDetector: Reset completo");
+    this.logCounter = 0;
   }
 
   isCurrentlyDetected(): boolean {
