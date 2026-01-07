@@ -392,9 +392,26 @@ export class HumanFingerDetector {
     if (this.consecutiveNonDetections >= this.CONFIG.FRAMES_TO_LOSE) {
       if (this.lastDetectionState) {
         console.log("❌ SEÑAL PERDIDA - No hay pulso cardíaco");
+        // NUEVO: Limpiar historial para empezar fresco cuando vuelva el dedo
+        this.softReset();
       }
       this.lastDetectionState = false;
     }
+  }
+
+  /**
+   * NUEVO: Reset suave - limpia historial pero mantiene estado de detección
+   * Se llama cuando se pierde la señal para evitar datos contaminados
+   */
+  softReset(): void {
+    console.log("🧹 HumanFingerDetector: Reset SUAVE - limpiando historial");
+    this.redHistory = [];
+    this.timestampHistory = [];
+    this.pulsatilityHistory = [];
+    this.detectedPeaks = [];
+    this.detectedValleys = [];
+    // NO resetear: consecutiveDetections, consecutiveNonDetections, lastDetectionState
+    // Eso lo maneja handleNonDetection/handleDetection
   }
 
   private updateHistory(redValue: number, timestamp: number): void {

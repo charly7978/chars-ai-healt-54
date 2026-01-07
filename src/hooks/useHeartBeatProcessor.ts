@@ -51,6 +51,9 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
+  // REFERENCIA PARA TRACKING DE ESTADO DEL DEDO
+  const lastFingerStateRef = useRef<boolean>(false);
+
   // PROCESAMIENTO UNIFICADO DE SEÑAL - ELIMINADAS DUPLICIDADES
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
@@ -85,6 +88,12 @@ export const useHeartBeatProcessor = () => {
     
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
+
+    // CRÍTICO: Notificar cambio de estado del dedo para reset inteligente
+    if (fingerDetected !== lastFingerStateRef.current) {
+      processorRef.current.setFingerDetected(fingerDetected);
+      lastFingerStateRef.current = fingerDetected;
+    }
 
     // PROCESAMIENTO MATEMÁTICO AVANZADO DIRECTO
     const result = processorRef.current.processSignal(value, timestamp);
