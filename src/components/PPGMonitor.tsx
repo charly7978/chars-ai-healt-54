@@ -33,59 +33,65 @@ interface PPGMonitorProps {
   onStreamReady?: (stream: MediaStream | null) => void;
 }
 
-// ============ FILTRO PASA-BANDA BUTTERWORTH 2DO ORDEN ============
-// Diseñado para 0.5-4 Hz @ 30 fps (frecuencia cardíaca 30-240 BPM)
-class BandpassFilter {
-  // Coeficientes pre-calculados para Butterworth 2do orden
-  // Pasa-alto 0.5 Hz
-  private hp_b = [0.9565, -1.913, 0.9565];
-  private hp_a = [1, -1.911, 0.915];
-  private hp_x: number[] = [0, 0, 0];
-  private hp_y: number[] = [0, 0, 0];
-  
-  // Pasa-bajo 4 Hz
-  private lp_b = [0.0675, 0.135, 0.0675];
-  private lp_a = [1, -1.143, 0.413];
-  private lp_x: number[] = [0, 0, 0];
-  private lp_y: number[] = [0, 0, 0];
+// ============ FILTRO PPG SIMPLE Y EFECTIVO ============
+// Basado en implementaciones probadas de apps PPG reales
+// Usa filtro de media móvil + derivada para detectar cambios pulsátiles
+class PPGFilter {
+  private rawBuffer: number[] = [];
+  private filteredBuffer: number[] = [];
+  private readonly SMOOTH_WINDOW = 5;   // Ventana de suavizado
+  private readonly BASELINE_ALPHA = 0.995; // Muy lento para baseline
+  private baseline = 0;
+  private initialized = false;
   
   filter(input: number): number {
-    // Pasa-alto primero (elimina baseline drift)
-    this.hp_x.unshift(input);
-    this.hp_x.pop();
+    // 1. Inicializar baseline
+    if (!this.initialized) {
+      this.baseline = input;
+      this.initialized = true;
+      return 0;
+    }
     
-    const hp_out = 
-      this.hp_b[0] * this.hp_x[0] + 
-      this.hp_b[1] * this.hp_x[1] + 
-      this.hp_b[2] * this.hp_x[2] -
-      this.hp_a[1] * this.hp_y[0] - 
-      this.hp_a[2] * this.hp_y[1];
+    // 2. Actualizar baseline MUY lentamente (elimina drift DC)
+    this.baseline = this.baseline * this.BASELINE_ALPHA + input * (1 - this.BASELINE_ALPHA);
     
-    this.hp_y.unshift(hp_out);
-    this.hp_y.pop();
+    // 3. Extraer componente AC (variación pulsátil)
+    const ac = input - this.baseline;
     
-    // Pasa-bajo después (elimina ruido de alta frecuencia)
-    this.lp_x.unshift(hp_out);
-    this.lp_x.pop();
+    // 4. Agregar al buffer de suavizado
+    this.rawBuffer.push(ac);
+    if (this.rawBuffer.length > this.SMOOTH_WINDOW) {
+      this.rawBuffer.shift();
+    }
     
-    const lp_out = 
-      this.lp_b[0] * this.lp_x[0] + 
-      this.lp_b[1] * this.lp_x[1] + 
-      this.lp_b[2] * this.lp_x[2] -
-      this.lp_a[1] * this.lp_y[0] - 
-      this.lp_a[2] * this.lp_y[1];
+    // 5. Media móvil simple (suaviza ruido de alta frecuencia)
+    const smoothed = this.rawBuffer.reduce((a, b) => a + b, 0) / this.rawBuffer.length;
     
-    this.lp_y.unshift(lp_out);
-    this.lp_y.pop();
+    // 6. Guardar en buffer filtrado
+    this.filteredBuffer.push(smoothed);
+    if (this.filteredBuffer.length > 3) {
+      this.filteredBuffer.shift();
+    }
     
-    return lp_out;
+    // 7. Segunda pasada de suavizado para eliminar spikes
+    if (this.filteredBuffer.length >= 3) {
+      // Filtro de mediana de 3 puntos (elimina outliers)
+      const sorted = [...this.filteredBuffer].sort((a, b) => a - b);
+      return sorted[1]; // Mediana
+    }
+    
+    return smoothed;
   }
   
   reset(): void {
-    this.hp_x = [0, 0, 0];
-    this.hp_y = [0, 0, 0];
-    this.lp_x = [0, 0, 0];
-    this.lp_y = [0, 0, 0];
+    this.rawBuffer = [];
+    this.filteredBuffer = [];
+    this.baseline = 0;
+    this.initialized = false;
+  }
+  
+  getBaseline(): number {
+    return this.baseline;
   }
 }
 
@@ -133,48 +139,58 @@ class CircularBuffer {
 class PeakDetector {
   private peakTimes: number[] = [];
   private lastPeakTime = 0;
+  private lastValues: number[] = [];
   
-  private readonly MIN_INTERVAL = 375;  // 160 BPM máximo
+  // Límites fisiológicos realistas
+  private readonly MIN_INTERVAL = 450;  // 133 BPM máximo (ejercicio intenso)
   private readonly MAX_INTERVAL = 1500; // 40 BPM mínimo
-  private readonly MAX_PEAKS = 20;
+  private readonly MAX_PEAKS = 25;
   
   detectPeak(signal: number[], timestamp: number): boolean {
-    if (signal.length < 15) return false;
+    if (signal.length < 20) return false;
     
     // Verificar intervalo mínimo desde último pico
     if (timestamp - this.lastPeakTime < this.MIN_INTERVAL) {
       return false;
     }
     
-    const recent = signal.slice(-30);
+    // Usar últimos 45 samples para análisis (1.5 segundos)
+    const recent = signal.slice(-45);
     const min = Math.min(...recent);
     const max = Math.max(...recent);
     const range = max - min;
     
     // Señal muy débil - no detectar
-    if (range < 0.003) return false;
+    if (range < 0.002) return false;
     
-    // Umbral adaptativo al 40% del rango
-    const threshold = min + range * 0.40;
+    // Umbral adaptativo al 50% del rango (más estricto)
+    const threshold = min + range * 0.50;
     
-    // Verificar pico local en los últimos 5 samples
-    const last5 = signal.slice(-5);
-    const center = last5[2];
+    // Verificar pico local en los últimos 7 samples (centro = índice 3)
+    if (signal.length < 7) return false;
+    const last7 = signal.slice(-7);
+    const center = last7[3];
     
-    // El centro debe ser máximo local
-    const isLocalMax = center > last5[0] && 
-                       center > last5[1] && 
-                       center >= last5[3] && 
-                       center >= last5[4];
+    // El centro debe ser ESTRICTAMENTE mayor que vecinos
+    const isLocalMax = center > last7[0] && 
+                       center > last7[1] && 
+                       center > last7[2] && 
+                       center > last7[4] && 
+                       center > last7[5] && 
+                       center > last7[6];
     
     // El pico debe estar sobre el umbral
     const aboveThreshold = center > threshold;
     
-    // Prominencia: diferencia con los extremos
-    const prominence = center - Math.min(last5[0], last5[4]);
-    const hasProminence = prominence > range * 0.12;
+    // Prominencia: diferencia con los extremos (más estricto)
+    const prominence = center - Math.min(last7[0], last7[6]);
+    const hasProminence = prominence > range * 0.20;
     
-    if (isLocalMax && aboveThreshold && hasProminence) {
+    // Verificar que estamos en fase descendente (confirmación de pico real)
+    const current = signal[signal.length - 1];
+    const isDescending = current < last7[3]; // El valor actual es menor que el pico
+    
+    if (isLocalMax && aboveThreshold && hasProminence && isDescending) {
       this.lastPeakTime = timestamp;
       this.peakTimes.push(timestamp);
       
@@ -183,8 +199,8 @@ class PeakDetector {
         this.peakTimes.shift();
       }
       
-      // Limpiar picos muy viejos (>10 segundos)
-      const cutoff = timestamp - 10000;
+      // Limpiar picos muy viejos (>12 segundos)
+      const cutoff = timestamp - 12000;
       this.peakTimes = this.peakTimes.filter(t => t > cutoff);
       
       return true;
@@ -194,20 +210,26 @@ class PeakDetector {
   }
   
   getBPM(): number {
-    if (this.peakTimes.length < 3) return 0;
+    // Solo necesitamos 2 picos para calcular BPM
+    if (this.peakTimes.length < 2) return 0;
     
-    // Calcular intervalos RR válidos
+    // Calcular intervalos RR válidos (últimos 10)
     const intervals: number[] = [];
-    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 8; i--) {
+    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 10; i--) {
       const interval = this.peakTimes[i] - this.peakTimes[i - 1];
       if (interval >= this.MIN_INTERVAL && interval <= this.MAX_INTERVAL) {
         intervals.push(interval);
       }
     }
     
-    if (intervals.length < 2) return 0;
+    if (intervals.length === 0) return 0;
     
-    // Usar mediana para robustez
+    // Con un solo intervalo, usarlo directamente
+    if (intervals.length === 1) {
+      return Math.round(60000 / intervals[0]);
+    }
+    
+    // Con múltiples intervalos, usar mediana para robustez
     intervals.sort((a, b) => a - b);
     const median = intervals[Math.floor(intervals.length / 2)];
     
@@ -216,7 +238,7 @@ class PeakDetector {
   
   getRRIntervals(): number[] {
     const intervals: number[] = [];
-    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 10; i--) {
+    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 12; i--) {
       const interval = this.peakTimes[i] - this.peakTimes[i - 1];
       if (interval >= this.MIN_INTERVAL && interval <= this.MAX_INTERVAL) {
         intervals.push(interval);
@@ -232,6 +254,7 @@ class PeakDetector {
   reset(): void {
     this.peakTimes = [];
     this.lastPeakTime = 0;
+    this.lastValues = [];
   }
 }
 
@@ -251,7 +274,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
   const isRunningRef = useRef(false);
   const mountedRef = useRef(true);
   
-  const filterRef = useRef<BandpassFilter | null>(null);
+  const filterRef = useRef<PPGFilter | null>(null);
   const bufferRef = useRef<CircularBuffer | null>(null);
   const detectorRef = useRef<PeakDetector | null>(null);
   
@@ -459,7 +482,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       isRunningRef.current = true;
       
       // Inicializar procesadores
-      filterRef.current = new BandpassFilter();
+      filterRef.current = new PPGFilter();
       bufferRef.current = new CircularBuffer(180); // 6 segundos @ 30fps
       detectorRef.current = new PeakDetector();
       
