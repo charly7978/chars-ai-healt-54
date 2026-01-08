@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from "react";
+import React, { useRef, useEffect } from "react";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -6,13 +6,8 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG - NUEVA IMPLEMENTACIÓN SIMPLIFICADA
- * 
- * Principios:
- * 1. getUserMedia simple y directo
- * 2. Sin auto-calibradores complejos
- * 3. Flash básico sin complicaciones
- * 4. Cleanup robusto
+ * CÁMARA PPG - IMPLEMENTACIÓN ULTRA SIMPLE
+ * Sin useCallback, sin dependencias complejas
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
@@ -20,141 +15,160 @@ const CameraView: React.FC<CameraViewProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const isActiveRef = useRef(false);
+  const mountedRef = useRef(true);
+  const onStreamReadyRef = useRef(onStreamReady);
   
-  const stopCamera = useCallback(async () => {
-    if (streamRef.current) {
-      const tracks = streamRef.current.getTracks();
-      
-      // Apagar flash primero
-      for (const track of tracks) {
-        if (track.kind === 'video') {
-          try {
-            await (track as any).applyConstraints({ 
-              advanced: [{ torch: false }] 
-            });
-          } catch {}
-        }
-        track.stop();
-      }
-      
-      streamRef.current = null;
-    }
-    
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    
-    isActiveRef.current = false;
-  }, []);
-
-  const startCamera = useCallback(async () => {
-    if (isActiveRef.current) return;
-    isActiveRef.current = true;
-    
-    await stopCamera();
-
-    try {
-      // PASO 1: Obtener stream con constraints simples
-      const constraints: MediaStreamConstraints = {
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 30, max: 30 }
-        }
-      };
-      
-      let stream: MediaStream;
-      
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (e) {
-        // Fallback sin facingMode
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 30 }
-          }
-        });
-      }
-      
-      if (!isActiveRef.current) {
-        stream.getTracks().forEach(t => t.stop());
-        return;
-      }
-
-      streamRef.current = stream;
-      
-      // PASO 2: Conectar al video element
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        try {
-          await videoRef.current.play();
-        } catch {}
-      }
-
-      // PASO 3: Configurar track (flash, exposición)
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        const capabilities = videoTrack.getCapabilities?.() as any || {};
-        
-        // Encender flash si disponible
-        if (capabilities.torch) {
-          try {
-            await videoTrack.applyConstraints({
-              advanced: [{ torch: true }]
-            } as any);
-            console.log('🔦 Flash encendido');
-          } catch (e) {
-            console.log('⚠️ No se pudo encender flash');
-          }
-        }
-        
-        // Ajustes opcionales de exposición
-        const advancedSettings: any[] = [];
-        
-        if (capabilities.exposureMode?.includes('manual')) {
-          advancedSettings.push({ exposureMode: 'manual' });
-        }
-        
-        if (capabilities.exposureCompensation) {
-          const mid = (capabilities.exposureCompensation.min + capabilities.exposureCompensation.max) / 2;
-          advancedSettings.push({ exposureCompensation: mid * 0.5 });
-        }
-        
-        if (capabilities.focusMode?.includes('manual') && capabilities.focusDistance) {
-          advancedSettings.push({ 
-            focusMode: 'manual',
-            focusDistance: capabilities.focusDistance.min 
-          });
-        }
-        
-        if (advancedSettings.length > 0) {
-          try {
-            await videoTrack.applyConstraints({ advanced: advancedSettings } as any);
-          } catch {}
-        }
-
-        console.log('📷 Cámara iniciada', {
-          torch: capabilities.torch || false,
-          resolution: `${videoTrack.getSettings().width}x${videoTrack.getSettings().height}`
-        });
-      }
-
-      // PASO 4: Notificar que el stream está listo
-      onStreamReady?.(stream);
-
-    } catch (err) {
-      console.error('❌ Error iniciando cámara:', err);
-      isActiveRef.current = false;
-    }
-  }, [onStreamReady, stopCamera]);
+  // Actualizar ref sin causar re-render
+  useEffect(() => {
+    onStreamReadyRef.current = onStreamReady;
+  }, [onStreamReady]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    
+    const stopCamera = async () => {
+      console.log('🛑 Deteniendo cámara...');
+      
+      if (streamRef.current) {
+        const tracks = streamRef.current.getTracks();
+        
+        for (const track of tracks) {
+          if (track.kind === 'video') {
+            try {
+              await (track as any).applyConstraints({ 
+                advanced: [{ torch: false }] 
+              });
+            } catch {}
+          }
+          track.stop();
+        }
+        
+        streamRef.current = null;
+      }
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+
+    const startCamera = async () => {
+      console.log('📷 Intentando iniciar cámara...');
+      
+      // Limpiar cualquier stream anterior
+      await stopCamera();
+      
+      if (!mountedRef.current) return;
+
+      try {
+        // Constraints simples para máxima compatibilidad
+        let stream: MediaStream | null = null;
+        
+        // Intento 1: Cámara trasera específica
+        try {
+          console.log('📷 Intentando cámara trasera...');
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: { exact: "environment" },
+              width: { ideal: 640 },
+              height: { ideal: 480 }
+            }
+          });
+          console.log('✅ Cámara trasera obtenida');
+        } catch (e) {
+          console.log('⚠️ Cámara trasera falló, probando cualquier cámara...');
+        }
+        
+        // Intento 2: Cualquier cámara
+        if (!stream) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 }
+              }
+            });
+            console.log('✅ Cámara alternativa obtenida');
+          } catch (e) {
+            console.log('⚠️ Cámara alternativa falló, probando mínimo...');
+          }
+        }
+        
+        // Intento 3: Mínimo absoluto
+        if (!stream) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: true
+          });
+          console.log('✅ Cámara mínima obtenida');
+        }
+        
+        if (!mountedRef.current) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
+
+        streamRef.current = stream;
+        
+        // Conectar al video
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          
+          // Esperar a que esté listo
+          await new Promise<void>((resolve) => {
+            if (!videoRef.current) { resolve(); return; }
+            
+            if (videoRef.current.readyState >= 2) {
+              resolve();
+            } else {
+              videoRef.current.onloadeddata = () => resolve();
+              setTimeout(resolve, 2000); // Timeout de seguridad
+            }
+          });
+          
+          try {
+            await videoRef.current.play();
+            console.log('▶️ Video reproduciendo');
+          } catch (e) {
+            console.log('⚠️ Error play():', e);
+          }
+        }
+
+        // Configurar flash
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          const caps = videoTrack.getCapabilities?.() as any || {};
+          const settings = videoTrack.getSettings();
+          
+          console.log('📷 Cámara iniciada:', {
+            label: videoTrack.label,
+            width: settings.width,
+            height: settings.height,
+            hasTorch: caps.torch || false
+          });
+          
+          // Encender flash
+          if (caps.torch) {
+            try {
+              await videoTrack.applyConstraints({
+                advanced: [{ torch: true }]
+              } as any);
+              console.log('🔦 Flash ENCENDIDO');
+            } catch (e) {
+              console.log('⚠️ No se pudo encender flash:', e);
+            }
+          }
+        }
+
+        // Notificar que está listo
+        onStreamReadyRef.current?.(stream);
+
+      } catch (err) {
+        console.error('❌ Error cámara:', err);
+      }
+    };
+
     if (isMonitoring) {
       startCamera();
     } else {
@@ -162,9 +176,10 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
     
     return () => {
+      mountedRef.current = false;
       stopCamera();
     };
-  }, [isMonitoring, startCamera, stopCamera]);
+  }, [isMonitoring]);
 
   return (
     <video
