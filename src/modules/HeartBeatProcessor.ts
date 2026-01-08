@@ -132,6 +132,11 @@ export class HeartBeatProcessor {
   }
 
   private async playHeartSound() {
+    // VIBRACIÓN SIEMPRE - independiente del audio
+    if (navigator.vibrate) {
+      navigator.vibrate([50, 30, 80]);
+    }
+    
     if (!this.audioContext || !this.audioUnlocked) return;
     if (this.isInWarmup()) return;
     
@@ -141,11 +146,6 @@ export class HeartBeatProcessor {
     try {
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
-      }
-      
-      // Vibración
-      if (navigator.vibrate) {
-        navigator.vibrate([50, 30, 80]);
       }
       
       const t = this.audioContext.currentTime;
@@ -297,20 +297,20 @@ export class HeartBeatProcessor {
       return { isPeak: false, confidence: 0 };
     }
     
-    const window = this.normalizedBuffer.slice(-20); // Era -30
+    const window = this.normalizedBuffer.slice(-20);
     
-    // === UMBRAL ADAPTATIVO - MÁS PERMISIVO ===
+    // === UMBRAL ADAPTATIVO ===
     const windowMean = window.reduce((a, b) => a + b, 0) / window.length;
     const windowStd = Math.sqrt(
       window.reduce((sum, v) => sum + Math.pow(v - windowMean, 2), 0) / window.length
     );
     
-    // Umbral más bajo
-    const adaptiveThreshold = windowMean + windowStd * 0.25; // Era 0.4
+    // Umbral adaptativo basado en desviación estándar
+    const adaptiveThreshold = windowMean + windowStd * 0.5; // Aumentado para reducir falsos positivos
     
-    // Buscar máximo en región central - AMPLIADA
-    const searchStart = 4;  // Era 8
-    const searchEnd = 16;   // Era 22
+    // Buscar máximo en región central
+    const searchStart = 4;
+    const searchEnd = 16;
     
     let maxIdx = searchStart;
     let maxVal = window[searchStart];
@@ -321,40 +321,41 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Umbral más bajo para aceptar picos
-    if (maxVal < adaptiveThreshold && maxVal < windowMean + 0.1) {
+    // Validar que supere el umbral
+    if (maxVal < adaptiveThreshold && maxVal < windowMean + 0.5) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // === VALIDACIÓN DE PROMINENCIA - MÁS SIMPLE ===
+    // === VALIDACIÓN DE PROMINENCIA ===
     const leftVal = window[Math.max(0, maxIdx - 2)] ?? 0;
     const rightVal = window[Math.min(window.length - 1, maxIdx + 2)] ?? 0;
     
-    // Solo verificar que sea un pico local
+    // Debe ser un pico local (mayor que al menos un lado)
     if (maxVal <= leftVal && maxVal <= rightVal) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Calcular prominencia de forma simple
+    // Calcular prominencia
     const prominence = maxVal - Math.min(leftVal, rightVal);
     
-    // Prominencia mínima MUY BAJA para señales débiles
-    const minProminence = Math.max(0.005, windowStd * 0.10); // Reducido de 0.15
+    // Prominencia mínima basada en std - más estricta para evitar ruido
+    const minProminence = Math.max(0.1, windowStd * 0.5);
     if (prominence < minProminence) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Rango de ventana MÁS TOLERANTE
+    // Rango de ventana
     const windowMin = Math.min(...window);
     const windowMax = Math.max(...window);
     const windowRange = windowMax - windowMin;
     
-    // Log diagnóstico cada 30 frames
-    if (this.frameCount % 30 === 0) {
-      console.log(`🔍 Peak: range=${windowRange.toFixed(4)}, prom=${prominence.toFixed(4)}, minProm=${minProminence.toFixed(4)}`);
+    // Log diagnóstico cada 60 frames (2 segundos)
+    if (this.frameCount % 60 === 0) {
+      console.log(`🔍 Peak: range=${windowRange.toFixed(2)}, prom=${prominence.toFixed(2)}, minProm=${minProminence.toFixed(2)}, std=${windowStd.toFixed(2)}`);
     }
     
-    if (windowRange < 0.01 || windowRange > 80) { // Reducido de 0.02
+    // Rango mínimo más estricto para evitar ruido
+    if (windowRange < 0.03 || windowRange > 80) {
       return { isPeak: false, confidence: 0 };
     }
     

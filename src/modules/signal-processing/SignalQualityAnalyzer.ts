@@ -337,40 +337,37 @@ export class SignalQualityAnalyzer {
     let confidence = 0;
     const { red, green, blue } = rgbData;
     
-    // === 1. RATIO R/G EXTREMO (40% del peso) ===
-    // Dedo con flash: R/G > 10-20 (sangre absorbe verde fuertemente)
-    // Pared iluminada: R/G típico 0.8-3 (refleja todos los colores más parejo)
+    // === 1. RATIO R/G (40% del peso) - AJUSTADO PARA HARDWARE REAL ===
+    // Tu cámara produce R/G de 3-5 con dedo (no 15+)
     const rgRatio = green > 0.1 ? red / green : (green === 0 && red > 200 ? 50 : 1);
     
-    if (rgRatio >= 15) {
-      confidence += 0.40; // Ratio muy alto = definitivamente dedo
-    } else if (rgRatio >= 8) {
+    if (rgRatio >= 5) {
+      confidence += 0.40; // Ratio alto = probablemente dedo
+    } else if (rgRatio >= 3) {
       confidence += 0.30;
-    } else if (rgRatio >= 4) {
+    } else if (rgRatio >= 1.5) {
       confidence += 0.10; // Zona gris
     }
-    // rgRatio < 4 = 0 puntos (probablemente NO es dedo)
+    // rgRatio < 1.5 = 0 puntos (probablemente NO es dedo)
     
-    // === 2. VERDE MUY BAJO EN VALOR ABSOLUTO (25% del peso) ===
-    // Dedo: verde < 30 típicamente (absorbido por hemoglobina)
-    // Pared: verde generalmente > 80 con flash
-    if (green <= 10) {
-      confidence += 0.25; // Verde casi cero = dedo absorbiéndolo
-    } else if (green <= 30) {
+    // === 2. VERDE BAJO EN VALOR ABSOLUTO (25% del peso) - MÁS TOLERANTE ===
+    // Tu cámara puede dar verde hasta 50 con dedo
+    if (green <= 50) {
+      confidence += 0.25; // Verde bajo = dedo absorbiéndolo
+    } else if (green <= 80) {
       confidence += 0.18;
-    } else if (green <= 60) {
+    } else if (green <= 120) {
       confidence += 0.08;
     }
-    // green > 60 = 0 puntos (superficie reflectante, no dedo)
+    // green > 120 = 0 puntos (superficie reflectante, no dedo)
     
-    // === 3. PULSATILIDAD REAL Y PERIÓDICA (35% del peso) ===
-    // Dedo: tiene pulsatilidad AC/DC > 0.5% Y periodicidad > 0.2
-    // Pared: pulsatilidad ~0 o ruido sin periodicidad
+    // === 3. PULSATILIDAD REAL Y PERIÓDICA (35% del peso) - MÁS PERMISIVO ===
+    // Señales débiles también cuentan
     const pulsatility = dcLevel > 0 ? acAmplitude / dcLevel : 0;
     
-    // Combinación de pulsatilidad Y periodicidad
-    const hasPulse = pulsatility >= 0.005 && periodicity >= 0.15;
-    const hasWeakPulse = pulsatility >= 0.002 && periodicity >= 0.08;
+    // Combinación de pulsatilidad Y periodicidad - UMBRALES REDUCIDOS
+    const hasPulse = pulsatility >= 0.001 && periodicity >= 0.05;
+    const hasWeakPulse = pulsatility >= 0.0005 && periodicity >= 0.02;
     
     if (hasPulse) {
       confidence += 0.35; // Pulso real con ritmo = sangre fluyendo
