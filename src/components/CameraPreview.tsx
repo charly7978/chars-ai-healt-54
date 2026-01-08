@@ -69,14 +69,13 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
   return (
     <div className="absolute top-4 right-4 z-20">
       <div className="relative w-28 h-36 rounded-xl overflow-hidden border-2 border-white/30 shadow-xl bg-black">
-        {/* Video preview */}
+        {/* Video preview - sin espejo para cámara trasera */}
         <video
           ref={videoRef}
           playsInline
           muted
           autoPlay
           className="w-full h-full object-cover"
-          style={{ transform: 'scaleX(-1)' }}
         />
         
         {/* Overlay con gradiente */}
