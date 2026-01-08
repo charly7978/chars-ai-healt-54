@@ -299,31 +299,43 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * DETECCIÓN DE PICOS - VERSIÓN MÁS TOLERANTE
+   * DETECCIÓN DE PICOS - CALIBRADO PARA SEÑALES PPG REALES
+   * Los valores normalizados típicos son 1-50 (diferencia señal - baseline)
    */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
     const n = this.normalizedBuffer.length;
-    if (n < 20) return { isPeak: false, confidence: 0 }; // Era 30
+    if (n < 25) return { isPeak: false, confidence: 0 };
     
+    // INTERVALO MÍNIMO FISIOLÓGICO: 300ms = 200 BPM máximo
     const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
     if (timeSinceLastPeak < this.MIN_PEAK_INTERVAL_MS) {
       return { isPeak: false, confidence: 0 };
     }
     
-    const window = this.normalizedBuffer.slice(-20);
+    const window = this.normalizedBuffer.slice(-25);
     
-    // === UMBRAL ADAPTATIVO ===
+    // === ESTADÍSTICAS DE VENTANA ===
     const windowMean = window.reduce((a, b) => a + b, 0) / window.length;
     const windowStd = Math.sqrt(
       window.reduce((sum, v) => sum + Math.pow(v - windowMean, 2), 0) / window.length
     );
+    const windowMin = Math.min(...window);
+    const windowMax = Math.max(...window);
+    const windowRange = windowMax - windowMin;
     
-    // Umbral adaptativo basado en desviación estándar - MÁS ESTRICTO
-    const adaptiveThreshold = windowMean + windowStd * 1.0; // Aumentado para reducir falsos positivos
+    // Log diagnóstico cada 90 frames (3 segundos)
+    if (this.frameCount % 90 === 0) {
+      console.log(`🔍 Signal: range=${windowRange.toFixed(1)}, std=${windowStd.toFixed(1)}, mean=${windowMean.toFixed(1)}`);
+    }
     
-    // Buscar máximo en región central
-    const searchStart = 4;
-    const searchEnd = 16;
+    // REQUIERE SEÑAL MÍNIMA: rango > 2 (señales normalizadas típicas: 5-30)
+    if (windowRange < 2 || windowRange > 200) {
+      return { isPeak: false, confidence: 0 };
+    }
+    
+    // === BUSCAR MÁXIMO EN REGIÓN CENTRAL ===
+    const searchStart = 6;
+    const searchEnd = 19;
     
     let maxIdx = searchStart;
     let maxVal = window[searchStart];
@@ -334,52 +346,46 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Validar que supere el umbral
-    if (maxVal < adaptiveThreshold && maxVal < windowMean + 0.5) {
+    // UMBRAL ADAPTATIVO: debe estar significativamente sobre la media
+    const adaptiveThreshold = windowMean + windowStd * 1.5;
+    if (maxVal < adaptiveThreshold) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // === VALIDACIÓN DE PROMINENCIA ===
-    const leftVal = window[Math.max(0, maxIdx - 2)] ?? 0;
-    const rightVal = window[Math.min(window.length - 1, maxIdx + 2)] ?? 0;
+    // === VALIDACIÓN DE FORMA DE PICO (LATIGAZO) ===
+    // Pico real: subida rápida + bajada rápida
+    const leftVals = [window[maxIdx - 3], window[maxIdx - 2], window[maxIdx - 1]];
+    const rightVals = [window[maxIdx + 1], window[maxIdx + 2], window[maxIdx + 3]];
     
-    // Debe ser un pico local (mayor que al menos un lado)
-    if (maxVal <= leftVal && maxVal <= rightVal) {
-      return { isPeak: false, confidence: 0 };
-    }
+    const leftMin = Math.min(...leftVals.filter(v => v !== undefined));
+    const rightMin = Math.min(...rightVals.filter(v => v !== undefined));
     
-    // Calcular prominencia
-    const prominence = maxVal - Math.min(leftVal, rightVal);
+    // Prominencia: altura del pico sobre los valles
+    const prominence = maxVal - Math.min(leftMin, rightMin);
     
-    // Prominencia mínima basada en std - MÁS ESTRICTA para evitar ruido
-    const minProminence = Math.max(0.5, windowStd * 0.4);
+    // PROMINENCIA MÍNIMA ADAPTATIVA: basada en std pero con mínimo absoluto
+    const minProminence = Math.max(1.5, windowStd * 0.6);
+    
     if (prominence < minProminence) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Rango de ventana
-    const windowMin = Math.min(...window);
-    const windowMax = Math.max(...window);
-    const windowRange = windowMax - windowMin;
+    // VERIFICAR FORMA DE LATIGAZO: debe bajar a ambos lados
+    const dropsLeft = maxVal > leftMin + prominence * 0.3;
+    const dropsRight = maxVal > rightMin + prominence * 0.3;
     
-    // Log diagnóstico cada 60 frames (2 segundos)
-    if (this.frameCount % 60 === 0) {
-      console.log(`🔍 Peak: range=${windowRange.toFixed(2)}, prom=${prominence.toFixed(2)}, minProm=${minProminence.toFixed(2)}, std=${windowStd.toFixed(2)}`);
-    }
-    
-    // Rango mínimo - requiere señal más fuerte para evitar ruido
-    if (windowRange < 0.5 || windowRange > 100) {
+    if (!dropsLeft || !dropsRight) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // === VALIDACIÓN TEMPORAL - MÁS TOLERANTE ===
-    if (this.rrIntervals.length >= 5 && this.lastPeakTime) { // Era 3
+    // === VALIDACIÓN TEMPORAL ===
+    if (this.rrIntervals.length >= 4 && this.lastPeakTime) {
       const expectedInterval = this.expectedPeakInterval;
       const currentInterval = now - this.lastPeakTime;
       const deviation = Math.abs(currentInterval - expectedInterval) / expectedInterval;
       
-      // Solo rechazar si la desviación es EXTREMA (>80%)
-      if (deviation > 0.8 && prominence < minProminence * 3) {
+      // Rechazar si es MUY diferente al ritmo establecido (>70%) y prominencia baja
+      if (deviation > 0.7 && prominence < minProminence * 2) {
         return { isPeak: false, confidence: 0 };
       }
     }
@@ -401,10 +407,10 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Confianza basada en prominencia y consistencia
-    const prominenceScore = Math.min(1, prominence / (windowStd * 2));
+    // Confianza basada en prominencia relativa
+    const prominenceScore = Math.min(1, prominence / (windowStd * 3));
     const consistencyScore = this.validPeakCount > 5 ? 0.2 : 0;
-    const confidence = Math.min(1, 0.4 + prominenceScore * 0.4 + consistencyScore);
+    const confidence = Math.min(1, 0.5 + prominenceScore * 0.3 + consistencyScore);
     
     return { isPeak: true, confidence };
   }
