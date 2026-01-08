@@ -341,14 +341,16 @@ export class SignalQualityAnalyzer {
     // Tu cámara produce R/G de 3-5 con dedo (no 15+)
     const rgRatio = green > 0.1 ? red / green : (green === 0 && red > 200 ? 50 : 1);
     
-    if (rgRatio >= 5) {
+    if (rgRatio >= 4) {
       confidence += 0.40; // Ratio alto = probablemente dedo
-    } else if (rgRatio >= 3) {
-      confidence += 0.30;
+    } else if (rgRatio >= 2.5) {
+      confidence += 0.35; // Tu cámara produce 3-5
     } else if (rgRatio >= 1.5) {
-      confidence += 0.10; // Zona gris
+      confidence += 0.25; // Zona aceptable
+    } else if (rgRatio >= 1.2) {
+      confidence += 0.15; // Zona marginal
     }
-    // rgRatio < 1.5 = 0 puntos (probablemente NO es dedo)
+    // rgRatio < 1.2 = 0 puntos (probablemente NO es dedo)
     
     // === 2. VERDE BAJO EN VALOR ABSOLUTO (25% del peso) - MÁS TOLERANTE ===
     // Tu cámara puede dar verde hasta 50 con dedo
