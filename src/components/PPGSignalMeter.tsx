@@ -41,21 +41,21 @@ const CONFIG = {
   
   // Procesamiento de señal PPG - CALIBRADO PARA VALORES REALES
   SIGNAL: {
-    // Normalización automática - VALORES MUY AMPLIOS para capturar cualquier señal
+    // Normalización automática
     MIN_RANGE: 0.001,    // Rango mínimo muy pequeño para señales débiles
     MAX_RANGE: 200,      // Rango máximo amplio
     
     // Suavizado exponencial (0.1 = muy suave, 0.5 = más reactivo)
     SMOOTHING: 0.12,     // Más suave para ondas limpias
     
-    // Línea base adaptativa (velocidad de adaptación) - MÁS LENTA
+    // Línea base adaptativa (velocidad de adaptación)
     BASELINE_SPEED: 0.003,
     
-    // Altura de onda objetivo (% del canvas) - ONDAS MÁS GRANDES
-    TARGET_AMPLITUDE: 0.35,  // 35% del alto para ondas bien visibles
+    // Altura de onda objetivo (% del canvas)
+    TARGET_AMPLITUDE: 0.40,  // 40% del alto para ondas bien visibles
     
-    // AMPLIFICACIÓN FIJA para señales muy pequeñas
-    AMPLIFICATION: 150,   // Multiplicador base
+    // AMPLIFICACIÓN AUMENTADA para señales muy pequeñas
+    AMPLIFICATION: 500,   // Aumentado de 150 a 500
   },
   
   // Detección de picos
@@ -326,9 +326,9 @@ const PPGSignalMeter = ({
       // Calcular factor de escala necesario
       let scaleFactor = targetHeight / Math.max(dynamicRange, 0.001);
       
-      // Limitar el factor para evitar ruido excesivo
+      // Limitar el factor - más amplificación mínima para ver señales débiles
       scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
-      scaleFactor = Math.max(scaleFactor, 10); // Mínimo de amplificación
+      scaleFactor = Math.max(scaleFactor, 50); // Aumentado de 10 a 50
       
       // 8. Aplicar escala (invertido: valores positivos de AC van hacia ARRIBA)
       const scaledValue = -ac * scaleFactor;
