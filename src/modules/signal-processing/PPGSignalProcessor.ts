@@ -2,12 +2,12 @@ import { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInt
 import { BandpassFilter } from './BandpassFilter';
 import { FrameProcessor } from './FrameProcessor';
 import { SignalQualityAnalyzer, SignalQualityResult } from './SignalQualityAnalyzer';
+import { globalCameraController, CameraController } from '../camera/CameraController';
 
 /**
- * PROCESADOR PPG - VERSIÓN CON SQI UNIFICADO
+ * PROCESADOR PPG - CON CALIBRACIÓN INTEGRADA
  * 
- * Usa SignalQualityAnalyzer como ÚNICA fuente de verdad para calidad
- * La calidad determina si la señal es válida para medir signos vitales
+ * Conecta SignalQualityAnalyzer → CameraController para calibración guiada
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -16,8 +16,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameProcessor: FrameProcessor;
   private qualityAnalyzer: SignalQualityAnalyzer;
   
-  // Buffers - OPTIMIZADOS para 30fps
-  private readonly BUFFER_SIZE = 60; // 2s @ 30fps - buffer central
+  // Buffers
+  private readonly BUFFER_SIZE = 60;
   private rawRedBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   
@@ -26,8 +26,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount: number = 0;
   private lastQualityResult: SignalQualityResult | null = null;
   
-  // Estadísticas RGB para SpO2
+  // RGB para SpO2
   private rgbStats = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0 };
+  
+  // Calibración cada N frames (no cada frame)
+  private calibrationFrameCounter = 0;
+  private readonly CALIBRATION_INTERVAL = 5; // Cada 5 frames = ~6 veces/seg
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -43,6 +47,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.filteredBuffer = [];
     this.bandpassFilter.reset();
     this.qualityAnalyzer.reset();
+    this.calibrationFrameCounter = 0;
   }
 
   start(): void {
@@ -62,7 +67,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * PROCESAMIENTO DE FRAME - CON SQI UNIFICADO
+   * PROCESAMIENTO DE FRAME - CON CALIBRACIÓN GUIADA
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
@@ -97,8 +102,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.filteredBuffer.shift();
       }
       
-      // 4. ANÁLISIS DE CALIDAD UNIFICADO 
-      // IMPORTANTE: Usar valores CRUDOS para detección real de dedo
+      // 4. ANÁLISIS DE CALIDAD
       const rawR = frameData.rawRed ?? redValue;
       const rawG = frameData.rawGreen ?? avgGreen;
       const rawB = frameData.rawBlue ?? avgBlue;
@@ -112,10 +116,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.lastQualityResult = qualityResult;
       this.lastRGB.pulsatility = qualityResult.perfusionIndex / 100;
       
-      // 5. Actualizar estadísticas RGB para SpO2
+      // 5. *** CALIBRACIÓN GUIADA POR SEÑAL ***
+      this.calibrationFrameCounter++;
+      if (this.calibrationFrameCounter >= this.CALIBRATION_INTERVAL) {
+        this.calibrationFrameCounter = 0;
+        this.executeSignalGuidedCalibration(qualityResult, frameData);
+      }
+      
+      // 6. Actualizar estadísticas RGB
       this.updateRGBStats();
       
-      // 6. Emitir señal procesada
+      // 7. Emitir señal
       const roi = this.frameProcessor.detectROI(redValue, imageData);
       
       const processedSignal: ProcessedSignal = {
@@ -126,7 +137,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         fingerDetected: qualityResult.isSignalValid,
         roi: roi,
         perfusionIndex: qualityResult.perfusionIndex,
-        rawGreen: rawG, // CRÍTICO: Para validar dedo en HeartBeatProcessor
+        rawGreen: rawG,
         diagnostics: {
           message: qualityResult.invalidReason || `PI: ${qualityResult.perfusionIndex.toFixed(2)}%`,
           hasPulsatility: qualityResult.isSignalValid,
@@ -136,27 +147,44 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       this.onSignalReady(processedSignal);
     } catch (error) {
-      // Error silenciado para rendimiento
+      // Error silenciado
     }
   }
 
   /**
-   * Actualiza estadísticas RGB para SpO2
+   * CALIBRACIÓN GUIADA POR LA SEÑAL
+   * El algoritmo le dice a la cámara qué ajustar
    */
+  private executeSignalGuidedCalibration(
+    quality: SignalQualityResult,
+    frameData: { rawRed?: number; rawGreen?: number; rawBlue?: number }
+  ): void {
+    // Generar comando basado en métricas
+    const command = this.qualityAnalyzer.getCalibrationCommand();
+    
+    // Construir métricas para el controlador
+    const metrics = {
+      snr: quality.metrics.snr,
+      dcLevel: quality.metrics.dcLevel,
+      acAmplitude: quality.metrics.acAmplitude,
+      isSaturated: this.frameProcessor.getIsSaturated(),
+      perfusionIndex: quality.perfusionIndex,
+      periodicity: quality.metrics.periodicity,
+      fingerConfidence: quality.metrics.fingerConfidence
+    };
+    
+    // Ejecutar comando en CameraController
+    globalCameraController.executeCommand(command, metrics);
+  }
+
   private updateRGBStats(): void {
     this.rgbStats = this.frameProcessor.getRGBStats();
   }
 
-  /**
-   * Obtiene estadísticas RGB para SpO2
-   */
   getRGBStats(): typeof this.rgbStats {
     return { ...this.rgbStats };
   }
   
-  /**
-   * Obtiene el último resultado de calidad
-   */
   getQualityResult(): SignalQualityResult | null {
     return this.lastQualityResult;
   }
@@ -170,6 +198,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.qualityAnalyzer.reset();
     this.lastQualityResult = null;
     this.rgbStats = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0 };
+    this.calibrationFrameCounter = 0;
   }
 
   getLastNSamples(n: number): number[] {
