@@ -39,30 +39,30 @@ const CONFIG = {
   GRID_MAJOR: 100,   // Líneas principales cada 100px
   GRID_MINOR: 20,    // Líneas menores cada 20px
   
-  // Procesamiento de señal PPG - CALIBRADO PARA VALORES REALES
+  // Procesamiento de señal PPG - ONDAS REALES SIN SUAVIZADO EXCESIVO
   SIGNAL: {
     // Normalización automática
-    MIN_RANGE: 0.001,    // Rango mínimo muy pequeño para señales débiles
+    MIN_RANGE: 1,        // Rango mínimo para señales reales
     MAX_RANGE: 200,      // Rango máximo amplio
     
-    // Suavizado exponencial (0.1 = muy suave, 0.5 = más reactivo)
-    SMOOTHING: 0.12,     // Más suave para ondas limpias
+    // SUAVIZADO MÍNIMO: 0.4 = reactivo, muestra picos agudos reales
+    SMOOTHING: 0.4,      // Aumentado para mostrar picos tipo "latigazo"
     
-    // Línea base adaptativa (velocidad de adaptación)
-    BASELINE_SPEED: 0.003,
+    // Línea base adaptativa LENTA (no distorsiona picos)
+    BASELINE_SPEED: 0.002,
     
     // Altura de onda objetivo (% del canvas)
-    TARGET_AMPLITUDE: 0.40,  // 40% del alto para ondas bien visibles
+    TARGET_AMPLITUDE: 0.45,  // 45% del alto
     
-    // AMPLIFICACIÓN BALANCEADA - ni excesiva ni insuficiente
-    AMPLIFICATION: 800,   // Reducido de 2000 a 800 para evitar distorsión
+    // AMPLIFICACIÓN para señales normalizadas (típico 5-30)
+    AMPLIFICATION: 15,   // Reducido - señales ya tienen buen rango
   },
   
-  // Detección de picos
+  // Detección de picos (solo para referencia visual)
   PEAKS: {
-    MIN_DISTANCE_MS: 300,   // Mínimo entre picos (200 BPM máx)
-    DETECTION_WINDOW: 3,    // Puntos a cada lado para detectar (más sensible)
-    MIN_PROMINENCE: 0.08,   // Prominencia mínima BAJA para detectar más picos
+    MIN_DISTANCE_MS: 300,
+    DETECTION_WINDOW: 3,
+    MIN_PROMINENCE: 1.5,   // Calibrado para señales normalizadas
   },
   
   // Colores
@@ -323,18 +323,18 @@ const PPGSignalMeter = ({
       // 7. AMPLIFICACIÓN ADAPTATIVA: escalar para llenar TARGET_AMPLITUDE del canvas
       const targetHeight = CONFIG.CANVAS_HEIGHT * S.TARGET_AMPLITUDE;
       
-      // Calcular factor de escala necesario
-      let scaleFactor = targetHeight / Math.max(dynamicRange, 0.001);
+      // Calcular factor de escala basado en rango dinámico REAL
+      let scaleFactor = targetHeight / Math.max(dynamicRange, 1);
       
-      // Limitar el factor - balanceado para ondas naturales
+      // Límites de escala para señales normalizadas (rango típico 5-30)
       scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
-      scaleFactor = Math.max(scaleFactor, 80); // Reducido de 200 a 80
+      scaleFactor = Math.max(scaleFactor, 3); // Mínimo bajo para señales fuertes
       
-      // 8. Aplicar escala (invertido: valores positivos de AC van hacia ARRIBA)
+      // 8. Aplicar escala (invertido: picos van hacia ARRIBA)
       const scaledValue = -ac * scaleFactor;
       
-      // 9. Clamp para evitar valores extremos
-      const maxAmplitude = targetHeight * 1.2;
+      // 9. Clamp suave - permite picos agudos
+      const maxAmplitude = targetHeight * 1.5;
       const clampedValue = Math.max(-maxAmplitude, Math.min(maxAmplitude, scaledValue));
       
       // Agregar punto al buffer
