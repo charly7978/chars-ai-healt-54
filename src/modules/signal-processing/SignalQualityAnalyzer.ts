@@ -61,7 +61,7 @@ export class SignalQualityAnalyzer {
   };
   
   // Buffers para análisis - OPTIMIZADOS para menos memoria
-  private readonly BUFFER_SIZE = 60; // ~2 segundos a 30fps (suficiente para análisis)
+  private readonly BUFFER_SIZE = 30; // ~1 segundo a 30fps (suficiente para análisis)
   private rawBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   private dcBuffer: number[] = [];

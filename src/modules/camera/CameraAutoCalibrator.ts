@@ -22,7 +22,7 @@ export class CameraAutoCalibrator {
   private currentBrightness = 0;
   private track: MediaStreamTrack | null = null;
   private lastAdjustTime = 0;
-  private readonly COOLDOWN = 1000; // 1 segundo entre ajustes (más rápido)
+  private readonly COOLDOWN = 500; // 500ms entre ajustes - más rápido
   
   // Estado actual de exposición
   private currentExposure = 0;
@@ -42,9 +42,9 @@ export class CameraAutoCalibrator {
         min: caps.exposureCompensation.min,
         max: caps.exposureCompensation.max
       };
-      // Iniciar en 40% del rango (ligeramente más alto para evitar oscuridad)
+      // OPTIMIZADO: Iniciar en 50% del rango para mejor señal PPG
       const range = this.exposureRange.max - this.exposureRange.min;
-      this.currentExposure = this.exposureRange.min + range * 0.4;
+      this.currentExposure = this.exposureRange.min + range * 0.5;
     }
   }
 

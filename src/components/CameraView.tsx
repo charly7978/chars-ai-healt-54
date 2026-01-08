@@ -77,12 +77,13 @@ const CameraView: React.FC<CameraViewProps> = ({
         
         // Intentar cámara trasera
         try {
+          // OPTIMIZADO: 640x480 es suficiente para PPG según literatura científica
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
               facingMode: { exact: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
               frameRate: { ideal: 30 }
             }
           });
@@ -91,8 +92,8 @@ const CameraView: React.FC<CameraViewProps> = ({
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
               frameRate: { ideal: 30 }
             }
           });
@@ -130,7 +131,8 @@ const CameraView: React.FC<CameraViewProps> = ({
           
           if (caps.exposureCompensation) {
             const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-            settings.push({ exposureCompensation: caps.exposureCompensation.min + range * 0.3 });
+            // OPTIMIZADO: 50% de exposición inicial para mejor señal PPG
+            settings.push({ exposureCompensation: caps.exposureCompensation.min + range * 0.5 });
           }
           
           if (caps.iso) {

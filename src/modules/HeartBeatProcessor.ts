@@ -15,14 +15,14 @@ export class HeartBeatProcessor {
   private readonly MAX_PEAK_INTERVAL_MS = 2000; // 30 BPM mín (era 1500) - más tolerante
   private readonly WARMUP_TIME_MS = 1000;       // 1 segundo warmup (era 2)
   
-  // Buffers - REDUCIDOS para respuesta más rápida
+  // Buffers - OPTIMIZADOS para 30fps
   private signalBuffer: number[] = [];
   private normalizedBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 60; // Era 90
+  private readonly BUFFER_SIZE = 45; // 1.5s @ 30fps
   
   // Baseline - MÁS RÁPIDO
   private baselineBuffer: number[] = [];
-  private readonly BASELINE_SIZE = 30; // Era 45
+  private readonly BASELINE_SIZE = 20; // ~0.7s @ 30fps
   private baseline: number = 0;
   
   // Detección de picos
