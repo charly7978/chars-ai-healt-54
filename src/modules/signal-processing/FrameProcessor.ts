@@ -3,40 +3,39 @@ import { ProcessedSignal } from '../../types/signal';
 import { globalCalibrator } from '../camera/CameraAutoCalibrator';
 
 /**
- * FrameProcessor - EXTRACCIÓN PPG ULTRA-LIGERA
+ * FrameProcessor - EXTRACCIÓN PPG ROBUSTA
  * 
- * PRINCIPIOS:
- * 1. Buffers PEQUEÑOS y fijos
- * 2. Calibración llamada cada 15 frames (NO cada 5)
- * 3. Logs mínimos
- * 4. Sin acumulación de memoria
+ * CORREGIDO:
+ * 1. calculateAC() ahora devuelve valores normalizados (0-0.1 típico)
+ * 2. Mejor detección de piel con umbrales apropiados
+ * 3. Normalización consistente
  */
 export class FrameProcessor {
-  // Buffers PEQUEÑOS - 60 frames = 2s @ 30fps
+  // Buffers PEQUEÑOS - 90 frames = 3s @ 30fps
   private redBuffer: Float32Array;
   private greenBuffer: Float32Array;
   private blueBuffer: Float32Array;
   private bufferIndex = 0;
   private bufferFilled = false;
-  private readonly BUFFER_SIZE = 60;
+  private readonly BUFFER_SIZE = 90;
   
-  // Calibración
+  // Calibración de ganancia
   private calibrationDC = 0;
   private calibrationComplete = false;
   private calibrationSamples = 0;
-  private readonly CALIBRATION_FRAMES = 30;
+  private readonly CALIBRATION_FRAMES = 45; // 1.5 segundos
   
   // Ganancia
   private gainFactor = 1.0;
-  private readonly TARGET_DC = 120;
+  private readonly TARGET_DC = 180; // Target para mejor SNR
   
-  // Suavizado
+  // Suavizado exponencial
   private lastRed = 0;
   private lastGreen = 0;
   private lastBlue = 0;
-  private readonly SMOOTHING = 0.2;
+  private readonly SMOOTHING = 0.15; // Más suavizado para estabilidad
   
-  // Contadores
+  // Estadísticas
   private frameCount = 0;
   private skinPixelRatio = 0;
   
@@ -58,20 +57,26 @@ export class FrameProcessor {
     let blueSum = 0;
     let skinPixelCount = 0;
     
-    // Procesar con step de 4 para velocidad
+    // Procesar con step de 4 para velocidad (cada 4 píxeles en memoria = cada píxel real)
+    // Saltamos de 16 en 16 para velocidad (cada 4 píxeles)
     for (let i = 0; i < data.length; i += 16) {
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
       
       const total = r + g + b;
-      if (total < 50) continue;
+      if (total < 50) continue; // Muy oscuro
       
+      // Normalización cromática para detección de piel/dedo
       const nr = r / total;
       const ng = g / total;
       const nrng = ng > 0.01 ? nr / ng : 0;
       
-      if (nr > 0.33 && nrng > 1.0 && r > 40) {
+      // Criterios para piel/dedo con flash:
+      // - Rojo dominante (nr > 0.35)
+      // - Ratio R/G alto (nrng > 1.2)
+      // - Rojo absoluto alto (r > 60)
+      if (nr > 0.35 && nrng > 1.2 && r > 60) {
         redSum += r;
         greenSum += g;
         blueSum += b;
@@ -79,8 +84,8 @@ export class FrameProcessor {
       }
     }
     
-    // Fallback si no hay piel detectada
-    if (skinPixelCount < 100) {
+    // Fallback: si no hay suficientes píxeles de piel, usar todos
+    if (skinPixelCount < 50) {
       redSum = 0; greenSum = 0; blueSum = 0; skinPixelCount = 0;
       for (let i = 0; i < data.length; i += 16) {
         redSum += data[i];
@@ -97,7 +102,7 @@ export class FrameProcessor {
     const rawGreen = skinPixelCount > 0 ? greenSum / skinPixelCount : 0;
     const rawBlue = skinPixelCount > 0 ? blueSum / skinPixelCount : 0;
     
-    // Suavizado temporal
+    // Suavizado temporal exponencial
     let smoothedRed: number, smoothedGreen: number, smoothedBlue: number;
     
     if (this.lastRed === 0) {
@@ -105,6 +110,7 @@ export class FrameProcessor {
       smoothedGreen = rawGreen;
       smoothedBlue = rawBlue;
     } else {
+      // EMA: new = old * alpha + raw * (1-alpha)
       smoothedRed = this.lastRed * this.SMOOTHING + rawRed * (1 - this.SMOOTHING);
       smoothedGreen = this.lastGreen * this.SMOOTHING + rawGreen * (1 - this.SMOOTHING);
       smoothedBlue = this.lastBlue * this.SMOOTHING + rawBlue * (1 - this.SMOOTHING);
@@ -114,10 +120,10 @@ export class FrameProcessor {
     this.lastGreen = smoothedGreen;
     this.lastBlue = smoothedBlue;
     
-    // Calibración
+    // Calibración de ganancia
     this.updateGainCalibration(smoothedRed, smoothedGreen, smoothedBlue);
     
-    // Aplicar ganancia
+    // Aplicar normalización
     const avgRed = this.applyNormalization(smoothedRed);
     const avgGreen = this.applyNormalization(smoothedGreen);
     const avgBlue = this.applyNormalization(smoothedBlue);
@@ -125,19 +131,18 @@ export class FrameProcessor {
     // Actualizar buffer circular
     this.updateBuffer(avgRed, avgGreen, avgBlue);
     
-    // Calcular AC
+    // Calcular AC (pulsatilidad)
     const acComponent = this.calculateAC();
     
-    // Calibrador de cámara cada 15 frames (~500ms)
+    // Calibrador de cámara cada 20 frames (~667ms)
     this.frameCount++;
-    if (this.frameCount % 15 === 0) {
+    if (this.frameCount % 20 === 0) {
       globalCalibrator.analyze(avgRed, avgGreen, avgBlue);
     }
     
     // Log cada 5 segundos
     if (this.frameCount % 150 === 0) {
-      const brightness = ((avgRed + avgGreen + avgBlue) / 3).toFixed(0);
-      console.log(`📷 PPG: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} B=${brightness} | AC=${(acComponent * 100).toFixed(2)}%`);
+      console.log(`📷 PPG: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} B=${avgBlue.toFixed(0)} | AC=${(acComponent * 100).toFixed(2)}%`);
     }
     
     return {
@@ -158,6 +163,8 @@ export class FrameProcessor {
     if (this.calibrationComplete) return;
     
     const currentDC = (r + g + b) / 3;
+    if (currentDC < 10) return; // Ignorar frames muy oscuros
+    
     this.calibrationSamples++;
     this.calibrationDC += currentDC;
     
@@ -167,7 +174,8 @@ export class FrameProcessor {
       
       if (this.calibrationDC > 0) {
         this.gainFactor = this.TARGET_DC / this.calibrationDC;
-        this.gainFactor = Math.max(0.3, Math.min(1.5, this.gainFactor));
+        // Limitar ganancia para evitar saturación
+        this.gainFactor = Math.max(0.5, Math.min(2.0, this.gainFactor));
       }
     }
   }
@@ -186,30 +194,55 @@ export class FrameProcessor {
     if (this.bufferIndex === 0) this.bufferFilled = true;
   }
   
+  /**
+   * Calcula componente AC (pulsatilidad) normalizada
+   * CORREGIDO: Devuelve valor entre 0-0.1 típico para PPG real
+   * AC = (max - min) / (2 * DC) -> valor fraccional
+   */
   private calculateAC(): number {
     const count = this.bufferFilled ? this.BUFFER_SIZE : this.bufferIndex;
     if (count < 30) return 0;
     
+    // Usar solo los últimos 30 frames (~1 segundo)
+    const startIdx = count > 30 ? count - 30 : 0;
+    
     let sum = 0;
     let min = Infinity;
     let max = -Infinity;
+    let validCount = 0;
     
-    for (let i = 0; i < count; i++) {
-      const val = this.redBuffer[i];
-      sum += val;
-      if (val < min) min = val;
-      if (val > max) max = val;
+    for (let i = startIdx; i < count; i++) {
+      const idx = (this.bufferIndex - count + i + this.BUFFER_SIZE) % this.BUFFER_SIZE;
+      const val = this.redBuffer[idx];
+      
+      if (val > 0) {
+        sum += val;
+        if (val < min) min = val;
+        if (val > max) max = val;
+        validCount++;
+      }
     }
     
-    const mean = sum / count;
-    if (mean === 0) return 0;
+    if (validCount < 20 || max === min) return 0;
     
-    return (max - min) / mean;
+    const dc = sum / validCount;
+    if (dc < 1) return 0;
+    
+    // Pulsatilidad = (pico-a-pico) / (2 * DC)
+    // Típicamente 0.5%-5% para dedo con flash
+    const ac = (max - min) / (2 * dc);
+    
+    // Limitar a rango razonable
+    return Math.max(0, Math.min(0.15, ac));
   }
   
   getRedBuffer(): number[] {
     const count = this.bufferFilled ? this.BUFFER_SIZE : this.bufferIndex;
-    return Array.from(this.redBuffer.slice(0, count));
+    const result: number[] = [];
+    for (let i = 0; i < count; i++) {
+      result.push(this.redBuffer[i]);
+    }
+    return result;
   }
   
   getAllChannelBuffers(): { red: number[], green: number[], blue: number[] } {
@@ -247,7 +280,10 @@ export class FrameProcessor {
     const redAC = redMax - redMin;
     const greenAC = greenMax - greenMin;
     
-    const rgRatio = (redDC > 0 && greenDC > 0) ? (redAC / redDC) / (greenAC / greenDC) : 0;
+    // Ratio de amplitudes normalizadas (para SpO2)
+    const redACnorm = redDC > 0 ? redAC / redDC : 0;
+    const greenACnorm = greenDC > 0 ? greenAC / greenDC : 0;
+    const rgRatio = greenACnorm > 0 ? redACnorm / greenACnorm : 0;
     
     return { redAC, redDC, greenAC, greenDC, rgRatio };
   }
