@@ -1,114 +1,108 @@
-import React, { useRef, useEffect } from 'react';
+/**
+ * @file CameraPreview.tsx
+ * @description INDICADOR DE CALIDAD CON VISTA DE CÁMARA
+ * Muestra el dedo en tiempo real + calidad instantánea
+ */
+
+import React, { useRef, useEffect } from "react";
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
+  isFingerDetected: boolean;
   signalQuality: number;
-  fingerDetected: boolean;
+  isVisible: boolean;
 }
 
-/**
- * Vista previa de la cámara con indicador de calidad real
- */
 const CameraPreview: React.FC<CameraPreviewProps> = ({
   stream,
   signalQuality,
-  fingerDetected
+  isVisible
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  
+
+  // Conectar stream al video
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    
-    if (stream) {
-      video.srcObject = stream;
-      video.play().catch(e => console.log('Video preview play error:', e));
-    } else {
-      video.srcObject = null;
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => {});
     }
     
     return () => {
-      if (video) {
-        video.srcObject = null;
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
       }
     };
   }, [stream]);
-  
-  // Si no hay stream, mostrar placeholder
-  if (!stream) {
-    return (
-      <div className="absolute top-4 right-4 z-20">
-        <div className="w-24 h-32 rounded-lg bg-gray-900 border-2 border-white/20 flex items-center justify-center">
-          <div className="text-white/50 text-xs text-center p-2">
-            Sin cámara
-          </div>
-        </div>
-      </div>
-    );
-  }
-  
-  const getQualityColor = () => {
-    if (signalQuality > 60) return 'bg-emerald-500';
-    if (signalQuality > 30) return 'bg-yellow-500';
-    return 'bg-red-500';
+
+  if (!isVisible) return null;
+
+  // Valor REAL sin modificar
+  const realQuality = Math.round(signalQuality);
+
+  // Color basado en rangos reales
+  const getColor = () => {
+    if (realQuality < 20) return "#ef4444"; // rojo
+    if (realQuality < 40) return "#f97316"; // naranja  
+    if (realQuality < 60) return "#eab308"; // amarillo
+    if (realQuality < 80) return "#22c55e"; // verde
+    return "#10b981"; // verde brillante
   };
-  
-  const getQualityLabel = () => {
-    if (!fingerDetected) return 'Sin dedo';
-    if (signalQuality > 60) return 'Excelente';
-    if (signalQuality > 30) return 'Regular';
-    return 'Baja';
+
+  // Etiqueta descriptiva
+  const getLabel = () => {
+    if (realQuality < 20) return "Muy Baja";
+    if (realQuality < 40) return "Baja";
+    if (realQuality < 60) return "Regular";
+    if (realQuality < 80) return "Buena";
+    return "Excelente";
   };
-  
-  const getQualityBarColor = () => {
-    if (signalQuality > 60) return 'bg-emerald-400';
-    if (signalQuality > 30) return 'bg-yellow-400';
-    return 'bg-red-400';
-  };
-  
+
   return (
-    <div className="absolute top-4 right-4 z-20">
-      <div className="relative w-28 h-36 rounded-xl overflow-hidden border-2 border-white/30 shadow-xl bg-black">
-        {/* Video preview - sin espejo para cámara trasera */}
+    <div className="absolute top-14 left-3 z-40">
+      {/* Contenedor con video del dedo + indicador */}
+      <div 
+        className="rounded-xl overflow-hidden shadow-lg"
+        style={{ 
+          backgroundColor: 'rgba(0,0,0,0.85)',
+          border: `2px solid ${getColor()}`,
+          boxShadow: `0 0 15px ${getColor()}50`,
+          width: '110px'
+        }}
+      >
+        {/* Video del dedo - muestra el rojo */}
         <video
           ref={videoRef}
           playsInline
           muted
           autoPlay
-          className="w-full h-full object-cover"
+          className="w-full h-20 object-cover"
+          style={{ 
+            transform: 'scaleX(-1)',
+            filter: 'saturate(1.2) contrast(1.1)'
+          }}
         />
         
-        {/* Overlay con gradiente */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-        
-        {/* Indicador de calidad */}
-        <div className="absolute bottom-0 left-0 right-0 p-2">
-          {/* Barra de progreso de calidad */}
-          <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden mb-1">
-            <div 
-              className={`h-full transition-all duration-300 ${getQualityBarColor()}`}
-              style={{ width: `${Math.max(5, signalQuality)}%` }}
-            />
-          </div>
+        {/* Indicador de calidad debajo del video */}
+        <div className="px-2 py-1.5 flex items-center justify-between">
+          {/* Punto de color */}
+          <div 
+            className="w-2.5 h-2.5 rounded-full animate-pulse"
+            style={{ backgroundColor: getColor() }}
+          />
           
-          {/* Datos de calidad */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <div className={`w-2 h-2 rounded-full ${getQualityColor()} ${fingerDetected ? 'animate-pulse' : ''}`} />
-              <span className="text-white text-[10px] font-medium">
-                {Math.round(signalQuality)}%
-              </span>
-            </div>
-            <span className="text-white/80 text-[9px]">
-              {getQualityLabel()}
-            </span>
-          </div>
+          {/* Valor numérico */}
+          <span 
+            className="text-base font-bold font-mono"
+            style={{ color: getColor() }}
+          >
+            {realQuality}%
+          </span>
+          
+          {/* Etiqueta corta */}
+          <span className="text-[10px] text-white/60">
+            {getLabel()}
+          </span>
         </div>
-        
-        {/* Indicador de dedo detectado */}
-        {fingerDetected && (
-          <div className="absolute top-1 left-1 w-3 h-3 rounded-full bg-emerald-500 border border-white/50 animate-pulse" />
-        )}
       </div>
     </div>
   );

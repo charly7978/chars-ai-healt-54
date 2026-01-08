@@ -39,23 +39,23 @@ const CONFIG = {
   GRID_MAJOR: 100,   // Líneas principales cada 100px
   GRID_MINOR: 20,    // Líneas menores cada 20px
   
-  // Procesamiento de señal PPG - AMPLIFICACIÓN MÁXIMA
+  // Procesamiento de señal PPG - CALIBRADO PARA VALORES REALES
   SIGNAL: {
-    // Normalización automática
-    MIN_RANGE: 0.0001,   // Rango mínimo muy pequeño
+    // Normalización automática - VALORES MUY AMPLIOS para capturar cualquier señal
+    MIN_RANGE: 0.001,    // Rango mínimo muy pequeño para señales débiles
     MAX_RANGE: 200,      // Rango máximo amplio
     
-    // Suavizado exponencial (más reactivo)
-    SMOOTHING: 0.25,     // Más reactivo para ver ondas
+    // Suavizado exponencial (0.1 = muy suave, 0.5 = más reactivo)
+    SMOOTHING: 0.12,     // Más suave para ondas limpias
     
-    // Línea base adaptativa
-    BASELINE_SPEED: 0.001, // Muy lenta
+    // Línea base adaptativa (velocidad de adaptación) - MÁS LENTA
+    BASELINE_SPEED: 0.003,
     
-    // Altura de onda objetivo (% del canvas)
-    TARGET_AMPLITUDE: 0.40,  // 40% del alto
+    // Altura de onda objetivo (% del canvas) - ONDAS MÁS GRANDES
+    TARGET_AMPLITUDE: 0.35,  // 35% del alto para ondas bien visibles
     
-    // AMPLIFICACIÓN FIJA - MUY ALTA para señales pequeñas
-    AMPLIFICATION: 500,   // Multiplicador alto
+    // AMPLIFICACIÓN FIJA para señales muy pequeñas
+    AMPLIFICATION: 150,   // Multiplicador base
   },
   
   // Detección de picos
@@ -109,8 +109,8 @@ const PPGSignalMeter = ({
     lastRenderTime: 0,
   });
   
-  // Picos externos (del PPGMonitor)
-  const externalPeaksRef = useRef<Array<{
+  // Picos detectados
+  const peaksRef = useRef<Array<{
     time: number;
     x: number;
     y: number;
@@ -122,40 +122,25 @@ const PPGSignalMeter = ({
     value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak
   });
   
-  const lastExternalPeakTimeRef = useRef(0);
+  const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
-  const lastProcessedValueRef = useRef(0);
 
   // ========== ACTUALIZAR REFS ==========
   useEffect(() => {
     propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak };
   }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak]);
 
-  // ========== SINCRONIZACIÓN DE PICOS EXTERNOS (ÚNICO SISTEMA) ==========
+  // ========== SINCRONIZACIÓN DE PICOS EXTERNOS ==========
   useEffect(() => {
     if (isPeak && isFingerDetected) {
       const now = Date.now();
-      if (now - lastExternalPeakTimeRef.current > CONFIG.PEAKS.MIN_DISTANCE_MS) {
-        lastExternalPeakTimeRef.current = now;
+      if (now - lastPeakTimeRef.current > CONFIG.PEAKS.MIN_DISTANCE_MS) {
+        lastPeakTimeRef.current = now;
         setShowPulse(true);
         setTimeout(() => setShowPulse(false), 150);
-        
-        // Agregar pico externo con la posición actual
-        const hasArrhythmia = arrhythmiaStatus?.includes('ARRITMIA') || false;
-        externalPeaksRef.current.push({
-          time: now,
-          x: CONFIG.CANVAS_WIDTH, // Posición actual (derecha)
-          y: CONFIG.CANVAS_HEIGHT / 2 + lastProcessedValueRef.current,
-          isArrhythmia: hasArrhythmia
-        });
-        
-        // Mantener solo los últimos 20 picos
-        if (externalPeaksRef.current.length > 20) {
-          externalPeaksRef.current.shift();
-        }
       }
     }
-  }, [isPeak, isFingerDetected, arrhythmiaStatus]);
+  }, [isPeak, isFingerDetected]);
 
   // ========== INICIALIZACIÓN ==========
   useEffect(() => {
@@ -175,7 +160,7 @@ const PPGSignalMeter = ({
   useEffect(() => {
     if (preserveResults && !isFingerDetected) {
       dataBufferRef.current?.clear();
-      externalPeaksRef.current = [];
+      peaksRef.current = [];
       processingRef.current = {
         baseline: null,
         lastSmoothed: null,
@@ -306,61 +291,51 @@ const PPGSignalMeter = ({
         return;
       }
       
-      // ========== PROCESAMIENTO DE SEÑAL PPG - AMPLIFICACIÓN ROBUSTA ==========
+      // ========== PROCESAMIENTO DE SEÑAL PPG - SIMPLIFICADO Y ROBUSTO ==========
       const S = CONFIG.SIGNAL;
       
       // 1. Inicializar línea base (DC) con el primer valor
       if (proc.baseline === null) {
         proc.baseline = rawValue;
-        proc.signalMin = 0;
-        proc.signalMax = 0;
+        proc.signalMin = rawValue;
+        proc.signalMax = rawValue;
       }
       
-      // 2. Actualizar línea base MUY LENTAMENTE
+      // 2. Actualizar línea base MUY LENTAMENTE (sigue cambios de iluminación)
       proc.baseline = proc.baseline * (1 - S.BASELINE_SPEED) + rawValue * S.BASELINE_SPEED;
       
-      // 3. Suavizado exponencial
+      // 3. Suavizado exponencial de la señal
       const smoothed = proc.lastSmoothed === null 
         ? rawValue 
         : proc.lastSmoothed + S.SMOOTHING * (rawValue - proc.lastSmoothed);
       proc.lastSmoothed = smoothed;
       
-      // 4. Extraer componente AC (ya viene filtrado, centrado en ~0)
-      // El valor ya es la variación pulsátil, no necesitamos restar baseline
-      const ac = smoothed; // La señal filtrada YA está centrada en 0
+      // 4. Extraer componente AC (variación pulsátil) = señal - línea base
+      const ac = smoothed - proc.baseline;
       
-      // 5. Tracking del rango dinámico con decay LENTO
-      const decayFactor = 0.998;
-      proc.signalMin = Math.min(proc.signalMin * decayFactor, ac);
-      proc.signalMax = Math.max(proc.signalMax * decayFactor, ac);
+      // 5. Tracking del rango dinámico con decay
+      proc.signalMin = Math.min(proc.signalMin * 0.9995 + ac * 0.0005, ac);
+      proc.signalMax = Math.max(proc.signalMax * 0.9995 + ac * 0.0005, ac);
       
-      // 6. Calcular rango dinámico
-      const dynamicRange = Math.max(Math.abs(proc.signalMax - proc.signalMin), S.MIN_RANGE);
+      // 6. Calcular amplitud dinámica
+      const dynamicRange = Math.max(proc.signalMax - proc.signalMin, S.MIN_RANGE);
       
-      // 7. AMPLIFICACIÓN para llenar el canvas
+      // 7. AMPLIFICACIÓN ADAPTATIVA: escalar para llenar TARGET_AMPLITUDE del canvas
       const targetHeight = CONFIG.CANVAS_HEIGHT * S.TARGET_AMPLITUDE;
       
-      // Factor de escala adaptativo
-      let scaleFactor: number;
-      if (dynamicRange < 0.01) {
-        // Señal muy pequeña - usar amplificación máxima
-        scaleFactor = S.AMPLIFICATION;
-      } else {
-        // Escalar para que el rango llene targetHeight
-        scaleFactor = targetHeight / dynamicRange;
-        scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
-        scaleFactor = Math.max(scaleFactor, 20);
-      }
+      // Calcular factor de escala necesario
+      let scaleFactor = targetHeight / Math.max(dynamicRange, 0.001);
       
-      // 8. Aplicar escala (invertido: positivo en señal = arriba en canvas)
+      // Limitar el factor para evitar ruido excesivo
+      scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
+      scaleFactor = Math.max(scaleFactor, 10); // Mínimo de amplificación
+      
+      // 8. Aplicar escala (invertido: valores positivos de AC van hacia ARRIBA)
       const scaledValue = -ac * scaleFactor;
       
-      // 9. Clamp
-      const maxAmplitude = targetHeight * 1.5;
+      // 9. Clamp para evitar valores extremos
+      const maxAmplitude = targetHeight * 1.2;
       const clampedValue = Math.max(-maxAmplitude, Math.min(maxAmplitude, scaledValue));
-      
-      // Guardar para referencia de picos externos
-      lastProcessedValueRef.current = clampedValue;
       
       // Agregar punto al buffer
       buffer.push({
@@ -387,6 +362,7 @@ const PPGSignalMeter = ({
         ctx.lineCap = 'round';
         
         let started = false;
+        const peakCandidates: Array<{x: number; y: number; time: number; val: number}> = [];
         
         for (let i = 0; i < points.length; i++) {
           const pt = points[i];
@@ -402,56 +378,65 @@ const PPGSignalMeter = ({
           } else {
             ctx.lineTo(x, y);
           }
+          
+          // Detectar picos locales (picos van hacia ARRIBA = valores NEGATIVOS en canvas)
+          if (i >= CONFIG.PEAKS.DETECTION_WINDOW && i < points.length - CONFIG.PEAKS.DETECTION_WINDOW) {
+            let isPeakLocal = true;
+            const currentVal = pt.value;
+            
+            // Un pico es un MÍNIMO local (valor más negativo = más arriba en canvas)
+            for (let j = i - CONFIG.PEAKS.DETECTION_WINDOW; j <= i + CONFIG.PEAKS.DETECTION_WINDOW; j++) {
+              if (j !== i && points[j].value < currentVal) {
+                // Hay un punto más alto (más negativo), no es pico
+                isPeakLocal = false;
+                break;
+              }
+            }
+            
+            // Verificar prominencia: el pico debe estar significativamente arriba de la línea base
+            // (valor negativo grande = arriba)
+            const prominence = -currentVal; // Convertir a positivo para comparar
+            const minProminence = CONFIG.CANVAS_HEIGHT * CONFIG.SIGNAL.TARGET_AMPLITUDE * CONFIG.PEAKS.MIN_PROMINENCE;
+            
+            if (isPeakLocal && prominence > minProminence) {
+              peakCandidates.push({ x, y, time: pt.time, val: pt.value });
+            }
+          }
         }
         
         ctx.stroke();
         ctx.shadowBlur = 0;
         
-        // ========== MARCAR PICOS EXTERNOS (DEL PPGMonitor) ==========
-        const externalPeaks = externalPeaksRef.current;
+        // ========== MARCAR PICOS ==========
+        // Filtrar picos muy cercanos
+        const validPeaks = peakCandidates.filter((peak, idx) => {
+          if (idx === 0) return true;
+          const prev = peakCandidates[idx - 1];
+          return peak.time - prev.time >= CONFIG.PEAKS.MIN_DISTANCE_MS;
+        });
         
-        externalPeaks.forEach((peak) => {
-          const age = now - peak.time;
-          if (age > WINDOW_MS) return;
-          
-          // Calcular posición X basada en el tiempo
-          const x = W - (age * W / WINDOW_MS);
-          
-          // Buscar el punto más cercano en el buffer para obtener la Y correcta
-          let y = centerY;
-          let minTimeDiff = Infinity;
-          for (const pt of points) {
-            const timeDiff = Math.abs(pt.time - peak.time);
-            if (timeDiff < minTimeDiff) {
-              minTimeDiff = timeDiff;
-              y = centerY + pt.value;
-            }
-          }
+        // Verificar arritmia
+        const hasArrhythmia = arrStatus?.includes('ARRITMIA') || false;
+        
+        validPeaks.forEach((peak, idx) => {
+          const isArrPeak = hasArrhythmia && idx === validPeaks.length - 1;
           
           // Círculo del pico
           ctx.beginPath();
-          ctx.arc(x, y, peak.isArrhythmia ? 10 : 7, 0, Math.PI * 2);
-          ctx.fillStyle = peak.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
+          ctx.arc(peak.x, peak.y, isArrPeak ? 8 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = isArrPeak ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
           ctx.fill();
           
-          // Borde blanco para visibilidad
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          
           // Halo para arritmias
-          if (peak.isArrhythmia) {
+          if (isArrPeak) {
             const alpha = (Math.sin(now / 150) + 1) / 2;
             ctx.beginPath();
-            ctx.arc(x, y, 16, 0, Math.PI * 2);
+            ctx.arc(peak.x, peak.y, 14, 0, Math.PI * 2);
             ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
             ctx.lineWidth = 3;
             ctx.stroke();
           }
         });
-        
-        // Limpiar picos viejos
-        externalPeaksRef.current = externalPeaks.filter(p => now - p.time < WINDOW_MS + 1000);
       }
       
       // Dibujar alerta de arritmia si aplica
@@ -475,7 +460,7 @@ const PPGSignalMeter = ({
   // ========== RESET ==========
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
-    externalPeaksRef.current = [];
+    peaksRef.current = [];
     processingRef.current = {
       baseline: null,
       lastSmoothed: null,
