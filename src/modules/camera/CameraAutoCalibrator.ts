@@ -47,9 +47,9 @@ export class CameraAutoCalibrator {
         min: caps.exposureCompensation.min,
         max: caps.exposureCompensation.max
       };
-      // Iniciar en 60% del rango para mejor iluminación inicial
+      // Iniciar en 70% del rango para mejor iluminación inicial
       const range = this.exposureRange.max - this.exposureRange.min;
-      this.currentExposure = this.exposureRange.min + range * 0.60;
+      this.currentExposure = this.exposureRange.min + range * 0.70;
       // Log removido para rendimiento
     }
   }
@@ -100,8 +100,8 @@ export class CameraAutoCalibrator {
         this.reduceExposureSlightly();
         this.lastAdjustTime = now;
       }
-    } else if (this.currentBrightness < 50) {
-      // AUMENTADO a 50 - más proactivo para mejorar iluminación
+    } else if (this.currentBrightness < 60) {
+      // AUMENTADO a 60 - más proactivo para mejorar iluminación
       recommendation = 'Muy oscuro';
       
       if (canAdjust && this.hasExposure && this.track) {
@@ -164,18 +164,17 @@ export class CameraAutoCalibrator {
     if (!this.track || !this.hasExposure) return;
     
     const range = this.exposureRange.max - this.exposureRange.min;
-    // Permitir hasta 85% del rango máximo para mejor iluminación
-    const maxAllowed = this.exposureRange.min + range * 0.85;
+    // Permitir hasta 90% del rango máximo para mejor iluminación
+    const maxAllowed = this.exposureRange.min + range * 0.90;
     
     this.currentExposure = Math.min(
       maxAllowed,
-      this.currentExposure + range * 0.15
+      this.currentExposure + range * 0.20 // AUMENTADO de 0.15 a 0.20
     );
     
     this.track.applyConstraints({
       advanced: [{ exposureCompensation: this.currentExposure } as any]
     }).catch(() => {});
-    // Log removido para rendimiento
   }
 
   /**

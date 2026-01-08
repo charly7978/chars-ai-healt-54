@@ -69,7 +69,6 @@ const Index = () => {
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState,
-    setGreenValue,
     reset: resetHeartBeat,
     debugInfo: heartDebugInfo
   } = useHeartBeatProcessor();
@@ -527,10 +526,7 @@ const Index = () => {
 
     setSignalQuality(lastSignal.quality);
     
-    // CRÍTICO: Pasar valor verde al procesador de latidos para validación de dedo
-    if (lastSignal.rawGreen !== undefined) {
-      setGreenValue(lastSignal.rawGreen);
-    }
+    // ELIMINADO: Ya no pasamos valor verde - la calidad de señal determina validez
     
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
@@ -601,7 +597,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setGreenValue]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
 
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {

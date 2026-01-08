@@ -129,16 +129,18 @@ const CameraView: React.FC<CameraViewProps> = ({
           // Exposición y otros ajustes
           const settings: any[] = [];
           
-          // PPG: Exposición MEDIA para mejor iluminación con flash+dedo
+          // PPG: Exposición ALTA para mejor iluminación con flash+dedo
           if (caps.exposureCompensation) {
             const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-            const targetExposure = caps.exposureCompensation.min + range * 0.50;
+            const targetExposure = caps.exposureCompensation.min + range * 0.70; // AUMENTADO de 0.50
             settings.push({ exposureCompensation: targetExposure });
           }
           
-          // ISO MÍNIMO para reducir ruido
+          // ISO MEDIO para mejor sensibilidad sin ruido excesivo
           if (caps.iso) {
-            settings.push({ iso: caps.iso.min });
+            const isoRange = caps.iso.max - caps.iso.min;
+            const targetIso = caps.iso.min + isoRange * 0.3; // 30% del rango
+            settings.push({ iso: targetIso });
           }
           
           // White Balance manual para maximizar canal rojo

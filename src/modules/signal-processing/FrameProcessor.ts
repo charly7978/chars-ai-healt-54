@@ -65,13 +65,14 @@ export class FrameProcessor {
       const b = data[i + 2];
       
       const total = r + g + b;
-      if (total < 50) continue;
+      if (total < 20) continue; // MÁS PERMISIVO - era 50
       
       const nr = r / total;
       const ng = g / total;
       const nrng = ng > 0.01 ? nr / ng : 0;
       
-      if (nr > 0.33 && nrng > 1.0 && r > 40) {
+      // MENOS RESTRICTIVO para aceptar más variación de piel
+      if (nr > 0.30 && nrng > 0.8 && r > 30) {
         redSum += r;
         greenSum += g;
         blueSum += b;
