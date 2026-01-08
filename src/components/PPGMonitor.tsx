@@ -35,6 +35,7 @@ interface PPGMonitorProps {
   onData: (data: PPGData) => void;
   onCameraReady?: () => void;
   onError?: (error: string) => void;
+  onStreamReady?: (stream: MediaStream | null) => void;
 }
 
 // ============ FILTRO IIR BUTTERWORTH ============
@@ -210,7 +211,8 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
   isActive, 
   onData, 
   onCameraReady,
-  onError 
+  onError,
+  onStreamReady
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -248,6 +250,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         track.stop();
       }
       streamRef.current = null;
+      onStreamReady?.(null);
     }
     
     if (videoRef.current) {
@@ -259,7 +262,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
     baselineRef.current = 0;
     bpmSmoothedRef.current = 0;
     frameCountRef.current = 0;
-  }, []);
+  }, [onStreamReady]);
   
   // Iniciar cámara con secuencia correcta
   const startCamera = useCallback(async () => {
@@ -381,6 +384,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       }
       
       onCameraReady?.();
+      onStreamReady?.(stream);
       
       // PASO 4: Iniciar captura de frames
       startFrameLoop();
