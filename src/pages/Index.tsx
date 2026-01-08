@@ -3,6 +3,7 @@ import VitalSign from "@/components/VitalSign";
 import PPGMonitor from "@/components/PPGMonitor";
 import CameraPreview from "@/components/CameraPreview";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { useHeartbeatFeedback } from "@/hooks/useHeartbeatFeedback";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -48,6 +49,8 @@ const Index = () => {
     startCalibration,
     forceCalibrationCompletion
   } = useVitalSignsProcessor();
+  
+  const { triggerHeartbeatFeedback } = useHeartbeatFeedback();
 
   // Pantalla completa
   const enterFullScreen = async () => {
@@ -136,6 +139,11 @@ const Index = () => {
     setHeartRate(data.bpm);
     setBeatMarker(data.isPeak ? 1 : 0);
     
+    // Feedback de latido detectado
+    if (data.isPeak && data.fingerDetected && data.bpm > 0) {
+      triggerHeartbeatFeedback();
+    }
+    
     // Procesar signos vitales si hay dedo y suficientes intervalos RR
     if (data.fingerDetected && data.rrIntervals.length >= 3) {
       const rrData = {
@@ -168,7 +176,7 @@ const Index = () => {
         }
       }
     }
-  }, [processVitalSigns]);
+  }, [processVitalSigns, triggerHeartbeatFeedback]);
 
   // Inicio de monitoreo
   const startMonitoring = () => {
