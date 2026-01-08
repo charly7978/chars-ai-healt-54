@@ -53,9 +53,7 @@ export class HeartBeatProcessor {
   private audioUnlocked: boolean = false;
   private lastBeepTime: number = 0;
   
-  // Detección de dedo por canal verde
-  private lastGreenValue: number = 0;
-  private readonly GREEN_THRESHOLD = 50; // G > 50 = ambiente, G < 50 = dedo
+  // ELIMINADA detección de dedo - la calidad de señal determina si hay pulso
   private readonly BEEP_VOLUME = 1.0;
   private readonly MIN_BEEP_INTERVAL_MS = 350;
   
@@ -164,9 +162,9 @@ export class HeartBeatProcessor {
       compressor.release.setValueAtTime(0.25, t);
       compressor.connect(this.audioContext.destination);
       
-      // Ganancia master ALTA
+      // Ganancia master MÁXIMA
       const masterGain = this.audioContext.createGain();
-      masterGain.gain.value = 3.0; // VOLUMEN x3
+      masterGain.gain.value = 5.0; // VOLUMEN x5 - MÁXIMO
       masterGain.connect(compressor);
       
       // LUB (S1) - Cierre de válvulas mitral y tricúspide
@@ -175,11 +173,11 @@ export class HeartBeatProcessor {
       const lubFilter = this.audioContext.createBiquadFilter();
       
       lub.type = 'sine';
-      lub.frequency.setValueAtTime(65, t);
-      lub.frequency.exponentialRampToValueAtTime(45, t + 0.1);
+      lub.frequency.setValueAtTime(300, t); // FRECUENCIA ALTA AUDIBLE
+      lub.frequency.exponentialRampToValueAtTime(200, t + 0.1);
       
       lubFilter.type = 'lowpass';
-      lubFilter.frequency.value = 150;
+      lubFilter.frequency.value = 800; // AUMENTADO para frecuencias altas
       lubFilter.Q.value = 1;
       
       lubGain.gain.setValueAtTime(0, t);
@@ -202,11 +200,11 @@ export class HeartBeatProcessor {
       const dubStart = t + 0.12;
       
       dub.type = 'sine';
-      dub.frequency.setValueAtTime(85, dubStart);
-      dub.frequency.exponentialRampToValueAtTime(55, dubStart + 0.08);
+      dub.frequency.setValueAtTime(400, dubStart); // FRECUENCIA ALTA AUDIBLE
+      dub.frequency.exponentialRampToValueAtTime(250, dubStart + 0.08);
       
       dubFilter.type = 'lowpass';
-      dubFilter.frequency.value = 180;
+      dubFilter.frequency.value = 900; // AUMENTADO para frecuencias altas
       dubFilter.Q.value = 0.8;
       
       dubGain.gain.setValueAtTime(0, dubStart);
@@ -232,15 +230,7 @@ export class HeartBeatProcessor {
     return Date.now() - this.startTime < this.WARMUP_TIME_MS;
   }
 
-  // Recibir valor verde para validar dedo
-  setGreenValue(green: number): void {
-    this.lastGreenValue = green;
-  }
-  
-  // Verificar si hay dedo real (G bajo = sangre absorbiendo verde)
-  private hasRealFinger(): boolean {
-    return this.lastGreenValue < this.GREEN_THRESHOLD;
-  }
+  // ELIMINADO: setGreenValue y hasRealFinger - la calidad de señal determina validez
 
   processSignal(value: number, timestamp?: number): {
     bpm: number;
@@ -252,16 +242,7 @@ export class HeartBeatProcessor {
     this.frameCount++;
     const now = timestamp || Date.now();
     
-    // CRÍTICO: Si no hay dedo real, NO procesar picos
-    if (!this.hasRealFinger()) {
-      return {
-        bpm: Math.round(this.smoothBPM),
-        confidence: 0,
-        isPeak: false,
-        filteredValue: 0,
-        arrhythmiaCount: 0
-      };
-    }
+    // SIN validación de dedo - dejamos que la señal determine si hay pulso
     
     // Actualizar baseline
     this.baselineBuffer.push(value);

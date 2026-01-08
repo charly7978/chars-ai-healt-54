@@ -48,12 +48,7 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  // Pasar valor verde al procesador para validar dedo
-  const setGreenValue = useCallback((green: number) => {
-    if (processorRef.current) {
-      processorRef.current.setGreenValue(green);
-    }
-  }, []);
+  // ELIMINADO: setGreenValue - la calidad de señal determina validez
 
   const processSignal = useCallback((value: number, _fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
@@ -141,7 +136,6 @@ export const useHeartBeatProcessor = () => {
     confidence,
     signalQuality,
     processSignal,
-    setGreenValue,
     reset,
     setArrhythmiaState,
     debugInfo: {
