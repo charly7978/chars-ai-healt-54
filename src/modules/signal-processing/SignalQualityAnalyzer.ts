@@ -471,6 +471,84 @@ export class SignalQualityAnalyzer {
   }
   
   /**
+   * NUEVO: Genera comando de calibración para CameraController
+   * Basado en las métricas actuales de señal
+   */
+  getCalibrationCommand(): { 
+    action: 'INCREASE_LIGHT' | 'REDUCE_EXPOSURE' | 'ADJUST_GAIN' | 'OPTIMIZE_COLOR' | 'MAINTAIN';
+    urgency: 'urgent' | 'normal' | 'none';
+  } {
+    if (!this.lastQuality) {
+      return { action: 'MAINTAIN', urgency: 'none' };
+    }
+    
+    const { metrics, isSignalValid, invalidReason } = this.lastQuality;
+    
+    // Saturación = máxima urgencia
+    if (metrics.dcLevel > 245) {
+      return { action: 'REDUCE_EXPOSURE', urgency: 'urgent' };
+    }
+    
+    // SNR muy bajo = necesita más luz
+    if (metrics.snr < 4 && isSignalValid) {
+      return { action: 'INCREASE_LIGHT', urgency: 'normal' };
+    }
+    
+    // DC muy bajo = oscuro
+    if (metrics.dcLevel < 80 && metrics.fingerConfidence > 0.3) {
+      return { action: 'INCREASE_LIGHT', urgency: 'normal' };
+    }
+    
+    // DC alto pero no saturando
+    if (metrics.dcLevel > 200) {
+      return { action: 'REDUCE_EXPOSURE', urgency: 'normal' };
+    }
+    
+    // Pulsatilidad baja con dedo detectado = ajustar ganancia
+    if (invalidReason === 'LOW_PULSATILITY' && metrics.fingerConfidence > 0.3) {
+      return { action: 'ADJUST_GAIN', urgency: 'normal' };
+    }
+    
+    // Todo bien
+    return { action: 'MAINTAIN', urgency: 'none' };
+  }
+  
+  /**
+   * NUEVO: Obtiene métricas para el CameraController
+   */
+  getMetricsForCalibration(): {
+    snr: number;
+    dcLevel: number;
+    acAmplitude: number;
+    isSaturated: boolean;
+    perfusionIndex: number;
+    periodicity: number;
+    fingerConfidence: number;
+  } {
+    if (!this.lastQuality) {
+      return {
+        snr: 0,
+        dcLevel: 0,
+        acAmplitude: 0,
+        isSaturated: false,
+        perfusionIndex: 0,
+        periodicity: 0,
+        fingerConfidence: 0,
+      };
+    }
+    
+    return {
+      snr: this.lastQuality.metrics.snr,
+      dcLevel: this.lastQuality.metrics.dcLevel,
+      acAmplitude: this.lastQuality.metrics.acAmplitude,
+      isSaturated: this.lastQuality.metrics.dcLevel > 245,
+      perfusionIndex: this.lastQuality.perfusionIndex,
+      periodicity: this.lastQuality.metrics.periodicity,
+      fingerConfidence: this.lastQuality.metrics.fingerConfidence,
+    };
+  }
+  
+  /**
    * Reinicia el analizador
    */
   reset(): void {
