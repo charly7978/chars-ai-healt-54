@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from "react";
-import { globalCalibrator } from "@/modules/camera/CameraAutoCalibrator";
+import { globalCameraController } from "@/modules/camera/CameraController";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -7,12 +7,12 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG - VERSIÓN ESTABLE
+ * CÁMARA PPG - CON SELECCIÓN INTELIGENTE DE CÁMARA
  * 
- * PRINCIPIOS:
- * 1. SIN useCallback para evitar re-renders
- * 2. Refs para todo el estado mutable
- * 3. Cleanup completo con torch apagado
+ * Características:
+ * 1. Selección automática de cámara trasera principal (evita ultra-wide, macro)
+ * 2. Inicialización optimizada para PPG
+ * 3. Integración con CameraController para ajustes dinámicos
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
@@ -56,7 +56,45 @@ const CameraView: React.FC<CameraViewProps> = ({
       }
       
       isStartingRef.current = false;
-      globalCalibrator.reset();
+      globalCameraController.reset();
+    };
+    
+    /**
+     * Selecciona la cámara trasera principal, evitando ultra-wide, macro, telephoto
+     */
+    const selectMainBackCamera = async (): Promise<string | null> => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter(d => d.kind === 'videoinput');
+        
+        if (cameras.length === 0) return null;
+        
+        // Buscar cámara trasera principal
+        const mainBack = cameras.find(cam => {
+          const label = cam.label.toLowerCase();
+          const isBack = label.includes('back') || label.includes('rear') || 
+                         label.includes('trasera') || label.includes('0,') ||
+                         label.includes('facing back');
+          const isNotSpecial = !label.includes('ultra') && 
+                               !label.includes('wide') && 
+                               !label.includes('macro') && 
+                               !label.includes('tele') &&
+                               !label.includes('depth');
+          return isBack && isNotSpecial;
+        });
+        
+        if (mainBack) return mainBack.deviceId;
+        
+        // Fallback: cualquier cámara trasera
+        const anyBack = cameras.find(cam => {
+          const label = cam.label.toLowerCase();
+          return label.includes('back') || label.includes('rear') || label.includes('trasera');
+        });
+        
+        return anyBack?.deviceId || cameras[0]?.deviceId || null;
+      } catch {
+        return null;
+      }
     };
 
     const startCamera = async () => {
@@ -75,20 +113,35 @@ const CameraView: React.FC<CameraViewProps> = ({
       try {
         let stream: MediaStream;
         
-        // Intentar cámara trasera
+        // PASO 1: Intentar seleccionar cámara principal por deviceId
+        const mainCameraId = await selectMainBackCamera();
+        
         try {
-          // OPTIMIZADO: 640x480 es suficiente para PPG según literatura científica
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              facingMode: { exact: "environment" },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 }
-            }
-          });
+          if (mainCameraId) {
+            // Usar deviceId específico para cámara principal
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: {
+                deviceId: { exact: mainCameraId },
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 30 }
+              }
+            });
+          } else {
+            // Fallback: facingMode environment
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: {
+                facingMode: { exact: "environment" },
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 30 }
+              }
+            });
+          }
         } catch {
-          // Fallback: cualquier cámara
+          // Fallback final: cualquier cámara
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
@@ -112,54 +165,11 @@ const CameraView: React.FC<CameraViewProps> = ({
           await videoRef.current.play().catch(() => {});
         }
 
-        // Configurar track
+        // PASO 2: Configurar track con CameraController
         const track = stream.getVideoTracks()[0];
         if (track) {
-          const caps: any = track.getCapabilities?.() || {};
-          
-          globalCalibrator.setTrack(track);
-          
-          // Torch
-          if (caps.torch === true) {
-            try {
-              await track.applyConstraints({ advanced: [{ torch: true }] } as any);
-            } catch {}
-          }
-          
-          // Exposición y otros ajustes
-          const settings: any[] = [];
-          
-          // PPG: Exposición ALTA para mejor iluminación con flash+dedo
-          if (caps.exposureCompensation) {
-            const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-            const targetExposure = caps.exposureCompensation.min + range * 0.70; // AUMENTADO de 0.50
-            settings.push({ exposureCompensation: targetExposure });
-          }
-          
-          // ISO MEDIO para mejor sensibilidad sin ruido excesivo
-          if (caps.iso) {
-            const isoRange = caps.iso.max - caps.iso.min;
-            const targetIso = caps.iso.min + isoRange * 0.3; // 30% del rango
-            settings.push({ iso: targetIso });
-          }
-          
-          // White Balance manual para maximizar canal rojo
-          if (caps.whiteBalanceMode) {
-            settings.push({ whiteBalanceMode: 'manual' });
-          }
-          if (caps.colorTemperature) {
-            settings.push({ colorTemperature: caps.colorTemperature.min });
-          }
-          
-          if (caps.focusDistance?.min !== undefined) {
-            settings.push({ focusDistance: caps.focusDistance.min });
-          }
-          
-          if (settings.length > 0) {
-            try {
-              await track.applyConstraints({ advanced: settings } as any);
-            } catch {}
-          }
+          // Usar el nuevo CameraController para configuración inicial
+          await globalCameraController.setTrack(track);
         }
 
         onStreamReadyRef.current?.(stream);

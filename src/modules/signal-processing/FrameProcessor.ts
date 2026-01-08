@@ -1,13 +1,12 @@
 import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
-import { globalCalibrator } from '../camera/CameraAutoCalibrator';
 
 /**
  * FrameProcessor - EXTRACCIÓN PPG ULTRA-LIGERA
  * 
  * PRINCIPIOS:
  * 1. Buffers PEQUEÑOS y fijos
- * 2. Calibración llamada cada 15 frames (NO cada 5)
+ * 2. Sin dependencia de calibrador externo - datos puros para CameraController
  * 3. Logs mínimos
  * 4. Sin acumulación de memoria
  */
@@ -20,7 +19,7 @@ export class FrameProcessor {
   private bufferFilled = false;
   private readonly BUFFER_SIZE = 30;
   
-  // Calibración
+  // Calibración interna
   private calibrationDC = 0;
   private calibrationComplete = false;
   private calibrationSamples = 0;
@@ -39,6 +38,9 @@ export class FrameProcessor {
   // Contadores
   private frameCount = 0;
   private skinPixelRatio = 0;
+  
+  // Estado de saturación para reportar
+  private isSaturatedState = false;
   
   constructor() {
     this.redBuffer = new Float32Array(this.BUFFER_SIZE);
@@ -129,21 +131,14 @@ export class FrameProcessor {
     // Calcular AC
     const acComponent = this.calculateAC();
     
-    // DETECCIÓN DE SATURACIÓN - notificar al calibrador
+    // DETECCIÓN DE SATURACIÓN - guardar estado para CameraController
     this.frameCount++;
-    if (this.isSaturated(smoothedRed, smoothedGreen)) {
-      globalCalibrator.reportSaturation();
-    }
+    this.isSaturatedState = this.isSaturated(smoothedRed, smoothedGreen);
     
-    // Calibrador de cámara cada 15 frames (~500ms)
-    if (this.frameCount % 15 === 0) {
-      globalCalibrator.analyze(avgRed, avgGreen, avgBlue);
+    // Log diagnóstico reducido - solo cada 15 segundos
+    if (this.frameCount % 450 === 0) {
+      console.log(`📷 R=${smoothedRed.toFixed(0)} G=${smoothedGreen.toFixed(0)} AC=${(acComponent * 100).toFixed(1)}%`);
     }
-    
-      // Log diagnóstico reducido - solo cada 15 segundos
-      if (this.frameCount % 450 === 0) {
-        console.log(`📷 R=${smoothedRed.toFixed(0)} G=${smoothedGreen.toFixed(0)} AC=${(acComponent * 100).toFixed(1)}%`);
-      }
     
     return {
       redValue: avgRed,
@@ -274,11 +269,19 @@ export class FrameProcessor {
   }
   
   /**
+   * Obtener estado de saturación actual
+   */
+  getIsSaturated(): boolean {
+    return this.isSaturatedState;
+  }
+  
+  /**
    * Detectar saturación del sensor - científicamente validado
    * Saturación = R muy alto o luz blanca (R+G altos = flash sin dedo)
    */
   private isSaturated(r: number, g: number): boolean {
-    return r > 248 || (r > 230 && g > 150);
+    const saturated = r > 248 || (r > 230 && g > 150);
+    return saturated;
   }
   
   reset(): void {
@@ -296,6 +299,6 @@ export class FrameProcessor {
     this.lastGreen = 0;
     this.lastBlue = 0;
     this.skinPixelRatio = 0;
-    globalCalibrator.reset();
+    this.isSaturatedState = false;
   }
 }
