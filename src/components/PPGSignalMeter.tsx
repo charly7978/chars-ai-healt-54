@@ -109,8 +109,8 @@ const PPGSignalMeter = ({
     lastRenderTime: 0,
   });
   
-  // Picos detectados
-  const peaksRef = useRef<Array<{
+  // Picos externos (del PPGMonitor)
+  const externalPeaksRef = useRef<Array<{
     time: number;
     x: number;
     y: number;
@@ -122,25 +122,40 @@ const PPGSignalMeter = ({
     value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak
   });
   
-  const lastPeakTimeRef = useRef(0);
+  const lastExternalPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
+  const lastProcessedValueRef = useRef(0);
 
   // ========== ACTUALIZAR REFS ==========
   useEffect(() => {
     propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak };
   }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak]);
 
-  // ========== SINCRONIZACIÓN DE PICOS EXTERNOS ==========
+  // ========== SINCRONIZACIÓN DE PICOS EXTERNOS (ÚNICO SISTEMA) ==========
   useEffect(() => {
     if (isPeak && isFingerDetected) {
       const now = Date.now();
-      if (now - lastPeakTimeRef.current > CONFIG.PEAKS.MIN_DISTANCE_MS) {
-        lastPeakTimeRef.current = now;
+      if (now - lastExternalPeakTimeRef.current > CONFIG.PEAKS.MIN_DISTANCE_MS) {
+        lastExternalPeakTimeRef.current = now;
         setShowPulse(true);
         setTimeout(() => setShowPulse(false), 150);
+        
+        // Agregar pico externo con la posición actual
+        const hasArrhythmia = arrhythmiaStatus?.includes('ARRITMIA') || false;
+        externalPeaksRef.current.push({
+          time: now,
+          x: CONFIG.CANVAS_WIDTH, // Posición actual (derecha)
+          y: CONFIG.CANVAS_HEIGHT / 2 + lastProcessedValueRef.current,
+          isArrhythmia: hasArrhythmia
+        });
+        
+        // Mantener solo los últimos 20 picos
+        if (externalPeaksRef.current.length > 20) {
+          externalPeaksRef.current.shift();
+        }
       }
     }
-  }, [isPeak, isFingerDetected]);
+  }, [isPeak, isFingerDetected, arrhythmiaStatus]);
 
   // ========== INICIALIZACIÓN ==========
   useEffect(() => {
@@ -160,7 +175,7 @@ const PPGSignalMeter = ({
   useEffect(() => {
     if (preserveResults && !isFingerDetected) {
       dataBufferRef.current?.clear();
-      peaksRef.current = [];
+      externalPeaksRef.current = [];
       processingRef.current = {
         baseline: null,
         lastSmoothed: null,
@@ -344,6 +359,9 @@ const PPGSignalMeter = ({
       const maxAmplitude = targetHeight * 1.5;
       const clampedValue = Math.max(-maxAmplitude, Math.min(maxAmplitude, scaledValue));
       
+      // Guardar para referencia de picos externos
+      lastProcessedValueRef.current = clampedValue;
+      
       // Agregar punto al buffer
       buffer.push({
         time: now,
@@ -369,7 +387,6 @@ const PPGSignalMeter = ({
         ctx.lineCap = 'round';
         
         let started = false;
-        const peakCandidates: Array<{x: number; y: number; time: number; val: number}> = [];
         
         for (let i = 0; i < points.length; i++) {
           const pt = points[i];
@@ -385,65 +402,56 @@ const PPGSignalMeter = ({
           } else {
             ctx.lineTo(x, y);
           }
-          
-          // Detectar picos locales (picos van hacia ARRIBA = valores NEGATIVOS en canvas)
-          if (i >= CONFIG.PEAKS.DETECTION_WINDOW && i < points.length - CONFIG.PEAKS.DETECTION_WINDOW) {
-            let isPeakLocal = true;
-            const currentVal = pt.value;
-            
-            // Un pico es un MÍNIMO local (valor más negativo = más arriba en canvas)
-            for (let j = i - CONFIG.PEAKS.DETECTION_WINDOW; j <= i + CONFIG.PEAKS.DETECTION_WINDOW; j++) {
-              if (j !== i && points[j].value < currentVal) {
-                // Hay un punto más alto (más negativo), no es pico
-                isPeakLocal = false;
-                break;
-              }
-            }
-            
-            // Verificar prominencia: el pico debe estar significativamente arriba de la línea base
-            // (valor negativo grande = arriba)
-            const prominence = -currentVal; // Convertir a positivo para comparar
-            const minProminence = CONFIG.CANVAS_HEIGHT * CONFIG.SIGNAL.TARGET_AMPLITUDE * CONFIG.PEAKS.MIN_PROMINENCE;
-            
-            if (isPeakLocal && prominence > minProminence) {
-              peakCandidates.push({ x, y, time: pt.time, val: pt.value });
-            }
-          }
         }
         
         ctx.stroke();
         ctx.shadowBlur = 0;
         
-        // ========== MARCAR PICOS ==========
-        // Filtrar picos muy cercanos
-        const validPeaks = peakCandidates.filter((peak, idx) => {
-          if (idx === 0) return true;
-          const prev = peakCandidates[idx - 1];
-          return peak.time - prev.time >= CONFIG.PEAKS.MIN_DISTANCE_MS;
-        });
+        // ========== MARCAR PICOS EXTERNOS (DEL PPGMonitor) ==========
+        const externalPeaks = externalPeaksRef.current;
         
-        // Verificar arritmia
-        const hasArrhythmia = arrStatus?.includes('ARRITMIA') || false;
-        
-        validPeaks.forEach((peak, idx) => {
-          const isArrPeak = hasArrhythmia && idx === validPeaks.length - 1;
+        externalPeaks.forEach((peak) => {
+          const age = now - peak.time;
+          if (age > WINDOW_MS) return;
+          
+          // Calcular posición X basada en el tiempo
+          const x = W - (age * W / WINDOW_MS);
+          
+          // Buscar el punto más cercano en el buffer para obtener la Y correcta
+          let y = centerY;
+          let minTimeDiff = Infinity;
+          for (const pt of points) {
+            const timeDiff = Math.abs(pt.time - peak.time);
+            if (timeDiff < minTimeDiff) {
+              minTimeDiff = timeDiff;
+              y = centerY + pt.value;
+            }
+          }
           
           // Círculo del pico
           ctx.beginPath();
-          ctx.arc(peak.x, peak.y, isArrPeak ? 8 : 5, 0, Math.PI * 2);
-          ctx.fillStyle = isArrPeak ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
+          ctx.arc(x, y, peak.isArrhythmia ? 10 : 7, 0, Math.PI * 2);
+          ctx.fillStyle = peak.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
           ctx.fill();
           
+          // Borde blanco para visibilidad
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          
           // Halo para arritmias
-          if (isArrPeak) {
+          if (peak.isArrhythmia) {
             const alpha = (Math.sin(now / 150) + 1) / 2;
             ctx.beginPath();
-            ctx.arc(peak.x, peak.y, 14, 0, Math.PI * 2);
+            ctx.arc(x, y, 16, 0, Math.PI * 2);
             ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
             ctx.lineWidth = 3;
             ctx.stroke();
           }
         });
+        
+        // Limpiar picos viejos
+        externalPeaksRef.current = externalPeaks.filter(p => now - p.time < WINDOW_MS + 1000);
       }
       
       // Dibujar alerta de arritmia si aplica
@@ -467,7 +475,7 @@ const PPGSignalMeter = ({
   // ========== RESET ==========
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
-    peaksRef.current = [];
+    externalPeaksRef.current = [];
     processingRef.current = {
       baseline: null,
       lastSmoothed: null,
