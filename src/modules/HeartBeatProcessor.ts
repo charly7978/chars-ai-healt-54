@@ -52,6 +52,10 @@ export class HeartBeatProcessor {
   private audioInitialized: boolean = false;
   private audioUnlocked: boolean = false;
   private lastBeepTime: number = 0;
+  
+  // Detección de dedo por canal verde
+  private lastGreenValue: number = 0;
+  private readonly GREEN_THRESHOLD = 50; // G > 50 = ambiente, G < 50 = dedo
   private readonly BEEP_VOLUME = 1.0;
   private readonly MIN_BEEP_INTERVAL_MS = 350;
   
@@ -150,7 +154,21 @@ export class HeartBeatProcessor {
       
       const t = this.audioContext.currentTime;
       
-      // ===== SONIDO DE LATIDO CARDÍACO REALISTA =====
+      // ===== SONIDO DE LATIDO CARDÍACO - VOLUMEN MÁXIMO =====
+      // Crear compresor para maximizar volumen
+      const compressor = this.audioContext.createDynamicsCompressor();
+      compressor.threshold.setValueAtTime(-10, t);
+      compressor.knee.setValueAtTime(40, t);
+      compressor.ratio.setValueAtTime(12, t);
+      compressor.attack.setValueAtTime(0, t);
+      compressor.release.setValueAtTime(0.25, t);
+      compressor.connect(this.audioContext.destination);
+      
+      // Ganancia master ALTA
+      const masterGain = this.audioContext.createGain();
+      masterGain.gain.value = 3.0; // VOLUMEN x3
+      masterGain.connect(compressor);
+      
       // LUB (S1) - Cierre de válvulas mitral y tricúspide
       const lub = this.audioContext.createOscillator();
       const lubGain = this.audioContext.createGain();
@@ -171,7 +189,7 @@ export class HeartBeatProcessor {
       
       lub.connect(lubFilter);
       lubFilter.connect(lubGain);
-      lubGain.connect(this.audioContext.destination);
+      lubGain.connect(masterGain); // Conectar a master
       
       lub.start(t);
       lub.stop(t + 0.18);
@@ -198,7 +216,7 @@ export class HeartBeatProcessor {
       
       dub.connect(dubFilter);
       dubFilter.connect(dubGain);
-      dubGain.connect(this.audioContext.destination);
+      dubGain.connect(masterGain); // Conectar a master
       
       dub.start(dubStart);
       dub.stop(dubStart + 0.15);
@@ -214,6 +232,16 @@ export class HeartBeatProcessor {
     return Date.now() - this.startTime < this.WARMUP_TIME_MS;
   }
 
+  // Recibir valor verde para validar dedo
+  setGreenValue(green: number): void {
+    this.lastGreenValue = green;
+  }
+  
+  // Verificar si hay dedo real (G bajo = sangre absorbiendo verde)
+  private hasRealFinger(): boolean {
+    return this.lastGreenValue < this.GREEN_THRESHOLD;
+  }
+
   processSignal(value: number, timestamp?: number): {
     bpm: number;
     confidence: number;
@@ -223,6 +251,17 @@ export class HeartBeatProcessor {
   } {
     this.frameCount++;
     const now = timestamp || Date.now();
+    
+    // CRÍTICO: Si no hay dedo real, NO procesar picos
+    if (!this.hasRealFinger()) {
+      return {
+        bpm: Math.round(this.smoothBPM),
+        confidence: 0,
+        isPeak: false,
+        filteredValue: 0,
+        arrhythmiaCount: 0
+      };
+    }
     
     // Actualizar baseline
     this.baselineBuffer.push(value);
@@ -269,24 +308,16 @@ export class HeartBeatProcessor {
     if (peakResult.isPeak && !this.isInWarmup()) {
       this.updateBPM();
       
-      // VIBRACIÓN DIRECTA - sin async, sin depender de audio
+      // VIBRACIÓN DIRECTA - sin log para rendimiento
       try {
         if (navigator.vibrate) {
-          const vibrated = navigator.vibrate([50, 30, 80]);
-          console.log('📳 Vibración:', vibrated ? 'OK' : 'FALLO');
-        } else {
-          console.log('📳 Vibración: NO DISPONIBLE en este navegador');
+          navigator.vibrate([50, 30, 80]);
         }
       } catch (e) {
-        console.log('📳 Vibración ERROR:', e);
+        // Silenciado
       }
       
       this.playHeartSound(); // Audio separado
-    }
-    
-    // Log solo cada 5 segundos para reducir overhead (era 3s)
-    if (this.frameCount % 150 === 0) {
-      console.log(`💓 BPM=${this.smoothBPM.toFixed(0)}, picos=${this.validPeakCount}`);
     }
     
     return {

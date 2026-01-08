@@ -197,9 +197,9 @@ export class SignalQualityAnalyzer {
     
     this.lastQuality = result;
     
-    // Log solo cada 5 segundos para reducir overhead (era 3s)
-    if (this.frameCount % 150 === 0) {
-      console.log(`📊 SQI: q=${quality}%, finger=${(fingerConfidence*100).toFixed(0)}%, valid=${isValid}`);
+    // Log reducido - solo cada 30 segundos
+    if (this.frameCount % 900 === 0) {
+      console.log(`📊 SQI: q=${quality}%, finger=${(fingerConfidence*100).toFixed(0)}%`);
     }
     
     return result;

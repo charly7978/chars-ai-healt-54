@@ -69,6 +69,7 @@ const Index = () => {
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState,
+    setGreenValue,
     reset: resetHeartBeat,
     debugInfo: heartDebugInfo
   } = useHeartBeatProcessor();
@@ -526,6 +527,11 @@ const Index = () => {
 
     setSignalQuality(lastSignal.quality);
     
+    // CRÍTICO: Pasar valor verde al procesador de latidos para validación de dedo
+    if (lastSignal.rawGreen !== undefined) {
+      setGreenValue(lastSignal.rawGreen);
+    }
+    
     if (!isMonitoring || systemState.current !== 'ACTIVE') return;
     
     // CRÍTICO: fingerDetected ahora significa "SANGRE REAL DETECTADA"
@@ -595,7 +601,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setGreenValue]);
 
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {

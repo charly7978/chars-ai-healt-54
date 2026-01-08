@@ -139,11 +139,10 @@ export class FrameProcessor {
       globalCalibrator.analyze(avgRed, avgGreen, avgBlue);
     }
     
-    // Log diagnóstico cada 3 segundos con valores RAW
-    if (this.frameCount % 90 === 0) {
-      const brightness = ((avgRed + avgGreen + avgBlue) / 3).toFixed(0);
-      console.log(`📷 RAW: R=${smoothedRed.toFixed(0)} G=${smoothedGreen.toFixed(0)} B=${smoothedBlue.toFixed(0)} | Norm: R=${avgRed.toFixed(0)} | AC=${(acComponent * 100).toFixed(2)}%`);
-    }
+      // Log diagnóstico reducido - solo cada 15 segundos
+      if (this.frameCount % 450 === 0) {
+        console.log(`📷 R=${smoothedRed.toFixed(0)} G=${smoothedGreen.toFixed(0)} AC=${(acComponent * 100).toFixed(1)}%`);
+      }
     
     return {
       redValue: avgRed,

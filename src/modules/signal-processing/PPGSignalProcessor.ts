@@ -123,9 +123,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         rawValue: redValue,
         filteredValue: filtered,
         quality: qualityResult.quality,
-        fingerDetected: qualityResult.isSignalValid, // Ahora basado en SQI
+        fingerDetected: qualityResult.isSignalValid,
         roi: roi,
         perfusionIndex: qualityResult.perfusionIndex,
+        rawGreen: rawG, // CRÍTICO: Para validar dedo en HeartBeatProcessor
         diagnostics: {
           message: qualityResult.invalidReason || `PI: ${qualityResult.perfusionIndex.toFixed(2)}%`,
           hasPulsatility: qualityResult.isSignalValid,

@@ -132,16 +132,13 @@ const CameraView: React.FC<CameraViewProps> = ({
           // PPG: Exposición MEDIA para mejor iluminación con flash+dedo
           if (caps.exposureCompensation) {
             const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-            // 50% de exposición - equilibrio entre señal y saturación
             const targetExposure = caps.exposureCompensation.min + range * 0.50;
             settings.push({ exposureCompensation: targetExposure });
-            console.log(`📷 Exposición inicial: ${targetExposure.toFixed(1)} (50% del rango)`);
           }
           
           // ISO MÍNIMO para reducir ruido
           if (caps.iso) {
             settings.push({ iso: caps.iso.min });
-            console.log(`📷 ISO: ${caps.iso.min} (mínimo)`);
           }
           
           // White Balance manual para maximizar canal rojo
@@ -149,9 +146,7 @@ const CameraView: React.FC<CameraViewProps> = ({
             settings.push({ whiteBalanceMode: 'manual' });
           }
           if (caps.colorTemperature) {
-            // Temperatura baja = más rojo (mejor para PPG)
             settings.push({ colorTemperature: caps.colorTemperature.min });
-            console.log(`📷 Temp color: ${caps.colorTemperature.min}K (máximo rojo)`);
           }
           
           if (caps.focusDistance?.min !== undefined) {
@@ -163,8 +158,6 @@ const CameraView: React.FC<CameraViewProps> = ({
               await track.applyConstraints({ advanced: settings } as any);
             } catch {}
           }
-          
-          console.log('📷 Cámara iniciada');
         }
 
         onStreamReadyRef.current?.(stream);
