@@ -1,12 +1,14 @@
 import React, { useRef, useEffect } from 'react';
 
 /**
- * PPG MONITOR v6 - CON LIMPIEZA AUTOMÁTICA DE DATOS MALOS
+ * PPG MONITOR v7 - SEÑAL CRUDA SIN DETECCIÓN DE DEDO
  * 
- * Corrige:
- * 1. Buffer que acumula datos malos cuando se mueve el dedo
- * 2. Detector que no limpia intervalos RR obsoletos
- * 3. Calidad que baja sin razón
+ * Cambios principales:
+ * 1. ELIMINADA detección de dedo - la señal fluye siempre
+ * 2. Filtro pasa-banda IIR (0.5-4 Hz) para aislar latidos
+ * 3. Buffer circular simple sin limpieza automática
+ * 4. Detector de picos simplificado y robusto
+ * 5. Calidad basada SOLO en rango de señal y consistencia
  */
 
 interface PPGData {
@@ -16,7 +18,7 @@ interface PPGData {
   signalValue: number;
   filteredValue: number;
   quality: number;
-  fingerDetected: boolean;
+  fingerDetected: boolean; // Solo informativo, NO bloquea nada
   bpm: number;
   isPeak: boolean;
   rrIntervals: number[];
@@ -31,169 +33,172 @@ interface PPGMonitorProps {
   onStreamReady?: (stream: MediaStream | null) => void;
 }
 
-// ============ FILTRO PASA-ALTO ============
-class HighPassFilter {
-  private prevInput = 0;
-  private prevOutput = 0;
-  private readonly alpha: number;
+// ============ FILTRO PASA-BANDA BUTTERWORTH 2DO ORDEN ============
+// Diseñado para 0.5-4 Hz @ 30 fps (frecuencia cardíaca 30-240 BPM)
+class BandpassFilter {
+  // Coeficientes pre-calculados para Butterworth 2do orden
+  // Pasa-alto 0.5 Hz
+  private hp_b = [0.9565, -1.913, 0.9565];
+  private hp_a = [1, -1.911, 0.915];
+  private hp_x: number[] = [0, 0, 0];
+  private hp_y: number[] = [0, 0, 0];
   
-  constructor(tau = 0.25, fps = 30) {
-    this.alpha = tau / (tau + 2 / fps);
-  }
+  // Pasa-bajo 4 Hz
+  private lp_b = [0.0675, 0.135, 0.0675];
+  private lp_a = [1, -1.143, 0.413];
+  private lp_x: number[] = [0, 0, 0];
+  private lp_y: number[] = [0, 0, 0];
   
   filter(input: number): number {
-    const output = this.alpha * (this.prevOutput + input - this.prevInput);
-    this.prevInput = input;
-    this.prevOutput = output;
-    return output;
+    // Pasa-alto primero (elimina baseline drift)
+    this.hp_x.unshift(input);
+    this.hp_x.pop();
+    
+    const hp_out = 
+      this.hp_b[0] * this.hp_x[0] + 
+      this.hp_b[1] * this.hp_x[1] + 
+      this.hp_b[2] * this.hp_x[2] -
+      this.hp_a[1] * this.hp_y[0] - 
+      this.hp_a[2] * this.hp_y[1];
+    
+    this.hp_y.unshift(hp_out);
+    this.hp_y.pop();
+    
+    // Pasa-bajo después (elimina ruido de alta frecuencia)
+    this.lp_x.unshift(hp_out);
+    this.lp_x.pop();
+    
+    const lp_out = 
+      this.lp_b[0] * this.lp_x[0] + 
+      this.lp_b[1] * this.lp_x[1] + 
+      this.lp_b[2] * this.lp_x[2] -
+      this.lp_a[1] * this.lp_y[0] - 
+      this.lp_a[2] * this.lp_y[1];
+    
+    this.lp_y.unshift(lp_out);
+    this.lp_y.pop();
+    
+    return lp_out;
   }
   
   reset(): void {
-    this.prevInput = 0;
-    this.prevOutput = 0;
+    this.hp_x = [0, 0, 0];
+    this.hp_y = [0, 0, 0];
+    this.lp_x = [0, 0, 0];
+    this.lp_y = [0, 0, 0];
   }
 }
 
-// ============ BUFFER DE SEÑAL CON AUTO-LIMPIEZA ============
-class SignalBuffer {
-  private buffer: number[] = [];
-  private readonly maxSize: number;
-  private lastFingerLostTime = 0;
+// ============ BUFFER CIRCULAR SIMPLE ============
+class CircularBuffer {
+  private buffer: number[];
+  private index = 0;
+  private count = 0;
   
-  constructor(maxSize = 150) { // 5 segundos @ 30fps
-    this.maxSize = maxSize;
+  constructor(private readonly size: number) {
+    this.buffer = new Array(size).fill(0);
   }
   
-  push(value: number, fingerDetected: boolean): void {
-    const now = Date.now();
-    
-    // Si perdimos el dedo, marcar tiempo
-    if (!fingerDetected) {
-      if (this.lastFingerLostTime === 0) {
-        this.lastFingerLostTime = now;
-      }
-      // Si llevamos más de 1 segundo sin dedo, limpiar buffer
-      if (now - this.lastFingerLostTime > 1000 && this.buffer.length > 0) {
-        console.log('🧹 Limpiando buffer por pérdida de dedo');
-        this.buffer = [];
-      }
-      return; // No agregar datos sin dedo
-    }
-    
-    // Dedo detectado - resetear timer
-    this.lastFingerLostTime = 0;
-    
-    this.buffer.push(value);
-    if (this.buffer.length > this.maxSize) {
-      this.buffer.shift();
-    }
-  }
-  
-  getRecent(n: number): number[] {
-    return this.buffer.slice(-n);
+  push(value: number): void {
+    this.buffer[this.index] = value;
+    this.index = (this.index + 1) % this.size;
+    if (this.count < this.size) this.count++;
   }
   
   getAll(): number[] {
-    return [...this.buffer];
+    if (this.count < this.size) {
+      return this.buffer.slice(0, this.count);
+    }
+    // Devolver en orden cronológico
+    return [...this.buffer.slice(this.index), ...this.buffer.slice(0, this.index)];
+  }
+  
+  getRecent(n: number): number[] {
+    const all = this.getAll();
+    return all.slice(-Math.min(n, all.length));
   }
   
   get length(): number {
-    return this.buffer.length;
+    return this.count;
   }
   
   reset(): void {
-    this.buffer = [];
-    this.lastFingerLostTime = 0;
+    this.buffer.fill(0);
+    this.index = 0;
+    this.count = 0;
   }
 }
 
-// ============ DETECTOR DE PICOS CON LIMPIEZA ============
+// ============ DETECTOR DE PICOS ROBUSTO ============
 class PeakDetector {
   private peakTimes: number[] = [];
   private lastPeakTime = 0;
-  private lastFingerTime = 0;
   
-  private readonly MIN_INTERVAL = 400;
-  private readonly MAX_INTERVAL = 1500;
-  private readonly PEAK_EXPIRY = 8000; // Picos expiran después de 8 segundos
+  private readonly MIN_INTERVAL = 375;  // 160 BPM máximo
+  private readonly MAX_INTERVAL = 1500; // 40 BPM mínimo
+  private readonly MAX_PEAKS = 20;
   
-  detectPeak(signal: number[], timestamp: number, fingerDetected: boolean): boolean {
-    // Limpiar picos viejos
-    this.cleanOldPeaks(timestamp);
+  detectPeak(signal: number[], timestamp: number): boolean {
+    if (signal.length < 15) return false;
     
-    // Si no hay dedo, marcar y no detectar
-    if (!fingerDetected) {
-      if (this.lastFingerTime > 0 && timestamp - this.lastFingerTime > 2000) {
-        // Más de 2 segundos sin dedo - limpiar todo
-        if (this.peakTimes.length > 0) {
-          console.log('🧹 Limpiando picos por pérdida de dedo');
-          this.peakTimes = [];
-        }
-      }
-      return false;
-    }
-    
-    this.lastFingerTime = timestamp;
-    
-    if (signal.length < 30) return false;
-    
-    const recent = signal.slice(-45);
-    const min = Math.min(...recent);
-    const max = Math.max(...recent);
-    const range = max - min;
-    
-    if (range < 0.005) return false; // Señal muy débil
-    
-    // Umbral adaptativo: 45% del rango
-    const threshold = min + range * 0.45;
-    
-    // Verificar intervalo mínimo
+    // Verificar intervalo mínimo desde último pico
     if (timestamp - this.lastPeakTime < this.MIN_INTERVAL) {
       return false;
     }
     
-    // Verificar pico local
-    if (signal.length < 7) return false;
-    const last7 = signal.slice(-7);
-    const center = last7[3];
+    const recent = signal.slice(-30);
+    const min = Math.min(...recent);
+    const max = Math.max(...recent);
+    const range = max - min;
     
-    const isLocalMax = center > last7[0] && center > last7[1] && center > last7[2] &&
-                       center >= last7[4] && center >= last7[5] && center >= last7[6];
+    // Señal muy débil - no detectar
+    if (range < 0.003) return false;
     
-    // Prominencia: el pico debe sobresalir
-    const prominence = center - Math.min(last7[0], last7[6]);
-    const hasProminence = prominence > range * 0.15;
+    // Umbral adaptativo al 40% del rango
+    const threshold = min + range * 0.40;
     
-    if (isLocalMax && center > threshold && hasProminence) {
+    // Verificar pico local en los últimos 5 samples
+    const last5 = signal.slice(-5);
+    const center = last5[2];
+    
+    // El centro debe ser máximo local
+    const isLocalMax = center > last5[0] && 
+                       center > last5[1] && 
+                       center >= last5[3] && 
+                       center >= last5[4];
+    
+    // El pico debe estar sobre el umbral
+    const aboveThreshold = center > threshold;
+    
+    // Prominencia: diferencia con los extremos
+    const prominence = center - Math.min(last5[0], last5[4]);
+    const hasProminence = prominence > range * 0.12;
+    
+    if (isLocalMax && aboveThreshold && hasProminence) {
       this.lastPeakTime = timestamp;
       this.peakTimes.push(timestamp);
       
-      // Mantener solo últimos 15 picos
-      if (this.peakTimes.length > 15) {
+      // Mantener solo últimos N picos
+      if (this.peakTimes.length > this.MAX_PEAKS) {
         this.peakTimes.shift();
       }
       
-      console.log(`💓 PICO: val=${center.toFixed(4)} thresh=${threshold.toFixed(4)} prom=${prominence.toFixed(4)}`);
+      // Limpiar picos muy viejos (>10 segundos)
+      const cutoff = timestamp - 10000;
+      this.peakTimes = this.peakTimes.filter(t => t > cutoff);
+      
       return true;
     }
     
     return false;
   }
   
-  private cleanOldPeaks(now: number): void {
-    const expiry = now - this.PEAK_EXPIRY;
-    const before = this.peakTimes.length;
-    this.peakTimes = this.peakTimes.filter(t => t > expiry);
-    if (before > this.peakTimes.length) {
-      console.log(`🧹 Eliminados ${before - this.peakTimes.length} picos viejos`);
-    }
-  }
-  
   getBPM(): number {
     if (this.peakTimes.length < 3) return 0;
     
+    // Calcular intervalos RR válidos
     const intervals: number[] = [];
-    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 6; i--) {
+    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 8; i--) {
       const interval = this.peakTimes[i] - this.peakTimes[i - 1];
       if (interval >= this.MIN_INTERVAL && interval <= this.MAX_INTERVAL) {
         intervals.push(interval);
@@ -202,14 +207,16 @@ class PeakDetector {
     
     if (intervals.length < 2) return 0;
     
+    // Usar mediana para robustez
     intervals.sort((a, b) => a - b);
     const median = intervals[Math.floor(intervals.length / 2)];
-    return 60000 / median;
+    
+    return Math.round(60000 / median);
   }
   
   getRRIntervals(): number[] {
     const intervals: number[] = [];
-    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 8; i--) {
+    for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 10; i--) {
       const interval = this.peakTimes[i] - this.peakTimes[i - 1];
       if (interval >= this.MIN_INTERVAL && interval <= this.MAX_INTERVAL) {
         intervals.push(interval);
@@ -225,7 +232,6 @@ class PeakDetector {
   reset(): void {
     this.peakTimes = [];
     this.lastPeakTime = 0;
-    this.lastFingerTime = 0;
   }
 }
 
@@ -245,15 +251,17 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
   const isRunningRef = useRef(false);
   const mountedRef = useRef(true);
   
-  const filterRef = useRef<HighPassFilter | null>(null);
-  const bufferRef = useRef<SignalBuffer | null>(null);
+  const filterRef = useRef<BandpassFilter | null>(null);
+  const bufferRef = useRef<CircularBuffer | null>(null);
   const detectorRef = useRef<PeakDetector | null>(null);
   
-  const bpmSmoothedRef = useRef(0);
-  const qualitySmoothedRef = useRef(0);
+  const bpmRef = useRef(0);
   const frameCountRef = useRef(0);
   const flashOnRef = useRef(false);
-  const lastFingerStateRef = useRef(false);
+  
+  // Smoothing refs
+  const qualitySmoothedRef = useRef(0);
+  const lastRedRef = useRef(0);
   
   // Callbacks refs
   const onDataRef = useRef(onData);
@@ -302,10 +310,10 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       filterRef.current = null;
       bufferRef.current = null;
       detectorRef.current = null;
-      bpmSmoothedRef.current = 0;
-      qualitySmoothedRef.current = 0;
+      bpmRef.current = 0;
       frameCountRef.current = 0;
-      lastFingerStateRef.current = false;
+      qualitySmoothedRef.current = 0;
+      lastRedRef.current = 0;
     };
     
     const processFrame = () => {
@@ -325,14 +333,15 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       }
       
       frameCountRef.current++;
+      const timestamp = Date.now();
       
-      // Capturar frame
+      // Capturar frame completo a 64x64
       const w = 64, h = 64;
       ctx.drawImage(video, 0, 0, w, h);
       const imageData = ctx.getImageData(0, 0, w, h);
       const data = imageData.data;
       
-      // Promediar todos los píxeles
+      // Promediar TODOS los píxeles - sin región de interés
       let redSum = 0, greenSum = 0, blueSum = 0;
       const totalPixels = w * h;
       
@@ -346,91 +355,83 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       const avgGreen = greenSum / totalPixels;
       const avgBlue = blueSum / totalPixels;
       
-      // Detección de dedo
-      const fingerDetected = avgRed > 70 && 
-                            avgRed > avgGreen * 1.05 && 
-                            avgGreen > avgBlue * 0.85 &&
-                            avgRed < 250; // No saturado
+      // Señal PPG: canal rojo normalizado (0-1)
+      const rawSignal = avgRed / 255;
       
-      // Log cuando cambia estado del dedo
-      if (fingerDetected !== lastFingerStateRef.current) {
-        console.log(fingerDetected ? '👆 Dedo DETECTADO' : '👆 Dedo PERDIDO');
-        lastFingerStateRef.current = fingerDetected;
-        
-        // Si perdimos el dedo, resetear calidad gradualmente
-        if (!fingerDetected) {
-          qualitySmoothedRef.current = 0;
-        }
-      }
+      // Aplicar filtro pasa-banda SIEMPRE
+      const filteredValue = filterRef.current?.filter(rawSignal) ?? 0;
       
-      // Señal PPG (canal rojo normalizado)
-      const normalizedRed = avgRed / 255;
+      // Agregar al buffer SIEMPRE
+      bufferRef.current?.push(filteredValue);
       
-      // Filtrar solo si hay dedo
-      let filteredValue = 0;
-      if (fingerDetected) {
-        filteredValue = filterRef.current?.filter(normalizedRed) ?? 0;
-      } else {
-        // Resetear filtro si no hay dedo
-        filterRef.current?.reset();
-      }
-      
-      // Agregar a buffer
-      bufferRef.current?.push(filteredValue, fingerDetected);
-      
-      // Detección de picos
-      const timestamp = Date.now();
+      // Detectar picos
       const signalBuffer = bufferRef.current?.getAll() ?? [];
-      const isPeak = detectorRef.current?.detectPeak(signalBuffer, timestamp, fingerDetected) ?? false;
+      const isPeak = detectorRef.current?.detectPeak(signalBuffer, timestamp) ?? false;
       
-      // BPM
+      // Calcular BPM
       const rawBpm = detectorRef.current?.getBPM() ?? 0;
-      if (rawBpm > 0 && fingerDetected) {
-        bpmSmoothedRef.current = bpmSmoothedRef.current === 0 
+      if (rawBpm > 0) {
+        // Suavizado exponencial del BPM
+        bpmRef.current = bpmRef.current === 0 
           ? rawBpm 
-          : bpmSmoothedRef.current * 0.75 + rawBpm * 0.25;
-      } else if (!fingerDetected) {
-        // Decay lento del BPM cuando no hay dedo
-        bpmSmoothedRef.current *= 0.98;
-        if (bpmSmoothedRef.current < 30) bpmSmoothedRef.current = 0;
+          : bpmRef.current * 0.7 + rawBpm * 0.3;
       }
       
-      // Calidad
+      // Log de pico detectado
+      if (isPeak) {
+        console.log(`💓 PICO #${detectorRef.current?.getPeakCount()} | BPM=${Math.round(bpmRef.current)}`);
+      }
+      
+      // ============ CALIDAD DE SEÑAL ============
+      // Solo basada en: rango de señal filtrada + consistencia BPM
       let quality = 0;
-      if (fingerDetected && signalBuffer.length >= 30) {
+      
+      if (signalBuffer.length >= 30) {
         const recent = signalBuffer.slice(-60);
         const min = Math.min(...recent);
         const max = Math.max(...recent);
         const range = max - min;
         
+        // Componente 1: Rango de señal (0-50 puntos)
+        // range > 0.02 = señal muy buena
+        const rangeScore = Math.min(50, (range / 0.025) * 50);
+        
+        // Componente 2: Picos detectados (0-30 puntos)
         const peakCount = detectorRef.current?.getPeakCount() ?? 0;
+        const peakScore = Math.min(30, peakCount * 4);
+        
+        // Componente 3: Consistencia de intervalos RR (0-20 puntos)
         const intervals = detectorRef.current?.getRRIntervals() ?? [];
-        
-        // Rango de señal: 0-40 puntos
-        const rangeScore = Math.min(40, (range / 0.03) * 40);
-        
-        // Picos detectados: 0-30 puntos
-        const peakScore = Math.min(30, peakCount * 5);
-        
-        // Consistencia RR: 0-30 puntos
         let consistencyScore = 0;
         if (intervals.length >= 3) {
           const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
           const variance = intervals.reduce((a, b) => a + (b - mean) ** 2, 0) / intervals.length;
-          const cv = Math.sqrt(variance) / mean;
-          consistencyScore = Math.max(0, 30 * (1 - cv / 0.25));
+          const cv = Math.sqrt(variance) / mean; // Coeficiente de variación
+          // CV < 0.1 = muy consistente, CV > 0.3 = muy variable
+          consistencyScore = Math.max(0, 20 * (1 - cv / 0.3));
         }
         
         quality = rangeScore + peakScore + consistencyScore;
-        qualitySmoothedRef.current = qualitySmoothedRef.current * 0.85 + quality * 0.15;
+        
+        // Suavizado de calidad
+        qualitySmoothedRef.current = qualitySmoothedRef.current * 0.9 + quality * 0.1;
         quality = qualitySmoothedRef.current;
       }
+      
+      // ============ FINGER DETECTED (solo informativo) ============
+      // Rojo alto + rojo > verde = probablemente hay dedo con flash
+      const fingerDetected = avgRed > 60 && avgRed > avgGreen * 1.05;
       
       // Log cada 2 segundos
       if (frameCountRef.current % 60 === 0) {
         const bufLen = bufferRef.current?.length ?? 0;
         const peaks = detectorRef.current?.getPeakCount() ?? 0;
-        console.log(`📊 R=${avgRed.toFixed(0)} | Dedo=${fingerDetected ? 'SÍ' : 'NO'} | Buf=${bufLen} | Picos=${peaks} | BPM=${bpmSmoothedRef.current.toFixed(0)} | Q=${quality.toFixed(0)}%`);
+        const intervals = detectorRef.current?.getRRIntervals() ?? [];
+        console.log(
+          `📊 R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} B=${avgBlue.toFixed(0)} | ` +
+          `Buf=${bufLen} | Picos=${peaks} | RR=[${intervals.slice(0,3).map(v => v.toFixed(0)).join(',')}] | ` +
+          `BPM=${Math.round(bpmRef.current)} | Q=${quality.toFixed(0)}%`
+        );
       }
       
       // Enviar datos
@@ -438,11 +439,11 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         redValue: avgRed,
         greenValue: avgGreen,
         blueValue: avgBlue,
-        signalValue: normalizedRed,
+        signalValue: rawSignal,
         filteredValue,
-        quality: Math.round(quality),
-        fingerDetected,
-        bpm: Math.round(bpmSmoothedRef.current),
+        quality: Math.round(Math.min(100, quality)),
+        fingerDetected, // Solo informativo
+        bpm: Math.round(bpmRef.current),
         isPeak,
         rrIntervals: detectorRef.current?.getRRIntervals() ?? [],
         timestamp
@@ -454,11 +455,12 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
     const startCamera = async () => {
       if (!mountedRef.current) return;
       
-      console.log('🎥 Iniciando cámara...');
+      console.log('🎥 Iniciando cámara PPGv7...');
       isRunningRef.current = true;
       
-      filterRef.current = new HighPassFilter(0.25, 30);
-      bufferRef.current = new SignalBuffer(150);
+      // Inicializar procesadores
+      filterRef.current = new BandpassFilter();
+      bufferRef.current = new CircularBuffer(180); // 6 segundos @ 30fps
       detectorRef.current = new PeakDetector();
       
       if (canvasRef.current) {
@@ -469,6 +471,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       try {
         let stream: MediaStream | null = null;
         
+        // Intentar diferentes configuraciones de cámara
         const constraints = [
           { 
             audio: false, 
@@ -502,7 +505,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         streamRef.current = stream;
         onStreamReadyRef.current?.(stream);
         
-        // Encender flash
+        // Encender flash - CRÍTICO para PPG con dedo
         const track = stream.getVideoTracks()[0];
         if (track) {
           try {
@@ -544,7 +547,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
           return;
         }
         
-        console.log('📷 Cámara lista');
+        console.log('📷 PPGv7 listo - señal cruda sin filtro de dedo');
         onCameraReadyRef.current?.();
         animationRef.current = requestAnimationFrame(processFrame);
         
