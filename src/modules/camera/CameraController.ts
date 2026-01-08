@@ -1,10 +1,10 @@
 /**
  * CONTROLADOR SIMPLE DE CÁMARA PARA PPG
  * 
- * FILOSOFÍA: Configuración FIJA, sin ajustes automáticos
+ * FILOSOFÍA: Configuración FIJA, CONSERVADORA, sin ajustes automáticos
  * 
  * Para PPG funcional necesitamos:
- * 1. Exposición FIJA (no automática)
+ * 1. Exposición BAJA y FIJA (para evitar saturación)
  * 2. Flash/Torch SIEMPRE encendido
  * 3. Enfoque FIJO en distancia mínima
  * 4. Sin cambios durante la medición
@@ -81,68 +81,60 @@ export class CameraController {
   private async applyFixedPPGSettings(): Promise<void> {
     if (!this.track || !this.capabilities) return;
     
-    const constraints: any = { advanced: [] };
+    const settings: any[] = [];
     const caps = this.capabilities;
     
-    // 1. TORCH: SIEMPRE encendido
+    // 1. TORCH: SIEMPRE encendido (lo más importante)
     if (caps.hasTorch) {
-      constraints.advanced.push({ torch: true });
+      settings.push({ torch: true });
+      console.log('🔦 Flash encendido');
     }
     
-    // 2. EXPOSICIÓN: Fija en valor medio-bajo para evitar saturación
-    // Valores típicos: -3 a +3 en exposureCompensation
+    // 2. EXPOSICIÓN: BAJA para evitar saturación
+    // Con el flash encendido, exposición baja es ideal
     if (caps.hasExposure && caps.exposureRange) {
-      // Usar 40% del rango (levemente bajo para evitar saturación)
+      // Usar 20% del rango (MUY bajo para evitar saturación con flash)
       const range = caps.exposureRange.max - caps.exposureRange.min;
-      const fixedExposure = caps.exposureRange.min + (range * 0.4);
-      constraints.advanced.push({ exposureCompensation: fixedExposure });
+      const lowExposure = caps.exposureRange.min + (range * 0.20);
+      settings.push({ exposureCompensation: lowExposure });
       
-      console.log(`📸 Exposición fija: ${fixedExposure.toFixed(2)}`);
+      console.log(`📸 Exposición BAJA fija: ${lowExposure.toFixed(2)} (rango: ${caps.exposureRange.min} a ${caps.exposureRange.max})`);
     }
     
-    // 3. ISO: Bajo para minimizar ruido
+    // 3. ISO: MUY bajo para minimizar ruido (con flash no necesitamos ISO alto)
     if (caps.hasISO && caps.isoRange) {
-      // ISO bajo (25% del rango)
+      // ISO mínimo (10% del rango)
       const range = caps.isoRange.max - caps.isoRange.min;
-      const fixedISO = caps.isoRange.min + (range * 0.25);
-      constraints.advanced.push({ iso: fixedISO });
+      const minISO = caps.isoRange.min + (range * 0.10);
+      settings.push({ iso: minISO });
       
-      console.log(`📸 ISO fijo: ${fixedISO.toFixed(0)}`);
+      console.log(`📸 ISO bajo fijo: ${minISO.toFixed(0)} (rango: ${caps.isoRange.min} a ${caps.isoRange.max})`);
     }
     
-    // 4. BALANCE DE BLANCOS: Manual, temperatura fría
-    // Temperatura fría ayuda a diferenciar canal rojo
-    if (caps.hasColorTemp && caps.colorTempRange) {
-      constraints.advanced.push({ 
-        whiteBalanceMode: 'manual',
-        colorTemperature: caps.colorTempRange.min 
-      });
-    }
+    // 4. BALANCE DE BLANCOS: Deshabilitado (dejamos automático para PPG)
+    // En pruebas, manual puede causar problemas en algunos dispositivos
     
     // 5. ENFOQUE: Fijo en distancia mínima (dedo sobre lente)
     if (caps.hasFocusDistance && caps.focusDistanceRange) {
-      constraints.advanced.push({
+      settings.push({
         focusMode: 'manual',
         focusDistance: caps.focusDistanceRange.min
       });
+      console.log('🎯 Enfoque en distancia mínima');
     }
     
-    // Aplicar todas las configuraciones
-    try {
-      await this.track.applyConstraints(constraints);
-      console.log('✅ Configuración fija aplicada correctamente');
-    } catch (error) {
-      console.warn('⚠️ Error aplicando configuración completa, intentando individual...');
-      
-      // Fallback: aplicar una por una
-      for (const setting of constraints.advanced) {
-        try {
-          await this.track.applyConstraints({ advanced: [setting] });
-        } catch (e) {
-          console.warn('⚠️ No se pudo aplicar:', setting);
-        }
+    // Aplicar configuraciones una por una (más confiable que en lote)
+    let appliedCount = 0;
+    for (const setting of settings) {
+      try {
+        await this.track.applyConstraints({ advanced: [setting] });
+        appliedCount++;
+      } catch (error) {
+        console.warn('⚠️ No se pudo aplicar:', Object.keys(setting)[0], error);
       }
     }
+    
+    console.log(`✅ Aplicadas ${appliedCount}/${settings.length} configuraciones`);
   }
   
   /**
