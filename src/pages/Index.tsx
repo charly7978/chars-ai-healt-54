@@ -300,6 +300,10 @@ const Index = () => {
             variant: "destructive"
           });
         }}
+        onStreamReady={(stream) => {
+          console.log('📹 Stream recibido:', stream ? 'activo' : 'null');
+          setCameraStream(stream);
+        }}
       />
       
       {/* Overlay pantalla completa */}
