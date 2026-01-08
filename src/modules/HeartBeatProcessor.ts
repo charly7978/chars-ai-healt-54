@@ -265,10 +265,23 @@ export class HeartBeatProcessor {
       peakResult = this.detectPeak(now);
     }
     
-    // Si hay pico, actualizar BPM y sonar
+    // Si hay pico, actualizar BPM, vibrar y sonar
     if (peakResult.isPeak && !this.isInWarmup()) {
       this.updateBPM();
-      this.playHeartSound();
+      
+      // VIBRACIÓN DIRECTA - sin async, sin depender de audio
+      try {
+        if (navigator.vibrate) {
+          const vibrated = navigator.vibrate([50, 30, 80]);
+          console.log('📳 Vibración:', vibrated ? 'OK' : 'FALLO');
+        } else {
+          console.log('📳 Vibración: NO DISPONIBLE en este navegador');
+        }
+      } catch (e) {
+        console.log('📳 Vibración ERROR:', e);
+      }
+      
+      this.playHeartSound(); // Audio separado
     }
     
     // Log solo cada 5 segundos para reducir overhead (era 3s)
@@ -305,8 +318,8 @@ export class HeartBeatProcessor {
       window.reduce((sum, v) => sum + Math.pow(v - windowMean, 2), 0) / window.length
     );
     
-    // Umbral adaptativo basado en desviación estándar
-    const adaptiveThreshold = windowMean + windowStd * 0.5; // Aumentado para reducir falsos positivos
+    // Umbral adaptativo basado en desviación estándar - MÁS ESTRICTO
+    const adaptiveThreshold = windowMean + windowStd * 1.0; // Aumentado para reducir falsos positivos
     
     // Buscar máximo en región central
     const searchStart = 4;
@@ -338,8 +351,8 @@ export class HeartBeatProcessor {
     // Calcular prominencia
     const prominence = maxVal - Math.min(leftVal, rightVal);
     
-    // Prominencia mínima basada en std - REDUCIDA para detectar más picos
-    const minProminence = Math.max(0.02, windowStd * 0.2);
+    // Prominencia mínima basada en std - MÁS ESTRICTA para evitar ruido
+    const minProminence = Math.max(0.5, windowStd * 0.4);
     if (prominence < minProminence) {
       return { isPeak: false, confidence: 0 };
     }
@@ -354,8 +367,8 @@ export class HeartBeatProcessor {
       console.log(`🔍 Peak: range=${windowRange.toFixed(2)}, prom=${prominence.toFixed(2)}, minProm=${minProminence.toFixed(2)}, std=${windowStd.toFixed(2)}`);
     }
     
-    // Rango mínimo REDUCIDO para detectar señales débiles
-    if (windowRange < 0.005 || windowRange > 100) {
+    // Rango mínimo - requiere señal más fuerte para evitar ruido
+    if (windowRange < 0.5 || windowRange > 100) {
       return { isPeak: false, confidence: 0 };
     }
     
