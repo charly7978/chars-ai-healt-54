@@ -444,12 +444,12 @@ const Index = () => {
     console.log('📹 Video encontrado:', videoElement.videoWidth, 'x', videoElement.videoHeight);
     
     let lastProcessTime = 0;
-    // 60 FPS para máxima precisión PPG
-    const targetFrameInterval = 1000 / 60;
+    // OPTIMIZADO: 30 FPS sincronizado con BandpassFilter
+    const targetFrameInterval = 1000 / 30;
     
-    // RESOLUCIÓN 720p para mejor detección
-    const PPG_WIDTH = 1280;
-    const PPG_HEIGHT = 720;
+    // RESOLUCIÓN OPTIMIZADA: 320x240 es suficiente para PPG
+    const PPG_WIDTH = 320;
+    const PPG_HEIGHT = 240;
     tempCanvas.width = PPG_WIDTH;
     tempCanvas.height = PPG_HEIGHT;
     

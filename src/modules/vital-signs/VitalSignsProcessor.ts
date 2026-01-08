@@ -59,9 +59,9 @@ export class VitalSignsProcessor {
     lastArrhythmiaData: null as { timestamp: number; rmssd: number; rrVariation: number; } | null
   };
   
-  // HISTORIAL DE SEÑAL - REDUCIDO
+  // HISTORIAL DE SEÑAL - MÍNIMO (datos ya vienen procesados de HeartBeatProcessor)
   private signalHistory: number[] = [];
-  private readonly HISTORY_SIZE = 45; // Reducido de 60 - suficiente para análisis
+  private readonly HISTORY_SIZE = 30; // 1s @ 30fps - solo para análisis local
   
   // Baseline para calibración
   private baselineDC: number = 0;

@@ -16,8 +16,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameProcessor: FrameProcessor;
   private qualityAnalyzer: SignalQualityAnalyzer;
   
-  // Buffers - OPTIMIZADOS
-  private readonly BUFFER_SIZE = 90; // Reducido de 150 - suficiente para análisis
+  // Buffers - OPTIMIZADOS para 30fps
+  private readonly BUFFER_SIZE = 60; // 2s @ 30fps - buffer central
   private rawRedBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   

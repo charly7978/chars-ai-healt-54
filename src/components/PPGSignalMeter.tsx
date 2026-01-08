@@ -362,7 +362,10 @@ const PPGSignalMeter = ({
         ctx.lineCap = 'round';
         
         let started = false;
-        const peakCandidates: Array<{x: number; y: number; time: number; val: number}> = [];
+        
+        // OPTIMIZADO: Usamos solo isPeak de HeartBeatProcessor (detección unificada)
+        // Guardamos último punto para marcar pico cuando isPeak es true
+        let lastPoint: { x: number; y: number } | null = null;
         
         for (let i = 0; i < points.length; i++) {
           const pt = points[i];
@@ -379,64 +382,34 @@ const PPGSignalMeter = ({
             ctx.lineTo(x, y);
           }
           
-          // Detectar picos locales (picos van hacia ARRIBA = valores NEGATIVOS en canvas)
-          if (i >= CONFIG.PEAKS.DETECTION_WINDOW && i < points.length - CONFIG.PEAKS.DETECTION_WINDOW) {
-            let isPeakLocal = true;
-            const currentVal = pt.value;
-            
-            // Un pico es un MÍNIMO local (valor más negativo = más arriba en canvas)
-            for (let j = i - CONFIG.PEAKS.DETECTION_WINDOW; j <= i + CONFIG.PEAKS.DETECTION_WINDOW; j++) {
-              if (j !== i && points[j].value < currentVal) {
-                // Hay un punto más alto (más negativo), no es pico
-                isPeakLocal = false;
-                break;
-              }
-            }
-            
-            // Verificar prominencia: el pico debe estar significativamente arriba de la línea base
-            // (valor negativo grande = arriba)
-            const prominence = -currentVal; // Convertir a positivo para comparar
-            const minProminence = CONFIG.CANVAS_HEIGHT * CONFIG.SIGNAL.TARGET_AMPLITUDE * CONFIG.PEAKS.MIN_PROMINENCE;
-            
-            if (isPeakLocal && prominence > minProminence) {
-              peakCandidates.push({ x, y, time: pt.time, val: pt.value });
-            }
-          }
+          lastPoint = { x, y };
         }
         
         ctx.stroke();
         ctx.shadowBlur = 0;
         
-        // ========== MARCAR PICOS ==========
-        // Filtrar picos muy cercanos
-        const validPeaks = peakCandidates.filter((peak, idx) => {
-          if (idx === 0) return true;
-          const prev = peakCandidates[idx - 1];
-          return peak.time - prev.time >= CONFIG.PEAKS.MIN_DISTANCE_MS;
-        });
-        
-        // Verificar arritmia
+        // ========== MARCAR PICO DESDE HeartBeatProcessor ==========
+        // Solo usamos el prop isPeak - fuente ÚNICA de verdad
+        const { isPeak: externalPeak } = propsRef.current;
         const hasArrhythmia = arrStatus?.includes('ARRITMIA') || false;
         
-        validPeaks.forEach((peak, idx) => {
-          const isArrPeak = hasArrhythmia && idx === validPeaks.length - 1;
-          
-          // Círculo del pico
+        if (externalPeak && lastPoint) {
+          // Marcar el pico en la posición más reciente
           ctx.beginPath();
-          ctx.arc(peak.x, peak.y, isArrPeak ? 8 : 5, 0, Math.PI * 2);
-          ctx.fillStyle = isArrPeak ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
+          ctx.arc(lastPoint.x, lastPoint.y, hasArrhythmia ? 8 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = hasArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
           ctx.fill();
           
           // Halo para arritmias
-          if (isArrPeak) {
+          if (hasArrhythmia) {
             const alpha = (Math.sin(now / 150) + 1) / 2;
             ctx.beginPath();
-            ctx.arc(peak.x, peak.y, 14, 0, Math.PI * 2);
+            ctx.arc(lastPoint.x, lastPoint.y, 14, 0, Math.PI * 2);
             ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
             ctx.lineWidth = 3;
             ctx.stroke();
           }
-        });
+        }
       }
       
       // Dibujar alerta de arritmia si aplica

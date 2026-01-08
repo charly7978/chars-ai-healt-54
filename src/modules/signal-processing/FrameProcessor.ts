@@ -12,13 +12,13 @@ import { globalCalibrator } from '../camera/CameraAutoCalibrator';
  * 4. Sin acumulación de memoria
  */
 export class FrameProcessor {
-  // Buffers PEQUEÑOS - 60 frames = 2s @ 30fps
+  // Buffers PEQUEÑOS - 30 frames = 1s @ 30fps (suficiente para análisis)
   private redBuffer: Float32Array;
   private greenBuffer: Float32Array;
   private blueBuffer: Float32Array;
   private bufferIndex = 0;
   private bufferFilled = false;
-  private readonly BUFFER_SIZE = 60;
+  private readonly BUFFER_SIZE = 30;
   
   // Calibración
   private calibrationDC = 0;
