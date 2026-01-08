@@ -1,30 +1,24 @@
-/**
- * @file CameraPreview.tsx
- * @description INDICADOR DE CALIDAD CON VISTA DE CÁMARA
- * Muestra el dedo en tiempo real + calidad instantánea
- */
-
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect } from 'react';
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
-  isFingerDetected: boolean;
   signalQuality: number;
-  isVisible: boolean;
+  fingerDetected: boolean;
 }
 
+/**
+ * Vista previa de la cámara con indicador de calidad
+ */
 const CameraPreview: React.FC<CameraPreviewProps> = ({
   stream,
   signalQuality,
-  isVisible
+  fingerDetected
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  // Conectar stream al video
+  
   useEffect(() => {
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
-      videoRef.current.play().catch(() => {});
     }
     
     return () => {
@@ -33,75 +27,42 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
       }
     };
   }, [stream]);
-
-  if (!isVisible) return null;
-
-  // Valor REAL sin modificar
-  const realQuality = Math.round(signalQuality);
-
-  // Color basado en rangos reales
-  const getColor = () => {
-    if (realQuality < 20) return "#ef4444"; // rojo
-    if (realQuality < 40) return "#f97316"; // naranja  
-    if (realQuality < 60) return "#eab308"; // amarillo
-    if (realQuality < 80) return "#22c55e"; // verde
-    return "#10b981"; // verde brillante
+  
+  if (!stream) return null;
+  
+  const getQualityColor = () => {
+    if (signalQuality > 60) return 'bg-green-500';
+    if (signalQuality > 30) return 'bg-yellow-500';
+    return 'bg-red-500';
   };
-
-  // Etiqueta descriptiva
-  const getLabel = () => {
-    if (realQuality < 20) return "Muy Baja";
-    if (realQuality < 40) return "Baja";
-    if (realQuality < 60) return "Regular";
-    if (realQuality < 80) return "Buena";
-    return "Excelente";
+  
+  const getQualityLabel = () => {
+    if (signalQuality > 60) return 'Buena';
+    if (signalQuality > 30) return 'Regular';
+    return 'Baja';
   };
-
+  
   return (
-    <div className="absolute top-14 left-3 z-40">
-      {/* Contenedor con video del dedo + indicador */}
-      <div 
-        className="rounded-xl overflow-hidden shadow-lg"
-        style={{ 
-          backgroundColor: 'rgba(0,0,0,0.85)',
-          border: `2px solid ${getColor()}`,
-          boxShadow: `0 0 15px ${getColor()}50`,
-          width: '110px'
-        }}
-      >
-        {/* Video del dedo - muestra el rojo */}
+    <div className="absolute top-4 right-4 z-20">
+      <div className="relative w-24 h-32 rounded-lg overflow-hidden border-2 border-white/30 shadow-lg">
         <video
           ref={videoRef}
           playsInline
           muted
           autoPlay
-          className="w-full h-20 object-cover"
-          style={{ 
-            transform: 'scaleX(-1)',
-            filter: 'saturate(1.2) contrast(1.1)'
-          }}
+          className="w-full h-full object-cover"
+          style={{ transform: 'scaleX(-1)' }}
         />
         
-        {/* Indicador de calidad debajo del video */}
-        <div className="px-2 py-1.5 flex items-center justify-between">
-          {/* Punto de color */}
-          <div 
-            className="w-2.5 h-2.5 rounded-full animate-pulse"
-            style={{ backgroundColor: getColor() }}
-          />
-          
-          {/* Valor numérico */}
-          <span 
-            className="text-base font-bold font-mono"
-            style={{ color: getColor() }}
-          >
-            {realQuality}%
-          </span>
-          
-          {/* Etiqueta corta */}
-          <span className="text-[10px] text-white/60">
-            {getLabel()}
-          </span>
+        {/* Indicador de calidad */}
+        <div className="absolute bottom-0 left-0 right-0 bg-black/60 px-2 py-1">
+          <div className="flex items-center gap-1">
+            <div className={`w-2 h-2 rounded-full ${getQualityColor()}`} />
+            <span className="text-white text-xs">{Math.round(signalQuality)}%</span>
+          </div>
+          <div className="text-white/70 text-[10px]">
+            {fingerDetected ? getQualityLabel() : 'Sin dedo'}
+          </div>
         </div>
       </div>
     </div>
