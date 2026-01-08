@@ -129,13 +129,13 @@ const CameraView: React.FC<CameraViewProps> = ({
           // Exposición y otros ajustes
           const settings: any[] = [];
           
-          // PPG CIENTÍFICO: Exposición BAJA para evitar saturación con flash+dedo
+          // PPG: Exposición MEDIA para mejor iluminación con flash+dedo
           if (caps.exposureCompensation) {
             const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-            // 25% de exposición - literatura científica recomienda exposición mínima
-            const targetExposure = caps.exposureCompensation.min + range * 0.25;
+            // 50% de exposición - equilibrio entre señal y saturación
+            const targetExposure = caps.exposureCompensation.min + range * 0.50;
             settings.push({ exposureCompensation: targetExposure });
-            console.log(`📷 Exposición inicial: ${targetExposure.toFixed(1)} (25% del rango)`);
+            console.log(`📷 Exposición inicial: ${targetExposure.toFixed(1)} (50% del rango)`);
           }
           
           // ISO MÍNIMO para reducir ruido

@@ -54,8 +54,8 @@ const CONFIG = {
     // Altura de onda objetivo (% del canvas)
     TARGET_AMPLITUDE: 0.40,  // 40% del alto para ondas bien visibles
     
-    // AMPLIFICACIÓN AUMENTADA para señales muy pequeñas
-    AMPLIFICATION: 500,   // Aumentado de 150 a 500
+    // AMPLIFICACIÓN MUY AUMENTADA para señales muy pequeñas
+    AMPLIFICATION: 2000,   // Aumentado de 500 a 2000
   },
   
   // Detección de picos
@@ -326,9 +326,9 @@ const PPGSignalMeter = ({
       // Calcular factor de escala necesario
       let scaleFactor = targetHeight / Math.max(dynamicRange, 0.001);
       
-      // Limitar el factor - más amplificación mínima para ver señales débiles
+      // Limitar el factor - MUCHA más amplificación mínima para ver señales débiles
       scaleFactor = Math.min(scaleFactor, S.AMPLIFICATION);
-      scaleFactor = Math.max(scaleFactor, 50); // Aumentado de 10 a 50
+      scaleFactor = Math.max(scaleFactor, 200); // Aumentado de 50 a 200
       
       // 8. Aplicar escala (invertido: valores positivos de AC van hacia ARRIBA)
       const scaledValue = -ac * scaleFactor;
