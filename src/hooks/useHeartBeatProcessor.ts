@@ -48,6 +48,13 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
+  // Pasar valor verde al procesador para validar dedo
+  const setGreenValue = useCallback((green: number) => {
+    if (processorRef.current) {
+      processorRef.current.setGreenValue(green);
+    }
+  }, []);
+
   const processSignal = useCallback((value: number, _fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
@@ -77,15 +84,12 @@ export const useHeartBeatProcessor = () => {
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
-    // Procesar señal directamente - sin validación de dedo
+    // Procesar señal directamente - la validación de dedo está en HeartBeatProcessor
     const result = processorRef.current.processSignal(value, timestamp);
     const rrIntervals = processorRef.current.getRRIntervals();
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };
     
-    // NOTA: signalQuality ahora viene de SignalQualityAnalyzer a través de PPGSignalProcessor
-    // El hook recibe la calidad ya calculada desde Index.tsx
-
     // Actualizar BPM si hay confianza y está en rango válido
     if (result.confidence >= 0.3 && result.bpm >= 40 && result.bpm <= 180) {
       const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
@@ -102,7 +106,7 @@ export const useHeartBeatProcessor = () => {
       confidence: result.confidence,
       isPeak: result.isPeak,
       arrhythmiaCount: result.arrhythmiaCount,
-      signalQuality: signalQuality, // Usa el estado actual, que viene de PPG
+      signalQuality: signalQuality,
       rrData
     };
   }, [currentBPM, confidence, signalQuality]);
@@ -137,6 +141,7 @@ export const useHeartBeatProcessor = () => {
     confidence,
     signalQuality,
     processSignal,
+    setGreenValue,
     reset,
     setArrhythmiaState,
     debugInfo: {

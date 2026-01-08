@@ -50,8 +50,7 @@ export class CameraAutoCalibrator {
       // Iniciar en 60% del rango para mejor iluminación inicial
       const range = this.exposureRange.max - this.exposureRange.min;
       this.currentExposure = this.exposureRange.min + range * 0.60;
-      
-      console.log(`📷 Rango exposición: [${this.exposureRange.min}, ${this.exposureRange.max}], inicial: ${this.currentExposure.toFixed(1)}`);
+      // Log removido para rendimiento
     }
   }
 
@@ -87,12 +86,12 @@ export class CameraAutoCalibrator {
     
     if (isSensorSaturated) {
       isSaturated = true;
-      recommendation = `SATURADO R=${avgRed.toFixed(0)} - Reduciendo...`;
+      recommendation = `SATURADO`;
       
       if (canAdjust && this.hasExposure && this.track) {
         this.reduceExposure();
         this.lastAdjustTime = now;
-        console.log(`⚠️ Saturación detectada: R=${avgRed.toFixed(0)}, G=${avgGreen.toFixed(0)}`);
+        // Log removido para rendimiento
       }
     } else if (this.currentBrightness > this.TARGET_MAX) {
       recommendation = 'Muy brillante';
@@ -135,12 +134,10 @@ export class CameraAutoCalibrator {
       this.currentExposure - range * 0.4
     );
     
-    // Fire and forget
+    // Fire and forget - sin log
     this.track.applyConstraints({
       advanced: [{ exposureCompensation: this.currentExposure } as any]
     }).catch(() => {});
-    
-    console.log(`📷 Exposición reducida: ${this.currentExposure.toFixed(1)}`);
   }
 
   /**
@@ -178,8 +175,7 @@ export class CameraAutoCalibrator {
     this.track.applyConstraints({
       advanced: [{ exposureCompensation: this.currentExposure } as any]
     }).catch(() => {});
-    
-    console.log(`📷 Exposición aumentada: ${this.currentExposure.toFixed(1)}`);
+    // Log removido para rendimiento
   }
 
   /**
