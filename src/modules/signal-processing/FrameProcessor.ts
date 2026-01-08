@@ -60,36 +60,57 @@ export class FrameProcessor {
     let blueSum = 0;
     let skinPixelCount = 0;
     
-    // Procesar con step de 4 para velocidad
-    for (let i = 0; i < data.length; i += 16) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      
-      const total = r + g + b;
-      if (total < 20) continue; // MÁS PERMISIVO - era 50
-      
-      const nr = r / total;
-      const ng = g / total;
-      const nrng = ng > 0.01 ? nr / ng : 0;
-      
-      // MENOS RESTRICTIVO para aceptar más variación de piel
-      if (nr > 0.30 && nrng > 0.8 && r > 30) {
-        redSum += r;
-        greenSum += g;
-        blueSum += b;
-        skinPixelCount++;
+    // ROI central - el dedo cubre principalmente el centro
+    const centerX = imageData.width / 2;
+    const centerY = imageData.height / 2;
+    const roiRadius = Math.min(imageData.width, imageData.height) * 0.35;
+    
+    // Procesar con step de 4 (cada 4to pixel) para velocidad pero más cobertura
+    const step = 4;
+    for (let y = 0; y < imageData.height; y += step) {
+      for (let x = 0; x < imageData.width; x += step) {
+        // Verificar si está en ROI central
+        const dx = x - centerX;
+        const dy = y - centerY;
+        if (dx * dx + dy * dy > roiRadius * roiRadius) continue;
+        
+        const i = (y * imageData.width + x) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        
+        const total = r + g + b;
+        if (total < 30) continue;
+        
+        const nr = r / total;
+        const ng = g / total;
+        const nrng = ng > 0.01 ? nr / ng : 0;
+        
+        // Detección de piel/dedo - canal rojo dominante
+        if (nr > 0.32 && nrng > 0.9 && r > 40) {
+          redSum += r;
+          greenSum += g;
+          blueSum += b;
+          skinPixelCount++;
+        }
       }
     }
     
-    // Fallback si no hay piel detectada
-    if (skinPixelCount < 100) {
+    // Fallback: usar ROI central sin filtro de piel
+    if (skinPixelCount < 50) {
       redSum = 0; greenSum = 0; blueSum = 0; skinPixelCount = 0;
-      for (let i = 0; i < data.length; i += 16) {
-        redSum += data[i];
-        greenSum += data[i + 1];
-        blueSum += data[i + 2];
-        skinPixelCount++;
+      for (let y = 0; y < imageData.height; y += step) {
+        for (let x = 0; x < imageData.width; x += step) {
+          const dx = x - centerX;
+          const dy = y - centerY;
+          if (dx * dx + dy * dy > roiRadius * roiRadius) continue;
+          
+          const i = (y * imageData.width + x) * 4;
+          redSum += data[i];
+          greenSum += data[i + 1];
+          blueSum += data[i + 2];
+          skinPixelCount++;
+        }
       }
     }
     

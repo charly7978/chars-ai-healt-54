@@ -234,13 +234,20 @@ export class CameraController {
   
   /**
    * MÉTODO PRINCIPAL: Recibe comando del SignalQualityAnalyzer y ajusta cámara
-   * Llamar cada frame (o cada 2-3 frames) con las métricas actuales
+   * Solo actúa cuando hay señal válida (dedo detectado)
    */
   async executeCommand(command: CalibrationCommand, metrics: SignalMetrics): Promise<void> {
     if (!this.track || !this.capabilities) return;
     
     const now = performance.now();
     this.framesSinceAdjust++;
+    
+    // *** CRÍTICO: NO CALIBRAR SI NO HAY DEDO ***
+    // Si fingerConfidence es muy baja, no hacer nada (evita loops sin sentido)
+    if (metrics.fingerConfidence < 0.2 && !metrics.isSaturated) {
+      // Solo mantener torch encendido, nada más
+      return;
+    }
     
     // Trackear saturación
     if (metrics.isSaturated) {
@@ -249,12 +256,7 @@ export class CameraController {
       this.consecutiveSaturationFrames = 0;
     }
     
-    // Si no hay urgencia y poco tiempo pasó, skip
-    if (command.urgency === 'none' && (now - this.lastAdjustTime) < 100) {
-      return;
-    }
-    
-    // Saturación confirmada = acción inmediata
+    // Saturación confirmada = acción inmediata (esto sí siempre)
     if (this.consecutiveSaturationFrames >= this.SATURATION_THRESHOLD) {
       await this.reduceExposureUrgent();
       this.lastAdjustTime = now;
@@ -262,8 +264,14 @@ export class CameraController {
       return;
     }
     
-    // Rate limiting normal
-    if ((now - this.lastAdjustTime) < this.MIN_INTERVAL) return;
+    // Si no hay urgencia y poco tiempo pasó, skip
+    if (command.urgency === 'none') {
+      // En MAINTAIN, esperar más tiempo
+      if ((now - this.lastAdjustTime) < 500) return;
+    } else if (command.urgency === 'normal') {
+      if ((now - this.lastAdjustTime) < this.MIN_INTERVAL) return;
+    }
+    // 'urgent' pasa directamente
     
     // Ejecutar acción según comando
     switch (command.action) {
@@ -280,11 +288,11 @@ export class CameraController {
         await this.optimizeColorTemp();
         break;
       case 'MAINTAIN':
-        // Pequeños ajustes de mantenimiento via PID
-        if (this.framesSinceAdjust > 30) {
+        // Solo ajustes muy pequeños después de mucho tiempo
+        if (this.framesSinceAdjust > 60) {
           await this.maintainOptimal(metrics);
         }
-        break;
+        return; // No resetear lastAdjustTime en MAINTAIN
     }
     
     this.lastAdjustTime = now;
