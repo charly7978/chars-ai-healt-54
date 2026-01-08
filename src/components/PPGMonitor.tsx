@@ -1,13 +1,12 @@
 import React, { useRef, useEffect } from 'react';
 
 /**
- * PPG MONITOR v3 - CON CALIBRACIÓN AUTOMÁTICA DE CÁMARA
+ * PPG MONITOR v4 - CALIBRACIÓN DINÁMICA CONTINUA
  * 
- * Mejoras:
- * - Calibración automática de exposición para evitar saturación
- * - Control dinámico del flash
- * - Mejor extracción de señal PPG
- * - Detección de picos mejorada
+ * El sistema ajusta CONSTANTEMENTE:
+ * - Flash: encender si imagen oscura, apagar si saturada
+ * - Exposición: reducir si saturada, aumentar si oscura
+ * - Todo en tiempo real, cada frame
  */
 
 interface PPGData {
@@ -32,10 +31,10 @@ interface PPGMonitorProps {
   onStreamReady?: (stream: MediaStream | null) => void;
 }
 
-// ============ FILTRO PASABANDA SIMPLE (MÁS ESTABLE) ============
-class SimpleFilter {
+// ============ FILTRO SUAVIZADO SIMPLE ============
+class SmoothingFilter {
   private buffer: number[] = [];
-  private readonly SIZE = 15; // ~0.5 segundos @ 30fps
+  private readonly SIZE = 15;
   
   filter(value: number): number {
     this.buffer.push(value);
@@ -45,11 +44,8 @@ class SimpleFilter {
     
     if (this.buffer.length < 3) return 0;
     
-    // Promedio móvil para suavizar
     const avg = this.buffer.reduce((a, b) => a + b, 0) / this.buffer.length;
-    
-    // Retornar diferencia del promedio (componente AC)
-    return value - avg;
+    return value - avg; // Componente AC
   }
   
   reset(): void {
@@ -57,39 +53,34 @@ class SimpleFilter {
   }
 }
 
-// ============ DETECTOR DE PICOS ROBUSTO ============
-class RobustPeakDetector {
+// ============ DETECTOR DE PICOS ============
+class PeakDetector {
   private signalBuffer: number[] = [];
   private peakTimes: number[] = [];
   private lastPeakTime = 0;
-  private baselineBuffer: number[] = [];
   
-  private readonly SIGNAL_BUFFER_SIZE = 180; // 6 segundos
-  private readonly MIN_INTERVAL = 350; // Max ~170 BPM
-  private readonly MAX_INTERVAL = 1500; // Min ~40 BPM
+  private readonly BUFFER_SIZE = 180;
+  private readonly MIN_INTERVAL = 350;
+  private readonly MAX_INTERVAL = 1500;
   
   process(value: number, timestamp: number): { isPeak: boolean; bpm: number } {
     this.signalBuffer.push(value);
-    if (this.signalBuffer.length > this.SIGNAL_BUFFER_SIZE) {
+    if (this.signalBuffer.length > this.BUFFER_SIZE) {
       this.signalBuffer.shift();
     }
     
-    // Necesitamos al menos 2 segundos de datos
     if (this.signalBuffer.length < 60) {
       return { isPeak: false, bpm: 0 };
     }
     
-    // Calcular estadísticas de la señal
-    const recent = this.signalBuffer.slice(-90); // últimos 3 segundos
+    const recent = this.signalBuffer.slice(-90);
     const sorted = [...recent].sort((a, b) => a - b);
     const min = sorted[0];
     const max = sorted[sorted.length - 1];
     const range = max - min;
     
-    // Umbral adaptativo: 60% del rango desde el mínimo
-    const threshold = min + range * 0.6;
+    const threshold = min + range * 0.55;
     
-    // Detectar pico
     let isPeak = false;
     const timeSinceLastPeak = timestamp - this.lastPeakTime;
     
@@ -97,16 +88,14 @@ class RobustPeakDetector {
       const window = this.signalBuffer.slice(-7);
       const center = window[3];
       
-      // Verificar máximo local
       const isMax = center > window[0] && center > window[1] && center > window[2] &&
                     center >= window[4] && center >= window[5] && center >= window[6];
       
-      // Verificar umbral y prominencia
       const aboveThreshold = center > threshold;
       const prominence = center - Math.min(window[0], window[6]);
-      const hasProminence = prominence > range * 0.2;
+      const hasProminence = prominence > range * 0.15;
       
-      if (isMax && aboveThreshold && hasProminence && range > 0.3) {
+      if (isMax && aboveThreshold && hasProminence && range > 0.2) {
         isPeak = true;
         this.lastPeakTime = timestamp;
         this.peakTimes.push(timestamp);
@@ -115,11 +104,10 @@ class RobustPeakDetector {
           this.peakTimes.shift();
         }
         
-        console.log(`💓 PICO: val=${center.toFixed(2)} thresh=${threshold.toFixed(2)} range=${range.toFixed(2)}`);
+        console.log(`💓 PICO: val=${center.toFixed(2)} thresh=${threshold.toFixed(2)} prom=${prominence.toFixed(2)}`);
       }
     }
     
-    // Calcular BPM
     let bpm = 0;
     if (this.peakTimes.length >= 4) {
       const intervals: number[] = [];
@@ -169,7 +157,6 @@ class RobustPeakDetector {
     this.signalBuffer = [];
     this.peakTimes = [];
     this.lastPeakTime = 0;
-    this.baselineBuffer = [];
   }
 }
 
@@ -189,23 +176,25 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
   const isRunningRef = useRef(false);
   const mountedRef = useRef(true);
   
-  const filterRef = useRef<SimpleFilter | null>(null);
-  const detectorRef = useRef<RobustPeakDetector | null>(null);
+  const filterRef = useRef<SmoothingFilter | null>(null);
+  const detectorRef = useRef<PeakDetector | null>(null);
   
   const bpmSmoothedRef = useRef(0);
   const qualitySmoothedRef = useRef(0);
   const frameCountRef = useRef(0);
-  const flashEnabledRef = useRef(false);
   
-  // Calibración de cámara
-  const calibrationRef = useRef({
-    isCalibrating: true,
-    framesSinceStart: 0,
-    avgRed: 0,
-    samples: [] as number[],
+  // Estado de cámara
+  const cameraStateRef = useRef({
+    flashOn: false,
+    flashCapable: false,
+    exposureCapable: false,
+    minExposure: 0,
+    maxExposure: 0,
+    currentExposure: 0,
+    lastAdjustTime: 0,
   });
   
-  // Refs para callbacks
+  // Callbacks refs
   const onDataRef = useRef(onData);
   const onCameraReadyRef = useRef(onCameraReady);
   const onErrorRef = useRef(onError);
@@ -237,14 +226,13 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         for (const track of tracks) {
           try {
             const caps = track.getCapabilities?.() as any;
-            if (caps?.torch && flashEnabledRef.current) {
+            if (caps?.torch && cameraStateRef.current.flashOn) {
               await track.applyConstraints({ advanced: [{ torch: false } as any] });
             }
           } catch {}
           track.stop();
         }
         streamRef.current = null;
-        flashEnabledRef.current = false;
         onStreamReadyRef.current?.(null);
       }
       
@@ -257,12 +245,93 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       bpmSmoothedRef.current = 0;
       qualitySmoothedRef.current = 0;
       frameCountRef.current = 0;
-      calibrationRef.current = {
-        isCalibrating: true,
-        framesSinceStart: 0,
-        avgRed: 0,
-        samples: [],
+      cameraStateRef.current = {
+        flashOn: false,
+        flashCapable: false,
+        exposureCapable: false,
+        minExposure: 0,
+        maxExposure: 0,
+        currentExposure: 0,
+        lastAdjustTime: 0,
       };
+    };
+    
+    // ===== CALIBRACIÓN DINÁMICA =====
+    const adjustCamera = async (avgBrightness: number) => {
+      const state = cameraStateRef.current;
+      const now = Date.now();
+      
+      // No ajustar más de 1 vez por segundo
+      if (now - state.lastAdjustTime < 1000) return;
+      
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!track) return;
+      
+      // IMAGEN MUY OSCURA (< 60): necesitamos más luz
+      if (avgBrightness < 60) {
+        // Primero intentar encender flash
+        if (state.flashCapable && !state.flashOn) {
+          try {
+            await track.applyConstraints({ advanced: [{ torch: true } as any] });
+            state.flashOn = true;
+            state.lastAdjustTime = now;
+            console.log('🔦 Flash ENCENDIDO (imagen oscura)');
+            return;
+          } catch {}
+        }
+        
+        // Si no hay flash o ya está encendido, subir exposición
+        if (state.exposureCapable && state.currentExposure < state.maxExposure) {
+          const newExp = Math.min(state.maxExposure, state.currentExposure + 0.5);
+          try {
+            await track.applyConstraints({ 
+              advanced: [{ exposureCompensation: newExp } as any] 
+            });
+            state.currentExposure = newExp;
+            state.lastAdjustTime = now;
+            console.log(`📷 Exposición aumentada: ${newExp.toFixed(1)}`);
+          } catch {}
+        }
+      }
+      
+      // IMAGEN SATURADA (> 240): necesitamos menos luz
+      else if (avgBrightness > 240) {
+        // Primero intentar reducir exposición
+        if (state.exposureCapable && state.currentExposure > state.minExposure) {
+          const newExp = Math.max(state.minExposure, state.currentExposure - 0.5);
+          try {
+            await track.applyConstraints({ 
+              advanced: [{ exposureCompensation: newExp } as any] 
+            });
+            state.currentExposure = newExp;
+            state.lastAdjustTime = now;
+            console.log(`📷 Exposición reducida: ${newExp.toFixed(1)}`);
+            return;
+          } catch {}
+        }
+        
+        // Si exposición al mínimo y aún saturado, apagar flash
+        if (state.flashOn) {
+          try {
+            await track.applyConstraints({ advanced: [{ torch: false } as any] });
+            state.flashOn = false;
+            state.lastAdjustTime = now;
+            console.log('🔦 Flash APAGADO (saturación)');
+          } catch {}
+        }
+      }
+      
+      // RANGO ÓPTIMO (80-200): estamos bien, asegurar flash encendido para PPG
+      else if (avgBrightness >= 80 && avgBrightness <= 200) {
+        if (state.flashCapable && !state.flashOn) {
+          try {
+            await track.applyConstraints({ advanced: [{ torch: true } as any] });
+            state.flashOn = true;
+            state.lastAdjustTime = now;
+            console.log('🔦 Flash ENCENDIDO (rango óptimo)');
+          } catch {}
+        }
+      }
     };
     
     const processFrame = () => {
@@ -282,19 +351,17 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       }
       
       frameCountRef.current++;
-      const cal = calibrationRef.current;
-      cal.framesSinceStart++;
       
       // Capturar frame
       ctx.drawImage(video, 0, 0, 64, 64);
       const imageData = ctx.getImageData(0, 0, 64, 64);
       const data = imageData.data;
       
-      // ===== EXTRAER VALORES RGB DE ZONA CENTRAL =====
+      // ===== EXTRAER VALORES RGB =====
       let redSum = 0, greenSum = 0, blueSum = 0;
       let totalPixels = 0;
       
-      // Zona central 50%
+      // Zona central
       for (let y = 16; y < 48; y++) {
         for (let x = 16; x < 48; x++) {
           const i = (y * 64 + x) * 4;
@@ -308,42 +375,25 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       const avgRed = redSum / totalPixels;
       const avgGreen = greenSum / totalPixels;
       const avgBlue = blueSum / totalPixels;
+      const avgBrightness = (avgRed + avgGreen + avgBlue) / 3;
       
-      // ===== CALIBRACIÓN AUTOMÁTICA (primeros 30 frames = 1 segundo) =====
-      if (cal.isCalibrating && cal.framesSinceStart < 30) {
-        cal.samples.push(avgRed);
-        cal.avgRed = cal.samples.reduce((a, b) => a + b, 0) / cal.samples.length;
-        
-        animationRef.current = requestAnimationFrame(processFrame);
-        return;
-      }
-      
-      if (cal.isCalibrating) {
-        cal.isCalibrating = false;
-        console.log(`📐 Calibración completa: avgRed=${cal.avgRed.toFixed(1)}`);
-        
-        // Si rojo muy alto (>240), la imagen está saturada - desactivar flash
-        if (cal.avgRed > 240 && flashEnabledRef.current && streamRef.current) {
-          console.log('⚠️ Imagen saturada, desactivando flash...');
-          const track = streamRef.current.getVideoTracks()[0];
-          if (track) {
-            track.applyConstraints({ advanced: [{ torch: false } as any] })
-              .then(() => {
-                flashEnabledRef.current = false;
-                console.log('🔦 Flash APAGADO por saturación');
-              })
-              .catch(() => {});
-          }
-        }
+      // ===== CALIBRACIÓN DINÁMICA CONTINUA =====
+      // Cada 10 frames (~333ms) verificar si necesitamos ajustar
+      if (frameCountRef.current % 10 === 0) {
+        adjustCamera(avgBrightness);
       }
       
       // ===== DETECCIÓN DE DEDO =====
-      // Dedo = predominancia de rojo Y valores altos
-      const fingerDetected = avgRed > 100 && avgRed > avgGreen * 1.1 && avgGreen > avgBlue;
+      // Dedo cubriendo cámara con flash = predominancia roja clara
+      const fingerDetected = avgRed > 80 && 
+                            avgRed > avgGreen * 1.05 && 
+                            avgGreen > avgBlue * 0.9 &&
+                            avgBrightness > 50 && 
+                            avgBrightness < 250;
       
-      // ===== SEÑAL PPG (usar canal verde que es menos saturado) =====
-      // El canal verde tiene mejor relación señal-ruido en PPG
-      const rawSignal = avgGreen;
+      // ===== SEÑAL PPG =====
+      // Usar combinación de canales: rojo es más afectado por sangre
+      const rawSignal = avgRed * 0.6 + avgGreen * 0.4;
       const filteredValue = filterRef.current?.filter(rawSignal) ?? 0;
       
       // ===== DETECCIÓN DE PICOS =====
@@ -364,16 +414,16 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         const cv = detectorRef.current.getCV();
         const intervals = detectorRef.current.getRRIntervals();
         
-        // Rango de señal: 0-40 puntos (rango 0.5-3 = 0-40%)
-        const rangeScore = Math.min(40, (range / 3) * 40);
+        // Rango de señal: 0-50 puntos
+        const rangeScore = Math.min(50, (range / 2) * 50);
         
-        // Estabilidad: 0-40 puntos (CV bajo = más puntos)
+        // Estabilidad: 0-35 puntos
         const stabilityScore = intervals.length >= 3 
-          ? Math.max(0, 40 * (1 - Math.min(1, cv / 0.25)))
+          ? Math.max(0, 35 * (1 - Math.min(1, cv / 0.3)))
           : 0;
         
-        // Cobertura: 0-20 puntos
-        const coverageScore = Math.min(20, intervals.length * 4);
+        // Cobertura: 0-15 puntos
+        const coverageScore = Math.min(15, intervals.length * 3);
         
         quality = rangeScore + stabilityScore + coverageScore;
         qualitySmoothedRef.current = qualitySmoothedRef.current * 0.9 + quality * 0.1;
@@ -384,7 +434,8 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       if (frameCountRef.current % 60 === 0) {
         const range = detectorRef.current?.getSignalRange() ?? 0;
         const cv = detectorRef.current?.getCV() ?? 0;
-        console.log(`📊 R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} range=${range.toFixed(2)} CV=${cv.toFixed(2)} BPM=${bpmSmoothedRef.current.toFixed(0)} Q=${quality.toFixed(0)}%`);
+        const state = cameraStateRef.current;
+        console.log(`📊 Brillo=${avgBrightness.toFixed(0)} R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} Flash=${state.flashOn ? 'ON' : 'OFF'} range=${range.toFixed(2)} Q=${quality.toFixed(0)}%`);
       }
       
       // Enviar datos
@@ -411,8 +462,8 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       console.log('🎥 Iniciando cámara...');
       isRunningRef.current = true;
       
-      filterRef.current = new SimpleFilter();
-      detectorRef.current = new RobustPeakDetector();
+      filterRef.current = new SmoothingFilter();
+      detectorRef.current = new PeakDetector();
       
       if (canvasRef.current) {
         canvasRef.current.width = 64;
@@ -448,27 +499,40 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         streamRef.current = stream;
         onStreamReadyRef.current?.(stream);
         
-        // Intentar encender flash
+        // Detectar capacidades de la cámara
         const track = stream.getVideoTracks()[0];
+        const state = cameraStateRef.current;
+        
         if (track) {
           try {
             const caps = track.getCapabilities?.() as any;
+            
+            // Flash
             if (caps?.torch) {
+              state.flashCapable = true;
+              // Encender flash inicialmente
               await track.applyConstraints({ advanced: [{ torch: true } as any] });
-              flashEnabledRef.current = true;
-              console.log('🔦 Flash ENCENDIDO');
+              state.flashOn = true;
+              console.log('🔦 Flash disponible y ENCENDIDO');
+            } else {
+              console.log('⚠️ Flash NO disponible');
             }
             
-            // Reducir exposición si es posible
+            // Exposición
             if (caps?.exposureCompensation) {
-              const minExp = caps.exposureCompensation.min;
+              state.exposureCapable = true;
+              state.minExposure = caps.exposureCompensation.min;
+              state.maxExposure = caps.exposureCompensation.max;
+              // Empezar en exposición media
+              const midExp = (state.minExposure + state.maxExposure) / 2;
               await track.applyConstraints({ 
-                advanced: [{ exposureCompensation: minExp } as any] 
+                advanced: [{ exposureCompensation: midExp } as any] 
               });
-              console.log('📷 Exposición reducida al mínimo');
+              state.currentExposure = midExp;
+              console.log(`📷 Exposición: min=${state.minExposure} max=${state.maxExposure} actual=${midExp}`);
             }
           } catch (e) {
-            console.log('⚠️ Error configurando cámara:', (e as Error).message);
+            console.log('⚠️ Error detectando capacidades:', (e as Error).message);
           }
         }
         
@@ -498,6 +562,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
           return;
         }
         
+        console.log('📷 Cámara lista - calibración dinámica activa');
         onCameraReadyRef.current?.();
         animationRef.current = requestAnimationFrame(processFrame);
         
