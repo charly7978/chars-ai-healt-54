@@ -15,19 +15,24 @@ export interface CalibrationState {
 }
 
 export class CameraAutoCalibrator {
-  // Rango objetivo AMPLIADO para mejor tolerancia
-  private readonly TARGET_MIN = 70;
-  private readonly TARGET_MAX = 180;
+  // Rango objetivo MÁS ESTRICTO para evitar saturación
+  private readonly TARGET_MIN = 80;
+  private readonly TARGET_MAX = 200;  // Reducido de 220 para evitar saturación
+  
+  // Umbrales de saturación CRÍTICOS
+  private readonly SATURATION_RED = 245;      // Rojo saturado
+  private readonly SATURATION_COMBINED = 230; // R alto + G significativo
   
   private currentBrightness = 0;
   private track: MediaStreamTrack | null = null;
   private lastAdjustTime = 0;
-  private readonly COOLDOWN = 500; // 500ms entre ajustes - más rápido
+  private readonly COOLDOWN = 300; // 300ms - respuesta más rápida
   
   // Estado actual de exposición
   private currentExposure = 0;
   private exposureRange = { min: 0, max: 0 };
   private hasExposure = false;
+  private saturationCount = 0;
 
   /**
    * Configurar track de video
@@ -42,14 +47,26 @@ export class CameraAutoCalibrator {
         min: caps.exposureCompensation.min,
         max: caps.exposureCompensation.max
       };
-      // OPTIMIZADO: Iniciar en 50% del rango para mejor señal PPG
+      // CIENTÍFICO: Iniciar en 25% del rango para evitar saturación con flash+dedo
       const range = this.exposureRange.max - this.exposureRange.min;
-      this.currentExposure = this.exposureRange.min + range * 0.5;
+      this.currentExposure = this.exposureRange.min + range * 0.25;
     }
   }
 
   /**
-   * Analizar brillo y ajustar SOLO si es crítico
+   * Reportar saturación desde FrameProcessor
+   */
+  reportSaturation(): void {
+    this.saturationCount++;
+    if (this.saturationCount >= 3 && this.hasExposure && this.track) {
+      this.reduceExposure();
+      this.saturationCount = 0;
+      this.lastAdjustTime = Date.now();
+    }
+  }
+
+  /**
+   * Analizar brillo y ajustar - DETECCIÓN DE SATURACIÓN MEJORADA
    * Llamar cada ~10-15 frames, NO cada frame
    */
   analyze(avgRed: number, avgGreen: number, avgBlue: number): CalibrationState {
@@ -61,16 +78,21 @@ export class CameraAutoCalibrator {
     let recommendation = '';
     let isSaturated = false;
     
-    // SOLO ajustar en casos críticos
-    if (this.currentBrightness > 210) {
+    // DETECCIÓN DE SATURACIÓN CIENTÍFICA
+    // Saturación del sensor: R muy alto O (R alto + G significativo = luz blanca/flash)
+    const isSensorSaturated = avgRed > this.SATURATION_RED || 
+                               (avgRed > this.SATURATION_COMBINED && avgGreen > 150);
+    
+    if (isSensorSaturated) {
       isSaturated = true;
-      recommendation = 'SATURADO - Reduciendo...';
+      recommendation = `SATURADO R=${avgRed.toFixed(0)} - Reduciendo...`;
       
       if (canAdjust && this.hasExposure && this.track) {
         this.reduceExposure();
         this.lastAdjustTime = now;
+        console.log(`⚠️ Saturación detectada: R=${avgRed.toFixed(0)}, G=${avgGreen.toFixed(0)}`);
       }
-    } else if (this.currentBrightness > 190) {
+    } else if (this.currentBrightness > this.TARGET_MAX) {
       recommendation = 'Muy brillante';
       
       if (canAdjust && this.hasExposure && this.track) {
@@ -78,7 +100,6 @@ export class CameraAutoCalibrator {
         this.lastAdjustTime = now;
       }
     } else if (this.currentBrightness < 60) {
-      // Umbral de oscuro aumentado de 50 a 60
       recommendation = 'Muy oscuro';
       
       if (canAdjust && this.hasExposure && this.track) {
@@ -87,10 +108,8 @@ export class CameraAutoCalibrator {
       }
     } else if (this.currentBrightness >= this.TARGET_MIN && this.currentBrightness <= this.TARGET_MAX) {
       recommendation = 'Óptimo ✓';
-    } else if (this.currentBrightness > this.TARGET_MAX) {
-      recommendation = 'Ligeramente brillante';
     } else {
-      recommendation = 'Ligeramente oscuro';
+      recommendation = 'En rango';
     }
     
     return {
@@ -180,6 +199,7 @@ export class CameraAutoCalibrator {
     this.lastAdjustTime = 0;
     this.currentExposure = 0;
     this.hasExposure = false;
+    this.saturationCount = 0;
   }
 }
 
