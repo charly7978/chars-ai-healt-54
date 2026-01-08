@@ -1,13 +1,13 @@
 import React, { useRef, useEffect } from 'react';
 
 /**
- * PPG MONITOR - SISTEMA UNIFICADO DE CAPTURA Y PROCESAMIENTO
+ * PPG MONITOR v3 - CON CALIBRACIÓN AUTOMÁTICA DE CÁMARA
  * 
- * Mejoras v2:
- * - Calidad de señal basada en SNR real + estabilidad RR
- * - Detección de picos más robusta
- * - Mejor detección de dedo
- * - Logs de debug para vibración
+ * Mejoras:
+ * - Calibración automática de exposición para evitar saturación
+ * - Control dinámico del flash
+ * - Mejor extracción de señal PPG
+ * - Detección de picos mejorada
  */
 
 interface PPGData {
@@ -32,139 +32,108 @@ interface PPGMonitorProps {
   onStreamReady?: (stream: MediaStream | null) => void;
 }
 
-// ============ FILTRO IIR BUTTERWORTH 0.5-4Hz ============
-class ButterworthFilter {
-  private b: number[];
-  private a: number[];
-  private x: number[];
-  private y: number[];
-  
-  constructor() {
-    // Coeficientes para filtro pasabanda 0.5-4Hz @ 30Hz, orden 2
-    this.b = [0.1311, 0, -0.2622, 0, 0.1311];
-    this.a = [1, -2.1192, 1.8298, -0.7821, 0.1584];
-    this.x = new Array(this.b.length).fill(0);
-    this.y = new Array(this.a.length).fill(0);
-  }
-  
-  filter(sample: number): number {
-    this.x.pop();
-    this.x.unshift(sample);
-    
-    let y = 0;
-    for (let i = 0; i < this.b.length; i++) {
-      y += this.b[i] * this.x[i];
-    }
-    for (let i = 1; i < this.a.length; i++) {
-      y -= this.a[i] * this.y[i - 1];
-    }
-    
-    this.y.pop();
-    this.y.unshift(y);
-    
-    return y;
-  }
-  
-  reset(): void {
-    this.x.fill(0);
-    this.y.fill(0);
-  }
-}
-
-// ============ DETECTOR DE PICOS MEJORADO ============
-class PeakDetector {
+// ============ FILTRO PASABANDA SIMPLE (MÁS ESTABLE) ============
+class SimpleFilter {
   private buffer: number[] = [];
-  private peakTimes: number[] = [];
-  private lastPeakTime = 0;
-  private adaptiveThreshold = 0;
-  private signalHistory: number[] = [];
+  private readonly SIZE = 15; // ~0.5 segundos @ 30fps
   
-  // Configuración optimizada
-  private readonly BUFFER_SIZE = 150; // 5 segundos @ 30fps
-  private readonly MIN_PEAK_INTERVAL = 333; // Max 180 BPM
-  private readonly MAX_PEAK_INTERVAL = 1500; // Min 40 BPM
-  private readonly REFRACTORY_PERIOD = 280; // ms después de pico
-  
-  addSample(value: number, timestamp: number): { isPeak: boolean; bpm: number } {
+  filter(value: number): number {
     this.buffer.push(value);
-    if (this.buffer.length > this.BUFFER_SIZE) {
+    if (this.buffer.length > this.SIZE) {
       this.buffer.shift();
     }
     
-    // Mantener historial para SNR
-    this.signalHistory.push(value);
-    if (this.signalHistory.length > 300) {
-      this.signalHistory.shift();
+    if (this.buffer.length < 3) return 0;
+    
+    // Promedio móvil para suavizar
+    const avg = this.buffer.reduce((a, b) => a + b, 0) / this.buffer.length;
+    
+    // Retornar diferencia del promedio (componente AC)
+    return value - avg;
+  }
+  
+  reset(): void {
+    this.buffer = [];
+  }
+}
+
+// ============ DETECTOR DE PICOS ROBUSTO ============
+class RobustPeakDetector {
+  private signalBuffer: number[] = [];
+  private peakTimes: number[] = [];
+  private lastPeakTime = 0;
+  private baselineBuffer: number[] = [];
+  
+  private readonly SIGNAL_BUFFER_SIZE = 180; // 6 segundos
+  private readonly MIN_INTERVAL = 350; // Max ~170 BPM
+  private readonly MAX_INTERVAL = 1500; // Min ~40 BPM
+  
+  process(value: number, timestamp: number): { isPeak: boolean; bpm: number } {
+    this.signalBuffer.push(value);
+    if (this.signalBuffer.length > this.SIGNAL_BUFFER_SIZE) {
+      this.signalBuffer.shift();
     }
     
-    // Umbral adaptativo basado en percentiles
-    if (this.buffer.length >= 60) { // 2 segundos mínimo
-      const sorted = [...this.buffer].sort((a, b) => a - b);
-      const p20 = sorted[Math.floor(sorted.length * 0.20)];
-      const p80 = sorted[Math.floor(sorted.length * 0.80)];
-      const range = p80 - p20;
-      
-      // Umbral = percentil 60 + pequeño margen
-      const p60 = sorted[Math.floor(sorted.length * 0.60)];
-      this.adaptiveThreshold = p60 + range * 0.15;
+    // Necesitamos al menos 2 segundos de datos
+    if (this.signalBuffer.length < 60) {
+      return { isPeak: false, bpm: 0 };
     }
+    
+    // Calcular estadísticas de la señal
+    const recent = this.signalBuffer.slice(-90); // últimos 3 segundos
+    const sorted = [...recent].sort((a, b) => a - b);
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    const range = max - min;
+    
+    // Umbral adaptativo: 60% del rango desde el mínimo
+    const threshold = min + range * 0.6;
     
     // Detectar pico
     let isPeak = false;
     const timeSinceLastPeak = timestamp - this.lastPeakTime;
     
-    if (timeSinceLastPeak > this.REFRACTORY_PERIOD && this.buffer.length >= 9) {
-      const window = this.buffer.slice(-9);
-      const center = window[4]; // Punto central (índice 4)
+    if (timeSinceLastPeak > this.MIN_INTERVAL && this.signalBuffer.length >= 7) {
+      const window = this.signalBuffer.slice(-7);
+      const center = window[3];
       
-      // Verificar máximo local estricto
-      let isLocalMax = true;
-      for (let i = 0; i < window.length; i++) {
-        if (i !== 4 && window[i] >= center) {
-          isLocalMax = false;
-          break;
-        }
-      }
+      // Verificar máximo local
+      const isMax = center > window[0] && center > window[1] && center > window[2] &&
+                    center >= window[4] && center >= window[5] && center >= window[6];
       
-      // Verificar umbral
-      const aboveThreshold = center > this.adaptiveThreshold;
+      // Verificar umbral y prominencia
+      const aboveThreshold = center > threshold;
+      const prominence = center - Math.min(window[0], window[6]);
+      const hasProminence = prominence > range * 0.2;
       
-      // Verificar prominencia: debe ser significativamente mayor que el mínimo cercano
-      const localMin = Math.min(...window);
-      const prominence = center - localMin;
-      const avgRange = this.getSignalRange();
-      const hasProminence = prominence > avgRange * 0.15; // 15% del rango
-      
-      if (isLocalMax && aboveThreshold && hasProminence) {
+      if (isMax && aboveThreshold && hasProminence && range > 0.3) {
         isPeak = true;
         this.lastPeakTime = timestamp;
         this.peakTimes.push(timestamp);
         
-        // Mantener últimos 30 picos
         if (this.peakTimes.length > 30) {
           this.peakTimes.shift();
         }
         
-        console.log(`💓 PICO detectado: val=${center.toFixed(2)} thresh=${this.adaptiveThreshold.toFixed(2)} prom=${prominence.toFixed(2)}`);
+        console.log(`💓 PICO: val=${center.toFixed(2)} thresh=${threshold.toFixed(2)} range=${range.toFixed(2)}`);
       }
     }
     
-    // Calcular BPM con mediana de intervalos válidos
+    // Calcular BPM
     let bpm = 0;
     if (this.peakTimes.length >= 4) {
       const intervals: number[] = [];
-      
       for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 8; i--) {
         const interval = this.peakTimes[i] - this.peakTimes[i - 1];
-        if (interval >= this.MIN_PEAK_INTERVAL && interval <= this.MAX_PEAK_INTERVAL) {
+        if (interval >= this.MIN_INTERVAL && interval <= this.MAX_INTERVAL) {
           intervals.push(interval);
         }
       }
       
       if (intervals.length >= 3) {
         intervals.sort((a, b) => a - b);
-        const medianInterval = intervals[Math.floor(intervals.length / 2)];
-        bpm = 60000 / medianInterval;
+        const median = intervals[Math.floor(intervals.length / 2)];
+        bpm = 60000 / median;
       }
     }
     
@@ -172,60 +141,35 @@ class PeakDetector {
   }
   
   getSignalRange(): number {
-    if (this.buffer.length < 30) return 1;
-    const sorted = [...this.buffer].sort((a, b) => a - b);
+    if (this.signalBuffer.length < 30) return 0;
+    const sorted = [...this.signalBuffer].sort((a, b) => a - b);
     return sorted[sorted.length - 1] - sorted[0];
-  }
-  
-  // SNR: relación señal-ruido
-  getSNR(): number {
-    if (this.signalHistory.length < 60) return 0;
-    
-    const recent = this.signalHistory.slice(-90);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    
-    // Calcular varianza total
-    const variance = recent.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / recent.length;
-    const std = Math.sqrt(variance);
-    
-    // Calcular amplitud de señal (diferencia entre picos y valles)
-    const sorted = [...recent].sort((a, b) => a - b);
-    const p10 = sorted[Math.floor(sorted.length * 0.1)];
-    const p90 = sorted[Math.floor(sorted.length * 0.9)];
-    const signalAmplitude = p90 - p10;
-    
-    // SNR simplificado: amplitud / ruido
-    if (std < 0.001) return 0;
-    return Math.min(30, signalAmplitude / std); // Max 30 dB
   }
   
   getRRIntervals(): number[] {
     const intervals: number[] = [];
     for (let i = this.peakTimes.length - 1; i > 0 && intervals.length < 10; i--) {
       const interval = this.peakTimes[i] - this.peakTimes[i - 1];
-      if (interval >= this.MIN_PEAK_INTERVAL && interval <= this.MAX_PEAK_INTERVAL) {
+      if (interval >= this.MIN_INTERVAL && interval <= this.MAX_INTERVAL) {
         intervals.push(interval);
       }
     }
     return intervals;
   }
   
-  // Coeficiente de variación de intervalos RR
-  getRRVariability(): number {
+  getCV(): number {
     const intervals = this.getRRIntervals();
     if (intervals.length < 3) return 1;
-    
     const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-    const variance = intervals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / intervals.length;
+    const variance = intervals.reduce((a, b) => a + (b - mean) ** 2, 0) / intervals.length;
     return Math.sqrt(variance) / mean;
   }
   
   reset(): void {
-    this.buffer = [];
+    this.signalBuffer = [];
     this.peakTimes = [];
     this.lastPeakTime = 0;
-    this.adaptiveThreshold = 0;
-    this.signalHistory = [];
+    this.baselineBuffer = [];
   }
 }
 
@@ -243,12 +187,23 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
   const streamRef = useRef<MediaStream | null>(null);
   const animationRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
-  const filterRef = useRef<ButterworthFilter | null>(null);
-  const peakDetectorRef = useRef<PeakDetector | null>(null);
-  const baselineRef = useRef(0);
+  const mountedRef = useRef(true);
+  
+  const filterRef = useRef<SimpleFilter | null>(null);
+  const detectorRef = useRef<RobustPeakDetector | null>(null);
+  
   const bpmSmoothedRef = useRef(0);
-  const frameCountRef = useRef(0);
   const qualitySmoothedRef = useRef(0);
+  const frameCountRef = useRef(0);
+  const flashEnabledRef = useRef(false);
+  
+  // Calibración de cámara
+  const calibrationRef = useRef({
+    isCalibrating: true,
+    framesSinceStart: 0,
+    avgRed: 0,
+    samples: [] as number[],
+  });
   
   // Refs para callbacks
   const onDataRef = useRef(onData);
@@ -264,9 +219,11 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
   }, [onData, onCameraReady, onError, onStreamReady]);
   
   useEffect(() => {
-    let mounted = true;
+    mountedRef.current = true;
     
     const cleanup = async () => {
+      if (!isRunningRef.current && !streamRef.current) return;
+      
       console.log('🧹 Cleanup PPGMonitor');
       isRunningRef.current = false;
       
@@ -280,13 +237,14 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         for (const track of tracks) {
           try {
             const caps = track.getCapabilities?.() as any;
-            if (caps?.torch) {
+            if (caps?.torch && flashEnabledRef.current) {
               await track.applyConstraints({ advanced: [{ torch: false } as any] });
             }
           } catch {}
           track.stop();
         }
         streamRef.current = null;
+        flashEnabledRef.current = false;
         onStreamReadyRef.current?.(null);
       }
       
@@ -295,15 +253,20 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       }
       
       filterRef.current = null;
-      peakDetectorRef.current = null;
-      baselineRef.current = 0;
+      detectorRef.current = null;
       bpmSmoothedRef.current = 0;
-      frameCountRef.current = 0;
       qualitySmoothedRef.current = 0;
+      frameCountRef.current = 0;
+      calibrationRef.current = {
+        isCalibrating: true,
+        framesSinceStart: 0,
+        avgRed: 0,
+        samples: [],
+      };
     };
     
     const processFrame = () => {
-      if (!isRunningRef.current) return;
+      if (!isRunningRef.current || !mountedRef.current) return;
       
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -319,117 +282,109 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
       }
       
       frameCountRef.current++;
+      const cal = calibrationRef.current;
+      cal.framesSinceStart++;
       
-      // Capturar frame (resolución pequeña para velocidad)
+      // Capturar frame
       ctx.drawImage(video, 0, 0, 64, 64);
       const imageData = ctx.getImageData(0, 0, 64, 64);
       const data = imageData.data;
       
-      // ===== DETECCIÓN DE DEDO MEJORADA =====
-      // Zona central 60%
+      // ===== EXTRAER VALORES RGB DE ZONA CENTRAL =====
       let redSum = 0, greenSum = 0, blueSum = 0;
-      let skinPixels = 0;
-      let highRedPixels = 0;
+      let totalPixels = 0;
       
-      const margin = 13; // ~20% de 64
-      for (let y = margin; y < 51; y++) {
-        for (let x = margin; x < 51; x++) {
+      // Zona central 50%
+      for (let y = 16; y < 48; y++) {
+        for (let x = 16; x < 48; x++) {
           const i = (y * 64 + x) * 4;
-          const r = data[i], g = data[i + 1], b = data[i + 2];
-          
-          // Criterio de piel con flash: Rojo alto, Rojo > Verde > Azul
-          if (r > 100 && r > g * 1.1 && g > b * 0.9) {
-            redSum += r;
-            greenSum += g;
-            blueSum += b;
-            skinPixels++;
-            
-            if (r > 180) highRedPixels++;
+          redSum += data[i];
+          greenSum += data[i + 1];
+          blueSum += data[i + 2];
+          totalPixels++;
+        }
+      }
+      
+      const avgRed = redSum / totalPixels;
+      const avgGreen = greenSum / totalPixels;
+      const avgBlue = blueSum / totalPixels;
+      
+      // ===== CALIBRACIÓN AUTOMÁTICA (primeros 30 frames = 1 segundo) =====
+      if (cal.isCalibrating && cal.framesSinceStart < 30) {
+        cal.samples.push(avgRed);
+        cal.avgRed = cal.samples.reduce((a, b) => a + b, 0) / cal.samples.length;
+        
+        animationRef.current = requestAnimationFrame(processFrame);
+        return;
+      }
+      
+      if (cal.isCalibrating) {
+        cal.isCalibrating = false;
+        console.log(`📐 Calibración completa: avgRed=${cal.avgRed.toFixed(1)}`);
+        
+        // Si rojo muy alto (>240), la imagen está saturada - desactivar flash
+        if (cal.avgRed > 240 && flashEnabledRef.current && streamRef.current) {
+          console.log('⚠️ Imagen saturada, desactivando flash...');
+          const track = streamRef.current.getVideoTracks()[0];
+          if (track) {
+            track.applyConstraints({ advanced: [{ torch: false } as any] })
+              .then(() => {
+                flashEnabledRef.current = false;
+                console.log('🔦 Flash APAGADO por saturación');
+              })
+              .catch(() => {});
           }
         }
       }
       
-      const totalPixels = 38 * 38; // (51-13)^2
-      const skinRatio = skinPixels / totalPixels;
-      const highRedRatio = highRedPixels / totalPixels;
+      // ===== DETECCIÓN DE DEDO =====
+      // Dedo = predominancia de rojo Y valores altos
+      const fingerDetected = avgRed > 100 && avgRed > avgGreen * 1.1 && avgGreen > avgBlue;
       
-      let avgRed = 0, avgGreen = 0, avgBlue = 0;
-      if (skinPixels >= 200) {
-        avgRed = redSum / skinPixels;
-        avgGreen = greenSum / skinPixels;
-        avgBlue = blueSum / skinPixels;
-      } else {
-        // Fallback: todos los píxeles
-        redSum = greenSum = blueSum = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          redSum += data[i];
-          greenSum += data[i + 1];
-          blueSum += data[i + 2];
-        }
-        const n = data.length / 4;
-        avgRed = redSum / n;
-        avgGreen = greenSum / n;
-        avgBlue = blueSum / n;
-      }
+      // ===== SEÑAL PPG (usar canal verde que es menos saturado) =====
+      // El canal verde tiene mejor relación señal-ruido en PPG
+      const rawSignal = avgGreen;
+      const filteredValue = filterRef.current?.filter(rawSignal) ?? 0;
       
-      // Dedo detectado: suficientes píxeles de piel Y rojo promedio alto
-      const fingerDetected = skinRatio > 0.4 && avgRed > 140;
-      
-      // ===== SEÑAL PPG =====
-      if (baselineRef.current === 0) {
-        baselineRef.current = avgRed;
-      } else {
-        // Baseline lento para seguir cambios DC
-        baselineRef.current = baselineRef.current * 0.98 + avgRed * 0.02;
-      }
-      
-      const signalValue = avgRed - baselineRef.current;
-      const filteredValue = filterRef.current?.filter(signalValue) ?? signalValue;
-      
-      // ===== DETECCIÓN DE PICOS Y BPM =====
+      // ===== DETECCIÓN DE PICOS =====
       const timestamp = Date.now();
-      const { isPeak, bpm } = peakDetectorRef.current?.addSample(filteredValue, timestamp) 
+      const { isPeak, bpm } = detectorRef.current?.process(filteredValue, timestamp) 
         ?? { isPeak: false, bpm: 0 };
       
       if (bpm > 0) {
-        if (bpmSmoothedRef.current === 0) {
-          bpmSmoothedRef.current = bpm;
-        } else {
-          bpmSmoothedRef.current = bpmSmoothedRef.current * 0.85 + bpm * 0.15;
-        }
+        bpmSmoothedRef.current = bpmSmoothedRef.current === 0 
+          ? bpm 
+          : bpmSmoothedRef.current * 0.85 + bpm * 0.15;
       }
       
-      // ===== CALIDAD DE SEÑAL MEJORADA =====
+      // ===== CALIDAD DE SEÑAL =====
       let quality = 0;
-      if (fingerDetected && peakDetectorRef.current) {
-        const snr = peakDetectorRef.current.getSNR();
-        const rrCV = peakDetectorRef.current.getRRVariability();
-        const intervals = peakDetectorRef.current.getRRIntervals();
+      if (fingerDetected && detectorRef.current) {
+        const range = detectorRef.current.getSignalRange();
+        const cv = detectorRef.current.getCV();
+        const intervals = detectorRef.current.getRRIntervals();
         
-        // Factor SNR: 0-50 puntos (SNR de 0-15 = 0-50%)
-        const snrScore = Math.min(50, (snr / 15) * 50);
+        // Rango de señal: 0-40 puntos (rango 0.5-3 = 0-40%)
+        const rangeScore = Math.min(40, (range / 3) * 40);
         
-        // Factor estabilidad RR: 0-40 puntos (CV bajo = más puntos)
-        // CV típico saludable: 0.02-0.08
-        const rrScore = intervals.length >= 3 
-          ? Math.max(0, 40 * (1 - Math.min(1, rrCV / 0.3)))
+        // Estabilidad: 0-40 puntos (CV bajo = más puntos)
+        const stabilityScore = intervals.length >= 3 
+          ? Math.max(0, 40 * (1 - Math.min(1, cv / 0.25)))
           : 0;
         
-        // Factor cobertura: 0-10 puntos (tener suficientes intervalos)
-        const coverageScore = Math.min(10, intervals.length * 2);
+        // Cobertura: 0-20 puntos
+        const coverageScore = Math.min(20, intervals.length * 4);
         
-        quality = snrScore + rrScore + coverageScore;
-        
-        // Suavizar calidad
+        quality = rangeScore + stabilityScore + coverageScore;
         qualitySmoothedRef.current = qualitySmoothedRef.current * 0.9 + quality * 0.1;
         quality = qualitySmoothedRef.current;
       }
       
       // Log cada 2 segundos
       if (frameCountRef.current % 60 === 0) {
-        const snr = peakDetectorRef.current?.getSNR() ?? 0;
-        const rrCV = peakDetectorRef.current?.getRRVariability() ?? 0;
-        console.log(`📊 PPG: R=${avgRed.toFixed(0)} skin=${(skinRatio*100).toFixed(0)}% SNR=${snr.toFixed(1)} CV=${rrCV.toFixed(2)} BPM=${bpmSmoothedRef.current.toFixed(0)} Q=${quality.toFixed(0)}%`);
+        const range = detectorRef.current?.getSignalRange() ?? 0;
+        const cv = detectorRef.current?.getCV() ?? 0;
+        console.log(`📊 R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} range=${range.toFixed(2)} CV=${cv.toFixed(2)} BPM=${bpmSmoothedRef.current.toFixed(0)} Q=${quality.toFixed(0)}%`);
       }
       
       // Enviar datos
@@ -437,13 +392,13 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         redValue: avgRed,
         greenValue: avgGreen,
         blueValue: avgBlue,
-        signalValue,
+        signalValue: rawSignal,
         filteredValue,
         quality: Math.round(quality),
         fingerDetected,
         bpm: Math.round(bpmSmoothedRef.current),
         isPeak,
-        rrIntervals: peakDetectorRef.current?.getRRIntervals() ?? [],
+        rrIntervals: detectorRef.current?.getRRIntervals() ?? [],
         timestamp
       });
       
@@ -451,13 +406,13 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
     };
     
     const startCamera = async () => {
-      if (!mounted) return;
+      if (!mountedRef.current) return;
       
       console.log('🎥 Iniciando cámara...');
       isRunningRef.current = true;
       
-      filterRef.current = new ButterworthFilter();
-      peakDetectorRef.current = new PeakDetector();
+      filterRef.current = new SimpleFilter();
+      detectorRef.current = new RobustPeakDetector();
       
       if (canvasRef.current) {
         canvasRef.current.width = 64;
@@ -468,13 +423,13 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         let stream: MediaStream | null = null;
         
         const constraints = [
-          { audio: false, video: { facingMode: { exact: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } },
-          { audio: false, video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } } },
+          { audio: false, video: { facingMode: { exact: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } } },
+          { audio: false, video: { facingMode: 'environment' } },
           { audio: false, video: true }
         ];
         
         for (const c of constraints) {
-          if (!mounted || !isRunningRef.current) return;
+          if (!mountedRef.current || !isRunningRef.current) return;
           try {
             stream = await navigator.mediaDevices.getUserMedia(c);
             console.log('✅ Stream obtenido');
@@ -485,7 +440,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         }
         
         if (!stream) throw new Error('No se pudo acceder a la cámara');
-        if (!mounted || !isRunningRef.current) {
+        if (!mountedRef.current || !isRunningRef.current) {
           stream.getTracks().forEach(t => t.stop());
           return;
         }
@@ -493,19 +448,27 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         streamRef.current = stream;
         onStreamReadyRef.current?.(stream);
         
-        // Encender flash
+        // Intentar encender flash
         const track = stream.getVideoTracks()[0];
         if (track) {
           try {
             const caps = track.getCapabilities?.() as any;
             if (caps?.torch) {
               await track.applyConstraints({ advanced: [{ torch: true } as any] });
+              flashEnabledRef.current = true;
               console.log('🔦 Flash ENCENDIDO');
-            } else {
-              console.log('⚠️ Este dispositivo no tiene flash/torch');
+            }
+            
+            // Reducir exposición si es posible
+            if (caps?.exposureCompensation) {
+              const minExp = caps.exposureCompensation.min;
+              await track.applyConstraints({ 
+                advanced: [{ exposureCompensation: minExp } as any] 
+              });
+              console.log('📷 Exposición reducida al mínimo');
             }
           } catch (e) {
-            console.log('⚠️ Error flash:', (e as Error).message);
+            console.log('⚠️ Error configurando cámara:', (e as Error).message);
           }
         }
         
@@ -530,7 +493,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
         await video.play();
         console.log('▶️ Video:', video.videoWidth, 'x', video.videoHeight);
         
-        if (!mounted || !isRunningRef.current) {
+        if (!mountedRef.current || !isRunningRef.current) {
           await cleanup();
           return;
         }
@@ -552,7 +515,7 @@ const PPGMonitor: React.FC<PPGMonitorProps> = ({
     }
     
     return () => {
-      mounted = false;
+      mountedRef.current = false;
       cleanup();
     };
   }, [isActive]);
