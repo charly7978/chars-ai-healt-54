@@ -365,9 +365,9 @@ export class SignalQualityAnalyzer {
     // Señales débiles también cuentan
     const pulsatility = dcLevel > 0 ? acAmplitude / dcLevel : 0;
     
-    // Combinación de pulsatilidad Y periodicidad - UMBRALES REDUCIDOS
-    const hasPulse = pulsatility >= 0.001 && periodicity >= 0.05;
-    const hasWeakPulse = pulsatility >= 0.0005 && periodicity >= 0.02;
+    // Combinación de pulsatilidad Y periodicidad - UMBRALES MUY REDUCIDOS
+    const hasPulse = pulsatility >= 0.0003 && periodicity >= 0.02;
+    const hasWeakPulse = pulsatility >= 0.0001 && periodicity >= 0.01;
     
     if (hasPulse) {
       confidence += 0.35; // Pulso real con ritmo = sangre fluyendo

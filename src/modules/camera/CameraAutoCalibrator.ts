@@ -47,9 +47,9 @@ export class CameraAutoCalibrator {
         min: caps.exposureCompensation.min,
         max: caps.exposureCompensation.max
       };
-      // Iniciar en 40% del rango para mejor iluminación inicial
+      // Iniciar en 60% del rango para mejor iluminación inicial
       const range = this.exposureRange.max - this.exposureRange.min;
-      this.currentExposure = this.exposureRange.min + range * 0.40;
+      this.currentExposure = this.exposureRange.min + range * 0.60;
       
       console.log(`📷 Rango exposición: [${this.exposureRange.min}, ${this.exposureRange.max}], inicial: ${this.currentExposure.toFixed(1)}`);
     }
@@ -101,8 +101,8 @@ export class CameraAutoCalibrator {
         this.reduceExposureSlightly();
         this.lastAdjustTime = now;
       }
-    } else if (this.currentBrightness < 30) {
-      // REDUCIDO de 60 a 30 - solo aumentar si está MUY oscuro
+    } else if (this.currentBrightness < 50) {
+      // AUMENTADO a 50 - más proactivo para mejorar iluminación
       recommendation = 'Muy oscuro';
       
       if (canAdjust && this.hasExposure && this.track) {

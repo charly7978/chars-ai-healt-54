@@ -548,7 +548,12 @@ const Index = () => {
     
     setHeartRate(heartBeatResult.bpm);
     setHeartbeatSignal(signalValue);
-    setBeatMarker(heartBeatResult.isPeak ? 1 : 0);
+    
+    // Marcador de pico visible por 300ms
+    if (heartBeatResult.isPeak) {
+      setBeatMarker(1);
+      setTimeout(() => setBeatMarker(0), 300);
+    }
     
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));

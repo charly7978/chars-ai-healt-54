@@ -338,8 +338,8 @@ export class HeartBeatProcessor {
     // Calcular prominencia
     const prominence = maxVal - Math.min(leftVal, rightVal);
     
-    // Prominencia mínima basada en std - más estricta para evitar ruido
-    const minProminence = Math.max(0.1, windowStd * 0.5);
+    // Prominencia mínima basada en std - REDUCIDA para detectar más picos
+    const minProminence = Math.max(0.02, windowStd * 0.2);
     if (prominence < minProminence) {
       return { isPeak: false, confidence: 0 };
     }
@@ -354,8 +354,8 @@ export class HeartBeatProcessor {
       console.log(`🔍 Peak: range=${windowRange.toFixed(2)}, prom=${prominence.toFixed(2)}, minProm=${minProminence.toFixed(2)}, std=${windowStd.toFixed(2)}`);
     }
     
-    // Rango mínimo más estricto para evitar ruido
-    if (windowRange < 0.03 || windowRange > 80) {
+    // Rango mínimo REDUCIDO para detectar señales débiles
+    if (windowRange < 0.005 || windowRange > 100) {
       return { isPeak: false, confidence: 0 };
     }
     
