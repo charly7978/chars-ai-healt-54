@@ -2,21 +2,26 @@ import { useRef, useCallback, useEffect } from 'react';
 
 /**
  * Hook para feedback háptico y sonoro de latidos
- * - Vibración corta en cada latido detectado
- * - Sonido de beep suave
+ * - Vibración en cada latido detectado
+ * - Sonido de beep suave tipo monitor cardíaco
  */
 export const useHeartbeatFeedback = () => {
   const audioContextRef = useRef<AudioContext | null>(null);
-  const lastBeepTimeRef = useRef(0);
-  const MIN_BEEP_INTERVAL = 250; // Mínimo 250ms entre beeps (max 240 BPM)
+  const lastFeedbackTimeRef = useRef(0);
+  const feedbackCountRef = useRef(0);
+  const MIN_FEEDBACK_INTERVAL = 280; // Mínimo 280ms entre feedbacks (max ~214 BPM)
   
-  // Inicializar AudioContext al primer uso
-  const getAudioContext = useCallback(() => {
+  // Inicializar AudioContext (requiere interacción de usuario primero)
+  const initAudioContext = useCallback(() => {
     if (!audioContextRef.current) {
       try {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          audioContextRef.current = new AudioCtx();
+          console.log('🔊 AudioContext inicializado');
+        }
       } catch (e) {
-        console.log('AudioContext no disponible');
+        console.log('⚠️ AudioContext no disponible:', e);
       }
     }
     return audioContextRef.current;
@@ -24,17 +29,15 @@ export const useHeartbeatFeedback = () => {
   
   // Reproducir beep
   const playBeep = useCallback(() => {
-    const now = Date.now();
-    if (now - lastBeepTimeRef.current < MIN_BEEP_INTERVAL) return;
-    lastBeepTimeRef.current = now;
-    
-    const ctx = getAudioContext();
+    const ctx = initAudioContext();
     if (!ctx) return;
     
     try {
-      // Reanudar si está suspendido
+      // Reanudar si está suspendido (política de autoplay)
       if (ctx.state === 'suspended') {
-        ctx.resume();
+        ctx.resume().then(() => {
+          console.log('🔊 AudioContext resumido');
+        });
       }
       
       // Crear oscilador para beep
@@ -44,45 +47,79 @@ export const useHeartbeatFeedback = () => {
       oscillator.connect(gainNode);
       gainNode.connect(ctx.destination);
       
-      // Frecuencia agradable (similar a monitor cardíaco)
+      // Frecuencia similar a monitor cardíaco hospitalario
       oscillator.frequency.setValueAtTime(880, ctx.currentTime); // A5
       oscillator.type = 'sine';
       
-      // Volumen suave con fade out
-      gainNode.gain.setValueAtTime(0.15, ctx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+      // Volumen y fade out
+      gainNode.gain.setValueAtTime(0.2, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
       
       // Duración corta
       oscillator.start(ctx.currentTime);
-      oscillator.stop(ctx.currentTime + 0.08);
+      oscillator.stop(ctx.currentTime + 0.1);
       
     } catch (e) {
       // Silenciar errores de audio
     }
-  }, [getAudioContext]);
+  }, [initAudioContext]);
   
   // Vibración
   const vibrate = useCallback(() => {
-    if (navigator.vibrate) {
-      navigator.vibrate(30); // Vibración corta de 30ms
+    if ('vibrate' in navigator) {
+      try {
+        const result = navigator.vibrate(40); // Vibración de 40ms
+        if (!result) {
+          console.log('⚠️ Vibración no soportada o deshabilitada');
+        }
+      } catch (e) {
+        console.log('⚠️ Error vibración:', e);
+      }
+    } else {
+      console.log('⚠️ API de vibración no disponible');
     }
   }, []);
   
-  // Feedback combinado
+  // Feedback combinado con rate limiting
   const triggerHeartbeatFeedback = useCallback(() => {
+    const now = Date.now();
+    if (now - lastFeedbackTimeRef.current < MIN_FEEDBACK_INTERVAL) {
+      return; // Evitar spam
+    }
+    lastFeedbackTimeRef.current = now;
+    feedbackCountRef.current++;
+    
+    // Log cada 10 latidos
+    if (feedbackCountRef.current % 10 === 1) {
+      console.log(`💓 Feedback #${feedbackCountRef.current} - beep + vibración`);
+    }
+    
     playBeep();
     vibrate();
   }, [playBeep, vibrate]);
   
-  // Cleanup
+  // Pre-inicializar AudioContext en el primer touch/click
   useEffect(() => {
+    const handleUserInteraction = () => {
+      initAudioContext();
+      // Solo necesitamos hacerlo una vez
+      document.removeEventListener('touchstart', handleUserInteraction);
+      document.removeEventListener('click', handleUserInteraction);
+    };
+    
+    document.addEventListener('touchstart', handleUserInteraction, { once: true });
+    document.addEventListener('click', handleUserInteraction, { once: true });
+    
     return () => {
+      document.removeEventListener('touchstart', handleUserInteraction);
+      document.removeEventListener('click', handleUserInteraction);
+      
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => {});
         audioContextRef.current = null;
       }
     };
-  }, []);
+  }, [initAudioContext]);
   
   return {
     triggerHeartbeatFeedback,
