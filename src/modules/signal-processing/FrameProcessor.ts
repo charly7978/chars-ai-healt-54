@@ -128,16 +128,21 @@ export class FrameProcessor {
     // Calcular AC
     const acComponent = this.calculateAC();
     
-    // Calibrador de cámara cada 15 frames (~500ms)
+    // DETECCIÓN DE SATURACIÓN - notificar al calibrador
     this.frameCount++;
+    if (this.isSaturated(smoothedRed, smoothedGreen)) {
+      globalCalibrator.reportSaturation();
+    }
+    
+    // Calibrador de cámara cada 15 frames (~500ms)
     if (this.frameCount % 15 === 0) {
       globalCalibrator.analyze(avgRed, avgGreen, avgBlue);
     }
     
-    // Log cada 5 segundos
-    if (this.frameCount % 150 === 0) {
+    // Log diagnóstico cada 3 segundos con valores RAW
+    if (this.frameCount % 90 === 0) {
       const brightness = ((avgRed + avgGreen + avgBlue) / 3).toFixed(0);
-      console.log(`📷 PPG: R=${avgRed.toFixed(0)} G=${avgGreen.toFixed(0)} B=${brightness} | AC=${(acComponent * 100).toFixed(2)}%`);
+      console.log(`📷 RAW: R=${smoothedRed.toFixed(0)} G=${smoothedGreen.toFixed(0)} B=${smoothedBlue.toFixed(0)} | Norm: R=${avgRed.toFixed(0)} | AC=${(acComponent * 100).toFixed(2)}%`);
     }
     
     return {
@@ -266,6 +271,14 @@ export class FrameProcessor {
   
   getGainFactor(): number {
     return this.gainFactor;
+  }
+  
+  /**
+   * Detectar saturación del sensor - científicamente validado
+   * Saturación = R muy alto o luz blanca (R+G altos = flash sin dedo)
+   */
+  private isSaturated(r: number, g: number): boolean {
+    return r > 248 || (r > 230 && g > 150);
   }
   
   reset(): void {

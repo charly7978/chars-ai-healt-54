@@ -338,18 +338,23 @@ export class HeartBeatProcessor {
     // Calcular prominencia de forma simple
     const prominence = maxVal - Math.min(leftVal, rightVal);
     
-    // Prominencia mínima muy baja
-    const minProminence = Math.max(0.01, windowStd * 0.15); // Era 0.25
+    // Prominencia mínima MUY BAJA para señales débiles
+    const minProminence = Math.max(0.005, windowStd * 0.10); // Reducido de 0.15
     if (prominence < minProminence) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Rango de ventana más tolerante
+    // Rango de ventana MÁS TOLERANTE
     const windowMin = Math.min(...window);
     const windowMax = Math.max(...window);
     const windowRange = windowMax - windowMin;
     
-    if (windowRange < 0.02 || windowRange > 60) { // Era 0.05 y 40
+    // Log diagnóstico cada 30 frames
+    if (this.frameCount % 30 === 0) {
+      console.log(`🔍 Peak: range=${windowRange.toFixed(4)}, prom=${prominence.toFixed(4)}, minProm=${minProminence.toFixed(4)}`);
+    }
+    
+    if (windowRange < 0.01 || windowRange > 80) { // Reducido de 0.02
       return { isPeak: false, confidence: 0 };
     }
     

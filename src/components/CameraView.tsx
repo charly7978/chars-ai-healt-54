@@ -129,14 +129,29 @@ const CameraView: React.FC<CameraViewProps> = ({
           // Exposición y otros ajustes
           const settings: any[] = [];
           
+          // PPG CIENTÍFICO: Exposición BAJA para evitar saturación con flash+dedo
           if (caps.exposureCompensation) {
             const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-            // OPTIMIZADO: 50% de exposición inicial para mejor señal PPG
-            settings.push({ exposureCompensation: caps.exposureCompensation.min + range * 0.5 });
+            // 25% de exposición - literatura científica recomienda exposición mínima
+            const targetExposure = caps.exposureCompensation.min + range * 0.25;
+            settings.push({ exposureCompensation: targetExposure });
+            console.log(`📷 Exposición inicial: ${targetExposure.toFixed(1)} (25% del rango)`);
           }
           
+          // ISO MÍNIMO para reducir ruido
           if (caps.iso) {
-            settings.push({ iso: Math.min(caps.iso.min + 200, caps.iso.max) });
+            settings.push({ iso: caps.iso.min });
+            console.log(`📷 ISO: ${caps.iso.min} (mínimo)`);
+          }
+          
+          // White Balance manual para maximizar canal rojo
+          if (caps.whiteBalanceMode) {
+            settings.push({ whiteBalanceMode: 'manual' });
+          }
+          if (caps.colorTemperature) {
+            // Temperatura baja = más rojo (mejor para PPG)
+            settings.push({ colorTemperature: caps.colorTemperature.min });
+            console.log(`📷 Temp color: ${caps.colorTemperature.min}K (máximo rojo)`);
           }
           
           if (caps.focusDistance?.min !== undefined) {
