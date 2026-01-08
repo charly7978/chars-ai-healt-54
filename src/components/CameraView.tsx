@@ -1,5 +1,4 @@
-import React, { useRef, useEffect } from "react";
-import { globalCalibrator } from "@/modules/camera/CameraAutoCalibrator";
+import React, { useRef, useEffect, useCallback } from "react";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -7,12 +6,13 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG - VERSIÓN ESTABLE
+ * CÁMARA PPG - NUEVA IMPLEMENTACIÓN SIMPLIFICADA
  * 
- * PRINCIPIOS:
- * 1. SIN useCallback para evitar re-renders
- * 2. Refs para todo el estado mutable
- * 3. Cleanup completo con torch apagado
+ * Principios:
+ * 1. getUserMedia simple y directo
+ * 2. Sin auto-calibradores complejos
+ * 3. Flash básico sin complicaciones
+ * 4. Cleanup robusto
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
@@ -20,145 +20,141 @@ const CameraView: React.FC<CameraViewProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const isStartingRef = useRef(false);
-  const onStreamReadyRef = useRef(onStreamReady);
+  const isActiveRef = useRef(false);
   
-  // Mantener ref actualizada sin causar re-render
-  useEffect(() => {
-    onStreamReadyRef.current = onStreamReady;
-  }, [onStreamReady]);
-
-  useEffect(() => {
-    let mounted = true;
-    
-    const stopCamera = async () => {
-      if (streamRef.current) {
-        const tracks = streamRef.current.getTracks();
-        
-        // Apagar torch ANTES de detener tracks
-        for (const track of tracks) {
-          if (track.kind === 'video') {
-            try {
-              const caps: any = track.getCapabilities?.() || {};
-              if (caps.torch) {
-                await track.applyConstraints({ advanced: [{ torch: false }] } as any);
-              }
-            } catch {}
-          }
-          try { track.stop(); } catch {}
+  const stopCamera = useCallback(async () => {
+    if (streamRef.current) {
+      const tracks = streamRef.current.getTracks();
+      
+      // Apagar flash primero
+      for (const track of tracks) {
+        if (track.kind === 'video') {
+          try {
+            await (track as any).applyConstraints({ 
+              advanced: [{ torch: false }] 
+            });
+          } catch {}
         }
-        
-        streamRef.current = null;
+        track.stop();
       }
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-      
-      isStartingRef.current = false;
-      globalCalibrator.reset();
-    };
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    isActiveRef.current = false;
+  }, []);
 
-    const startCamera = async () => {
-      // Evitar múltiples inicios simultáneos
-      if (isStartingRef.current) return;
-      isStartingRef.current = true;
+  const startCamera = useCallback(async () => {
+    if (isActiveRef.current) return;
+    isActiveRef.current = true;
+    
+    await stopCamera();
+
+    try {
+      // PASO 1: Obtener stream con constraints simples
+      const constraints: MediaStreamConstraints = {
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 30, max: 30 }
+        }
+      };
       
-      // Limpiar stream anterior
-      await stopCamera();
+      let stream: MediaStream;
       
-      if (!mounted) {
-        isStartingRef.current = false;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        // Fallback sin facingMode
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30 }
+          }
+        });
+      }
+      
+      if (!isActiveRef.current) {
+        stream.getTracks().forEach(t => t.stop());
         return;
       }
 
-      try {
-        let stream: MediaStream;
-        
-        // Intentar cámara trasera
+      streamRef.current = stream;
+      
+      // PASO 2: Conectar al video element
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              facingMode: { exact: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              frameRate: { ideal: 30 }
-            }
-          });
-        } catch {
-          // Fallback: cualquier cámara
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-              frameRate: { ideal: 30 }
-            }
-          });
-        }
-        
-        if (!mounted) {
-          stream.getTracks().forEach(t => t.stop());
-          isStartingRef.current = false;
-          return;
-        }
-
-        streamRef.current = stream;
-        
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
-        }
-
-        // Configurar track
-        const track = stream.getVideoTracks()[0];
-        if (track) {
-          const caps: any = track.getCapabilities?.() || {};
-          
-          globalCalibrator.setTrack(track);
-          
-          // Torch
-          if (caps.torch === true) {
-            try {
-              await track.applyConstraints({ advanced: [{ torch: true }] } as any);
-            } catch {}
-          }
-          
-          // Exposición y otros ajustes
-          const settings: any[] = [];
-          
-          if (caps.exposureCompensation) {
-            const range = caps.exposureCompensation.max - caps.exposureCompensation.min;
-            settings.push({ exposureCompensation: caps.exposureCompensation.min + range * 0.3 });
-          }
-          
-          if (caps.iso) {
-            settings.push({ iso: Math.min(caps.iso.min + 200, caps.iso.max) });
-          }
-          
-          if (caps.focusDistance?.min !== undefined) {
-            settings.push({ focusDistance: caps.focusDistance.min });
-          }
-          
-          if (settings.length > 0) {
-            try {
-              await track.applyConstraints({ advanced: settings } as any);
-            } catch {}
-          }
-          
-          console.log('📷 Cámara iniciada');
-        }
-
-        onStreamReadyRef.current?.(stream);
-        isStartingRef.current = false;
-
-      } catch (err) {
-        console.error('❌ Error cámara:', err);
-        isStartingRef.current = false;
+          await videoRef.current.play();
+        } catch {}
       }
-    };
 
+      // PASO 3: Configurar track (flash, exposición)
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        const capabilities = videoTrack.getCapabilities?.() as any || {};
+        
+        // Encender flash si disponible
+        if (capabilities.torch) {
+          try {
+            await videoTrack.applyConstraints({
+              advanced: [{ torch: true }]
+            } as any);
+            console.log('🔦 Flash encendido');
+          } catch (e) {
+            console.log('⚠️ No se pudo encender flash');
+          }
+        }
+        
+        // Ajustes opcionales de exposición
+        const advancedSettings: any[] = [];
+        
+        if (capabilities.exposureMode?.includes('manual')) {
+          advancedSettings.push({ exposureMode: 'manual' });
+        }
+        
+        if (capabilities.exposureCompensation) {
+          const mid = (capabilities.exposureCompensation.min + capabilities.exposureCompensation.max) / 2;
+          advancedSettings.push({ exposureCompensation: mid * 0.5 });
+        }
+        
+        if (capabilities.focusMode?.includes('manual') && capabilities.focusDistance) {
+          advancedSettings.push({ 
+            focusMode: 'manual',
+            focusDistance: capabilities.focusDistance.min 
+          });
+        }
+        
+        if (advancedSettings.length > 0) {
+          try {
+            await videoTrack.applyConstraints({ advanced: advancedSettings } as any);
+          } catch {}
+        }
+
+        console.log('📷 Cámara iniciada', {
+          torch: capabilities.torch || false,
+          resolution: `${videoTrack.getSettings().width}x${videoTrack.getSettings().height}`
+        });
+      }
+
+      // PASO 4: Notificar que el stream está listo
+      onStreamReady?.(stream);
+
+    } catch (err) {
+      console.error('❌ Error iniciando cámara:', err);
+      isActiveRef.current = false;
+    }
+  }, [onStreamReady, stopCamera]);
+
+  useEffect(() => {
     if (isMonitoring) {
       startCamera();
     } else {
@@ -166,10 +162,9 @@ const CameraView: React.FC<CameraViewProps> = ({
     }
     
     return () => {
-      mounted = false;
       stopCamera();
     };
-  }, [isMonitoring]); // SOLO depende de isMonitoring
+  }, [isMonitoring, startCamera, stopCamera]);
 
   return (
     <video
@@ -177,11 +172,10 @@ const CameraView: React.FC<CameraViewProps> = ({
       playsInline
       muted
       autoPlay
-      disablePictureInPicture
-      disableRemotePlayback
       style={{
         position: "absolute",
-        inset: 0,
+        top: 0,
+        left: 0,
         width: "100%",
         height: "100%",
         objectFit: "cover",
