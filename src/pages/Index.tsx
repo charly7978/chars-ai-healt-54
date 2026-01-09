@@ -507,8 +507,7 @@ const Index = () => {
     // Esperar a que el video esté listo antes de iniciar el loop
     let startLoopTimeout: number | null = null;
     const startLoop = () => {
-      // Verificar estado antes de continuar
-      if (systemState.current !== 'ACTIVE' || !frameLoopActiveRef.current) {
+      if (!frameLoopActiveRef.current) {
         return;
       }
       
@@ -534,17 +533,9 @@ const Index = () => {
     
     // ELIMINADO: Ya no pasamos valor verde - la calidad de señal determina validez
     
-    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
+    if (!isMonitoring) return;
     
-    // CRÍTICO: fingerDetected ahora significa "SANGRE REAL DETECTADA"
-    const hasBlood = lastSignal.fingerDetected;
-    
-    // Si NO hay sangre real, degradar valores gradualmente
-    if (!hasBlood) {
-      setHeartRate(prev => prev > 0 ? Math.max(0, prev * 0.95) : 0);
-      return; // NO PROCESAR SIN SANGRE
-    }
-    
+    // Procesar siempre - sin validación de dedo
     const signalValue = lastSignal.filteredValue;
 
     // PROCESAMIENTO DE LATIDOS - Solo si hay sangre
