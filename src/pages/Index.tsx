@@ -240,16 +240,14 @@ const Index = () => {
   };
 
   const startAutoCalibration = () => {
-    if (isCalibrating || systemState.current === 'CALIBRATING') return;
+    if (isCalibrating) return;
     
-    systemState.current = 'CALIBRATING';
+    // NO cambiar systemState - mantener ACTIVE para que el loop siga corriendo
     setIsCalibrating(true);
     startCalibration();
     
     setTimeout(() => {
-      if (systemState.current === 'CALIBRATING') {
-        systemState.current = 'ACTIVE';
-      }
+      setIsCalibrating(false);
     }, 3000);
   };
 
@@ -393,7 +391,8 @@ const Index = () => {
   const handleStreamReady = (stream: MediaStream) => {
     setCameraStream(stream);
     
-    if (!isMonitoring || systemState.current !== 'ACTIVE') return;
+    // Permitir iniciar si está ACTIVE o STARTING (no bloquear por calibración)
+    if (!isMonitoring || (systemState.current !== 'ACTIVE' && systemState.current !== 'STARTING')) return;
     
     if (frameLoopActiveRef.current) return;
     
@@ -463,8 +462,11 @@ const Index = () => {
       }
       
       const video = videoElementRef.current;
-      // Usar systemState.current en lugar de isMonitoring (closure)
-      if (systemState.current !== 'ACTIVE' || !video) {
+      // Permitir continuar si está ACTIVE, STARTING o CALIBRATING
+      const validState = systemState.current === 'ACTIVE' || 
+                         systemState.current === 'STARTING' || 
+                         systemState.current === 'CALIBRATING';
+      if (!validState || !video) {
         frameLoopActiveRef.current = false;
         console.log('🛑 Loop detenido por estado:', systemState.current);
         return;
@@ -489,8 +491,12 @@ const Index = () => {
         }
       }
       
-      // SOLO usar refs para la siguiente iteración
-      if (frameLoopActiveRef.current && systemState.current === 'ACTIVE') {
+      // SOLO usar refs para la siguiente iteración - permitir cualquier estado válido
+      const continueLoop = frameLoopActiveRef.current && 
+                          (systemState.current === 'ACTIVE' || 
+                           systemState.current === 'STARTING' || 
+                           systemState.current === 'CALIBRATING');
+      if (continueLoop) {
         frameLoopIdRef.current = requestAnimationFrame(processImage);
       } else {
         frameLoopActiveRef.current = false;
