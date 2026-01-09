@@ -7,12 +7,13 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG - CON SELECCIÓN INTELIGENTE DE CÁMARA
+ * CÁMARA PPG - SOLO CÁMARA TRASERA PRINCIPAL
  * 
  * Características:
- * 1. Selección automática de cámara trasera principal (evita ultra-wide, macro)
- * 2. Inicialización optimizada para PPG
- * 3. Integración con CameraController para ajustes dinámicos
+ * 1. SOLO cámara trasera principal (camera0, facing back)
+ * 2. SIN sensores auxiliares (ultra-wide, macro, depth, telephoto)
+ * 3. 60 FPS, baja resolución
+ * 4. Flash siempre encendido
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
@@ -23,7 +24,6 @@ const CameraView: React.FC<CameraViewProps> = ({
   const isStartingRef = useRef(false);
   const onStreamReadyRef = useRef(onStreamReady);
   
-  // Mantener ref actualizada sin causar re-render
   useEffect(() => {
     onStreamReadyRef.current = onStreamReady;
   }, [onStreamReady]);
@@ -35,7 +35,6 @@ const CameraView: React.FC<CameraViewProps> = ({
       if (streamRef.current) {
         const tracks = streamRef.current.getTracks();
         
-        // Apagar torch ANTES de detener tracks
         for (const track of tracks) {
           if (track.kind === 'video') {
             try {
@@ -60,49 +59,75 @@ const CameraView: React.FC<CameraViewProps> = ({
     };
     
     /**
-     * Selecciona la cámara trasera principal, evitando ultra-wide, macro, telephoto
+     * Selecciona SOLO la cámara trasera principal
+     * Excluye: ultra-wide, macro, telephoto, depth, angular
      */
     const selectMainBackCamera = async (): Promise<string | null> => {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const cameras = devices.filter(d => d.kind === 'videoinput');
         
+        console.log('📷 Cámaras disponibles:', cameras.map(c => c.label));
+        
         if (cameras.length === 0) return null;
         
-        // Buscar cámara trasera principal
+        // Buscar cámara trasera PRINCIPAL - excluir TODOS los sensores especiales
         const mainBack = cameras.find(cam => {
           const label = cam.label.toLowerCase();
-          const isBack = label.includes('back') || label.includes('rear') || 
-                         label.includes('trasera') || label.includes('0,') ||
-                         label.includes('facing back');
-          const isNotSpecial = !label.includes('ultra') && 
-                               !label.includes('wide') && 
-                               !label.includes('macro') && 
-                               !label.includes('tele') &&
-                               !label.includes('depth');
-          return isBack && isNotSpecial;
+          
+          // Debe ser trasera
+          const isBack = label.includes('back') || 
+                         label.includes('rear') || 
+                         label.includes('trasera') ||
+                         label.includes('facing back') ||
+                         label.includes('camera 0') ||
+                         label.includes('camera0');
+          
+          // NO debe ser sensor especial
+          const isSpecialSensor = 
+            label.includes('ultra') ||
+            label.includes('wide') ||
+            label.includes('macro') ||
+            label.includes('tele') ||
+            label.includes('depth') ||
+            label.includes('angular') ||
+            label.includes('zoom') ||
+            label.includes('aux') ||
+            label.includes('secondary') ||
+            label.includes('2') ||
+            label.includes('3') ||
+            label.includes('4');
+          
+          return isBack && !isSpecialSensor;
         });
         
-        if (mainBack) return mainBack.deviceId;
+        if (mainBack) {
+          console.log('✅ Cámara principal seleccionada:', mainBack.label);
+          return mainBack.deviceId;
+        }
         
-        // Fallback: cualquier cámara trasera
+        // Fallback: primera cámara trasera sin filtro de sensores
         const anyBack = cameras.find(cam => {
           const label = cam.label.toLowerCase();
           return label.includes('back') || label.includes('rear') || label.includes('trasera');
         });
         
-        return anyBack?.deviceId || cameras[0]?.deviceId || null;
+        if (anyBack) {
+          console.log('⚠️ Usando cámara trasera alternativa:', anyBack.label);
+          return anyBack.deviceId;
+        }
+        
+        console.log('⚠️ Usando primera cámara disponible');
+        return cameras[0]?.deviceId || null;
       } catch {
         return null;
       }
     };
 
     const startCamera = async () => {
-      // Evitar múltiples inicios simultáneos
       if (isStartingRef.current) return;
       isStartingRef.current = true;
       
-      // Limpiar stream anterior
       await stopCamera();
       
       if (!mounted) {
@@ -113,42 +138,38 @@ const CameraView: React.FC<CameraViewProps> = ({
       try {
         let stream: MediaStream;
         
-        // PASO 1: Intentar seleccionar cámara principal por deviceId
         const mainCameraId = await selectMainBackCamera();
+        
+        // Configuración: BAJA resolución, 60 FPS
+        const videoConstraints = {
+          width: { ideal: 320, max: 480 },
+          height: { ideal: 240, max: 360 },
+          frameRate: { ideal: 60, min: 30 }
+        };
         
         try {
           if (mainCameraId) {
-            // Usar deviceId específico para cámara principal
             stream = await navigator.mediaDevices.getUserMedia({
               audio: false,
               video: {
                 deviceId: { exact: mainCameraId },
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                frameRate: { ideal: 30 }
+                ...videoConstraints
               }
             });
           } else {
-            // Fallback: facingMode environment
             stream = await navigator.mediaDevices.getUserMedia({
               audio: false,
               video: {
                 facingMode: { exact: "environment" },
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                frameRate: { ideal: 30 }
+                ...videoConstraints
               }
             });
           }
         } catch {
-          // Fallback final: cualquier cámara
+          // Fallback final
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: {
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 }
-            }
+            video: videoConstraints
           });
         }
         
@@ -165,10 +186,11 @@ const CameraView: React.FC<CameraViewProps> = ({
           await videoRef.current.play().catch(() => {});
         }
 
-        // PASO 2: Configurar track con CameraController
         const track = stream.getVideoTracks()[0];
         if (track) {
-          // Usar el nuevo CameraController para configuración inicial
+          const settings = track.getSettings();
+          console.log(`📹 Cámara iniciada: ${settings.width}x${settings.height} @ ${settings.frameRate}fps`);
+          
           await globalCameraController.setTrack(track);
         }
 
@@ -191,7 +213,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       mounted = false;
       stopCamera();
     };
-  }, [isMonitoring]); // SOLO depende de isMonitoring
+  }, [isMonitoring]);
 
   return (
     <video
