@@ -2,22 +2,18 @@ import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
 
 /**
- * FrameProcessor - EXTRACCIÓN PPG ULTRA-LIGERA
+ * FrameProcessor - EXTRACCIÓN PPG ULTRA-SIMPLE
  * 
- * PRINCIPIOS:
- * 1. Buffers PEQUEÑOS y fijos
- * 2. Sin dependencia de calibrador externo - datos puros para CameraController
- * 3. Logs mínimos
- * 4. Sin acumulación de memoria
+ * SIN detección de dedo ni piel
+ * Procesa TODO el ROI central sin filtros
  */
 export class FrameProcessor {
-  // Buffers PEQUEÑOS - 30 frames = 1s @ 30fps (suficiente para análisis)
   private redBuffer: Float32Array;
   private greenBuffer: Float32Array;
   private blueBuffer: Float32Array;
   private bufferIndex = 0;
   private bufferFilled = false;
-  private readonly BUFFER_SIZE = 30;
+  private readonly BUFFER_SIZE = 60;
   
   // Calibración interna
   private calibrationDC = 0;
@@ -33,13 +29,9 @@ export class FrameProcessor {
   private lastRed = 0;
   private lastGreen = 0;
   private lastBlue = 0;
-  private readonly SMOOTHING = 0.2;
+  private readonly SMOOTHING = 0.15;
   
-  // Contadores
   private frameCount = 0;
-  private skinPixelRatio = 0;
-  
-  // Estado de saturación para reportar
   private isSaturatedState = false;
   
   constructor() {
@@ -49,27 +41,26 @@ export class FrameProcessor {
   }
   
   /**
-   * Extraer datos del frame
+   * Extraer datos del frame - SIN DETECCIÓN DE DEDO
+   * Procesa todo el ROI central
    */
   extractFrameData(imageData: ImageData): FrameData {
     const data = imageData.data;
-    const totalPixels = imageData.width * imageData.height;
     
     let redSum = 0;
     let greenSum = 0;
     let blueSum = 0;
-    let skinPixelCount = 0;
+    let pixelCount = 0;
     
-    // ROI central - el dedo cubre principalmente el centro
+    // ROI central circular
     const centerX = imageData.width / 2;
     const centerY = imageData.height / 2;
-    const roiRadius = Math.min(imageData.width, imageData.height) * 0.35;
+    const roiRadius = Math.min(imageData.width, imageData.height) * 0.40;
     
-    // Procesar con step de 4 (cada 4to pixel) para velocidad pero más cobertura
-    const step = 4;
+    // Procesar con step de 2 para más cobertura
+    const step = 2;
     for (let y = 0; y < imageData.height; y += step) {
       for (let x = 0; x < imageData.width; x += step) {
-        // Verificar si está en ROI central
         const dx = x - centerX;
         const dy = y - centerY;
         if (dx * dx + dy * dy > roiRadius * roiRadius) continue;
@@ -79,47 +70,20 @@ export class FrameProcessor {
         const g = data[i + 1];
         const b = data[i + 2];
         
-        const total = r + g + b;
-        if (total < 30) continue;
-        
-        const nr = r / total;
-        const ng = g / total;
-        const nrng = ng > 0.01 ? nr / ng : 0;
-        
-        // Detección de piel/dedo - canal rojo dominante
-        if (nr > 0.32 && nrng > 0.9 && r > 40) {
+        // SIN filtro de piel - procesar TODO
+        if (r + g + b > 20) { // Solo filtrar negro puro
           redSum += r;
           greenSum += g;
           blueSum += b;
-          skinPixelCount++;
+          pixelCount++;
         }
       }
     }
-    
-    // Fallback: usar ROI central sin filtro de piel
-    if (skinPixelCount < 50) {
-      redSum = 0; greenSum = 0; blueSum = 0; skinPixelCount = 0;
-      for (let y = 0; y < imageData.height; y += step) {
-        for (let x = 0; x < imageData.width; x += step) {
-          const dx = x - centerX;
-          const dy = y - centerY;
-          if (dx * dx + dy * dy > roiRadius * roiRadius) continue;
-          
-          const i = (y * imageData.width + x) * 4;
-          redSum += data[i];
-          greenSum += data[i + 1];
-          blueSum += data[i + 2];
-          skinPixelCount++;
-        }
-      }
-    }
-    
-    this.skinPixelRatio = skinPixelCount / (totalPixels / 4);
     
     // Promedios crudos
-    const rawRed = skinPixelCount > 0 ? redSum / skinPixelCount : 0;
-    const rawGreen = skinPixelCount > 0 ? greenSum / skinPixelCount : 0;
-    const rawBlue = skinPixelCount > 0 ? blueSum / skinPixelCount : 0;
+    const rawRed = pixelCount > 0 ? redSum / pixelCount : 0;
+    const rawGreen = pixelCount > 0 ? greenSum / pixelCount : 0;
+    const rawBlue = pixelCount > 0 ? blueSum / pixelCount : 0;
     
     // Suavizado temporal
     let smoothedRed: number, smoothedGreen: number, smoothedBlue: number;
@@ -146,19 +110,19 @@ export class FrameProcessor {
     const avgGreen = this.applyNormalization(smoothedGreen);
     const avgBlue = this.applyNormalization(smoothedBlue);
     
-    // Actualizar buffer circular
+    // Actualizar buffer
     this.updateBuffer(avgRed, avgGreen, avgBlue);
     
     // Calcular AC
     const acComponent = this.calculateAC();
     
-    // DETECCIÓN DE SATURACIÓN - guardar estado para CameraController
+    // Saturación
     this.frameCount++;
     this.isSaturatedState = this.isSaturated(smoothedRed, smoothedGreen);
     
-    // Log diagnóstico reducido - solo cada 15 segundos
-    if (this.frameCount % 450 === 0) {
-      console.log(`📷 R=${smoothedRed.toFixed(0)} G=${smoothedGreen.toFixed(0)} AC=${(acComponent * 100).toFixed(1)}%`);
+    // Log reducido
+    if (this.frameCount % 600 === 0) {
+      console.log(`📷 R=${smoothedRed.toFixed(0)} G=${smoothedGreen.toFixed(0)} B=${smoothedBlue.toFixed(0)} AC=${(acComponent * 100).toFixed(1)}%`);
     }
     
     return {
@@ -278,7 +242,7 @@ export class FrameProcessor {
   }
   
   getSkinPixelRatio(): number {
-    return this.skinPixelRatio;
+    return 1; // Sin detección de piel
   }
   
   isCalibrated(): boolean {
@@ -289,20 +253,12 @@ export class FrameProcessor {
     return this.gainFactor;
   }
   
-  /**
-   * Obtener estado de saturación actual
-   */
   getIsSaturated(): boolean {
     return this.isSaturatedState;
   }
   
-  /**
-   * Detectar saturación del sensor - científicamente validado
-   * Saturación = R muy alto o luz blanca (R+G altos = flash sin dedo)
-   */
   private isSaturated(r: number, g: number): boolean {
-    const saturated = r > 248 || (r > 230 && g > 150);
-    return saturated;
+    return r > 248 || (r > 230 && g > 150);
   }
   
   reset(): void {
@@ -319,7 +275,6 @@ export class FrameProcessor {
     this.lastRed = 0;
     this.lastGreen = 0;
     this.lastBlue = 0;
-    this.skinPixelRatio = 0;
     this.isSaturatedState = false;
   }
 }
