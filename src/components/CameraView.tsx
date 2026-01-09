@@ -231,6 +231,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         objectFit: "cover",
         opacity: 0.001,
         pointerEvents: "none",
+        transform: "none", // SIN efecto espejo
       }}
     />
   );
