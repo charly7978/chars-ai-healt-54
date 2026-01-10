@@ -134,6 +134,14 @@ const CameraView: React.FC<CameraViewProps> = ({
         objectFit: "cover",
         opacity: 0.001,
         pointerEvents: "none",
+        // FORZAR SIN ESPEJO - Modo RAW
+        transform: "none",
+        WebkitTransform: "none",
+        MozTransform: "none",
+        msTransform: "none",
+        OTransform: "none",
+        // Sin escala ni flip
+        scale: "1",
       }}
     />
   );

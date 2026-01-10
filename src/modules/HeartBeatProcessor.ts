@@ -98,7 +98,7 @@ export class HeartBeatProcessor {
    */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
     const n = this.signalBuffer.length;
-    if (n < 30) return { isPeak: false, confidence: 0 };
+    if (n < 15) return { isPeak: false, confidence: 0 };
     
     // Intervalo mínimo entre picos
     const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
@@ -106,8 +106,8 @@ export class HeartBeatProcessor {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Ventana de análisis (últimas 30 muestras)
-    const window = this.signalBuffer.slice(-30);
+    // Ventana de análisis corta para mayor sensibilidad
+    const window = this.signalBuffer.slice(-15);
     
     // Estadísticas
     const mean = window.reduce((a, b) => a + b, 0) / window.length;
@@ -116,49 +116,52 @@ export class HeartBeatProcessor {
     const min = Math.min(...window);
     const range = max - min;
     
-    // Log cada 3 segundos
-    if (this.frameCount % 90 === 0) {
-      console.log(`🔍 PPG: range=${range.toFixed(1)}, std=${std.toFixed(1)}, mean=${mean.toFixed(1)}`);
+    // Log cada 2 segundos
+    if (this.frameCount % 60 === 0) {
+      console.log(`💓 PPG: range=${range.toFixed(2)}, std=${std.toFixed(2)}, mean=${mean.toFixed(1)}, buffer=${n}`);
     }
     
-    // UMBRAL MÍNIMO: necesitamos algo de variación
-    if (range < 0.3 || std < 0.1) {
+    // UMBRALES MUY BAJOS para señal PPG real filtrada
+    // La señal filtrada típicamente tiene rangos de 0.1 a 5
+    if (range < 0.05 || std < 0.02) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Buscar máximo en región central (índices 10-20)
-    let maxIdx = 10;
-    let maxVal = window[10];
-    for (let i = 11; i < 20; i++) {
+    // Buscar máximo en la mitad reciente (índices 5-12)
+    let maxIdx = 5;
+    let maxVal = window[5];
+    for (let i = 6; i < 12 && i < window.length; i++) {
       if (window[i] > maxVal) {
         maxVal = window[i];
         maxIdx = i;
       }
     }
     
-    // Umbral adaptativo: debe superar media + 0.5*std
-    const threshold = mean + std * 0.5;
+    // Umbral adaptativo bajo: media + 0.3*std
+    const threshold = mean + std * 0.3;
     if (maxVal < threshold) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Verificar que es un máximo local (cae a ambos lados)
-    const leftVals = window.slice(Math.max(0, maxIdx - 3), maxIdx);
-    const rightVals = window.slice(maxIdx + 1, Math.min(window.length, maxIdx + 4));
+    // Verificar máximo local simple
+    const leftIdx = Math.max(0, maxIdx - 2);
+    const rightIdx = Math.min(window.length - 1, maxIdx + 2);
     
-    if (leftVals.length === 0 || rightVals.length === 0) {
-      return { isPeak: false, confidence: 0 };
+    let isLocalMax = true;
+    for (let i = leftIdx; i <= rightIdx; i++) {
+      if (i !== maxIdx && window[i] >= maxVal) {
+        isLocalMax = false;
+        break;
+      }
     }
     
-    const leftMax = Math.max(...leftVals);
-    const rightMax = Math.max(...rightVals);
-    
-    // El pico debe ser mayor que sus vecinos
-    if (maxVal <= leftMax || maxVal <= rightMax) {
+    if (!isLocalMax) {
       return { isPeak: false, confidence: 0 };
     }
     
     // ¡PICO DETECTADO!
+    console.log(`✅ PICO: val=${maxVal.toFixed(2)}, thresh=${threshold.toFixed(2)}, interval=${timeSinceLastPeak}ms`);
+    
     this.previousPeakTime = this.lastPeakTime;
     this.lastPeakTime = now;
     
@@ -173,7 +176,7 @@ export class HeartBeatProcessor {
       }
     }
     
-    const confidence = Math.min(1, (maxVal - threshold) / (std + 0.1));
+    const confidence = Math.min(1, (maxVal - threshold) / (std + 0.01));
     return { isPeak: true, confidence };
   }
 
