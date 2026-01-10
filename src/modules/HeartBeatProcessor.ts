@@ -116,14 +116,14 @@ export class HeartBeatProcessor {
     const min = Math.min(...window);
     const range = max - min;
     
-    // Log cada 2 segundos
-    if (this.frameCount % 60 === 0) {
-      console.log(`💓 PPG: range=${range.toFixed(2)}, std=${std.toFixed(2)}, mean=${mean.toFixed(1)}, buffer=${n}`);
+    // Log cada segundo para diagnóstico
+    if (this.frameCount % 30 === 0) {
+      console.log(`💓 PPG: range=${range.toFixed(3)}, std=${std.toFixed(3)}, mean=${mean.toFixed(2)}, buffer=${n}`);
     }
     
-    // UMBRALES MUY BAJOS para señal PPG real filtrada
-    // La señal filtrada típicamente tiene rangos de 0.1 a 5
-    if (range < 0.05 || std < 0.02) {
+    // UMBRALES ULTRA BAJOS para captar cualquier señal PPG
+    // La señal filtrada pasabanda típicamente tiene rangos de 0.01 a 5
+    if (range < 0.01 || std < 0.005) {
       return { isPeak: false, confidence: 0 };
     }
     
@@ -137,8 +137,8 @@ export class HeartBeatProcessor {
       }
     }
     
-    // Umbral adaptativo bajo: media + 0.3*std
-    const threshold = mean + std * 0.3;
+    // Umbral adaptativo muy bajo: media + 0.2*std
+    const threshold = mean + std * 0.2;
     if (maxVal < threshold) {
       return { isPeak: false, confidence: 0 };
     }
