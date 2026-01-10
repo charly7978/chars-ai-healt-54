@@ -69,7 +69,7 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
           width: '110px'
         }}
       >
-        {/* Video del dedo - muestra el rojo */}
+        {/* Video del dedo - SIN ESPEJO - DATOS CRUDOS */}
         <video
           ref={videoRef}
           playsInline
@@ -77,8 +77,8 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
           autoPlay
           className="w-full h-20 object-cover"
           style={{ 
-            transform: 'scaleX(-1)',
-            filter: 'saturate(1.2) contrast(1.1)'
+            transform: 'none',
+            filter: 'none'
           }}
         />
         

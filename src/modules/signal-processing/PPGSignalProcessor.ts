@@ -100,17 +100,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   private calculateSimpleQuality(): number {
-    if (this.filteredBuffer.length < 30) return 10;
+    if (this.filteredBuffer.length < 15) return 10;
     
-    const recent = this.filteredBuffer.slice(-30);
+    const recent = this.filteredBuffer.slice(-15);
     const range = Math.max(...recent) - Math.min(...recent);
     
     // Calidad basada en el rango de la señal filtrada
-    // Rango típico PPG: 0.5-20
-    if (range < 0.5) return 5;
-    if (range > 50) return 30; // Mucho ruido
+    // Rango típico PPG filtrado: 0.05 - 10
+    if (range < 0.05) return 5;
+    if (range > 100) return 20; // Mucho ruido
     
-    return Math.min(100, Math.round(range * 5));
+    // Escalar range a calidad 0-100
+    return Math.min(100, Math.round(range * 15));
   }
   
   private calculatePerfusionIndex(): number {
