@@ -33,7 +33,7 @@ const CONFIG = {
   TARGET_FPS: 60,
   
   // Buffer de datos
-  BUFFER_SIZE: 300,
+  BUFFER_SIZE: 600,
   
   // Grid médico estándar
   GRID_MAJOR: 100,   // Líneas principales cada 100px
@@ -46,16 +46,16 @@ const CONFIG = {
     MAX_RANGE: 200,      // Rango máximo amplio
     
     // SUAVIZADO MÍNIMO: 0.4 = reactivo, muestra picos agudos reales
-    SMOOTHING: 0.4,      // Aumentado para mostrar picos tipo "latigazo"
+    SMOOTHING: 0.6,      // Aumentado para mostrar picos tipo "latigazo"
     
     // Línea base adaptativa LENTA (no distorsiona picos)
     BASELINE_SPEED: 0.002,
     
     // Altura de onda objetivo (% del canvas)
-    TARGET_AMPLITUDE: 0.45,  // 45% del alto
+    TARGET_AMPLITUDE: 0.65,  // 45% del alto
     
     // AMPLIFICACIÓN para señales normalizadas (típico 5-30)
-    AMPLIFICATION: 15,   // Reducido - señales ya tienen buen rango
+    AMPLIFICATION: 25,   // Reducido - señales ya tienen buen rango
   },
   
   // Detección de picos (solo para referencia visual)
