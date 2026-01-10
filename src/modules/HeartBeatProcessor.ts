@@ -1,19 +1,26 @@
 /**
- * PROCESADOR DE LATIDOS CARDÍACOS - VERSIÓN SIMPLIFICADA
- * 
- * Detecta picos en la señal PPG filtrada
- * Sin validación de dedo - procesa todo
+ * PROCESADOR DE LATIDOS CARDÍACOS - OPTIMIZADO
+ * * Incluye:
+ * 1. Filtro Pasa-Altos (DC Removal) para eliminar tendencias de luz.
+ * 2. Detección de picos adaptativa sobre señal limpia.
+ * 3. Gestión de buffer robusta.
  */
 export class HeartBeatProcessor {
   private readonly MIN_BPM = 40;
   private readonly MAX_BPM = 200;
-  private readonly MIN_PEAK_INTERVAL_MS = 300;  // 200 BPM máx
-  private readonly MAX_PEAK_INTERVAL_MS = 1500; // 40 BPM mín
+  private readonly MIN_PEAK_INTERVAL_MS = 300;  
+  private readonly MAX_PEAK_INTERVAL_MS = 1500; 
   
   // Buffer de señal
   private signalBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 60; // 2 segundos @ 30fps
+  // Aumentamos buffer para tener mejor contexto histórico (3 seg @ 60fps = 180 frames)
+  private readonly BUFFER_SIZE = 180; 
   
+  // Variables para Filtro Pasa-Altos (High Pass Filter)
+  private outputFilter: number = 0;
+  private lastInput: number = 0;
+  private readonly ALPHA = 0.95; // Factor de suavizado del filtro
+
   // Detección de picos
   private lastPeakTime: number | null = null;
   private previousPeakTime: number | null = null;
@@ -41,7 +48,8 @@ export class HeartBeatProcessor {
     const unlock = async () => {
       if (this.audioUnlocked) return;
       try {
-        this.audioContext = new AudioContext();
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        this.audioContext = new AudioContextClass();
         await this.audioContext.resume();
         this.audioUnlocked = true;
         document.removeEventListener('touchstart', unlock);
@@ -52,7 +60,12 @@ export class HeartBeatProcessor {
     document.addEventListener('click', unlock, { passive: true });
   }
 
-  processSignal(value: number, timestamp?: number): {
+  /**
+   * Procesa un nuevo valor de brillo (raw data)
+   * @param rawValue Valor crudo (invertido) que viene de la cámara
+   * @param timestamp Tiempo actual
+   */
+  processSignal(rawValue: number, timestamp?: number): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
@@ -62,21 +75,31 @@ export class HeartBeatProcessor {
     this.frameCount++;
     const now = timestamp || Date.now();
     
-    // Guardar en buffer
-    this.signalBuffer.push(value);
+    // 1. FILTRO DE SEÑAL (DC REMOVAL)
+    // Eliminamos la línea base constante (brillo de piel) para dejar solo el pulso AC.
+    // Fórmula: y[n] = x[n] - x[n-1] + alpha * y[n-1]
+    const currentInput = rawValue;
+    this.outputFilter = currentInput - this.lastInput + this.ALPHA * this.outputFilter;
+    this.lastInput = currentInput;
+
+    // Usamos el valor filtrado para todo el análisis
+    const filteredValue = this.outputFilter;
+
+    // 2. Guardar en buffer
+    this.signalBuffer.push(filteredValue);
     if (this.signalBuffer.length > this.BUFFER_SIZE) {
       this.signalBuffer.shift();
     }
     
-    // Necesitamos al menos 30 muestras
-    if (this.signalBuffer.length < 30) {
-      return { bpm: 0, confidence: 0, isPeak: false, filteredValue: value, arrhythmiaCount: 0 };
+    // Necesitamos llenar un poco el buffer antes de analizar
+    if (this.signalBuffer.length < 45) {
+      return { bpm: 0, confidence: 0, isPeak: false, filteredValue, arrhythmiaCount: 0 };
     }
     
-    // Detectar pico
+    // 3. Detectar pico sobre la señal filtrada
     const peakResult = this.detectPeak(now);
     
-    // Si hay pico, actualizar BPM y reproducir sonido
+    // Si hay pico, actualizar BPM y feedback
     if (peakResult.isPeak) {
       this.updateBPM(now);
       this.playBeep();
@@ -87,118 +110,110 @@ export class HeartBeatProcessor {
       bpm: Math.round(this.smoothBPM),
       confidence: peakResult.confidence,
       isPeak: peakResult.isPeak,
-      filteredValue: value,
+      filteredValue: filteredValue, // Enviamos señal limpia para dibujar
       arrhythmiaCount: 0
     };
   }
 
   /**
-   * DETECCIÓN DE PICOS SIMPLE
-   * Busca máximos locales que superen un umbral adaptativo
+   * DETECCIÓN DE PICOS ADAPTATIVA
    */
   private detectPeak(now: number): { isPeak: boolean; confidence: number } {
     const n = this.signalBuffer.length;
-    if (n < 15) return { isPeak: false, confidence: 0 };
-    
-    // Intervalo mínimo entre picos
+    // Intervalo mínimo físico (refractario)
     const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
     if (timeSinceLastPeak < this.MIN_PEAK_INTERVAL_MS) {
       return { isPeak: false, confidence: 0 };
     }
     
-    // Ventana de análisis corta para mayor sensibilidad
-    const window = this.signalBuffer.slice(-15);
+    // Analizamos una ventana reciente (ej. últimos 15 frames)
+    const windowSize = 15;
+    const window = this.signalBuffer.slice(-windowSize);
     
-    // Estadísticas
+    // Estadísticas locales
+    const max = Math.max(...window);
+    
+    // Buscamos el índice del máximo dentro de la ventana
+    // Queremos que el pico esté "centrado" en la ventana para confirmar que baja después de subir
+    // Índice relativo al inicio de la ventana (0 a 14)
+    let localMaxIdx = -1;
+    for(let i=0; i<window.length; i++) {
+        if(window[i] === max) {
+            localMaxIdx = i;
+            break;
+        }
+    }
+
+    // El pico candidato debe estar en el medio (ej. entre índice 5 y 10)
+    // para asegurar que tenemos datos a izquierda (subida) y derecha (bajada)
+    if (localMaxIdx < 5 || localMaxIdx > window.length - 5) {
+        return { isPeak: false, confidence: 0 };
+    }
+
+    // Calcular media y desviación estándar de la ventana para el umbral
     const mean = window.reduce((a, b) => a + b, 0) / window.length;
     const std = Math.sqrt(window.reduce((sum, v) => sum + Math.pow(v - mean, 2), 0) / window.length);
-    const max = Math.max(...window);
-    const min = Math.min(...window);
-    const range = max - min;
     
-    // Log cada segundo para diagnóstico
-    if (this.frameCount % 30 === 0) {
-      console.log(`💓 PPG: range=${range.toFixed(3)}, std=${std.toFixed(3)}, mean=${mean.toFixed(2)}, buffer=${n}`);
+    // Umbral dinámico: debe sobresalir de la media local
+    const threshold = mean + (std * 1.1); // Factor ajustable según sensibilidad deseada
+
+    // Validación de amplitud mínima (para no detectar ruido en silencio)
+    // Con la señal filtrada, los picos suelen ser > 0.5 dependiendo de la ganancia
+    if (max < threshold || std < 0.1) {
+        return { isPeak: false, confidence: 0 };
     }
-    
-    // UMBRALES ULTRA BAJOS para captar cualquier señal PPG
-    // La señal filtrada pasabanda típicamente tiene rangos de 0.01 a 5
-    if (range < 0.01 || std < 0.005) {
-      return { isPeak: false, confidence: 0 };
-    }
-    
-    // Buscar máximo en la mitad reciente (índices 5-12)
-    let maxIdx = 5;
-    let maxVal = window[5];
-    for (let i = 6; i < 12 && i < window.length; i++) {
-      if (window[i] > maxVal) {
-        maxVal = window[i];
-        maxIdx = i;
-      }
-    }
-    
-    // Umbral adaptativo muy bajo: media + 0.2*std
-    const threshold = mean + std * 0.2;
-    if (maxVal < threshold) {
-      return { isPeak: false, confidence: 0 };
-    }
-    
-    // Verificar máximo local simple
-    const leftIdx = Math.max(0, maxIdx - 2);
-    const rightIdx = Math.min(window.length - 1, maxIdx + 2);
-    
-    let isLocalMax = true;
-    for (let i = leftIdx; i <= rightIdx; i++) {
-      if (i !== maxIdx && window[i] >= maxVal) {
-        isLocalMax = false;
-        break;
-      }
-    }
-    
-    if (!isLocalMax) {
-      return { isPeak: false, confidence: 0 };
-    }
-    
-    // ¡PICO DETECTADO!
-    console.log(`✅ PICO: val=${maxVal.toFixed(2)}, thresh=${threshold.toFixed(2)}, interval=${timeSinceLastPeak}ms`);
-    
-    this.previousPeakTime = this.lastPeakTime;
-    this.lastPeakTime = now;
-    
-    // Guardar intervalo RR
-    if (this.previousPeakTime) {
-      const rr = now - this.previousPeakTime;
-      if (rr >= this.MIN_PEAK_INTERVAL_MS && rr <= this.MAX_PEAK_INTERVAL_MS) {
-        this.rrIntervals.push(rr);
-        if (this.rrIntervals.length > 30) {
-          this.rrIntervals.shift();
+
+    // Verificamos que sea un máximo local estricto
+    // (el valor central es mayor que sus vecinos inmediatos)
+    const centerVal = window[localMaxIdx];
+    if (centerVal > window[localMaxIdx-1] && centerVal > window[localMaxIdx+1]) {
+        
+        // ¡PICO CONFIRMADO!
+        // console.log(`✅ PICO DETECTADO: BPM calc=${60000/timeSinceLastPeak}`);
+        
+        this.previousPeakTime = this.lastPeakTime;
+        this.lastPeakTime = now;
+        
+        // Guardar intervalo RR
+        if (this.previousPeakTime) {
+          const rr = now - this.previousPeakTime;
+          if (rr >= this.MIN_PEAK_INTERVAL_MS && rr <= this.MAX_PEAK_INTERVAL_MS) {
+            this.rrIntervals.push(rr);
+            if (this.rrIntervals.length > 30) {
+              this.rrIntervals.shift();
+            }
+          }
         }
-      }
+        
+        // Calcular confianza basada en qué tanto supera el umbral
+        const confidence = Math.min(1, (max - threshold) / (std || 1));
+        return { isPeak: true, confidence };
     }
     
-    const confidence = Math.min(1, (maxVal - threshold) / (std + 0.01));
-    return { isPeak: true, confidence };
+    return { isPeak: false, confidence: 0 };
   }
 
   private updateBPM(now: number): void {
     if (!this.previousPeakTime) return;
     
     const interval = now - this.previousPeakTime;
+    // Filtro básico de intervalos imposibles
     if (interval < this.MIN_PEAK_INTERVAL_MS || interval > this.MAX_PEAK_INTERVAL_MS) return;
     
     const instantBPM = 60000 / interval;
     
-    // Suavizado
+    // Suavizado del BPM (Media móvil exponencial)
     if (this.smoothBPM === 0) {
       this.smoothBPM = instantBPM;
     } else {
+      // 70% historia, 30% nuevo valor
       this.smoothBPM = this.smoothBPM * 0.7 + instantBPM * 0.3;
     }
     
     this.smoothBPM = Math.max(this.MIN_BPM, Math.min(this.MAX_BPM, this.smoothBPM));
     
     this.bpmBuffer.push(instantBPM);
-    if (this.bpmBuffer.length > 10) {
+    if (this.bpmBuffer.length > 20) { // Buffer un poco más grande
       this.bpmBuffer.shift();
     }
   }
@@ -206,7 +221,7 @@ export class HeartBeatProcessor {
   private vibrate(): void {
     try {
       if (navigator.vibrate) {
-        navigator.vibrate([40, 20, 60]);
+        navigator.vibrate(30); // Vibración corta y seca
       }
     } catch {}
   }
@@ -215,27 +230,31 @@ export class HeartBeatProcessor {
     if (!this.audioContext || !this.audioUnlocked) return;
     
     const now = Date.now();
+    // Evitar solapamiento de sonidos
     if (now - this.lastBeepTime < 300) return;
     
     try {
-      const t = this.audioContext.currentTime;
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
       
-      // Sonido de latido simple
+      const t = this.audioContext.currentTime;
       const osc = this.audioContext.createOscillator();
       const gain = this.audioContext.createGain();
       
+      // Tono "médico" (más agudo y corto)
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(220, t);
-      osc.frequency.exponentialRampToValueAtTime(110, t + 0.1);
+      osc.frequency.setValueAtTime(880, t); // La5
+      osc.frequency.exponentialRampToValueAtTime(440, t + 0.1);
       
-      gain.gain.setValueAtTime(0.5, t);
-      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+      gain.gain.setValueAtTime(0.1, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
       
       osc.connect(gain);
       gain.connect(this.audioContext.destination);
       
       osc.start(t);
-      osc.stop(t + 0.2);
+      osc.stop(t + 0.15);
       
       this.lastBeepTime = now;
     } catch {}
@@ -263,6 +282,9 @@ export class HeartBeatProcessor {
     this.lastPeakTime = null;
     this.previousPeakTime = null;
     this.frameCount = 0;
+    // Resetear filtros
+    this.outputFilter = 0;
+    this.lastInput = 0;
   }
   
   dispose(): void {
