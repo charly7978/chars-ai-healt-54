@@ -14,7 +14,7 @@ const Index = () => {
   // ESTADO ÚNICO Y DEFINITIVO
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
-  const [signalQuality, setSignalQuality] = useState(0);
+  // signalQuality ELIMINADO - entrada directa sin validación de calidad
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: Number.NaN as unknown as number,
     glucose: 0,
@@ -303,7 +303,7 @@ const Index = () => {
     }
     
     setElapsedTime(0);
-    setSignalQuality(0);
+    // signalQuality eliminado
     setCalibrationProgress(0);
     
     // 8. Limpiar video ref
@@ -376,7 +376,7 @@ const Index = () => {
       lastArrhythmiaData: undefined
     });
     setArrhythmiaCount("--");
-    setSignalQuality(0);
+    // signalQuality eliminado
     lastArrhythmiaData.current = null;
     setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
@@ -528,11 +528,8 @@ const Index = () => {
   
   useEffect(() => {
     if (!lastSignal) return;
-
-    setSignalQuality(lastSignal.quality);
     
-    // ELIMINADO: Ya no pasamos valor verde - la calidad de señal determina validez
-    
+    // ENTRADA DIRECTA - sin validación de calidad
     if (!isMonitoring) return;
     
     // Procesar siempre - sin validación de dedo
@@ -658,8 +655,8 @@ const Index = () => {
         {/* VENTANA DE PREVISUALIZACIÓN DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
-          isFingerDetected={lastSignal?.fingerDetected || false}
-          signalQuality={signalQuality}
+          isFingerDetected={true}
+          signalQuality={100}
           isVisible={isCameraOn}
         />
 
@@ -681,8 +678,8 @@ const Index = () => {
           <div className="flex-1">
             <PPGSignalMeter 
               value={heartbeatSignal}
-              quality={lastSignal?.quality || 0}
-              isFingerDetected={lastSignal?.fingerDetected || false}
+              quality={100}
+              isFingerDetected={true}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}

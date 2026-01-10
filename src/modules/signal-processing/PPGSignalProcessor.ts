@@ -33,7 +33,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   async initialize(): Promise<void> {
     this.rawBuffer = [];
     this.filteredBuffer = [];
-    this.smoothedQuality = 85;
     this.bandpassFilter.reset();
   }
 
@@ -77,53 +76,24 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.filteredBuffer.shift();
     }
     
-    // 4. Calcular calidad simple basada en variación
-    const quality = this.calculateSimpleQuality();
-    
-    // 5. Emitir señal
+    // 4. Emitir señal - SIN CALIDAD (entrada directa)
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: rawRed,
       filteredValue: filtered,
-      quality,
-      fingerDetected: true,
+      quality: 100, // Fijo - sin validación de calidad
+      fingerDetected: true, // Siempre true - entrada directa
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex: this.calculatePerfusionIndex(),
       rawGreen: frameData.rawGreen,
       diagnostics: {
-        message: `R=${rawRed.toFixed(0)} F=${filtered.toFixed(1)}`,
-        hasPulsatility: quality > 20,
-        pulsatilityValue: quality / 100
+        message: `R=${rawRed.toFixed(0)} F=${filtered.toFixed(2)}`,
+        hasPulsatility: true,
+        pulsatilityValue: 1
       }
     };
 
     this.onSignalReady(processedSignal);
-  }
-  
-  // Calidad suavizada para estabilidad
-  private smoothedQuality: number = 85;
-  
-  private calculateSimpleQuality(): number {
-    // Verificar que hay señal (DC > 50 indica dedo presente)
-    const stats = this.frameProcessor.getRGBStats();
-    const hasSignal = stats.redDC > 50;
-    
-    let targetQuality: number;
-    
-    if (!hasSignal) {
-      targetQuality = 15;
-    } else if (this.rawBuffer.length < 10) {
-      targetQuality = 80; // Inicializando
-    } else {
-      // Mientras haya señal, mantener calidad alta
-      targetQuality = 88;
-    }
-    
-    // Suavizado exponencial para evitar fluctuaciones
-    const alpha = 0.08;
-    this.smoothedQuality = alpha * targetQuality + (1 - alpha) * this.smoothedQuality;
-    
-    return Math.round(this.smoothedQuality);
   }
   
   private calculatePerfusionIndex(): number {
@@ -136,7 +106,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.rawBuffer = [];
     this.filteredBuffer = [];
     this.frameCount = 0;
-    this.smoothedQuality = 85;
     this.bandpassFilter.reset();
     this.frameProcessor.reset();
   }
