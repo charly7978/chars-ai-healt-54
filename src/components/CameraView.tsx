@@ -9,11 +9,10 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG - MODO PROCESAMIENTO
- * * - Captura video RAW
- * - Procesa frames en un canvas oculto
- * - Extrae el promedio del canal ROJO
- * - Invierte la señal para detectar valles como picos
+ * CÁMARA PPG - VERSIÓN FINAL OPTIMIZADA
+ * 1. Lee solo el centro de la imagen (ROI 40x40px).
+ * 2. Invierte la señal (Sangre = Oscuridad = Pico).
+ * 3. Usa requestAnimationFrame para sincronía perfecta.
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
@@ -38,43 +37,46 @@ const CameraView: React.FC<CameraViewProps> = ({
       const video = videoRef.current;
       const canvas = canvasRef.current;
       
-      // Verificamos que el video tenga datos reales
+      // Solo procesamos si hay video real corriendo
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
         if (ctx) {
-          // 1. Dibujar frame actual en canvas pequeño (50x50 es rápido y suficiente)
-          ctx.drawImage(video, 0, 0, 50, 50);
+          // 1. OPTIMIZACIÓN: Leer solo el CENTRO de la imagen
+          // El flash ilumina mejor el centro. Los bordes tienen ruido.
+          // Calculamos el centro exacto del video.
+          const roiSize = 40; // Región de interés de 40x40 píxeles
+          const centerX = (video.videoWidth - roiSize) / 2;
+          const centerY = (video.videoHeight - roiSize) / 2;
           
-          // 2. Obtener datos de píxeles crudos
-          const frame = ctx.getImageData(0, 0, 50, 50);
+          // Dibujamos solo ese pedacito en nuestro canvas de 40x40
+          ctx.drawImage(video, centerX, centerY, roiSize, roiSize, 0, 0, roiSize, roiSize);
+          
+          // 2. Obtener datos de píxeles
+          const frame = ctx.getImageData(0, 0, roiSize, roiSize);
           const data = frame.data;
           let sumRed = 0;
           let count = 0;
 
-          // 3. Recorrer píxeles (Stride = 4 bytes: R, G, B, A)
-          // Optimizamos saltando de 4 en 4 para leer solo píxeles alternos si fuera necesario,
-          // pero 50x50 es pequeño, así que leemos todo.
+          // 3. Promediar canal ROJO
           for (let i = 0; i < data.length; i += 4) {
-            sumRed += data[i]; // Canal Rojo
+            sumRed += data[i];
             count++;
           }
 
-          // 4. Calcular promedio
           const averageRed = sumRed / count;
 
-          // 5. IMPORTANTE: Invertimos el valor (-averageRed).
-          // Cuando el corazón bombea, hay más sangre -> la imagen es MÁS OSCURA (menor valor rojo).
-          // Al invertirlo, convertimos ese oscurecimiento en un PICO positivo para el algoritmo.
-          // Solo enviamos si hay suficiente luz (>10) para evitar ruido en oscuridad total.
-          if (averageRed > 5) { 
+          // 4. INVERTIR SEÑAL Y ENVIAR
+          // Importante: Si hay muy poca luz (averageRed < 1), no enviamos nada para no meter ruido.
+          if (averageRed > 1) { 
+             // Enviamos negativo porque el latido oscurece la imagen
              onFrameData(-averageRed); 
           }
         }
       }
     }
     
-    // Bucle continuo mientras se esté monitoreando
+    // Bucle continuo
     if (isMonitoring) {
       requestRef.current = requestAnimationFrame(processFrame);
     }
@@ -94,9 +96,9 @@ const CameraView: React.FC<CameraViewProps> = ({
       if (streamRef.current) {
         const tracks = streamRef.current.getTracks();
         for (const track of tracks) {
-          // Apagar flash antes de detener
           if (track.kind === 'video') {
             try {
+              // Intentar apagar flash
               const caps: any = track.getCapabilities?.() || {};
               if (caps.torch) {
                 await track.applyConstraints({ advanced: [{ torch: false }] } as any);
@@ -128,14 +130,14 @@ const CameraView: React.FC<CameraViewProps> = ({
       }
 
       try {
-        // Configuración óptima para PPG: FrameRate alto si es posible, resolución baja
+        // Configuración óptima para PPG
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
             facingMode: { ideal: "environment" },
-            width: { ideal: 192 }, // Resolución baja para procesar rápido
+            width: { ideal: 192 }, // Baja resolución = más rápido
             height: { ideal: 144 },
-            frameRate: { ideal: 60, min: 30 } // Intentar 60fps para mejor precisión temporal
+            frameRate: { ideal: 60, min: 30 } // Prioridad a los FPS
           }
         });
         
@@ -149,7 +151,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          // Esperar a que reproduzca para iniciar procesamiento
           await videoRef.current.play().catch(() => {});
         }
 
@@ -157,7 +158,6 @@ const CameraView: React.FC<CameraViewProps> = ({
         const track = stream.getVideoTracks()[0];
         if (track) {
           await globalCameraController.setTrack(track);
-          // Intentar forzar torch
           try {
              await track.applyConstraints({ advanced: [{ torch: true }] } as any);
           } catch (e) {
@@ -168,7 +168,7 @@ const CameraView: React.FC<CameraViewProps> = ({
         onStreamReadyRef.current?.(stream);
         isStartingRef.current = false;
 
-        // INICIAR BUCLE DE PROCESAMIENTO
+        // INICIAR BUCLE
         requestRef.current = requestAnimationFrame(processFrame);
 
       } catch (err) {
@@ -192,11 +192,11 @@ const CameraView: React.FC<CameraViewProps> = ({
 
   return (
     <>
-      {/* Canvas Oculto para procesamiento de píxeles */}
+      {/* Canvas oculto pequeño para procesar el ROI */}
       <canvas 
         ref={canvasRef} 
-        width={50} 
-        height={50} 
+        width={40} 
+        height={40} 
         style={{ display: 'none' }} 
       />
 
@@ -211,11 +211,8 @@ const CameraView: React.FC<CameraViewProps> = ({
           width: "100%",
           height: "100%",
           objectFit: "cover",
-          // Opacidad 1 para ver el video (útil para debug visual del usuario)
-          // Puedes cambiarlo a 0.01 si prefieres que no se vea
-          opacity: 1, 
+          opacity: 1, // Visible para que el usuario pueda apuntar
           pointerEvents: "none",
-          transform: "none",
         }}
       />
     </>
@@ -223,4 +220,3 @@ const CameraView: React.FC<CameraViewProps> = ({
 };
 
 export default CameraView;
-      
