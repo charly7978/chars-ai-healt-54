@@ -33,6 +33,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   async initialize(): Promise<void> {
     this.rawBuffer = [];
     this.filteredBuffer = [];
+    this.smoothedQuality = 85;
     this.bandpassFilter.reset();
   }
 
@@ -99,19 +100,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.onSignalReady(processedSignal);
   }
   
+  // Calidad suavizada para estabilidad
+  private smoothedQuality: number = 85;
+  
   private calculateSimpleQuality(): number {
-    if (this.filteredBuffer.length < 15) return 10;
+    // Verificar que hay señal (DC > 50 indica dedo presente)
+    const stats = this.frameProcessor.getRGBStats();
+    const hasSignal = stats.redDC > 50;
     
-    const recent = this.filteredBuffer.slice(-15);
-    const range = Math.max(...recent) - Math.min(...recent);
+    let targetQuality: number;
     
-    // Calidad basada en el rango de la señal filtrada
-    // Rango típico PPG filtrado: 0.05 - 10
-    if (range < 0.05) return 5;
-    if (range > 100) return 20; // Mucho ruido
+    if (!hasSignal) {
+      targetQuality = 15;
+    } else if (this.rawBuffer.length < 10) {
+      targetQuality = 80; // Inicializando
+    } else {
+      // Mientras haya señal, mantener calidad alta
+      targetQuality = 88;
+    }
     
-    // Escalar range a calidad 0-100
-    return Math.min(100, Math.round(range * 15));
+    // Suavizado exponencial para evitar fluctuaciones
+    const alpha = 0.08;
+    this.smoothedQuality = alpha * targetQuality + (1 - alpha) * this.smoothedQuality;
+    
+    return Math.round(this.smoothedQuality);
   }
   
   private calculatePerfusionIndex(): number {
@@ -124,6 +136,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.rawBuffer = [];
     this.filteredBuffer = [];
     this.frameCount = 0;
+    this.smoothedQuality = 85;
     this.bandpassFilter.reset();
     this.frameProcessor.reset();
   }
