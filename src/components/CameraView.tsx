@@ -1,104 +1,37 @@
 import React, { useRef, useEffect } from "react";
-import { globalCameraController } from "@/modules/camera/CameraController";
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
-  // Callback vital: Envía el valor numérico del brillo rojo al procesador
-  onFrameData?: (averageRed: number) => void; 
   isMonitoring: boolean;
 }
 
 /**
- * CÁMARA PPG - VERSIÓN FINAL OPTIMIZADA
- * 1. Lee solo el centro de la imagen (ROI 40x40px).
- * 2. Invierte la señal (Sangre = Oscuridad = Pico).
- * 3. Usa requestAnimationFrame para sincronía perfecta.
+ * CÁMARA PPG - SOLO MANEJA LA CÁMARA Y EL FLASH
+ * El procesamiento de frames se hace en Index.tsx via useSignalProcessor
  */
 const CameraView: React.FC<CameraViewProps> = ({
   onStreamReady,
-  onFrameData,
   isMonitoring,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const requestRef = useRef<number>();
   const isStartingRef = useRef(false);
   const onStreamReadyRef = useRef(onStreamReady);
+  const flashRetryRef = useRef<number>(0);
   
-  // Actualizar refs para evitar dependencias en useEffect
   useEffect(() => {
     onStreamReadyRef.current = onStreamReady;
   }, [onStreamReady]);
 
-  // ========== LÓGICA DE PROCESAMIENTO DE IMAGEN ==========
-  const processFrame = () => {
-    if (videoRef.current && canvasRef.current && onFrameData) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      
-      // Solo procesamos si hay video real corriendo
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-        if (ctx) {
-          // 1. OPTIMIZACIÓN: Leer solo el CENTRO de la imagen
-          // El flash ilumina mejor el centro. Los bordes tienen ruido.
-          // Calculamos el centro exacto del video.
-          const roiSize = 40; // Región de interés de 40x40 píxeles
-          const centerX = (video.videoWidth - roiSize) / 2;
-          const centerY = (video.videoHeight - roiSize) / 2;
-          
-          // Dibujamos solo ese pedacito en nuestro canvas de 40x40
-          ctx.drawImage(video, centerX, centerY, roiSize, roiSize, 0, 0, roiSize, roiSize);
-          
-          // 2. Obtener datos de píxeles
-          const frame = ctx.getImageData(0, 0, roiSize, roiSize);
-          const data = frame.data;
-          let sumRed = 0;
-          let count = 0;
-
-          // 3. Promediar canal ROJO
-          for (let i = 0; i < data.length; i += 4) {
-            sumRed += data[i];
-            count++;
-          }
-
-          const averageRed = sumRed / count;
-
-          // 4. INVERTIR SEÑAL Y ENVIAR
-          // Importante: Si hay muy poca luz (averageRed < 1), no enviamos nada para no meter ruido.
-          if (averageRed > 1) { 
-             // Enviamos negativo porque el latido oscurece la imagen
-             onFrameData(-averageRed); 
-          }
-        }
-      }
-    }
-    
-    // Bucle continuo
-    if (isMonitoring) {
-      requestRef.current = requestAnimationFrame(processFrame);
-    }
-  };
-
-  // ========== GESTIÓN DE CÁMARA ==========
   useEffect(() => {
     let mounted = true;
     
     const stopCamera = async () => {
-      // Detener loop de procesamiento
-      if (requestRef.current) {
-        cancelAnimationFrame(requestRef.current);
-        requestRef.current = undefined;
-      }
-
       if (streamRef.current) {
         const tracks = streamRef.current.getTracks();
         for (const track of tracks) {
           if (track.kind === 'video') {
             try {
-              // Intentar apagar flash
               const caps: any = track.getCapabilities?.() || {};
               if (caps.torch) {
                 await track.applyConstraints({ advanced: [{ torch: false }] } as any);
@@ -115,7 +48,26 @@ const CameraView: React.FC<CameraViewProps> = ({
       }
       
       isStartingRef.current = false;
-      globalCameraController.reset();
+      flashRetryRef.current = 0;
+    };
+
+    const enableFlash = async (track: MediaStreamTrack) => {
+      // Intentar activar flash múltiples veces
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const caps: any = track.getCapabilities?.() || {};
+          if (caps.torch) {
+            await track.applyConstraints({ advanced: [{ torch: true }] } as any);
+            console.log('🔦 Flash ACTIVADO en intento', attempt + 1);
+            return true;
+          }
+        } catch (e) {
+          console.warn(`Flash intento ${attempt + 1} falló:`, e);
+          await new Promise(r => setTimeout(r, 200));
+        }
+      }
+      console.warn('⚠️ No se pudo activar el flash después de 3 intentos');
+      return false;
     };
 
     const startCamera = async () => {
@@ -130,14 +82,14 @@ const CameraView: React.FC<CameraViewProps> = ({
       }
 
       try {
-        // Configuración óptima para PPG
+        // Configuración OPTIMIZADA para PPG con flash
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 192 }, // Baja resolución = más rápido
-            height: { ideal: 144 },
-            frameRate: { ideal: 60, min: 30 } // Prioridad a los FPS
+            facingMode: { exact: "environment" }, // FORZAR cámara trasera
+            width: { ideal: 640, min: 320 },
+            height: { ideal: 480, min: 240 },
+            frameRate: { ideal: 30, min: 24 }
           }
         });
         
@@ -151,28 +103,68 @@ const CameraView: React.FC<CameraViewProps> = ({
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => {});
+          
+          // Esperar a que el video esté listo antes de continuar
+          await new Promise<void>((resolve) => {
+            if (videoRef.current) {
+              videoRef.current.onloadedmetadata = () => {
+                videoRef.current?.play().then(resolve).catch(resolve);
+              };
+            } else {
+              resolve();
+            }
+          });
         }
 
-        // Encender Flash (Torch)
+        // ACTIVAR FLASH - crítico para PPG
         const track = stream.getVideoTracks()[0];
         if (track) {
-          await globalCameraController.setTrack(track);
-          try {
-             await track.applyConstraints({ advanced: [{ torch: true }] } as any);
-          } catch (e) {
-             console.warn("No se pudo activar el flash nativamente", e);
-          }
+          // Esperar un poco para que la cámara se estabilice
+          await new Promise(r => setTimeout(r, 300));
+          await enableFlash(track);
         }
 
+        console.log('📹 Cámara lista:', videoRef.current?.videoWidth, 'x', videoRef.current?.videoHeight);
         onStreamReadyRef.current?.(stream);
         isStartingRef.current = false;
 
-        // INICIAR BUCLE
-        requestRef.current = requestAnimationFrame(processFrame);
-
       } catch (err) {
         console.error('❌ Error cámara:', err);
+        
+        // Fallback: intentar sin "exact" en facingMode
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: "environment",
+              width: { ideal: 640 },
+              height: { ideal: 480 }
+            }
+          });
+          
+          if (!mounted) {
+            fallbackStream.getTracks().forEach(t => t.stop());
+            isStartingRef.current = false;
+            return;
+          }
+          
+          streamRef.current = fallbackStream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = fallbackStream;
+            await videoRef.current.play().catch(() => {});
+          }
+          
+          const track = fallbackStream.getVideoTracks()[0];
+          if (track) {
+            await new Promise(r => setTimeout(r, 300));
+            await enableFlash(track);
+          }
+          
+          onStreamReadyRef.current?.(fallbackStream);
+        } catch (fallbackErr) {
+          console.error('❌ Error cámara fallback:', fallbackErr);
+        }
+        
         isStartingRef.current = false;
       }
     };
@@ -187,35 +179,26 @@ const CameraView: React.FC<CameraViewProps> = ({
       mounted = false;
       stopCamera();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMonitoring]);
 
   return (
-    <>
-      {/* Canvas oculto pequeño para procesar el ROI */}
-      <canvas 
-        ref={canvasRef} 
-        width={40} 
-        height={40} 
-        style={{ display: 'none' }} 
-      />
-
-      <video
-        ref={videoRef}
-        playsInline
-        muted
-        autoPlay
-        style={{
-          position: "absolute",
-          inset: 0,
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          opacity: 1, // Visible para que el usuario pueda apuntar
-          pointerEvents: "none",
-        }}
-      />
-    </>
+    <video
+      ref={videoRef}
+      playsInline
+      muted
+      autoPlay
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+        transform: "none",
+        WebkitTransform: "none",
+        opacity: 1,
+        pointerEvents: "none",
+      }}
+    />
   );
 };
 

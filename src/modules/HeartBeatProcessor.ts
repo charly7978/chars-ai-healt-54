@@ -121,7 +121,9 @@ export class HeartBeatProcessor {
     if (peakResult.isPeak) {
       this.updateBPM(now);
       this.playBeep();
+      // VIBRACIÓN FUERTE para que se sienta
       this.vibrate();
+      console.log(`💓 PICO DETECTADO! BPM=${Math.round(this.smoothBPM)} Val=${normalizedValue.toFixed(1)}`);
     }
     
     return {
@@ -179,7 +181,14 @@ export class HeartBeatProcessor {
   }
 
   private vibrate(): void {
-    try { if (navigator.vibrate) navigator.vibrate(30); } catch {}
+    try { 
+      if (navigator.vibrate) {
+        // Vibración más larga y fuerte: 50ms
+        navigator.vibrate(50); 
+      }
+    } catch (e) {
+      console.warn('Vibración no soportada:', e);
+    }
   }
 
   private async playBeep(): Promise<void> {
