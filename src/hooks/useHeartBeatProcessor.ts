@@ -5,6 +5,7 @@ interface HeartBeatResult {
   bpm: number;
   confidence: number;
   isPeak: boolean;
+  filteredValue: number;
   arrhythmiaCount: number;
   signalQuality: number;
   rrData?: {
@@ -56,6 +57,7 @@ export const useHeartBeatProcessor = () => {
         bpm: currentBPM,
         confidence: 0,
         isPeak: false,
+        filteredValue: 0,
         arrhythmiaCount: 0,
         signalQuality: 0,
         rrData: { intervals: [], lastPeakTime: null }
@@ -70,6 +72,7 @@ export const useHeartBeatProcessor = () => {
         bpm: currentBPM,
         confidence,
         isPeak: false,
+        filteredValue: 0,
         arrhythmiaCount: 0,
         signalQuality,
         rrData: { intervals: [], lastPeakTime: null }
@@ -100,6 +103,7 @@ export const useHeartBeatProcessor = () => {
       bpm: result.bpm,
       confidence: result.confidence,
       isPeak: result.isPeak,
+      filteredValue: result.filteredValue,
       arrhythmiaCount: result.arrhythmiaCount,
       signalQuality: signalQuality,
       rrData

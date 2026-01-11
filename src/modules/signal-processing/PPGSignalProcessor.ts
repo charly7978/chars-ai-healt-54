@@ -3,12 +3,13 @@ import { BandpassFilter } from './BandpassFilter';
 import { FrameProcessor } from './FrameProcessor';
 
 /**
- * PROCESADOR PPG - MODO SIMPLE
+ * PROCESADOR PPG - FLUJO ÚNICO Y LIMPIO
  * 
- * Flujo directo:
- * Frame → Extracción RGB → Filtro Pasabanda → Señal
+ * CADENA DE PROCESAMIENTO:
+ * Frame → Extracción Rojo → Inversión → Filtro Pasabanda → Señal
  * 
- * SIN calibración, SIN detección de dedo
+ * NO hay filtros duplicados
+ * NO hay detección de calidad (entrada directa)
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -21,37 +22,42 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private filteredBuffer: number[] = [];
   
   private frameCount: number = 0;
+  private lastLogTime: number = 0;
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    this.bandpassFilter = new BandpassFilter(30); // 30 fps
+    this.bandpassFilter = new BandpassFilter(30); // 30 FPS
     this.frameProcessor = new FrameProcessor();
   }
 
   async initialize(): Promise<void> {
     this.rawBuffer = [];
     this.filteredBuffer = [];
+    this.frameCount = 0;
     this.bandpassFilter.reset();
+    this.frameProcessor.reset();
   }
 
   start(): void {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.initialize();
+    console.log('🚀 PPGSignalProcessor iniciado');
   }
 
   stop(): void {
     this.isProcessing = false;
+    console.log('🛑 PPGSignalProcessor detenido');
   }
 
   async calibrate(): Promise<boolean> {
-    return true; // Sin calibración
+    return true;
   }
 
   /**
-   * PROCESAMIENTO DIRECTO - Sin validaciones
+   * PROCESAR UN FRAME DE IMAGEN
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
@@ -59,39 +65,43 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount++;
     const timestamp = Date.now();
     
-    // 1. Extraer RGB crudo
+    // 1. Extraer valores RGB crudos
     const frameData = this.frameProcessor.extractFrameData(imageData);
     const rawRed = frameData.rawRed ?? frameData.redValue;
     
-    // 2. Guardar valor crudo
-    this.rawBuffer.push(rawRed);
+    // 2. INVERTIR señal: más sangre = menos luz reflejada = valor más bajo
+    // Al invertir, los latidos serán picos positivos
+    const invertedRed = 255 - rawRed;
+    
+    // 3. Guardar valor crudo (invertido)
+    this.rawBuffer.push(invertedRed);
     if (this.rawBuffer.length > this.BUFFER_SIZE) {
       this.rawBuffer.shift();
     }
     
-    // 3. INVERTIR la señal roja: cuando hay más sangre, el rojo BAJA
-    //    Para que los picos cardíacos sean POSITIVOS, invertimos
-    const invertedRed = 255 - rawRed;
-    
-    // 4. Aplicar filtro pasabanda (0.3-5 Hz = 18-300 BPM)
+    // 4. Aplicar filtro pasabanda (0.3-5 Hz)
+    // Elimina DC (iluminación base) y ruido de alta frecuencia
     const filtered = this.bandpassFilter.filter(invertedRed);
+    
     this.filteredBuffer.push(filtered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
       this.filteredBuffer.shift();
     }
     
-    // 5. Log cada 2 segundos para debug
-    if (this.frameCount % 60 === 0) {
-      console.log(`💓 PPG: Raw=${rawRed.toFixed(0)} Inv=${invertedRed.toFixed(0)} Filt=${filtered.toFixed(3)}`);
+    // 5. Log cada segundo
+    const now = Date.now();
+    if (now - this.lastLogTime >= 1000) {
+      this.lastLogTime = now;
+      console.log(`📷 PPG: Raw=${rawRed.toFixed(0)} Inv=${invertedRed.toFixed(0)} Filt=${filtered.toFixed(3)} Frames=${this.frameCount}`);
     }
     
-    // 6. Emitir señal - SIN CALIDAD (entrada directa)
+    // 6. Emitir señal procesada
     const processedSignal: ProcessedSignal = {
       timestamp,
-      rawValue: invertedRed, // Valor invertido
-      filteredValue: filtered,
-      quality: 100, // Fijo - sin validación de calidad
-      fingerDetected: true, // Siempre true - entrada directa
+      rawValue: invertedRed,
+      filteredValue: filtered, // Este valor va al HeartBeatProcessor
+      quality: 100,
+      fingerDetected: true,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex: this.calculatePerfusionIndex(),
       rawGreen: frameData.rawGreen,
@@ -115,6 +125,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.rawBuffer = [];
     this.filteredBuffer = [];
     this.frameCount = 0;
+    this.lastLogTime = 0;
     this.bandpassFilter.reset();
     this.frameProcessor.reset();
   }

@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import VitalSign from "@/components/VitalSign";
-import CameraView from "@/components/CameraView";
+import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
@@ -11,10 +11,9 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
-  // ESTADO ÚNICO Y DEFINITIVO
+  // ESTADOS PRINCIPALES
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
-  // signalQuality ELIMINADO - entrada directa sin validación de calidad
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: Number.NaN as unknown as number,
     glucose: 0,
@@ -35,27 +34,21 @@ const Index = () => {
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [rrIntervals, setRRIntervals] = useState<number[]>([]);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   
   // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [rrIntervals, setRRIntervals] = useState<number[]>([]);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const cameraRef = useRef<CameraViewHandle>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const frameLoopRef = useRef<number | null>(null);
+  const isProcessingRef = useRef(false);
   
-  // CONTROL DE ESTADO
-  const systemState = useRef<'IDLE' | 'STARTING' | 'ACTIVE' | 'STOPPING' | 'CALIBRATING'>('IDLE');
-  const sessionIdRef = useRef<string>("");
-  const initializationLock = useRef<boolean>(false);
-  
-  // Referencias para frame loop
-  const frameLoopIdRef = useRef<number | null>(null);
-  const frameLoopActiveRef = useRef<boolean>(false);
-  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const tempCtxRef = useRef<CanvasRenderingContext2D | null>(null);
-  
-  // HOOKS - Sin MultiChannel
+  // HOOKS DE PROCESAMIENTO
   const { 
     startProcessing, 
     stopProcessing, 
@@ -63,14 +56,12 @@ const Index = () => {
     processFrame, 
     isProcessing, 
     framesProcessed,
-    debugInfo: signalDebugInfo
   } = useSignalProcessor();
   
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState,
     reset: resetHeartBeat,
-    debugInfo: heartDebugInfo
   } = useHeartBeatProcessor();
   
   const { 
@@ -83,29 +74,22 @@ const Index = () => {
     getCalibrationProgress
   } = useVitalSignsProcessor();
 
-  // INICIALIZACIÓN ÚNICA
+  // CANVAS PARA CAPTURA
   useEffect(() => {
-    if (initializationLock.current) return;
-    
-    initializationLock.current = true;
-    const t = Date.now().toString(36);
-    const c1 = (performance.now() | 0).toString(36);
-    sessionIdRef.current = `main_${t}_${c1}`;
-    
-    return () => {
-      frameLoopActiveRef.current = false;
-      if (frameLoopIdRef.current) {
-        cancelAnimationFrame(frameLoopIdRef.current);
-        frameLoopIdRef.current = null;
-      }
-      initializationLock.current = false;
-    };
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+      canvasRef.current.width = 320;
+      canvasRef.current.height = 240;
+      ctxRef.current = canvasRef.current.getContext('2d', { 
+        willReadFrequently: true,
+        alpha: false 
+      });
+    }
   }, []);
 
   // PANTALLA COMPLETA
   const enterFullScreen = async () => {
     if (isFullscreen) return;
-    
     try {
       const docEl = document.documentElement;
       if (docEl.requestFullscreen) {
@@ -113,11 +97,9 @@ const Index = () => {
       } else if ((docEl as any).webkitRequestFullscreen) {
         await (docEl as any).webkitRequestFullscreen();
       }
-      
       if (screen.orientation?.lock) {
         await screen.orientation.lock('portrait').catch(() => {});
       }
-      
       setIsFullscreen(true);
     } catch (err) {
       console.log('Error pantalla completa:', err);
@@ -126,17 +108,15 @@ const Index = () => {
   
   const exitFullScreen = () => {
     if (!isFullscreen) return;
-    
     try {
       if (document.exitFullscreen) {
         document.exitFullscreen();
       } else if ((document as any).webkitExitFullscreen) {
         (document as any).webkitExitFullscreen();
       }
-      
       screen.orientation?.unlock();
       setIsFullscreen(false);
-    } catch (err) {}
+    } catch {}
   };
 
   useEffect(() => {
@@ -156,18 +136,14 @@ const Index = () => {
       clearTimeout(timer);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      exitFullScreen();
     };
   }, []);
 
   // PREVENIR SCROLL
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
-    const options = { passive: false };
-    
-    document.body.addEventListener('touchmove', preventScroll, options);
-    document.body.addEventListener('scroll', preventScroll, options);
-
+    document.body.addEventListener('touchmove', preventScroll, { passive: false });
+    document.body.addEventListener('scroll', preventScroll, { passive: false });
     return () => {
       document.body.removeEventListener('touchmove', preventScroll);
       document.body.removeEventListener('scroll', preventScroll);
@@ -182,46 +158,82 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  // INICIO
-  const startMonitoring = () => {
-    if (systemState.current !== 'IDLE') {
-      console.log('⚠️ No se puede iniciar, estado actual:', systemState.current);
+  // === LOOP DE CAPTURA DE FRAMES ===
+  const startFrameLoop = useCallback(() => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (!canvas || !ctx) {
+      isProcessingRef.current = false;
       return;
     }
     
+    let lastFrameTime = 0;
+    const TARGET_FPS = 30;
+    const FRAME_INTERVAL = 1000 / TARGET_FPS;
+    
+    const captureFrame = () => {
+      if (!isProcessingRef.current) return;
+      
+      const video = cameraRef.current?.getVideoElement();
+      if (!video || video.readyState < 2 || video.videoWidth === 0) {
+        frameLoopRef.current = requestAnimationFrame(captureFrame);
+        return;
+      }
+      
+      const now = performance.now();
+      if (now - lastFrameTime >= FRAME_INTERVAL) {
+        try {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          processFrame(imageData);
+          lastFrameTime = now;
+        } catch (e) {
+          console.error('Error capturando frame:', e);
+        }
+      }
+      
+      frameLoopRef.current = requestAnimationFrame(captureFrame);
+    };
+    
+    console.log('🎬 Iniciando loop de captura');
+    frameLoopRef.current = requestAnimationFrame(captureFrame);
+  }, [processFrame]);
+
+  const stopFrameLoop = useCallback(() => {
+    isProcessingRef.current = false;
+    if (frameLoopRef.current) {
+      cancelAnimationFrame(frameLoopRef.current);
+      frameLoopRef.current = null;
+    }
+    console.log('🛑 Loop de captura detenido');
+  }, []);
+
+  // === INICIO DE MONITOREO ===
+  const startMonitoring = useCallback(() => {
+    if (isMonitoring) return;
+    
     console.log('🚀 Iniciando monitoreo...');
-    systemState.current = 'STARTING';
     
     if (navigator.vibrate) {
       navigator.vibrate([200]);
     }
-    
-    // Reset previo para asegurar estado limpio
-    frameLoopActiveRef.current = false;
-    if (frameLoopIdRef.current) {
-      cancelAnimationFrame(frameLoopIdRef.current);
-      frameLoopIdRef.current = null;
-    }
-    videoElementRef.current = null;
     
     enterFullScreen();
     setShowResults(false);
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // Iniciar procesador ANTES de encender cámara
+    // Iniciar procesamiento
     startProcessing();
-    
-    // Encender cámara (esto disparará handleStreamReady)
     setIsCameraOn(true);
     setIsMonitoring(true);
     
-    startAutoCalibration();
-    
-    // Limpiar timer previo si existe
+    // Timer de medición
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
-      measurementTimerRef.current = null;
     }
     
     measurementTimerRef.current = window.setInterval(() => {
@@ -235,65 +247,73 @@ const Index = () => {
       });
     }, 1000);
     
-    systemState.current = 'ACTIVE';
-    console.log('✅ Monitoreo activo');
-  };
-
-  const startAutoCalibration = () => {
-    if (isCalibrating) return;
-    
-    // NO cambiar systemState - mantener ACTIVE para que el loop siga corriendo
+    // Calibración automática
     setIsCalibrating(true);
     startCalibration();
+    setTimeout(() => setIsCalibrating(false), 3000);
     
-    setTimeout(() => {
-      setIsCalibrating(false);
-    }, 3000);
-  };
+  }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
 
-  const finalizeMeasurement = () => {
-    if (systemState.current === 'STOPPING' || systemState.current === 'IDLE') {
-      return;
-    }
+  // === CUANDO LA CÁMARA ESTÁ LISTA ===
+  const handleStreamReady = useCallback((stream: MediaStream) => {
+    console.log('📹 Stream recibido');
+    setCameraStream(stream);
     
-    systemState.current = 'STOPPING';
+    // Esperar a que el video esté listo y comenzar captura
+    setTimeout(() => {
+      const video = cameraRef.current?.getVideoElement();
+      if (video && video.readyState >= 2) {
+        console.log('✅ Video listo:', video.videoWidth, 'x', video.videoHeight);
+        startFrameLoop();
+      } else {
+        // Reintentar
+        const checkReady = setInterval(() => {
+          const v = cameraRef.current?.getVideoElement();
+          if (v && v.readyState >= 2 && v.videoWidth > 0) {
+            clearInterval(checkReady);
+            console.log('✅ Video listo (retry):', v.videoWidth, 'x', v.videoHeight);
+            startFrameLoop();
+          }
+        }, 100);
+        
+        // Timeout después de 5 segundos
+        setTimeout(() => clearInterval(checkReady), 5000);
+      }
+    }, 500);
+  }, [startFrameLoop]);
+
+  // === FINALIZAR MEDICIÓN ===
+  const finalizeMeasurement = useCallback(() => {
+    if (!isMonitoring) return;
+    
     console.log('🛑 Finalizando medición...');
     
-    // 1. PRIMERO: Detener el loop de frames
-    frameLoopActiveRef.current = false;
-    if (frameLoopIdRef.current) {
-      cancelAnimationFrame(frameLoopIdRef.current);
-      frameLoopIdRef.current = null;
-    }
+    // Detener loop primero
+    stopFrameLoop();
     
-    // 2. Detener timer
+    // Detener timer
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
     }
     
-    // 3. Detener procesadores ANTES de cambiar estados
+    // Detener procesadores
     stopProcessing();
     
     if (isCalibrating) {
       forceCalibrationCompletion();
     }
     
-    // 4. Guardar resultados antes de resetear
     const savedResults = resetVitalSigns();
     
-    // 5. Detener cámara (cambiando isCameraOn)
+    // Detener cámara
     setIsCameraOn(false);
     
-    // 6. Limpiar stream manualmente
     if (cameraStream) {
-      cameraStream.getTracks().forEach(track => {
-        try { track.stop(); } catch {}
-      });
+      cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
     }
     
-    // 7. Actualizar estados UI
     setIsMonitoring(false);
     setIsCalibrating(false);
     
@@ -303,58 +323,33 @@ const Index = () => {
     }
     
     setElapsedTime(0);
-    // signalQuality eliminado
     setCalibrationProgress(0);
     
-    // 8. Limpiar video ref
-    videoElementRef.current = null;
-    
-    systemState.current = 'IDLE';
-    console.log('✅ Medición finalizada correctamente');
-  };
+    console.log('✅ Medición finalizada');
+  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns]);
 
-  const handleReset = () => {
-    console.log('🔄 Reset completo iniciando...');
-    systemState.current = 'STOPPING';
+  // === RESET COMPLETO ===
+  const handleReset = useCallback(() => {
+    console.log('🔄 Reset completo...');
     
-    // 1. PRIMERO: Detener el loop de frames
-    frameLoopActiveRef.current = false;
-    if (frameLoopIdRef.current) {
-      cancelAnimationFrame(frameLoopIdRef.current);
-      frameLoopIdRef.current = null;
-    }
+    stopFrameLoop();
     
-    // 2. Detener timer
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
       measurementTimerRef.current = null;
     }
     
-    // 3. Detener procesadores PRIMERO
     stopProcessing();
     fullResetVitalSigns();
     resetHeartBeat();
     
-    // 4. Detener cámara
     setIsCameraOn(false);
     
-    // 5. Limpiar stream manualmente
     if (cameraStream) {
-      cameraStream.getTracks().forEach(track => {
-        try { track.stop(); } catch {}
-      });
+      cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
     }
     
-    // 6. Limpiar canvas
-    if (tempCtxRef.current && tempCanvasRef.current) {
-      tempCtxRef.current.clearRect(0, 0, tempCanvasRef.current.width, tempCanvasRef.current.height);
-    }
-    
-    // 7. Limpiar video ref
-    videoElementRef.current = null;
-    
-    // 8. Reset todos los estados
     setIsMonitoring(false);
     setShowResults(false);
     setIsCalibrating(false);
@@ -376,176 +371,32 @@ const Index = () => {
       lastArrhythmiaData: undefined
     });
     setArrhythmiaCount("--");
-    // signalQuality eliminado
     lastArrhythmiaData.current = null;
     setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
     
-    systemState.current = 'IDLE';
     console.log('✅ Reset completado');
-  };
+  }, [cameraStream, stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
 
-  // MANEJO DEL STREAM - MEJORADO PARA ROBUSTEZ
-  const videoElementRef = useRef<HTMLVideoElement | null>(null);
-  
-  const handleStreamReady = (stream: MediaStream) => {
-    setCameraStream(stream);
-    
-    // Permitir iniciar si está ACTIVE o STARTING (no bloquear por calibración)
-    if (!isMonitoring || (systemState.current !== 'ACTIVE' && systemState.current !== 'STARTING')) return;
-    
-    if (frameLoopActiveRef.current) return;
-    
-    const videoTrack = stream.getVideoTracks()[0];
-    
-    // Activar flash si está disponible
-    if (videoTrack?.getCapabilities?.()?.torch) {
-      videoTrack.applyConstraints({
-        advanced: [{ torch: true }]
-      }).catch(() => {});
-    }
-    
-    // Crear canvas temporal para captura
-    if (!tempCanvasRef.current) {
-      tempCanvasRef.current = document.createElement('canvas');
-      tempCtxRef.current = tempCanvasRef.current.getContext('2d', { 
-        willReadFrequently: true,
-        alpha: false 
-      });
-    }
-    
-    const tempCanvas = tempCanvasRef.current;
-    const tempCtx = tempCtxRef.current;
-    if (!tempCtx) return;
-    
-    // BUSCAR VIDEO POR STREAM - MÁS CONFIABLE
-    // Buscar el video que tiene este stream asignado
-    let videoElement: HTMLVideoElement | null = null;
-    const allVideos = document.querySelectorAll('video');
-    for (const v of allVideos) {
-      if (v.srcObject === stream || (v as any).srcObject?.id === stream.id) {
-        videoElement = v;
-        break;
-      }
-    }
-    
-    // Fallback: usar primer video disponible
-    if (!videoElement) {
-      videoElement = allVideos[0] as HTMLVideoElement || null;
-    }
-    
-    if (!videoElement) {
-      console.error('❌ No se encontró elemento video');
-      return;
-    }
-    
-    videoElementRef.current = videoElement;
-    console.log('📹 Video encontrado:', videoElement.videoWidth, 'x', videoElement.videoHeight);
-    
-    let lastProcessTime = 0;
-    // 30 FPS sincronizado con BandpassFilter
-    const targetFrameInterval = 1000 / 30;
-    
-    // RESOLUCIÓN AUMENTADA: 480x360 para mejor detección de señal
-    const PPG_WIDTH = 480;
-    const PPG_HEIGHT = 360;
-    tempCanvas.width = PPG_WIDTH;
-    tempCanvas.height = PPG_HEIGHT;
-    
-    frameLoopActiveRef.current = true;
-    
-    const processImage = () => {
-      // SOLO usar refs para evitar closures stale
-      if (!frameLoopActiveRef.current) {
-        console.log('🛑 Loop detenido por frameLoopActiveRef');
-        return;
-      }
-      
-      const video = videoElementRef.current;
-      // Permitir continuar si está ACTIVE, STARTING o CALIBRATING
-      const validState = systemState.current === 'ACTIVE' || 
-                         systemState.current === 'STARTING' || 
-                         systemState.current === 'CALIBRATING';
-      if (!validState || !video) {
-        frameLoopActiveRef.current = false;
-        console.log('🛑 Loop detenido por estado:', systemState.current);
-        return;
-      }
-      
-      const now = Date.now();
-      const timeSinceLastProcess = now - lastProcessTime;
-      
-      if (timeSinceLastProcess >= targetFrameInterval) {
-        try {
-          if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-            // Dibujar frame completo a canvas pequeño
-            tempCtx.drawImage(video, 0, 0, PPG_WIDTH, PPG_HEIGHT);
-            const imageData = tempCtx.getImageData(0, 0, PPG_WIDTH, PPG_HEIGHT);
-            processFrame(imageData);
-            lastProcessTime = now;
-          }
-        } catch (error) {
-          console.error('Error capturando frame:', error);
-          frameLoopActiveRef.current = false;
-          return;
-        }
-      }
-      
-      // SOLO usar refs para la siguiente iteración - permitir cualquier estado válido
-      const continueLoop = frameLoopActiveRef.current && 
-                          (systemState.current === 'ACTIVE' || 
-                           systemState.current === 'STARTING' || 
-                           systemState.current === 'CALIBRATING');
-      if (continueLoop) {
-        frameLoopIdRef.current = requestAnimationFrame(processImage);
-      } else {
-        frameLoopActiveRef.current = false;
-        frameLoopIdRef.current = null;
-      }
-    };
-
-    // Esperar a que el video esté listo antes de iniciar el loop
-    let startLoopTimeout: number | null = null;
-    const startLoop = () => {
-      if (!frameLoopActiveRef.current) {
-        return;
-      }
-      
-      if (videoElement && videoElement.readyState >= 2) {
-        console.log('✅ Iniciando captura de frames');
-        frameLoopIdRef.current = requestAnimationFrame(processImage);
-      } else {
-        startLoopTimeout = window.setTimeout(startLoop, 100);
-      }
-    };
-    
-    startLoop();
-  };
-
-  // PROCESAMIENTO DE SEÑALES - CON VALIDACIÓN DE SANGRE REAL
+  // === PROCESAR SEÑAL PPG ===
   const vitalSignsFrameCounter = useRef<number>(0);
   const VITALS_PROCESS_EVERY_N_FRAMES = 5;
   
   useEffect(() => {
-    if (!lastSignal) return;
+    if (!lastSignal || !isMonitoring) return;
     
-    // ENTRADA DIRECTA - sin validación de calidad
-    if (!isMonitoring) return;
-    
-    // Procesar siempre - sin validación de dedo
     const signalValue = lastSignal.filteredValue;
 
-    // PROCESAMIENTO DE LATIDOS - Solo si hay sangre
+    // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
-      true, // fingerDetected ya validado arriba
+      true,
       lastSignal.timestamp
     );
     
     setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(signalValue);
+    setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
     
-    // Marcador de pico visible por 300ms
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 300);
@@ -555,13 +406,12 @@ const Index = () => {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // THROTTLE del procesamiento de signos vitales
+    // Throttle signos vitales
     vitalSignsFrameCounter.current++;
     
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
-      // Solo procesar signos vitales si hay sangre Y intervalos RR
       if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
         const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
@@ -604,7 +454,6 @@ const Index = () => {
       if (currentProgress >= 100) {
         clearInterval(interval);
         setIsCalibrating(false);
-        
         if (navigator.vibrate) {
           navigator.vibrate([100]);
         }
@@ -650,9 +499,7 @@ const Index = () => {
       )}
 
       <div className="flex-1 relative">
-        {/* Panel de diagnóstico removido - tapaba los displays */}
-        
-        {/* VENTANA DE PREVISUALIZACIÓN DE CÁMARA */}
+        {/* PREVIEW DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
           isFingerDetected={true}
@@ -660,15 +507,17 @@ const Index = () => {
           isVisible={isCameraOn}
         />
 
+        {/* CÁMARA - Con ref directo */}
         <div className="absolute inset-0">
           <CameraView 
+            ref={cameraRef}
             onStreamReady={handleStreamReady}
             isMonitoring={isCameraOn}
           />
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER MINIMALISTA - Solo tiempo restante */}
+          {/* HEADER - Tiempo restante */}
           <div className="px-4 py-2 flex justify-center items-center bg-black/30">
             <div className="text-white text-xl font-bold">
               {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
@@ -690,7 +539,7 @@ const Index = () => {
             />
           </div>
 
-          {/* DISPLAYS DE SIGNOS VITALES */}
+          {/* SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
@@ -732,7 +581,7 @@ const Index = () => {
             </div>
           </div>
 
-          {/* BOTONERA */}
+          {/* BOTONES */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
               <MonitorButton 

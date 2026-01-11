@@ -1,4 +1,8 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+
+export interface CameraViewHandle {
+  getVideoElement: () => HTMLVideoElement | null;
+}
 
 interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
@@ -6,39 +10,42 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG - SOLO MANEJA LA CÁMARA Y EL FLASH
- * El procesamiento de frames se hace en Index.tsx via useSignalProcessor
+ * CÁMARA PPG UNIFICADA
+ * 
+ * FLUJO ÚNICO:
+ * 1. Inicializa cámara trasera con flash
+ * 2. Expone el elemento video directamente via ref
+ * 3. El padre (Index.tsx) captura frames del video
+ * 
+ * SIN duplicación, SIN canvas interno
  */
-const CameraView: React.FC<CameraViewProps> = ({
+const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   onStreamReady,
   isMonitoring,
-}) => {
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+}, ref) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
-  const onStreamReadyRef = useRef(onStreamReady);
-  const flashRetryRef = useRef<number>(0);
-  
-  useEffect(() => {
-    onStreamReadyRef.current = onStreamReady;
-  }, [onStreamReady]);
+
+  // Exponer video al padre
+  useImperativeHandle(ref, () => ({
+    getVideoElement: () => videoRef.current
+  }), []);
 
   useEffect(() => {
     let mounted = true;
     
     const stopCamera = async () => {
       if (streamRef.current) {
-        const tracks = streamRef.current.getTracks();
-        for (const track of tracks) {
-          if (track.kind === 'video') {
-            try {
-              const caps: any = track.getCapabilities?.() || {};
-              if (caps.torch) {
-                await track.applyConstraints({ advanced: [{ torch: false }] } as any);
-              }
-            } catch {}
-          }
-          try { track.stop(); } catch {}
+        // Apagar flash primero
+        for (const track of streamRef.current.getVideoTracks()) {
+          try {
+            const caps = track.getCapabilities?.() as any;
+            if (caps?.torch) {
+              await track.applyConstraints({ advanced: [{ torch: false } as any] });
+            }
+          } catch {}
+          track.stop();
         }
         streamRef.current = null;
       }
@@ -46,28 +53,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
-      
       isStartingRef.current = false;
-      flashRetryRef.current = 0;
-    };
-
-    const enableFlash = async (track: MediaStreamTrack) => {
-      // Intentar activar flash múltiples veces
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const caps: any = track.getCapabilities?.() || {};
-          if (caps.torch) {
-            await track.applyConstraints({ advanced: [{ torch: true }] } as any);
-            console.log('🔦 Flash ACTIVADO en intento', attempt + 1);
-            return true;
-          }
-        } catch (e) {
-          console.warn(`Flash intento ${attempt + 1} falló:`, e);
-          await new Promise(r => setTimeout(r, 200));
-        }
-      }
-      console.warn('⚠️ No se pudo activar el flash después de 3 intentos');
-      return false;
     };
 
     const startCamera = async () => {
@@ -75,21 +61,20 @@ const CameraView: React.FC<CameraViewProps> = ({
       isStartingRef.current = true;
       
       await stopCamera();
-      
       if (!mounted) {
         isStartingRef.current = false;
         return;
       }
 
       try {
-        // Configuración OPTIMIZADA para PPG con flash
+        // Configuración optimizada para PPG
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
-            facingMode: { exact: "environment" }, // FORZAR cámara trasera
-            width: { ideal: 640, min: 320 },
-            height: { ideal: 480, min: 240 },
-            frameRate: { ideal: 30, min: 24 }
+            facingMode: { exact: "environment" },
+            width: { ideal: 640, max: 1280 },
+            height: { ideal: 480, max: 720 },
+            frameRate: { ideal: 30, min: 24, max: 30 }
           }
         });
         
@@ -104,41 +89,54 @@ const CameraView: React.FC<CameraViewProps> = ({
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           
-          // Esperar a que el video esté listo antes de continuar
+          // Esperar metadata y reproducir
           await new Promise<void>((resolve) => {
-            if (videoRef.current) {
-              videoRef.current.onloadedmetadata = () => {
-                videoRef.current?.play().then(resolve).catch(resolve);
-              };
-            } else {
+            const video = videoRef.current!;
+            video.onloadedmetadata = async () => {
+              try {
+                await video.play();
+              } catch {}
               resolve();
-            }
+            };
           });
         }
 
-        // ACTIVAR FLASH - crítico para PPG
+        // ACTIVAR FLASH - Crítico para PPG
         const track = stream.getVideoTracks()[0];
         if (track) {
-          // Esperar un poco para que la cámara se estabilice
-          await new Promise(r => setTimeout(r, 300));
-          await enableFlash(track);
+          // Esperar estabilización de cámara
+          await new Promise(r => setTimeout(r, 500));
+          
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              const caps = track.getCapabilities?.() as any;
+              if (caps?.torch) {
+                await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                console.log('🔦 Flash ACTIVADO');
+                break;
+              }
+            } catch (e) {
+              await new Promise(r => setTimeout(r, 200));
+            }
+          }
         }
 
         console.log('📹 Cámara lista:', videoRef.current?.videoWidth, 'x', videoRef.current?.videoHeight);
-        onStreamReadyRef.current?.(stream);
+        onStreamReady?.(stream);
         isStartingRef.current = false;
 
       } catch (err) {
-        console.error('❌ Error cámara:', err);
+        console.error('❌ Error cámara con exact:', err);
         
-        // Fallback: intentar sin "exact" en facingMode
+        // Fallback sin "exact"
         try {
           const fallbackStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
               facingMode: "environment",
               width: { ideal: 640 },
-              height: { ideal: 480 }
+              height: { ideal: 480 },
+              frameRate: { ideal: 30 }
             }
           });
           
@@ -154,13 +152,21 @@ const CameraView: React.FC<CameraViewProps> = ({
             await videoRef.current.play().catch(() => {});
           }
           
+          // Flash en fallback
           const track = fallbackStream.getVideoTracks()[0];
           if (track) {
-            await new Promise(r => setTimeout(r, 300));
-            await enableFlash(track);
+            await new Promise(r => setTimeout(r, 500));
+            try {
+              const caps = track.getCapabilities?.() as any;
+              if (caps?.torch) {
+                await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                console.log('🔦 Flash ACTIVADO (fallback)');
+              }
+            } catch {}
           }
           
-          onStreamReadyRef.current?.(fallbackStream);
+          console.log('📹 Cámara fallback lista');
+          onStreamReady?.(fallbackStream);
         } catch (fallbackErr) {
           console.error('❌ Error cámara fallback:', fallbackErr);
         }
@@ -179,7 +185,7 @@ const CameraView: React.FC<CameraViewProps> = ({
       mounted = false;
       stopCamera();
     };
-  }, [isMonitoring]);
+  }, [isMonitoring, onStreamReady]);
 
   return (
     <video
@@ -193,13 +199,13 @@ const CameraView: React.FC<CameraViewProps> = ({
         width: "100%",
         height: "100%",
         objectFit: "cover",
-        transform: "none",
-        WebkitTransform: "none",
         opacity: 1,
         pointerEvents: "none",
       }}
     />
   );
-};
+});
+
+CameraView.displayName = 'CameraView';
 
 export default CameraView;

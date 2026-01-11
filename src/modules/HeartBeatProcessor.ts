@@ -1,41 +1,38 @@
 /**
- * PROCESADOR DE LATIDOS - VERSIÓN FINAL CON AUTO-GAIN (AGC)
- * * Características clave:
- * 1. Filtro Pasa-Altos: Elimina el brillo base (DC).
- * 2. Auto-Gain Control: Amplifica señales débiles automáticamente (x50, x100, etc).
- * 3. Normalización: Garantiza que la onda siempre se vea en pantalla.
+ * PROCESADOR DE LATIDOS - VERSIÓN LIMPIA
+ * 
+ * IMPORTANTE: Recibe señal YA FILTRADA del BandpassFilter
+ * NO aplica filtros adicionales, solo detecta picos
+ * 
+ * Flujo de datos:
+ * Cámara → FrameProcessor → BandpassFilter → ESTE PROCESADOR → BPM
  */
 export class HeartBeatProcessor {
   private readonly MIN_BPM = 40;
   private readonly MAX_BPM = 200;
-  private readonly MIN_PEAK_INTERVAL_MS = 300;  
-  private readonly MAX_PEAK_INTERVAL_MS = 1500; 
+  private readonly MIN_PEAK_INTERVAL_MS = 300;  // 200 BPM máx
+  private readonly MAX_PEAK_INTERVAL_MS = 1500; // 40 BPM mín
   
-  // Buffer de señal
+  // Buffer para análisis
   private signalBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 150; // Buffer histórico
+  private readonly BUFFER_SIZE = 90; // 3 segundos a 30fps
   
-  // Filtro Pasa-Altos (High Pass)
-  private outputFilter: number = 0;
-  private lastInput: number = 0;
-  private readonly ALPHA = 0.90; // Filtro suave
-
-  // Detección de picos
-  private lastPeakTime: number | null = null;
-  private previousPeakTime: number | null = null;
+  // Detección de picos - usa derivada
+  private prevValue: number = 0;
+  private prevDerivative: number = 0;
+  private lastPeakTime: number = 0;
+  private previousPeakTime: number = 0;
   
   // BPM
-  private bpmBuffer: number[] = [];
-  private smoothBPM: number = 0;
   private rrIntervals: number[] = [];
+  private smoothBPM: number = 0;
   
-  // Audio
+  // Audio y vibración
   private audioContext: AudioContext | null = null;
   private audioUnlocked: boolean = false;
   private lastBeepTime: number = 0;
   
   private frameCount: number = 0;
-  private isArrhythmiaDetected: boolean = false;
 
   constructor() {
     this.setupAudio();
@@ -51,6 +48,7 @@ export class HeartBeatProcessor {
         this.audioUnlocked = true;
         document.removeEventListener('touchstart', unlock);
         document.removeEventListener('click', unlock);
+        console.log('🔊 Audio desbloqueado');
       } catch {}
     };
     document.addEventListener('touchstart', unlock, { passive: true });
@@ -59,9 +57,10 @@ export class HeartBeatProcessor {
 
   /**
    * PROCESO PRINCIPAL
-   * Recibe el valor crudo invertido de la cámara
+   * @param filteredValue - Valor YA FILTRADO por BandpassFilter (0.3-5Hz)
+   * @param timestamp - Timestamp en ms
    */
-  processSignal(rawValue: number, timestamp?: number): {
+  processSignal(filteredValue: number, timestamp?: number): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
@@ -71,168 +70,158 @@ export class HeartBeatProcessor {
     this.frameCount++;
     const now = timestamp || Date.now();
     
-    // --- 1. FILTRO DC (Eliminar línea base) ---
-    const currentInput = rawValue;
-    this.outputFilter = currentInput - this.lastInput + this.ALPHA * this.outputFilter;
-    this.lastInput = currentInput;
-
-    // --- 2. GESTIÓN DE BUFFER ---
-    this.signalBuffer.push(this.outputFilter);
+    // Guardar en buffer
+    this.signalBuffer.push(filteredValue);
     if (this.signalBuffer.length > this.BUFFER_SIZE) {
       this.signalBuffer.shift();
     }
-
-    // --- 3. AUTO-GAIN CONTROL (AGC) ---
-    // Aquí ocurre la magia para visualizar ondas débiles
+    
+    // --- NORMALIZACIÓN DINÁMICA ---
+    // Escalar la señal basándose en el rango reciente
     let normalizedValue = 0;
-    
-    if (this.signalBuffer.length > 20) {
-        // Buscamos el mínimo y máximo recientes para ver qué tan débil es la señal
-        let min = Infinity;
-        let max = -Infinity;
-        
-        // Analizamos el último segundo (aprox 60 frames)
-        const checkLimit = Math.min(this.signalBuffer.length, 60);
-        for(let i = 1; i <= checkLimit; i++) {
-            const val = this.signalBuffer[this.signalBuffer.length - i];
-            if (val < min) min = val;
-            if (val > max) max = val;
-        }
-        
-        const range = max - min;
-        
-        // Si hay algo de señal (evitamos ruido eléctrico puro)
-        if (range > 0.0001) {
-            // Calculamos cuánto multiplicar para que la onda llegue a tamaño 50
-            const targetAmplitude = 50;
-            const gain = targetAmplitude / range; 
-            
-            // Limitamos la ganancia máxima a 1000x para no volvernos locos con ruido
-            const safeGain = Math.min(gain, 1000); 
-            
-            normalizedValue = this.outputFilter * safeGain;
-        }
+    if (this.signalBuffer.length >= 30) {
+      const recent = this.signalBuffer.slice(-60);
+      const min = Math.min(...recent);
+      const max = Math.max(...recent);
+      const range = max - min;
+      
+      if (range > 0.001) {
+        // Normalizar a rango -50 a +50 para visualización
+        normalizedValue = ((filteredValue - min) / range - 0.5) * 100;
+      }
     }
-
-    // --- 4. DETECCIÓN DE PICOS ---
-    // Usamos el valor normalizado, así que usamos un umbral fijo y cómodo
-    const peakResult = this.detectPeak(normalizedValue, now);
     
-    if (peakResult.isPeak) {
-      this.updateBPM(now);
+    // --- DETECCIÓN DE PICOS POR DERIVADA ---
+    const derivative = normalizedValue - this.prevValue;
+    const timeSinceLastPeak = now - this.lastPeakTime;
+    
+    // Detectar cruce de cero de la derivada (máximo local)
+    const isPeak = (
+      this.prevDerivative > 0 &&           // Derivada era positiva
+      derivative <= 0 &&                    // Ahora es negativa o cero
+      normalizedValue > 10 &&               // Valor significativo (umbral bajo)
+      timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS
+    );
+    
+    if (isPeak) {
+      // Registrar RR interval
+      if (this.lastPeakTime > 0) {
+        const rrInterval = now - this.lastPeakTime;
+        if (rrInterval >= this.MIN_PEAK_INTERVAL_MS && rrInterval <= this.MAX_PEAK_INTERVAL_MS) {
+          this.rrIntervals.push(rrInterval);
+          if (this.rrIntervals.length > 20) {
+            this.rrIntervals.shift();
+          }
+          
+          // Calcular BPM
+          const instantBPM = 60000 / rrInterval;
+          if (this.smoothBPM === 0) {
+            this.smoothBPM = instantBPM;
+          } else {
+            // Suavizado exponencial
+            this.smoothBPM = this.smoothBPM * 0.7 + instantBPM * 0.3;
+          }
+          this.smoothBPM = Math.max(this.MIN_BPM, Math.min(this.MAX_BPM, this.smoothBPM));
+        }
+      }
+      
+      this.previousPeakTime = this.lastPeakTime;
+      this.lastPeakTime = now;
+      
+      // Feedback
       this.playBeep();
-      // VIBRACIÓN FUERTE para que se sienta
       this.vibrate();
-      console.log(`💓 PICO DETECTADO! BPM=${Math.round(this.smoothBPM)} Val=${normalizedValue.toFixed(1)}`);
+      
+      console.log(`💓 PICO! BPM=${Math.round(this.smoothBPM)} Val=${normalizedValue.toFixed(1)}`);
+    }
+    
+    // Log periódico
+    if (this.frameCount % 30 === 0) {
+      console.log(`📊 Señal: Val=${normalizedValue.toFixed(1)} Der=${derivative.toFixed(2)} BPM=${Math.round(this.smoothBPM)}`);
+    }
+    
+    this.prevValue = normalizedValue;
+    this.prevDerivative = derivative;
+    
+    // Calcular confianza basada en estabilidad del BPM
+    let confidence = 0;
+    if (this.rrIntervals.length >= 3) {
+      const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
+      const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
+      const cv = Math.sqrt(variance) / mean; // Coeficiente de variación
+      confidence = Math.max(0, Math.min(1, 1 - cv));
     }
     
     return {
       bpm: Math.round(this.smoothBPM),
-      confidence: peakResult.confidence,
-      isPeak: peakResult.isPeak,
-      filteredValue: normalizedValue, // ¡Valor AMPLIFICADO para ver en gráfica!
+      confidence,
+      isPeak,
+      filteredValue: normalizedValue, // Valor normalizado para gráfica
       arrhythmiaCount: 0
     };
-  }
-
-  private detectPeak(val: number, now: number): { isPeak: boolean; confidence: number } {
-    const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : 10000;
-    
-    if (timeSinceLastPeak < this.MIN_PEAK_INTERVAL_MS) {
-        return { isPeak: false, confidence: 0 };
-    }
-
-    // Como normalizamos la señal a +/- 25 aprox, ponemos el umbral en 10
-    const THRESHOLD = 10; 
-
-    if (val > THRESHOLD) {
-        // Verificamos si es pico real (máximo local simple)
-        // Nota: En una señal amplificada, a veces conviene ser permisivo
-        this.previousPeakTime = this.lastPeakTime;
-        this.lastPeakTime = now;
-        
-        if (this.previousPeakTime) {
-          const rr = now - this.previousPeakTime;
-          if (rr >= this.MIN_PEAK_INTERVAL_MS && rr <= this.MAX_PEAK_INTERVAL_MS) {
-            this.rrIntervals.push(rr);
-            if (this.rrIntervals.length > 30) this.rrIntervals.shift();
-          }
-        }
-        
-        return { isPeak: true, confidence: 1 };
-    }
-    
-    return { isPeak: false, confidence: 0 };
-  }
-
-  private updateBPM(now: number): void {
-    if (!this.previousPeakTime) return;
-    const interval = now - this.previousPeakTime;
-    if (interval < this.MIN_PEAK_INTERVAL_MS || interval > this.MAX_PEAK_INTERVAL_MS) return;
-    
-    const instantBPM = 60000 / interval;
-    
-    if (this.smoothBPM === 0) {
-      this.smoothBPM = instantBPM;
-    } else {
-      this.smoothBPM = this.smoothBPM * 0.8 + instantBPM * 0.2;
-    }
-    this.smoothBPM = Math.max(this.MIN_BPM, Math.min(this.MAX_BPM, this.smoothBPM));
   }
 
   private vibrate(): void {
     try { 
       if (navigator.vibrate) {
-        // Vibración más larga y fuerte: 50ms
-        navigator.vibrate(50); 
+        navigator.vibrate(80); // Vibración de 80ms
       }
-    } catch (e) {
-      console.warn('Vibración no soportada:', e);
-    }
+    } catch {}
   }
 
   private async playBeep(): Promise<void> {
     if (!this.audioContext || !this.audioUnlocked) return;
     const now = Date.now();
-    if (now - this.lastBeepTime < 300) return;
+    if (now - this.lastBeepTime < 250) return;
     
     try {
-      if (this.audioContext.state === 'suspended') await this.audioContext.resume();
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
+      
       const t = this.audioContext.currentTime;
       const osc = this.audioContext.createOscillator();
       const gain = this.audioContext.createGain();
       
-      osc.frequency.setValueAtTime(800, t);
-      osc.frequency.exponentialRampToValueAtTime(400, t + 0.1);
-      gain.gain.setValueAtTime(0.1, t);
+      osc.frequency.setValueAtTime(880, t);
+      osc.frequency.exponentialRampToValueAtTime(440, t + 0.08);
+      gain.gain.setValueAtTime(0.15, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
       
       osc.connect(gain);
       gain.connect(this.audioContext.destination);
       osc.start(t);
-      osc.stop(t + 0.15);
+      osc.stop(t + 0.12);
+      
       this.lastBeepTime = now;
     } catch {}
   }
 
-  getRRIntervals(): number[] { return [...this.rrIntervals]; }
-  getLastPeakTime(): number | null { return this.lastPeakTime; }
-  setArrhythmiaDetected(isDetected: boolean): void { this.isArrhythmiaDetected = isDetected; }
+  getRRIntervals(): number[] { 
+    return [...this.rrIntervals]; 
+  }
+  
+  getLastPeakTime(): number { 
+    return this.lastPeakTime; 
+  }
+  
+  setArrhythmiaDetected(_isDetected: boolean): void {}
   setFingerDetected(_detected: boolean): void {}
   
   reset(): void {
     this.signalBuffer = [];
-    this.bpmBuffer = [];
     this.rrIntervals = [];
     this.smoothBPM = 0;
-    this.lastPeakTime = null;
-    this.previousPeakTime = null;
+    this.lastPeakTime = 0;
+    this.previousPeakTime = 0;
+    this.prevValue = 0;
+    this.prevDerivative = 0;
     this.frameCount = 0;
-    this.outputFilter = 0;
-    this.lastInput = 0;
   }
   
   dispose(): void {
-    if (this.audioContext) this.audioContext.close().catch(() => {});
+    if (this.audioContext) {
+      this.audioContext.close().catch(() => {});
+    }
   }
 }
