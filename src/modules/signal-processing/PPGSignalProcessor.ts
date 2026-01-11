@@ -69,17 +69,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.rawBuffer.shift();
     }
     
-    // 3. Aplicar filtro pasabanda (0.5-4 Hz = 30-240 BPM)
-    const filtered = this.bandpassFilter.filter(rawRed);
+    // 3. INVERTIR la señal roja: cuando hay más sangre, el rojo BAJA
+    //    Para que los picos cardíacos sean POSITIVOS, invertimos
+    const invertedRed = 255 - rawRed;
+    
+    // 4. Aplicar filtro pasabanda (0.3-5 Hz = 18-300 BPM)
+    const filtered = this.bandpassFilter.filter(invertedRed);
     this.filteredBuffer.push(filtered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
       this.filteredBuffer.shift();
     }
     
-    // 4. Emitir señal - SIN CALIDAD (entrada directa)
+    // 5. Log cada 2 segundos para debug
+    if (this.frameCount % 60 === 0) {
+      console.log(`💓 PPG: Raw=${rawRed.toFixed(0)} Inv=${invertedRed.toFixed(0)} Filt=${filtered.toFixed(3)}`);
+    }
+    
+    // 6. Emitir señal - SIN CALIDAD (entrada directa)
     const processedSignal: ProcessedSignal = {
       timestamp,
-      rawValue: rawRed,
+      rawValue: invertedRed, // Valor invertido
       filteredValue: filtered,
       quality: 100, // Fijo - sin validación de calidad
       fingerDetected: true, // Siempre true - entrada directa
@@ -87,7 +96,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       perfusionIndex: this.calculatePerfusionIndex(),
       rawGreen: frameData.rawGreen,
       diagnostics: {
-        message: `R=${rawRed.toFixed(0)} F=${filtered.toFixed(2)}`,
+        message: `R=${rawRed.toFixed(0)} F=${filtered.toFixed(3)}`,
         hasPulsatility: true,
         pulsatilityValue: 1
       }
