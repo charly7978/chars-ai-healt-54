@@ -2,29 +2,31 @@ import { FrameData } from './types';
 import { ProcessedSignal } from '../../types/signal';
 
 /**
- * FrameProcessor - DATOS CRUDOS SIN CALIBRACIÓN
+ * FrameProcessor - EXTRACCIÓN RGB CON ROI CENTRAL
  * 
- * Extrae valores RGB directamente del frame
- * SIN normalización, SIN ganancia, SIN filtros de piel
+ * Extrae el promedio de canales RGB de una región central del frame
+ * Detecta saturación y presencia de dedo
  */
 export class FrameProcessor {
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
   private blueBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 90; // 3 segundos @ 30fps
+  private readonly BUFFER_SIZE = 90;
   
   private frameCount = 0;
+  private lastLogTime = 0;
   
   /**
-   * Extraer datos CRUDOS del frame
+   * Extraer datos del frame
+   * Usa ROI central del 50% para evitar bordes
    */
   extractFrameData(imageData: ImageData): FrameData {
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
     
-    // ROI central - 60% del área para mejor captación del dedo
-    const roiSize = Math.min(width, height) * 0.6;
+    // ROI central - 50% del área
+    const roiSize = Math.min(width, height) * 0.5;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -35,9 +37,9 @@ export class FrameProcessor {
     let blueSum = 0;
     let count = 0;
     
-    // Muestrear cada 3 píxeles para velocidad
-    for (let y = startY; y < endY; y += 3) {
-      for (let x = startX; x < endX; x += 3) {
+    // Muestrear cada 2 píxeles
+    for (let y = startY; y < endY; y += 2) {
+      for (let x = startX; x < endX; x += 2) {
         const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
@@ -46,7 +48,6 @@ export class FrameProcessor {
       }
     }
     
-    // Promedios CRUDOS - sin ninguna transformación
     const rawRed = count > 0 ? redSum / count : 0;
     const rawGreen = count > 0 ? greenSum / count : 0;
     const rawBlue = count > 0 ? blueSum / count : 0;
@@ -64,10 +65,16 @@ export class FrameProcessor {
     
     this.frameCount++;
     
-    // Log cada 2 segundos - incluir detección de dedo
-    if (this.frameCount % 60 === 0) {
-      const fingerPresent = rawRed > 100 && rawRed < 255 && (rawRed > rawGreen * 1.2);
-      console.log(`📷 RAW: R=${rawRed.toFixed(1)} G=${rawGreen.toFixed(1)} B=${rawBlue.toFixed(1)} | Dedo: ${fingerPresent ? '✅' : '❌'}`);
+    // Detectar condiciones
+    const isSaturated = rawRed > 250;
+    const fingerPresent = rawRed > 80 && rawRed < 250 && (rawRed > rawGreen * 1.1);
+    
+    // Log cada segundo
+    const now = Date.now();
+    if (now - this.lastLogTime >= 1000) {
+      this.lastLogTime = now;
+      const status = isSaturated ? '⚠️ SATURADO' : (fingerPresent ? '✅ Dedo OK' : '❌ Sin dedo');
+      console.log(`📷 RGB: R=${rawRed.toFixed(0)} G=${rawGreen.toFixed(0)} B=${rawBlue.toFixed(0)} | ${status}`);
     }
     
     return {
@@ -112,8 +119,7 @@ export class FrameProcessor {
   
   getIsSaturated(): boolean {
     if (this.redBuffer.length === 0) return false;
-    const lastRed = this.redBuffer[this.redBuffer.length - 1];
-    return lastRed > 250;
+    return this.redBuffer[this.redBuffer.length - 1] > 250;
   }
   
   reset(): void {
@@ -121,5 +127,6 @@ export class FrameProcessor {
     this.greenBuffer = [];
     this.blueBuffer = [];
     this.frameCount = 0;
+    this.lastLogTime = 0;
   }
 }
