@@ -3,13 +3,12 @@ import { BandpassFilter } from './BandpassFilter';
 import { FrameProcessor } from './FrameProcessor';
 
 /**
- * PROCESADOR PPG - FLUJO ÚNICO Y LIMPIO
+ * PROCESADOR PPG - FLUJO LIMPIO
  * 
- * CADENA DE PROCESAMIENTO:
- * Frame → Extracción Rojo → Inversión → Filtro Pasabanda → Señal
+ * Frame → RGB → Canal Verde (mejor para PPG) → Filtro → Señal
  * 
- * NO hay filtros duplicados
- * NO hay detección de calidad (entrada directa)
+ * IMPORTANTE: Usamos canal VERDE en lugar de rojo
+ * El verde tiene mejor penetración en tejido y menos saturación
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -28,7 +27,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    this.bandpassFilter = new BandpassFilter(30); // 30 FPS
+    this.bandpassFilter = new BandpassFilter(30);
     this.frameProcessor = new FrameProcessor();
   }
 
@@ -36,6 +35,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.rawBuffer = [];
     this.filteredBuffer = [];
     this.frameCount = 0;
+    this.lastLogTime = 0;
     this.bandpassFilter.reset();
     this.frameProcessor.reset();
   }
@@ -57,7 +57,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * PROCESAR UN FRAME DE IMAGEN
+   * PROCESAR FRAME
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
@@ -65,48 +65,55 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount++;
     const timestamp = Date.now();
     
-    // 1. Extraer valores RGB crudos
+    // 1. Extraer RGB
     const frameData = this.frameProcessor.extractFrameData(imageData);
     const rawRed = frameData.rawRed ?? frameData.redValue;
+    const rawGreen = frameData.rawGreen ?? 0;
     
-    // 2. INVERTIR señal: más sangre = menos luz reflejada = valor más bajo
-    // Al invertir, los latidos serán picos positivos
-    const invertedRed = 255 - rawRed;
+    // 2. USAR CANAL VERDE para evitar saturación del flash
+    // El canal verde tiene mejor respuesta PPG en condiciones de luz intensa
+    // Si rojo está saturado (>250), usar verde que tiene más rango
+    const isSaturated = rawRed > 250;
+    const signalSource = isSaturated ? rawGreen : rawRed;
     
-    // 3. Guardar valor crudo (invertido)
-    this.rawBuffer.push(invertedRed);
+    // 3. Invertir: más sangre = menos luz = valor más bajo
+    // Invertimos para que los picos cardíacos sean positivos
+    const inverted = 255 - signalSource;
+    
+    // 4. Guardar en buffer
+    this.rawBuffer.push(inverted);
     if (this.rawBuffer.length > this.BUFFER_SIZE) {
       this.rawBuffer.shift();
     }
     
-    // 4. Aplicar filtro pasabanda (0.3-5 Hz)
-    // Elimina DC (iluminación base) y ruido de alta frecuencia
-    const filtered = this.bandpassFilter.filter(invertedRed);
+    // 5. Filtro pasabanda (0.3-5 Hz)
+    const filtered = this.bandpassFilter.filter(inverted);
     
     this.filteredBuffer.push(filtered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
       this.filteredBuffer.shift();
     }
     
-    // 5. Log cada segundo
+    // 6. Log cada segundo
     const now = Date.now();
     if (now - this.lastLogTime >= 1000) {
       this.lastLogTime = now;
-      console.log(`📷 PPG: Raw=${rawRed.toFixed(0)} Inv=${invertedRed.toFixed(0)} Filt=${filtered.toFixed(3)} Frames=${this.frameCount}`);
+      const src = isSaturated ? 'G' : 'R';
+      console.log(`📷 PPG [${src}]: Raw=${signalSource.toFixed(0)} Inv=${inverted.toFixed(0)} Filt=${filtered.toFixed(2)}`);
     }
     
-    // 6. Emitir señal procesada
+    // 7. Emitir
     const processedSignal: ProcessedSignal = {
       timestamp,
-      rawValue: invertedRed,
-      filteredValue: filtered, // Este valor va al HeartBeatProcessor
+      rawValue: inverted,
+      filteredValue: filtered,
       quality: 100,
       fingerDetected: true,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex: this.calculatePerfusionIndex(),
       rawGreen: frameData.rawGreen,
       diagnostics: {
-        message: `R=${rawRed.toFixed(0)} F=${filtered.toFixed(3)}`,
+        message: isSaturated ? `SAT:G=${rawGreen.toFixed(0)}` : `R=${rawRed.toFixed(0)}`,
         hasPulsatility: true,
         pulsatilityValue: 1
       }
