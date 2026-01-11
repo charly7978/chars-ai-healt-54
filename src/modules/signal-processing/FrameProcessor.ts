@@ -23,8 +23,8 @@ export class FrameProcessor {
     const width = imageData.width;
     const height = imageData.height;
     
-    // ROI central - 50% del área
-    const roiSize = Math.min(width, height) * 0.5;
+    // ROI central - 60% del área para mejor captación del dedo
+    const roiSize = Math.min(width, height) * 0.6;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -35,9 +35,9 @@ export class FrameProcessor {
     let blueSum = 0;
     let count = 0;
     
-    // Muestrear cada 2 píxeles para velocidad
-    for (let y = startY; y < endY; y += 2) {
-      for (let x = startX; x < endX; x += 2) {
+    // Muestrear cada 3 píxeles para velocidad
+    for (let y = startY; y < endY; y += 3) {
+      for (let x = startX; x < endX; x += 3) {
         const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
@@ -64,9 +64,10 @@ export class FrameProcessor {
     
     this.frameCount++;
     
-    // Log cada 2 segundos
+    // Log cada 2 segundos - incluir detección de dedo
     if (this.frameCount % 60 === 0) {
-      console.log(`📷 RAW: R=${rawRed.toFixed(1)} G=${rawGreen.toFixed(1)} B=${rawBlue.toFixed(1)}`);
+      const fingerPresent = rawRed > 100 && rawRed < 255 && (rawRed > rawGreen * 1.2);
+      console.log(`📷 RAW: R=${rawRed.toFixed(1)} G=${rawGreen.toFixed(1)} B=${rawBlue.toFixed(1)} | Dedo: ${fingerPresent ? '✅' : '❌'}`);
     }
     
     return {
