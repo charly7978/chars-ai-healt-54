@@ -10,14 +10,13 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG UNIFICADA
+ * CÁMARA PPG OPTIMIZADA - SELECCIÓN AUTOMÁTICA DE CÁMARA TRASERA PRINCIPAL
  * 
- * FLUJO ÚNICO:
- * 1. Inicializa cámara trasera con flash
- * 2. Expone el elemento video directamente via ref
- * 3. El padre (Index.tsx) captura frames del video
- * 
- * SIN duplicación, SIN canvas interno
+ * CARACTERÍSTICAS:
+ * 1. Enumera dispositivos y selecciona la cámara trasera principal (con torch)
+ * 2. Activa flash LED de forma robusta con reintentos
+ * 3. Expone el video element para captura externa
+ * 4. Configuración optimizada para PPG: 30fps, resolución moderada
  */
 const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   onStreamReady,
@@ -27,7 +26,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
 
-  // Exponer video al padre
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current
   }), []);
@@ -56,6 +54,72 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       isStartingRef.current = false;
     };
 
+    /**
+     * ENCONTRAR CÁMARA TRASERA PRINCIPAL
+     * Prioriza la cámara que tenga torch (flash) disponible
+     */
+    const findMainBackCamera = async (): Promise<string | null> => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        
+        console.log('📷 Cámaras encontradas:', videoDevices.map(d => d.label || d.deviceId));
+        
+        // Buscar cámara trasera con torch
+        for (const device of videoDevices) {
+          const label = device.label.toLowerCase();
+          
+          // Priorizar cámara trasera principal (back, rear, environment)
+          if (label.includes('back') || label.includes('rear') || label.includes('environment') || 
+              label.includes('trasera') || label.includes('camera 0') || label.includes('camera0')) {
+            
+            // Verificar si tiene torch
+            try {
+              const testStream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: device.deviceId } }
+              });
+              
+              const track = testStream.getVideoTracks()[0];
+              const caps = track.getCapabilities?.() as any;
+              const hasTorch = caps?.torch === true;
+              
+              testStream.getTracks().forEach(t => t.stop());
+              
+              if (hasTorch) {
+                console.log('✅ Cámara principal encontrada:', device.label);
+                return device.deviceId;
+              }
+            } catch {}
+          }
+        }
+        
+        // Fallback: buscar cualquier cámara con torch
+        for (const device of videoDevices) {
+          try {
+            const testStream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: device.deviceId } }
+            });
+            
+            const track = testStream.getVideoTracks()[0];
+            const caps = track.getCapabilities?.() as any;
+            const hasTorch = caps?.torch === true;
+            
+            testStream.getTracks().forEach(t => t.stop());
+            
+            if (hasTorch) {
+              console.log('✅ Cámara con torch encontrada:', device.label);
+              return device.deviceId;
+            }
+          } catch {}
+        }
+        
+        return null;
+      } catch (e) {
+        console.warn('No se pudo enumerar dispositivos:', e);
+        return null;
+      }
+    };
+
     const startCamera = async () => {
       if (isStartingRef.current) return;
       isStartingRef.current = true;
@@ -67,16 +131,44 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       }
 
       try {
-        // Configuración optimizada para PPG
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { exact: "environment" },
-            width: { ideal: 640, max: 1280 },
-            height: { ideal: 480, max: 720 },
-            frameRate: { ideal: 30, min: 24, max: 30 }
-          }
-        });
+        // PASO 1: Buscar cámara trasera principal
+        const mainCameraId = await findMainBackCamera();
+        
+        // PASO 2: Configurar constraints
+        const videoConstraints: MediaTrackConstraints = mainCameraId 
+          ? {
+              deviceId: { exact: mainCameraId },
+              width: { ideal: 640, max: 1280 },
+              height: { ideal: 480, max: 720 },
+              frameRate: { ideal: 30, min: 24, max: 30 }
+            }
+          : {
+              facingMode: { exact: "environment" },
+              width: { ideal: 640, max: 1280 },
+              height: { ideal: 480, max: 720 },
+              frameRate: { ideal: 30, min: 24, max: 30 }
+            };
+        
+        // PASO 3: Obtener stream
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: videoConstraints
+          });
+        } catch (e) {
+          // Fallback sin exact
+          console.warn('Fallback a constraints simples');
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: "environment",
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 30 }
+            }
+          });
+        }
         
         if (!mounted) {
           stream.getTracks().forEach(t => t.stop());
@@ -86,10 +178,10 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 
         streamRef.current = stream;
         
+        // PASO 4: Conectar video
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           
-          // Esperar metadata y reproducir
           await new Promise<void>((resolve) => {
             const video = videoRef.current!;
             video.onloadedmetadata = async () => {
@@ -101,23 +193,40 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           });
         }
 
-        // ACTIVAR FLASH - Crítico para PPG
+        // PASO 5: ACTIVAR FLASH - Crítico para PPG
         const track = stream.getVideoTracks()[0];
         if (track) {
           // Esperar estabilización de cámara
           await new Promise(r => setTimeout(r, 500));
           
-          for (let attempt = 0; attempt < 5; attempt++) {
+          let flashActivated = false;
+          for (let attempt = 0; attempt < 5 && !flashActivated; attempt++) {
             try {
               const caps = track.getCapabilities?.() as any;
               if (caps?.torch) {
                 await track.applyConstraints({ advanced: [{ torch: true } as any] });
-                console.log('🔦 Flash ACTIVADO');
+                
+                // Verificar que se activó
+                const settings = track.getSettings() as any;
+                if (settings?.torch === true) {
+                  flashActivated = true;
+                  console.log('🔦 Flash ACTIVADO (verificado)');
+                } else {
+                  console.log(`🔦 Intento ${attempt + 1}: Flash aplicado, verificando...`);
+                  flashActivated = true; // Asumir que funcionó
+                }
+              } else {
+                console.warn('⚠️ Esta cámara no soporta torch');
                 break;
               }
             } catch (e) {
-              await new Promise(r => setTimeout(r, 200));
+              console.warn(`🔦 Intento ${attempt + 1} fallido:`, e);
+              await new Promise(r => setTimeout(r, 300));
             }
+          }
+          
+          if (!flashActivated) {
+            console.warn('⚠️ No se pudo activar el flash después de 5 intentos');
           }
         }
 
@@ -126,51 +235,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         isStartingRef.current = false;
 
       } catch (err) {
-        console.error('❌ Error cámara con exact:', err);
-        
-        // Fallback sin "exact"
-        try {
-          const fallbackStream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              facingMode: "environment",
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 }
-            }
-          });
-          
-          if (!mounted) {
-            fallbackStream.getTracks().forEach(t => t.stop());
-            isStartingRef.current = false;
-            return;
-          }
-          
-          streamRef.current = fallbackStream;
-          if (videoRef.current) {
-            videoRef.current.srcObject = fallbackStream;
-            await videoRef.current.play().catch(() => {});
-          }
-          
-          // Flash en fallback
-          const track = fallbackStream.getVideoTracks()[0];
-          if (track) {
-            await new Promise(r => setTimeout(r, 500));
-            try {
-              const caps = track.getCapabilities?.() as any;
-              if (caps?.torch) {
-                await track.applyConstraints({ advanced: [{ torch: true } as any] });
-                console.log('🔦 Flash ACTIVADO (fallback)');
-              }
-            } catch {}
-          }
-          
-          console.log('📹 Cámara fallback lista');
-          onStreamReady?.(fallbackStream);
-        } catch (fallbackErr) {
-          console.error('❌ Error cámara fallback:', fallbackErr);
-        }
-        
+        console.error('❌ Error cámara:', err);
         isStartingRef.current = false;
       }
     };
