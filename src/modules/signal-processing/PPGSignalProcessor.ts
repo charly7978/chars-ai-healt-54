@@ -177,8 +177,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let count = 0;
     
     // Muestrear cada 4 píxeles para velocidad con ROI más grande
-    for (let y = startY; y < endY; y += 3) {
-      for (let x = startX; x < endX; x += 3) {
+    for (let y = startY; y < endY; y += 6) {
+      for (let x = startX; x < endX; x += 6) {
         const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
@@ -200,7 +200,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
    */
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
     // Umbrales más permisivos para comodidad
-    const redMinThreshold = 40;  // Antes: 60, ahora más permisivo
+    const redMinThreshold = 50;  // Antes: 60, ahora más permisivo
     const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
     
