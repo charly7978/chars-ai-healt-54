@@ -346,3 +346,4 @@ const PPGSignalMeter = ({
 };
 
 export default PPGSignalMeter;
+    
