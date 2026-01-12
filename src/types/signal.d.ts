@@ -13,7 +13,8 @@ export interface ProcessedSignal {
     height: number;
   };
   perfusionIndex?: number;
-  // Valor verde crudo para validación de dedo
+  // Valores RGB crudos para cálculos
+  rawRed?: number;
   rawGreen?: number;
   // Diagnóstico de detección de dedo
   diagnostics?: {
