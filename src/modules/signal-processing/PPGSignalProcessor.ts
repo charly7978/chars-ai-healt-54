@@ -2,40 +2,37 @@ import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcess
 import { BandpassFilter } from './BandpassFilter';
 
 /**
- * PROCESADOR PPG OPTIMIZADO - BAJO CONSUMO DE MEMORIA
+ * PROCESADOR PPG OPTIMIZADO - CANAL VERDE COMO FUENTE PRINCIPAL
  * 
- * Optimizaciones:
- * - Buffers reducidos a lo mínimo necesario
- * - Evita spread operators en arrays grandes
- * - Cálculos AC/DC incrementales
- * - Log throttling
+ * ARQUITECTURA LIMPIA:
+ * Frame → RGB → Canal VERDE (mejor SNR) → Inversión → Filtro Pasabanda → Señal
+ * 
+ * FUNDAMENTO CIENTÍFICO:
+ * - El canal verde (540nm) tiene mejor penetración en tejido y mayor absorción por sangre
+ * - Mejor relación señal/ruido que el rojo en condiciones de flash intenso
+ * - Referencia: De Haan & Jeanne 2013, webcam-pulse-detector
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   
   private bandpassFilter: BandpassFilter;
   
-  // Buffers REDUCIDOS - solo lo necesario
-  private readonly BUFFER_SIZE = 90; // 3 segundos @ 30fps (antes 150)
-  private rawBuffer: Float32Array;
-  private filteredBuffer: Float32Array;
-  private redBuffer: Float32Array;
-  private greenBuffer: Float32Array;
-  private bufferIndex: number = 0;
-  private bufferCount: number = 0;
+  // Buffers
+  private readonly BUFFER_SIZE = 150; // 5 segundos @ 30fps
+  private rawBuffer: number[] = [];
+  private filteredBuffer: number[] = [];
+  private redBuffer: number[] = [];
+  private greenBuffer: number[] = [];
   
-  // Estadísticas para SpO2 (calculadas incrementalmente)
-  private redSum: number = 0;
-  private greenSum: number = 0;
-  private redMin: number = 255;
-  private redMax: number = 0;
-  private greenMin: number = 255;
-  private greenMax: number = 0;
+  // Estadísticas para SpO2
+  private redDC: number = 0;
+  private redAC: number = 0;
+  private greenDC: number = 0;
+  private greenAC: number = 0;
   
-  // Control de logging - muy reducido
+  // Control de logging
   private frameCount: number = 0;
   private lastLogTime: number = 0;
-  private readonly LOG_INTERVAL = 2000; // Log cada 2s (antes 1s)
   
   // Detección de dedo
   private fingerDetected: boolean = false;
@@ -45,28 +42,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    // Usar TypedArrays para mejor rendimiento
-    this.rawBuffer = new Float32Array(this.BUFFER_SIZE);
-    this.filteredBuffer = new Float32Array(this.BUFFER_SIZE);
-    this.redBuffer = new Float32Array(this.BUFFER_SIZE);
-    this.greenBuffer = new Float32Array(this.BUFFER_SIZE);
-    
+    // Filtro pasabanda: 0.5-4Hz (30-240 BPM)
     this.bandpassFilter = new BandpassFilter(30);
   }
 
   async initialize(): Promise<void> {
     this.reset();
-    console.log('✅ PPGSignalProcessor inicializado (optimizado)');
+    console.log('✅ PPGSignalProcessor inicializado - Canal Verde como fuente principal');
   }
 
   start(): void {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.initialize();
+    console.log('🚀 PPGSignalProcessor iniciado');
   }
 
   stop(): void {
     this.isProcessing = false;
+    console.log('🛑 PPGSignalProcessor detenido');
   }
 
   async calibrate(): Promise<boolean> {
@@ -74,7 +68,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * PROCESAR FRAME - OPTIMIZADO
+   * PROCESAR FRAME - FLUJO ÚNICO Y LIMPIO
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
@@ -82,70 +76,66 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount++;
     const timestamp = Date.now();
     
-    // 1. EXTRAER RGB
+    // 1. EXTRAER RGB DE ROI CENTRAL (60% del área)
     const { rawRed, rawGreen, rawBlue } = this.extractROI(imageData);
     
-    // 2. ACTUALIZAR BUFFERS (sin shift, O(1))
-    const idx = this.bufferIndex;
-    
-    // Actualizar estadísticas incrementales
-    if (this.bufferCount === this.BUFFER_SIZE) {
-      // Remover valor antiguo de estadísticas
-      const oldRed = this.redBuffer[idx];
-      const oldGreen = this.greenBuffer[idx];
-      this.redSum -= oldRed;
-      this.greenSum -= oldGreen;
+    // 2. GUARDAR EN BUFFERS PARA CÁLCULO DE AC/DC
+    this.redBuffer.push(rawRed);
+    this.greenBuffer.push(rawGreen);
+    if (this.redBuffer.length > this.BUFFER_SIZE) {
+      this.redBuffer.shift();
+      this.greenBuffer.shift();
     }
     
-    this.redBuffer[idx] = rawRed;
-    this.greenBuffer[idx] = rawGreen;
-    this.redSum += rawRed;
-    this.greenSum += rawGreen;
-    
-    // 3. DETECCIÓN DE DEDO
+    // 3. DETECCIÓN DE DEDO - Basado en características RGB
     this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue);
     
-    // 4. CALCULAR AC/DC (cada 10 frames para optimizar)
-    if (this.frameCount % 10 === 0 && this.bufferCount >= 30) {
+    // 4. CALCULAR ESTADÍSTICAS AC/DC (para SpO2)
+    if (this.redBuffer.length >= 30) {
       this.calculateACDC();
     }
     
-    // 5. PROCESAR SEÑAL
+    // 5. SELECCIONAR CANAL PRINCIPAL: VERDE
+    // El canal verde tiene mejor SNR y menos saturación con flash
+    // Solo usamos rojo como fallback si verde está saturado
     const greenSaturated = rawGreen > 250;
     const signalSource = greenSaturated ? rawRed : rawGreen;
+    
+    // 6. INVERTIR SEÑAL: más sangre = menos luz reflejada
+    // Invertimos para que los picos sistólicos sean positivos
     const inverted = 255 - signalSource;
     
-    this.rawBuffer[idx] = inverted;
+    // 7. GUARDAR EN BUFFER RAW
+    this.rawBuffer.push(inverted);
+    if (this.rawBuffer.length > this.BUFFER_SIZE) {
+      this.rawBuffer.shift();
+    }
     
-    // 6. FILTRO PASABANDA
+    // 8. FILTRO PASABANDA (0.5-4 Hz)
     const filtered = this.bandpassFilter.filter(inverted);
-    this.filteredBuffer[idx] = filtered;
     
-    // 7. AVANZAR ÍNDICE
-    this.bufferIndex = (idx + 1) % this.BUFFER_SIZE;
-    if (this.bufferCount < this.BUFFER_SIZE) {
-      this.bufferCount++;
+    this.filteredBuffer.push(filtered);
+    if (this.filteredBuffer.length > this.BUFFER_SIZE) {
+      this.filteredBuffer.shift();
     }
     
-    // 8. CALCULAR CALIDAD (throttled)
-    if (this.frameCount % 5 === 0) {
-      this.signalQuality = this.calculateSignalQuality();
-    }
+    // 9. CALCULAR CALIDAD DE SEÑAL
+    this.signalQuality = this.calculateSignalQuality();
     
-    // 9. LOG REDUCIDO
+    // 10. LOG CADA SEGUNDO
     const now = Date.now();
-    if (now - this.lastLogTime >= this.LOG_INTERVAL) {
+    if (now - this.lastLogTime >= 1000) {
       this.lastLogTime = now;
       const src = greenSaturated ? 'R' : 'G';
       const fingerStatus = this.fingerDetected ? '✅' : '❌';
-      console.log(`📷 PPG [${src}] Q=${this.signalQuality.toFixed(0)}% ${fingerStatus}`);
+      console.log(`📷 PPG [${src}]: Raw=${signalSource.toFixed(0)} Inv=${inverted.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% ${fingerStatus}`);
     }
     
-    // 10. ÍNDICE DE PERFUSIÓN
+    // 11. CALCULAR ÍNDICE DE PERFUSIÓN
     const perfusionIndex = this.calculatePerfusionIndex();
     
-    // 11. EMITIR SEÑAL
-    this.onSignalReady({
+    // 12. EMITIR SEÑAL PROCESADA
+    const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: inverted,
       filteredValue: filtered,
@@ -156,24 +146,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rawRed,
       rawGreen,
       diagnostics: {
-        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)}`,
+        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}`,
         hasPulsatility: perfusionIndex > 0.1,
         pulsatilityValue: perfusionIndex
       }
-    });
+    };
+
+    this.onSignalReady(processedSignal);
   }
   
   /**
-   * EXTRAER RGB - OPTIMIZADO
-   * Muestreo más espaciado para velocidad
+   * EXTRAER RGB DE REGIÓN AMPLIA
+   * ROI del 85% para captura más fácil y cómoda
    */
   private extractROI(imageData: ImageData): { rawRed: number; rawGreen: number; rawBlue: number } {
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
     
-    // ROI 75% del área
-    const roiSize = Math.min(width, height) * 0.75;
+    // ROI amplia - 85% del área para mayor comodidad de uso
+    const roiSize = Math.min(width, height) * 0.85;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -184,12 +176,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let blueSum = 0;
     let count = 0;
     
-    // Muestrear cada 6 píxeles (antes 4)
-    const step = 6;
-    for (let y = startY; y < endY; y += step) {
-      const rowOffset = y * width;
-      for (let x = startX; x < endX; x += step) {
-        const i = (rowOffset + x) << 2; // Bit shift más rápido que * 4
+    // Muestrear cada 4 píxeles para velocidad con ROI más grande
+    for (let y = startY; y < endY; y += 4) {
+      for (let x = startX; x < endX; x += 4) {
+        const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
         blueSum += data[i + 2];
@@ -197,134 +187,127 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
     }
     
-    const invCount = 1 / count;
     return {
-      rawRed: redSum * invCount,
-      rawGreen: greenSum * invCount,
-      rawBlue: blueSum * invCount
+      rawRed: count > 0 ? redSum / count : 0,
+      rawGreen: count > 0 ? greenSum / count : 0,
+      rawBlue: count > 0 ? blueSum / count : 0
     };
   }
   
+  /**
+   * DETECCIÓN DE DEDO MÁS PERMISIVA
+   * Umbrales más amplios para facilitar la medición
+   */
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
+    // Umbrales más permisivos para comodidad
+    const redMinThreshold = 40;  // Antes: 60, ahora más permisivo
+    const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
+    
+    // Rango más amplio: 0.9-3.0 (antes 1.05-2.5)
+    // Permite más variación de tonos de piel y condiciones de luz
     const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
-    const validRed = rawRed > 40 && rawRed < 255;
+    const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
     const notFullySaturated = rawRed < 254 || rawGreen < 254;
+    
+    // También aceptar si hay suficiente luz en general
     const hasEnoughLight = rawRed > 30 && rawGreen > 20;
     
     return (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
   }
   
   /**
-   * CALCULAR AC/DC - OPTIMIZADO
-   * Usa buffers circulares sin crear nuevos arrays
+   * CALCULAR ESTADÍSTICAS AC/DC PARA SpO2
    */
   private calculateACDC(): void {
-    this.redMin = 255;
-    this.redMax = 0;
-    this.greenMin = 255;
-    this.greenMax = 0;
+    if (this.redBuffer.length < 30 || this.greenBuffer.length < 30) return;
     
-    // Solo analizar últimos 60 valores (2s)
-    const samplesToCheck = Math.min(60, this.bufferCount);
+    const recent = 60; // Últimos 2 segundos
+    const redRecent = this.redBuffer.slice(-recent);
+    const greenRecent = this.greenBuffer.slice(-recent);
     
-    for (let i = 0; i < samplesToCheck; i++) {
-      const idx = (this.bufferIndex - 1 - i + this.BUFFER_SIZE) % this.BUFFER_SIZE;
-      const r = this.redBuffer[idx];
-      const g = this.greenBuffer[idx];
-      
-      if (r < this.redMin) this.redMin = r;
-      if (r > this.redMax) this.redMax = r;
-      if (g < this.greenMin) this.greenMin = g;
-      if (g > this.greenMax) this.greenMax = g;
-    }
+    // DC = promedio (componente continua)
+    this.redDC = redRecent.reduce((a, b) => a + b, 0) / redRecent.length;
+    this.greenDC = greenRecent.reduce((a, b) => a + b, 0) / greenRecent.length;
+    
+    // AC = amplitud pico a pico (componente pulsátil)
+    this.redAC = Math.max(...redRecent) - Math.min(...redRecent);
+    this.greenAC = Math.max(...greenRecent) - Math.min(...greenRecent);
   }
   
+  /**
+   * CALCULAR CALIDAD DE SEÑAL
+   * Basado en variabilidad y pulsatilidad
+   */
   private calculateSignalQuality(): number {
-    if (this.bufferCount < 30 || !this.fingerDetected) return 0;
+    if (this.filteredBuffer.length < 30) return 0;
+    if (!this.fingerDetected) return 0;
     
-    // Calcular rango de señal filtrada
-    let min = Infinity, max = -Infinity;
-    let sum = 0;
-    const samplesToCheck = Math.min(60, this.bufferCount);
-    
-    for (let i = 0; i < samplesToCheck; i++) {
-      const idx = (this.bufferIndex - 1 - i + this.BUFFER_SIZE) % this.BUFFER_SIZE;
-      const v = this.filteredBuffer[idx];
-      if (v < min) min = v;
-      if (v > max) max = v;
-      sum += v;
-    }
-    
+    const recent = this.filteredBuffer.slice(-60);
+    const max = Math.max(...recent);
+    const min = Math.min(...recent);
     const range = max - min;
+    
+    // Rango mínimo para señal válida
     if (range < 0.5) return 10;
     
-    const mean = sum / samplesToCheck;
-    let variance = 0;
-    
-    for (let i = 0; i < samplesToCheck; i++) {
-      const idx = (this.bufferIndex - 1 - i + this.BUFFER_SIZE) % this.BUFFER_SIZE;
-      const diff = this.filteredBuffer[idx] - mean;
-      variance += diff * diff;
-    }
-    variance /= samplesToCheck;
-    
+    // Calcular SNR aproximado
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
-    const snr = range / (stdDev + 0.01);
     
-    return Math.min(100, Math.max(0, snr * 15));
+    // SNR = señal/ruido, normalizar a 0-100
+    const snr = range / (stdDev + 0.01);
+    const quality = Math.min(100, Math.max(0, snr * 15));
+    
+    return quality;
   }
   
+  /**
+   * ÍNDICE DE PERFUSIÓN: AC/DC * 100
+   * Indica la fuerza del pulso
+   */
   private calculatePerfusionIndex(): number {
-    if (this.bufferCount < 30) return 0;
-    const greenDC = this.greenSum / this.bufferCount;
-    if (greenDC === 0) return 0;
-    const greenAC = this.greenMax - this.greenMin;
-    return (greenAC / greenDC) * 100;
+    if (this.greenDC === 0) return 0;
+    // Usar canal verde ya que es nuestra fuente principal
+    return (this.greenAC / this.greenDC) * 100;
   }
 
   reset(): void {
-    this.bufferIndex = 0;
-    this.bufferCount = 0;
+    this.rawBuffer = [];
+    this.filteredBuffer = [];
+    this.redBuffer = [];
+    this.greenBuffer = [];
     this.frameCount = 0;
     this.lastLogTime = 0;
     this.fingerDetected = false;
     this.signalQuality = 0;
-    this.redSum = 0;
-    this.greenSum = 0;
-    this.redMin = 255;
-    this.redMax = 0;
-    this.greenMin = 255;
-    this.greenMax = 0;
+    this.redDC = 0;
+    this.redAC = 0;
+    this.greenDC = 0;
+    this.greenAC = 0;
     this.bandpassFilter.reset();
   }
 
   getRGBStats() {
-    const count = Math.max(1, this.bufferCount);
     return {
-      redAC: this.redMax - this.redMin,
-      redDC: this.redSum / count,
-      greenAC: this.greenMax - this.greenMin,
-      greenDC: this.greenSum / count,
-      rgRatio: this.greenSum > 0 ? this.redSum / this.greenSum : 0
+      redAC: this.redAC,
+      redDC: this.redDC,
+      greenAC: this.greenAC,
+      greenDC: this.greenDC,
+      rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0
     };
   }
 
   getLastNSamples(n: number): number[] {
-    const result: number[] = [];
-    const count = Math.min(n, this.bufferCount);
-    for (let i = 0; i < count; i++) {
-      const idx = (this.bufferIndex - 1 - i + this.BUFFER_SIZE) % this.BUFFER_SIZE;
-      result.unshift(this.filteredBuffer[idx]);
-    }
-    return result;
+    return this.filteredBuffer.slice(-n);
   }
   
   getRawBuffer(): number[] {
-    return Array.from(this.rawBuffer.slice(0, this.bufferCount));
+    return [...this.rawBuffer];
   }
   
   getFilteredBuffer(): number[] {
-    return Array.from(this.filteredBuffer.slice(0, this.bufferCount));
+    return [...this.filteredBuffer];
   }
 }
