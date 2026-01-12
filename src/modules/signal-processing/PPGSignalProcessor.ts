@@ -156,16 +156,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * EXTRAER RGB DE REGIÓN CENTRAL
-   * ROI del 60% para evitar bordes y artefactos
+   * EXTRAER RGB DE REGIÓN AMPLIA
+   * ROI del 85% para captura más fácil y cómoda
    */
   private extractROI(imageData: ImageData): { rawRed: number; rawGreen: number; rawBlue: number } {
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
     
-    // ROI central - 60% del área
-    const roiSize = Math.min(width, height) * 0.6;
+    // ROI amplia - 85% del área para mayor comodidad de uso
+    const roiSize = Math.min(width, height) * 0.85;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -176,9 +176,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let blueSum = 0;
     let count = 0;
     
-    // Muestrear cada 3 píxeles para velocidad
-    for (let y = startY; y < endY; y += 3) {
-      for (let x = startX; x < endX; x += 3) {
+    // Muestrear cada 4 píxeles para velocidad con ROI más grande
+    for (let y = startY; y < endY; y += 4) {
+      for (let x = startX; x < endX; x += 4) {
         const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
@@ -195,28 +195,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO ROBUSTA
-   * Basado en:
-   * 1. Nivel de rojo alto (flash iluminando tejido)
-   * 2. Ratio R/G característico de piel con sangre
-   * 3. No saturación completa
+   * DETECCIÓN DE DEDO MÁS PERMISIVA
+   * Umbrales más amplios para facilitar la medición
    */
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    // Criterios:
-    // - Rojo debe ser dominante (sangre absorbe menos rojo)
-    // - Verde debe ser menor que rojo (sangre absorbe más verde)
-    // - Niveles suficientes pero no saturados
-    
-    const redMinThreshold = 60;
+    // Umbrales más permisivos para comodidad
+    const redMinThreshold = 40;  // Antes: 60, ahora más permisivo
     const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
     
-    // Rojo debe ser ~1.1-1.8x mayor que verde para indicar tejido con sangre
-    const validRatio = rgRatio > 1.05 && rgRatio < 2.5;
+    // Rango más amplio: 0.9-3.0 (antes 1.05-2.5)
+    // Permite más variación de tonos de piel y condiciones de luz
+    const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
     const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
     const notFullySaturated = rawRed < 254 || rawGreen < 254;
     
-    return validRatio && validRed && notFullySaturated;
+    // También aceptar si hay suficiente luz en general
+    const hasEnoughLight = rawRed > 30 && rawGreen > 20;
+    
+    return (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
   }
   
   /**
