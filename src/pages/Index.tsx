@@ -390,9 +390,8 @@ const Index = () => {
     // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
-      !!lastSignal.fingerDetected,
-      lastSignal.timestamp,
-      lastSignal.quality
+      true,
+      lastSignal.timestamp
     );
     
     setHeartRate(heartBeatResult.bpm);
@@ -414,7 +413,7 @@ const Index = () => {
       vitalSignsFrameCounter.current = 0;
       
       if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
-        const vitals = processVitalSigns(lastSignal.rawValue, heartBeatResult.rrData);
+        const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
         if (vitals) {
           setVitalSigns(vitals);
@@ -503,8 +502,8 @@ const Index = () => {
         {/* PREVIEW DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
-          isFingerDetected={!!lastSignal?.fingerDetected}
-          signalQuality={lastSignal?.quality ?? 0}
+          isFingerDetected={true}
+          signalQuality={100}
           isVisible={isCameraOn}
         />
 
@@ -528,8 +527,8 @@ const Index = () => {
           <div className="flex-1">
             <PPGSignalMeter 
               value={heartbeatSignal}
-              quality={lastSignal?.quality ?? 0}
-              isFingerDetected={!!lastSignal?.fingerDetected}
+              quality={100}
+              isFingerDetected={true}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}

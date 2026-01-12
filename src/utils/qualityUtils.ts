@@ -38,7 +38,7 @@ export const getCardiacWaveColor = (quality: number): string => {
 export const getResultTextColor = (isFinal = false): string => {
   return isFinal ? '#fbbf24' : '#e5e7eb'; // amber-400 para finales, gray-200 para normales
 };
-()
+
 export const getResultBorderColor = (isFinal = false): string => {
   return isFinal ? '#fbbf24' : '#374151'; // amber-400 para finales, gray-700 para normales
 };

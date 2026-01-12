@@ -17,7 +17,6 @@ export class HeartBeatProcessor {
   // Derivada para detección de picos
   private prevValues: number[] = [];
   private lastPeakTime: number = 0;
-  private fingerDetected: boolean = true;
   
   // BPM
   private rrIntervals: number[] = [];
@@ -63,20 +62,6 @@ export class HeartBeatProcessor {
   } {
     this.frameCount++;
     const now = timestamp || Date.now();
-
-    // Si no hay dedo, no intentamos detectar picos (evita BPM fantasmas)
-    if (!this.fingerDetected) {
-      // Mantener buffer pequeño para no sobre-cargar
-      this.signalBuffer.push(filteredValue);
-      if (this.signalBuffer.length > 30) this.signalBuffer.shift();
-      return {
-        bpm: 0,
-        confidence: 0,
-        isPeak: false,
-        filteredValue: 0,
-        arrhythmiaCount: 0,
-      };
-    }
     
     // Guardar valor original
     this.signalBuffer.push(filteredValue);
@@ -98,7 +83,7 @@ export class HeartBeatProcessor {
       }
     }
     
-    // === DETECCIÓN DE PICOS (más robusta) ===
+    // === DETECCIÓN DE PICOS ===
     this.prevValues.push(normalizedValue);
     if (this.prevValues.length > 5) {
       this.prevValues.shift();
@@ -114,18 +99,9 @@ export class HeartBeatProcessor {
       const prev1 = this.prevValues[n - 2];
       const curr = this.prevValues[n - 1];
       
-      // Umbral adaptativo: basado en la dispersión reciente
-      const recent = this.prevValues.slice(-5);
-      const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-      const varr = recent.reduce((acc, v) => acc + (v - mean) * (v - mean), 0) / recent.length;
-      const sd = Math.sqrt(varr);
-      const dynThreshold = Math.max(6, mean + sd * 1.1);
-
-      // Máximo local con prominencia mínima
-      const localMin = Math.min(prev2, curr);
-      const prominence = prev1 - localMin;
-
-      if (prev1 > prev2 && prev1 > curr && prev1 > dynThreshold && prominence > 6) {
+      // Máximo local: valor anterior era mayor que sus vecinos
+      // Y la señal está por encima de la media (positiva)
+      if (prev1 > prev2 && prev1 > curr && prev1 > 5) {
         isPeak = true;
         
         // Calcular RR interval
@@ -149,17 +125,19 @@ export class HeartBeatProcessor {
         }
         
         this.lastPeakTime = now;
-
-        // Feedback solo cuando hay algo de confianza (evita vibración/beep por ruido)
-        if (this.rrIntervals.length >= 3) {
-          this.playBeep();
-          this.vibrate();
-        }
+        
+        // Feedback
+        this.playBeep();
+        this.vibrate();
+        
+        console.log(`💓 PICO! BPM=${Math.round(this.smoothBPM)} Val=${prev1.toFixed(1)}`);
       }
     }
     
-    // Log periódico (reducido)
-    // if (this.frameCount % 60 === 0) console.log(`📊 PPG Norm=${normalizedValue.toFixed(1)} BPM=${Math.round(this.smoothBPM)}`);
+    // Log periódico
+    if (this.frameCount % 30 === 0) {
+      console.log(`📊 Señal: Norm=${normalizedValue.toFixed(1)} BPM=${Math.round(this.smoothBPM)}`);
+    }
     
     // Confianza
     let confidence = 0;
@@ -224,17 +202,7 @@ export class HeartBeatProcessor {
   }
   
   setArrhythmiaDetected(_isDetected: boolean): void {}
-  setFingerDetected(detected: boolean): void {
-    if (this.fingerDetected === detected) return;
-    this.fingerDetected = detected;
-    if (!detected) {
-      // Reset duro para evitar que quede BPM anterior congelado
-      this.rrIntervals = [];
-      this.smoothBPM = 0;
-      this.lastPeakTime = 0;
-      this.prevValues = [];
-    }
-  }
+  setFingerDetected(_detected: boolean): void {}
   
   reset(): void {
     this.signalBuffer = [];
@@ -250,4 +218,4 @@ export class HeartBeatProcessor {
       this.audioContext.close().catch(() => {});
     }
   }
-  }
+}

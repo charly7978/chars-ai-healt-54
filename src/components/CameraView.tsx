@@ -66,77 +66,17 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         return;
       }
 
-      const stopStream = async (s: MediaStream | null) => {
-        if (!s) return;
-        for (const t of s.getTracks()) {
-          try { t.stop(); } catch {}
-        }
-      };
-
-      const getTorchCapableBackStream = async (): Promise<MediaStream> => {
-        // 1) Intento rápido: environment "ideal" (no exact) para maximizar compatibilidad
-        let stream = await navigator.mediaDevices.getUserMedia({
+      try {
+        // Configuración optimizada para PPG
+        const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
-            facingMode: "environment",
+            facingMode: { exact: "environment" },
             width: { ideal: 640, max: 1280 },
             height: { ideal: 480, max: 720 },
-            frameRate: { ideal: 30, min: 24, max: 30 },
+            frameRate: { ideal: 30, min: 24, max: 30 }
           }
         });
-
-        const firstTrack = stream.getVideoTracks()[0];
-        const firstCaps: any = firstTrack?.getCapabilities?.() || {};
-        if (firstCaps?.torch) {
-          return stream;
-        }
-
-        // 2) Si no hay torch, probamos otras cámaras (algunos móviles eligen lente sin flash)
-        // Nota: labels suelen venir vacíos hasta otorgar permisos (por eso hacemos el intento 1 primero)
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videos = devices.filter(d => d.kind === 'videoinput');
-
-        // Orden heurístico: priorizar las que parezcan traseras
-        const scored = videos.map(d => {
-          const label = (d.label || '').toLowerCase();
-          const score = (
-            (label.includes('back') ? 3 : 0) +
-            (label.includes('rear') ? 3 : 0) +
-            (label.includes('environment') ? 2 : 0) +
-            (label.includes('wide') ? 1 : 0)
-          );
-          return { d, score };
-        }).sort((a, b) => b.score - a.score);
-
-        for (const item of scored) {
-          try {
-            const candidate = await navigator.mediaDevices.getUserMedia({
-              audio: false,
-              video: {
-                deviceId: { exact: item.d.deviceId },
-                width: { ideal: 640, max: 1280 },
-                height: { ideal: 480, max: 720 },
-                frameRate: { ideal: 30, min: 24, max: 30 },
-              }
-            });
-            const t = candidate.getVideoTracks()[0];
-            const caps: any = t?.getCapabilities?.() || {};
-            if (caps?.torch) {
-              await stopStream(stream);
-              return candidate;
-            }
-            await stopStream(candidate);
-          } catch {
-            // seguimos
-          }
-        }
-
-        // 3) Si ninguna expone torch, devolvemos el stream inicial
-        return stream;
-      };
-
-      try {
-        const stream = await getTorchCapableBackStream();
         
         if (!mounted) {
           stream.getTracks().forEach(t => t.stop());
@@ -161,7 +101,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           });
         }
 
-        // ACTIVAR FLASH - crítico para PPG
+        // ACTIVAR FLASH - Crítico para PPG
         const track = stream.getVideoTracks()[0];
         if (track) {
           // Esperar estabilización de cámara
@@ -186,7 +126,51 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         isStartingRef.current = false;
 
       } catch (err) {
-        console.error('❌ Error cámara:', err);
+        console.error('❌ Error cámara con exact:', err);
+        
+        // Fallback sin "exact"
+        try {
+          const fallbackStream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: "environment",
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 30 }
+            }
+          });
+          
+          if (!mounted) {
+            fallbackStream.getTracks().forEach(t => t.stop());
+            isStartingRef.current = false;
+            return;
+          }
+          
+          streamRef.current = fallbackStream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = fallbackStream;
+            await videoRef.current.play().catch(() => {});
+          }
+          
+          // Flash en fallback
+          const track = fallbackStream.getVideoTracks()[0];
+          if (track) {
+            await new Promise(r => setTimeout(r, 500));
+            try {
+              const caps = track.getCapabilities?.() as any;
+              if (caps?.torch) {
+                await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                console.log('🔦 Flash ACTIVADO (fallback)');
+              }
+            } catch {}
+          }
+          
+          console.log('📹 Cámara fallback lista');
+          onStreamReady?.(fallbackStream);
+        } catch (fallbackErr) {
+          console.error('❌ Error cámara fallback:', fallbackErr);
+        }
+        
         isStartingRef.current = false;
       }
     };
@@ -225,4 +209,3 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 CameraView.displayName = 'CameraView';
 
 export default CameraView;
-            
