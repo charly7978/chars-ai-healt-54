@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
-import { parseArrhythmiaStatus } from '@/utils/arrhythmiaUtils';
+// Arritmias visualizadas directamente en la onda con colores diferenciados
 
 interface PPGSignalMeterProps {
   value: number;
@@ -190,29 +190,30 @@ const PPGSignalMeter = ({
       const amplitude = H * 0.35;
       const scaledValue = (signalValue / 50) * amplitude;
       
-      // Agregar punto
+      // Detectar si el pico actual es arrítmico
+      const currentIsArrhythmia = peak && arrStatus?.includes('ARRITMIA');
+      
+      // Agregar punto - marcar como arritmia si hay pico arrítmico
       buffer.push({
         time: now,
         value: scaledValue,
-        isArrhythmia: arrStatus?.includes('ARRITMIA') || false
+        isArrhythmia: currentIsArrhythmia || false
       });
       
-      // Dibujar señal
+      // Dibujar señal CON COLORES DIFERENCIADOS POR ARRITMIA
       const points = buffer.getPoints();
       const { CANVAS_WIDTH: W, WINDOW_MS, COLORS } = CONFIG;
       
       if (points.length > 2) {
-        ctx.shadowColor = COLORS.SIGNAL_GLOW;
-        ctx.shadowBlur = 8;
-        
-        ctx.beginPath();
-        ctx.strokeStyle = COLORS.SIGNAL;
+        // Dibujar segmentos con colores según arritmia
+        // Verde = normal, Rojo = arritmia
         ctx.lineWidth = 3;
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
         
-        let started = false;
-        let lastPoint: { x: number; y: number } | null = null;
+        let prevX: number | null = null;
+        let prevY: number | null = null;
+        let lastPoint: { x: number; y: number; isArrhythmia: boolean } | null = null;
         
         for (let i = 0; i < points.length; i++) {
           const pt = points[i];
@@ -220,62 +221,51 @@ const PPGSignalMeter = ({
           if (age > WINDOW_MS) continue;
           
           const x = W - (age * W / WINDOW_MS);
-          const y = centerY - pt.value; // NEGATIVO: valores positivos van ARRIBA
+          const y = centerY - pt.value;
           
-          if (!started) {
-            ctx.moveTo(x, y);
-            started = true;
-          } else {
+          if (prevX !== null && prevY !== null) {
+            // Dibujar segmento con color según arritmia del punto actual
+            ctx.beginPath();
+            ctx.moveTo(prevX, prevY);
             ctx.lineTo(x, y);
+            
+            if (pt.isArrhythmia) {
+              // Segmento ROJO para arritmia
+              ctx.strokeStyle = COLORS.PEAK_ARRHYTHMIA;
+              ctx.shadowColor = 'rgba(239, 68, 68, 0.5)';
+              ctx.shadowBlur = 10;
+            } else {
+              // Segmento VERDE normal
+              ctx.strokeStyle = COLORS.SIGNAL;
+              ctx.shadowColor = COLORS.SIGNAL_GLOW;
+              ctx.shadowBlur = 6;
+            }
+            
+            ctx.stroke();
+            ctx.shadowBlur = 0;
           }
           
-          lastPoint = { x, y };
+          prevX = x;
+          prevY = y;
+          lastPoint = { x, y, isArrhythmia: pt.isArrhythmia };
         }
         
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-        
-        // Marcar pico
+        // Marcar pico actual si lo hay
         if (peak && lastPoint) {
-          const hasArrhythmia = arrStatus?.includes('ARRITMIA') || false;
-          
           ctx.beginPath();
-          ctx.arc(lastPoint.x, lastPoint.y, hasArrhythmia ? 10 : 7, 0, Math.PI * 2);
-          ctx.fillStyle = hasArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
+          ctx.arc(lastPoint.x, lastPoint.y, lastPoint.isArrhythmia ? 12 : 8, 0, Math.PI * 2);
+          ctx.fillStyle = lastPoint.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
           ctx.fill();
           
-          if (hasArrhythmia) {
-            const alpha = (Math.sin(now / 150) + 1) / 2;
+          // Halo pulsante para arritmia
+          if (lastPoint.isArrhythmia) {
+            const alpha = (Math.sin(now / 100) + 1) / 2;
             ctx.beginPath();
-            ctx.arc(lastPoint.x, lastPoint.y, 16, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(239, 68, 68, ${alpha})`;
+            ctx.arc(lastPoint.x, lastPoint.y, 20, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(239, 68, 68, ${0.3 + alpha * 0.5})`;
             ctx.lineWidth = 3;
             ctx.stroke();
           }
-        }
-      }
-      
-      // Alerta de arritmia
-      if (arrStatus) {
-        const parsed = parseArrhythmiaStatus(arrStatus);
-        if (parsed?.status === 'DETECTED') {
-          const pulse = (Math.sin(now / 200) + 1) / 4;
-          ctx.fillStyle = `rgba(239, 68, 68, ${0.1 + pulse * 0.15})`;
-          ctx.fillRect(0, 0, W, 100);
-          
-          ctx.font = 'bold 28px system-ui, -apple-system, sans-serif';
-          ctx.fillStyle = '#ef4444';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          
-          const text = parsed.count > 1 
-            ? `⚠ ARRITMIAS DETECTADAS: ${parsed.count}` 
-            : '⚠ ARRITMIA DETECTADA';
-          
-          ctx.shadowColor = 'rgba(239, 68, 68, 0.5)';
-          ctx.shadowBlur = 10;
-          ctx.fillText(text, 30, 55);
-          ctx.shadowBlur = 0;
         }
       }
       

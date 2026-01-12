@@ -563,15 +563,7 @@ const Index = () => {
             />
           </div>
 
-          {/* INDICADOR DE ARRITMIA */}
-          {vitalSigns.arrhythmiaStatus?.includes('ARRITMIA') && (
-            <div className="absolute top-[45%] left-1/2 -translate-x-1/2 z-20 
-                            bg-red-600/90 px-6 py-2 rounded-full animate-pulse">
-              <span className="text-white font-bold text-lg">
-                ⚠️ ARRITMIA #{vitalSigns.arrhythmiaCount}
-              </span>
-            </div>
-          )}
+          {/* CONTADOR DE ARRITMIAS - Solo texto discreto, la visualización está en la onda */}
 
           {/* SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
