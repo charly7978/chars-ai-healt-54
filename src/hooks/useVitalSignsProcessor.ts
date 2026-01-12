@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
+import { VitalSignsProcessor, VitalSignsResult, RGBData } from '../modules/vital-signs/VitalSignsProcessor';
 
 /**
- * HOOK ÚNICO DE SIGNOS VITALES - OPTIMIZADO
- * Sin dependencia de MultiChannel (eliminado por rendimiento)
+ * HOOK DE SIGNOS VITALES - OPTIMIZADO
+ * Ahora acepta datos RGB para cálculo correcto de SpO2
  */
 export const useVitalSignsProcessor = () => {
   const processorRef = useRef<VitalSignsProcessor | null>(null);
@@ -11,12 +11,12 @@ export const useVitalSignsProcessor = () => {
   const sessionId = useRef<string>(`${Date.now().toString(36)}${(performance.now() | 0).toString(36)}`);
   const processedSignals = useRef<number>(0);
   
-  // Lazy initialization - solo crear una vez
+  // Lazy initialization
   if (!processorRef.current) {
     processorRef.current = new VitalSignsProcessor();
   }
   
-  // Cleanup al desmontar
+  // Cleanup
   useEffect(() => {
     return () => {
       if (processorRef.current) {
@@ -34,7 +34,17 @@ export const useVitalSignsProcessor = () => {
     processorRef.current?.forceCalibrationCompletion();
   }, []);
   
-  const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+  /**
+   * Actualizar datos RGB para SpO2
+   */
+  const setRGBData = useCallback((data: RGBData) => {
+    processorRef.current?.setRGBData(data);
+  }, []);
+  
+  const processSignal = useCallback((
+    value: number, 
+    rrData?: { intervals: number[], lastPeakTime: number | null }
+  ) => {
     if (!processorRef.current) return {
       spo2: 0, glucose: 0, hemoglobin: 0,
       pressure: { systolic: 0, diastolic: 0 },
@@ -48,7 +58,7 @@ export const useVitalSignsProcessor = () => {
     const result = processorRef.current.processSignal(value, rrData);
     
     // Guardar resultados válidos
-    if (result.spo2 > 0 && result.glucose > 0) {
+    if (result.spo2 > 0 || result.arrhythmiaCount > 0) {
       setLastValidResults(result);
     }
     
@@ -72,6 +82,7 @@ export const useVitalSignsProcessor = () => {
 
   return {
     processSignal,
+    setRGBData,
     reset,
     fullReset,
     startCalibration,

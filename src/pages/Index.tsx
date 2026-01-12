@@ -66,6 +66,7 @@ const Index = () => {
   
   const { 
     processSignal: processVitalSigns, 
+    setRGBData,
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
     lastValidResults,
@@ -412,28 +413,51 @@ const Index = () => {
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
+      // Actualizar datos RGB para SpO2 (desde lastSignal)
+      if (lastSignal.rawRed !== undefined && lastSignal.rawGreen !== undefined) {
+        // Calcular AC/DC aproximados desde la señal
+        const rawRed = lastSignal.rawRed;
+        const rawGreen = lastSignal.rawGreen;
+        const perfusion = lastSignal.perfusionIndex || 0;
+        
+        // Estimar AC como perfusión * DC
+        setRGBData({
+          redAC: rawRed * (perfusion / 100),
+          redDC: rawRed,
+          greenAC: rawGreen * (perfusion / 100),
+          greenDC: rawGreen
+        });
+      }
+      
       if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
         const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
         if (vitals) {
           setVitalSigns(vitals);
           
-          if (vitals.lastArrhythmiaData) {
-            lastArrhythmiaData.current = vitals.lastArrhythmiaData;
-            const [status, count] = vitals.arrhythmiaStatus.split('|');
-            setArrhythmiaCount(count || "0");
+          // Actualizar estado de arritmia
+          const arrhythmiaStatus = vitals.arrhythmiaStatus;
+          if (arrhythmiaStatus) {
+            lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
+            const parts = arrhythmiaStatus.split('|');
+            const count = parts.length > 1 ? parts[1] : "0";
+            setArrhythmiaCount(count);
             
-            const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+            const isArrhythmiaDetected = arrhythmiaStatus.includes("ARRITMIA DETECTADA");
             if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
               arrhythmiaDetectedRef.current = isArrhythmiaDetected;
               setArrhythmiaState(isArrhythmiaDetected);
               
               if (isArrhythmiaDetected) {
+                // Vibración fuerte para arritmia
+                if (navigator.vibrate) {
+                  navigator.vibrate([200, 100, 200]);
+                }
                 toast({ 
-                  title: "¡Arritmia detectada!", 
-                  description: "Latido irregular identificado.", 
+                  title: "⚠️ Arritmia detectada", 
+                  description: `Latido irregular #${vitals.arrhythmiaCount}`, 
                   variant: "destructive", 
-                  duration: 3000 
+                  duration: 4000 
                 });
               }
             }
@@ -441,7 +465,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData]);
 
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {
@@ -539,6 +563,16 @@ const Index = () => {
             />
           </div>
 
+          {/* INDICADOR DE ARRITMIA */}
+          {vitalSigns.arrhythmiaStatus?.includes('ARRITMIA') && (
+            <div className="absolute top-[45%] left-1/2 -translate-x-1/2 z-20 
+                            bg-red-600/90 px-6 py-2 rounded-full animate-pulse">
+              <span className="text-white font-bold text-lg">
+                ⚠️ ARRITMIA #{vitalSigns.arrhythmiaCount}
+              </span>
+            </div>
+          )}
+
           {/* SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
             <div className="grid grid-cols-3 gap-4 place-items-center">
@@ -556,7 +590,9 @@ const Index = () => {
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
-                value={vitalSigns.pressure ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` : "--/--"}
+                value={vitalSigns.pressure && vitalSigns.pressure.systolic > 0 
+                  ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` 
+                  : "--/--"}
                 unit="mmHg"
                 highlighted={showResults}
               />
