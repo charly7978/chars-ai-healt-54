@@ -165,7 +165,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const height = imageData.height;
     
     // ROI amplia - 85% del área para mayor comodidad de uso
-    const roiSize = Math.min(width, height) * 0.85;
+    const roiSize = Math.min(width, height) * 0.95;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -177,8 +177,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let count = 0;
     
     // Muestrear cada 4 píxeles para velocidad con ROI más grande
-    for (let y = startY; y < endY; y += 4) {
-      for (let x = startX; x < endX; x += 4) {
+    for (let y = startY; y < endY; y += 3) {
+      for (let x = startX; x < endX; x += 3) {
         const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
