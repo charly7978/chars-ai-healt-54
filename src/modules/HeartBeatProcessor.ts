@@ -1,35 +1,35 @@
 /**
- * PROCESADOR DE LATIDOS OPTIMIZADO
+ * PROCESADOR DE LATIDOS - VERSIÓN MEJORADA
  * 
- * ALGORITMO DE DETECCIÓN ROBUSTO:
- * 1. Normalización adaptativa de señal
- * 2. Detección de picos por máximo local + umbral dinámico
- * 3. Validación de intervalos RR fisiológicos
- * 4. Suavizado exponencial de BPM
- * 5. Feedback táctil y auditivo
+ * MEJORAS:
+ * 1. Detección de picos más robusta con análisis de pendientes
+ * 2. Filtrado de falsos positivos mejorado
+ * 3. BPM más estable con validación de intervalos
+ * 4. Mejor manejo de señales débiles
  * 
  * Referencia: webcam-pulse-detector (thearn), De Haan & Jeanne 2013
  */
 export class HeartBeatProcessor {
   // Constantes fisiológicas
   private readonly MIN_BPM = 40;
-  private readonly MAX_BPM = 200;
-  private readonly MIN_PEAK_INTERVAL_MS = 300;  // 200 BPM
-  private readonly MAX_PEAK_INTERVAL_MS = 1500; // 40 BPM
+  private readonly MAX_BPM = 180;
+  private readonly MIN_PEAK_INTERVAL_MS = 333;  // 180 BPM máximo
+  private readonly MAX_PEAK_INTERVAL_MS = 1500; // 40 BPM mínimo
   
   // Buffers para análisis
   private signalBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 150; // 5 segundos @ 30fps
+  private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
   
   // Detección de picos
   private lastPeakTime: number = 0;
-  private peakThreshold: number = 10; // Umbral adaptativo inicial
+  private peakThreshold: number = 8;
+  private adaptiveBaseline: number = 0;
   
   // RR Intervals y BPM
   private rrIntervals: number[] = [];
-  private readonly MAX_RR_INTERVALS = 10;
+  private readonly MAX_RR_INTERVALS = 12;
   private smoothBPM: number = 0;
-  private readonly BPM_SMOOTHING = 0.7; // Factor de suavizado (más alto = más estable)
+  private readonly BPM_SMOOTHING = 0.75;
   
   // Audio feedback
   private audioContext: AudioContext | null = null;
@@ -39,6 +39,8 @@ export class HeartBeatProcessor {
   // Estadísticas
   private frameCount: number = 0;
   private consecutivePeaks: number = 0;
+  private lastPeakValue: number = 0;
+  private peakHistory: { time: number; value: number }[] = [];
 
   constructor() {
     this.setupAudio();
@@ -159,16 +161,15 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * NORMALIZACIÓN ADAPTATIVA
-   * Escala la señal a rango -50 a +50 basado en min/max recientes
+   * NORMALIZACIÓN ADAPTATIVA MEJORADA
    */
   private normalizeSignal(value: number): { normalizedValue: number; range: number } {
-    const recent = this.signalBuffer.slice(-90); // 3 segundos
+    const recent = this.signalBuffer.slice(-120); // 4 segundos
     const min = Math.min(...recent);
     const max = Math.max(...recent);
     const range = max - min;
     
-    if (range < 0.1) {
+    if (range < 0.5) {
       return { normalizedValue: 0, range: 0 };
     }
     
@@ -179,57 +180,66 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * UMBRAL DINÁMICO
-   * Ajusta el umbral basado en la amplitud de la señal
+   * UMBRAL DINÁMICO MEJORADO
    */
   private updateThreshold(range: number): void {
-    // El umbral debe ser proporcional a la amplitud de la señal
-    // Pero no demasiado bajo para evitar falsos positivos
-    const newThreshold = Math.max(5, range * 0.3);
+    // Umbral proporcional a la amplitud pero con límites
+    const newThreshold = Math.max(6, Math.min(25, range * 0.25));
     
-    // Suavizar cambios en el umbral
-    this.peakThreshold = this.peakThreshold * 0.95 + newThreshold * 0.05;
+    // Suavizar cambios
+    this.peakThreshold = this.peakThreshold * 0.9 + newThreshold * 0.1;
   }
   
   /**
-   * DETECCIÓN DE PICO ROBUSTA
-   * Combina:
-   * 1. Máximo local (comparación con vecinos)
-   * 2. Umbral dinámico
-   * 3. Validación de pendiente
+   * DETECCIÓN DE PICO MEJORADA
+   * Usa análisis de pendiente además de máximo local
    */
   private detectPeak(normalizedValue: number, timeSinceLastPeak: number): boolean {
     const n = this.signalBuffer.length;
-    if (n < 5) return false;
+    if (n < 7) return false;
     
-    // Obtener últimos 5 valores normalizados
-    const recent5 = this.signalBuffer.slice(-5).map((v, i, arr) => {
-      const recent = this.signalBuffer.slice(-90);
-      const min = Math.min(...recent);
-      const max = Math.max(...recent);
+    // Obtener últimos 7 valores normalizados para mejor análisis
+    const recent = this.signalBuffer.slice(-7);
+    const recentNormalized = recent.map(v => {
+      const slice = this.signalBuffer.slice(-120);
+      const min = Math.min(...slice);
+      const max = Math.max(...slice);
       const range = max - min;
-      if (range < 0.1) return 0;
+      if (range < 0.5) return 0;
       return ((v - min) / range - 0.5) * 100;
     });
     
-    const [v0, v1, v2, v3, v4] = recent5;
+    const [v0, v1, v2, v3, v4, v5, v6] = recentNormalized;
     
-    // Condición 1: v2 (el valor del medio) debe ser un máximo local
-    const isLocalMax = v2 > v1 && v2 > v3;
+    // El valor central (v3) debe ser el máximo local
+    const isLocalMax = v3 > v2 && v3 > v4 && v3 >= v1 && v3 >= v5;
     
-    // Condición 2: Debe estar por encima del umbral
-    const aboveThreshold = v2 > this.peakThreshold;
+    // Debe estar por encima del umbral
+    const aboveThreshold = v3 > this.peakThreshold;
     
-    // Condición 3: Pendiente ascendente antes del pico
-    const hasRisingEdge = v1 > v0 || v2 > v1;
+    // Pendiente ascendente antes (v0→v3 debe subir)
+    const risingSlope = (v3 - v0) > 3;
     
-    // Condición 4: Pendiente descendente después del pico
-    const hasFallingEdge = v3 < v2 || v4 < v3;
+    // Pendiente descendente después (v3→v6 debe bajar)  
+    const fallingSlope = (v3 - v6) > 3;
     
-    // Condición 5: No demasiado cerca del pico anterior (anti-rebote)
+    // No muy cerca del pico anterior
     const notTooSoon = timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS;
     
-    return isLocalMax && aboveThreshold && hasRisingEdge && hasFallingEdge && notTooSoon;
+    // Validación de amplitud vs último pico (no muy diferente)
+    let amplitudeValid = true;
+    if (this.lastPeakValue > 0) {
+      const ratio = v3 / this.lastPeakValue;
+      amplitudeValid = ratio > 0.3 && ratio < 3.0;
+    }
+    
+    const isPeak = isLocalMax && aboveThreshold && risingSlope && fallingSlope && notTooSoon && amplitudeValid;
+    
+    if (isPeak) {
+      this.lastPeakValue = v3;
+    }
+    
+    return isPeak;
   }
   
   /**

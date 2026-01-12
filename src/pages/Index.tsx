@@ -413,18 +413,24 @@ const Index = () => {
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
-      // Actualizar datos RGB para SpO2 (desde lastSignal)
+      // Actualizar datos RGB para SpO2 - MEJORADO
       if (lastSignal.rawRed !== undefined && lastSignal.rawGreen !== undefined) {
-        // Calcular AC/DC aproximados desde la señal
         const rawRed = lastSignal.rawRed;
         const rawGreen = lastSignal.rawGreen;
-        const perfusion = lastSignal.perfusionIndex || 0;
         
-        // Estimar AC como perfusión * DC
+        // Calcular AC/DC basado en valores reales del PPGSignalProcessor
+        // DC = valor promedio (ya tenemos los raw)
+        // AC = estimado desde la amplitud de la señal filtrada
+        const signalAmplitude = Math.abs(lastSignal.filteredValue);
+        const perfusion = lastSignal.perfusionIndex || 1;
+        
+        // AC aproximado: usar amplitud de señal filtrada normalizada
+        const acFactor = Math.max(0.5, Math.min(10, signalAmplitude / 10));
+        
         setRGBData({
-          redAC: rawRed * (perfusion / 100),
+          redAC: acFactor * (rawRed / 255) * perfusion,
           redDC: rawRed,
-          greenAC: rawGreen * (perfusion / 100),
+          greenAC: acFactor * (rawGreen / 255) * perfusion,
           greenDC: rawGreen
         });
       }
@@ -551,8 +557,8 @@ const Index = () => {
           <div className="flex-1">
             <PPGSignalMeter 
               value={heartbeatSignal}
-              quality={100}
-              isFingerDetected={true}
+              quality={lastSignal?.quality || 0}
+              isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
@@ -560,6 +566,9 @@ const Index = () => {
               preserveResults={showResults}
               diagnosticMessage={lastSignal?.diagnostics?.message}
               isPeak={beatMarker === 1}
+              bpm={heartRate}
+              spo2={vitalSigns.spo2}
+              rrIntervals={rrIntervals}
             />
           </div>
 
