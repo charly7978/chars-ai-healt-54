@@ -83,10 +83,10 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
     
-    // Necesitamos suficientes muestras
+    // Necesitamos suficientes muestras - pero mantener último BPM válido
     if (this.signalBuffer.length < 30) {
       return {
-        bpm: 0,
+        bpm: this.smoothBPM > 0 ? Math.round(this.smoothBPM) : 0,
         confidence: 0,
         isPeak: false,
         filteredValue: 0,
@@ -161,17 +161,27 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * NORMALIZACIÓN ADAPTATIVA MEJORADA
+   * NORMALIZACIÓN ADAPTATIVA CON ESTABILIDAD
    */
+  private lastValidRange: number = 0;
+  
   private normalizeSignal(value: number): { normalizedValue: number; range: number } {
-    const recent = this.signalBuffer.slice(-120); // 4 segundos
+    const recent = this.signalBuffer.slice(-90); // 3 segundos (más estable)
     const min = Math.min(...recent);
     const max = Math.max(...recent);
     const range = max - min;
     
-    if (range < 0.5) {
+    // Umbral más bajo para aceptar más señales
+    if (range < 0.3) {
+      // Si no hay señal ahora pero tuvimos antes, usar último rango válido temporalmente
+      if (this.lastValidRange > 0) {
+        const normalizedValue = ((value - min) / this.lastValidRange - 0.5) * 100;
+        return { normalizedValue, range: 0 };
+      }
       return { normalizedValue: 0, range: 0 };
     }
+    
+    this.lastValidRange = range;
     
     // Normalizar a -50 a +50
     const normalizedValue = ((value - min) / range - 0.5) * 100;

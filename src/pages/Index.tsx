@@ -387,12 +387,11 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    // Procesar latidos
+    // Procesar latidos (solo 3 argumentos: value, fingerDetected, timestamp)
     const heartBeatResult = processHeartBeat(
       signalValue,
       !!lastSignal.fingerDetected,
-      lastSignal.timestamp,
-      lastSignal.quality
+      lastSignal.timestamp
     );
     
     setHeartRate(heartBeatResult.bpm);
