@@ -177,8 +177,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let count = 0;
     
     // Muestrear cada 4 píxeles para velocidad con ROI más grande
-    for (let y = startY; y < endY; y += 6) {
-      for (let x = startX; x < endX; x += 6) {
+    for (let y = startY; y < endY; y += 3) {
+      for (let x = startX; x < endX; x += 3) {
         const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
@@ -195,58 +195,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO ULTRA-ROBUSTA Y ESTABLE
-   * Evita cortes y fluctuaciones - prioriza continuidad
+   * DETECCIÓN DE DEDO MÁS PERMISIVA
+   * Umbrales más amplios para facilitar la medición
    */
-  private fingerConfidence: number = 0;
-  private consecutiveFingerFrames: number = 0;
-  private consecutiveNoFingerFrames: number = 0;
-  
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    // Umbrales muy permisivos para máxima comodidad
-    const redMinThreshold = 25;  // Muy bajo para aceptar más casos
+    // Umbrales más permisivos para comodidad
+    const redMinThreshold = 40;  // Antes: 60, ahora más permisivo
+    const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
     
-    // Criterios básicos muy amplios
-    const hasRedSignal = rawRed > redMinThreshold;
-    const hasLight = rawRed > 15 && rawGreen > 10;
-    const ratioOK = rgRatio > 0.5 && rgRatio < 5.0; // Rango muy amplio
-    const notFullySaturated = rawRed < 254 && rawGreen < 254;
+    // Rango más amplio: 0.9-3.0 (antes 1.05-2.5)
+    // Permite más variación de tonos de piel y condiciones de luz
+    const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
+    const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
+    const notFullySaturated = rawRed < 254 || rawGreen < 254;
     
-    // Detección instantánea
-    const instantDetected = (hasRedSignal && ratioOK && notFullySaturated) || 
-                           (hasLight && hasRedSignal);
+    // También aceptar si hay suficiente luz en general
+    const hasEnoughLight = rawRed > 30 && rawGreen > 20;
     
-    // Sistema de histéresis para evitar cortes
-    if (instantDetected) {
-      this.consecutiveFingerFrames++;
-      this.consecutiveNoFingerFrames = 0;
-      
-      // Subir confianza gradualmente
-      this.fingerConfidence = Math.min(1, this.fingerConfidence + 0.1);
-    } else {
-      this.consecutiveNoFingerFrames++;
-      
-      // Solo bajar confianza después de varios frames sin dedo
-      if (this.consecutiveNoFingerFrames > 15) { // ~0.5 segundos de tolerancia
-        this.fingerConfidence = Math.max(0, this.fingerConfidence - 0.05);
-        this.consecutiveFingerFrames = 0;
-      }
-    }
-    
-    // Considerar dedo presente si confianza > 0.3 (histéresis)
-    // Una vez detectado, necesita mucho tiempo sin señal para perderlo
-    if (this.fingerConfidence > 0.3) {
-      return true;
-    }
-    
-    // Si acaba de empezar y tiene señal instantánea, aceptar
-    if (instantDetected && this.consecutiveFingerFrames >= 3) {
-      this.fingerConfidence = 0.5;
-      return true;
-    }
-    
-    return false;
+    return (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
   }
   
   /**
@@ -269,64 +236,31 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * CALCULAR CALIDAD DE SEÑAL - VERSIÓN ESTABLE Y ROBUSTA
-   * Mantiene calidad alta si hay señal presente con suavizado
+   * CALCULAR CALIDAD DE SEÑAL
+   * Basado en variabilidad y pulsatilidad
    */
-  private smoothedQuality: number = 0;
-  
   private calculateSignalQuality(): number {
-    // Si no hay suficiente buffer, calidad inicial moderada
-    if (this.filteredBuffer.length < 15) {
-      return this.fingerDetected ? 60 : 0;
-    }
+    if (this.filteredBuffer.length < 30) return 0;
+    if (!this.fingerDetected) return 0;
     
-    // Si no hay dedo, calidad baja pero no cero inmediatamente
-    if (!this.fingerDetected) {
-      // Decay gradual para evitar cortes bruscos
-      this.smoothedQuality = Math.max(0, this.smoothedQuality * 0.9);
-      return Math.round(this.smoothedQuality);
-    }
-    
-    const recent = this.filteredBuffer.slice(-45); // 1.5 segundos
+    const recent = this.filteredBuffer.slice(-60);
     const max = Math.max(...recent);
     const min = Math.min(...recent);
     const range = max - min;
     
-    // Calcular calidad objetivo basada en métricas
-    let targetQuality: number;
+    // Rango mínimo para señal válida
+    if (range < 0.5) return 10;
     
-    if (range < 0.3) {
-      // Señal muy plana pero dedo presente
-      targetQuality = 55;
-    } else if (range < 1) {
-      // Señal débil
-      targetQuality = 70;
-    } else if (range < 5) {
-      // Señal buena
-      targetQuality = 85;
-    } else if (range < 20) {
-      // Señal excelente
-      targetQuality = 95;
-    } else {
-      // Señal muy fuerte (normal con flash)
-      targetQuality = 90;
-    }
+    // Calcular SNR aproximado
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
+    const stdDev = Math.sqrt(variance);
     
-    // Bonus por perfusión
-    const perfusion = this.calculatePerfusionIndex();
-    if (perfusion > 0.5) targetQuality = Math.min(100, targetQuality + 5);
+    // SNR = señal/ruido, normalizar a 0-100
+    const snr = range / (stdDev + 0.01);
+    const quality = Math.min(100, Math.max(0, snr * 15));
     
-    // Suavizado exponencial fuerte para estabilidad
-    // Alpha bajo = más estable, menos saltos
-    const alpha = 0.08;
-    this.smoothedQuality = alpha * targetQuality + (1 - alpha) * this.smoothedQuality;
-    
-    // Inicialización rápida si empezamos de cero
-    if (this.smoothedQuality < 30 && targetQuality > 60) {
-      this.smoothedQuality = Math.max(this.smoothedQuality, 50);
-    }
-    
-    return Math.round(Math.max(20, this.smoothedQuality));
+    return quality;
   }
   
   /**
@@ -352,10 +286,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.redAC = 0;
     this.greenDC = 0;
     this.greenAC = 0;
-    this.smoothedQuality = 0;
-    this.fingerConfidence = 0;
-    this.consecutiveFingerFrames = 0;
-    this.consecutiveNoFingerFrames = 0;
     this.bandpassFilter.reset();
   }
 
