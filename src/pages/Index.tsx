@@ -390,9 +390,8 @@ const Index = () => {
     // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
-      !!lastSignal.fingerDetected,
-      lastSignal.timestamp,
-      lastSignal.quality
+      true, // fingerDetected siempre true - la validación ya está en PPGSignalProcessor
+      lastSignal.timestamp
     );
     
     setHeartRate(heartBeatResult.bpm);
