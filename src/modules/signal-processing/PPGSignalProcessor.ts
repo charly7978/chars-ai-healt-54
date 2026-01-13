@@ -195,25 +195,42 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO MÁS PERMISIVA
-   * Umbrales más amplios para facilitar la medición
+   * DETECCIÓN DE DEDO MÁS ESTABLE Y PERMISIVA
+   * Histéresis para evitar parpadeo (on/off rápido)
    */
+  private lastFingerState: boolean = false;
+  private fingerStateCounter: number = 0;
+  private readonly FINGER_HYSTERESIS = 5; // Frames para cambiar estado
+  
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    // Umbrales más permisivos para comodidad
-    const redMinThreshold = 40;  // Antes: 60, ahora más permisivo
+    // Umbrales muy permisivos para comodidad
+    const redMinThreshold = 30;  // Muy permisivo
     const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
     
-    // Rango más amplio: 0.9-3.0 (antes 1.05-2.5)
-    // Permite más variación de tonos de piel y condiciones de luz
-    const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
+    // Rango muy amplio: 0.7-4.0
+    const validRatio = rgRatio > 0.7 && rgRatio < 4.0;
     const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
     const notFullySaturated = rawRed < 254 || rawGreen < 254;
     
-    // También aceptar si hay suficiente luz en general
-    const hasEnoughLight = rawRed > 30 && rawGreen > 20;
+    // Condición base: señal presente
+    const hasSignal = rawRed > 25 && rawGreen > 15;
+    const currentDetection = (validRatio && validRed && notFullySaturated) || (hasSignal && validRed);
     
-    return (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
+    // HISTÉRESIS: evitar cambios rápidos de estado
+    if (currentDetection === this.lastFingerState) {
+      this.fingerStateCounter = 0;
+      return this.lastFingerState;
+    }
+    
+    // Cambio de estado requiere N frames consecutivos
+    this.fingerStateCounter++;
+    if (this.fingerStateCounter >= this.FINGER_HYSTERESIS) {
+      this.lastFingerState = currentDetection;
+      this.fingerStateCounter = 0;
+    }
+    
+    return this.lastFingerState;
   }
   
   /**
@@ -287,6 +304,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.greenDC = 0;
     this.greenAC = 0;
     this.bandpassFilter.reset();
+    // Reset histéresis
+    this.lastFingerState = false;
+    this.fingerStateCounter = 0;
   }
 
   getRGBStats() {
