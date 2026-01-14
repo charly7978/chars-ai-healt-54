@@ -5,8 +5,10 @@ import CameraPreview from "@/components/CameraPreview";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { useCalibration } from "@/hooks/useCalibration";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
+import { CalibrationOverlay } from "@/components/CalibrationOverlay";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
@@ -73,6 +75,20 @@ const Index = () => {
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
+
+  // HOOK DE CALIBRACIÓN AUTOMÁTICA
+  const {
+    isCalibrating: isAutoCalibrating,
+    isCalibrated,
+    progress: autoCalibrationProgress,
+    state: calibrationState,
+    profile: calibrationProfile,
+    realtimeStats,
+    startCalibration: startAutoCalibration,
+    addSample: addCalibrationSample,
+    cancelCalibration,
+    getSignalQuality
+  } = useCalibration();
 
   // CANVAS PARA CAPTURA
   useEffect(() => {
@@ -247,10 +263,8 @@ const Index = () => {
       });
     }, 1000);
     
-    // Calibración automática
-    setIsCalibrating(true);
-    startCalibration();
-    setTimeout(() => setIsCalibrating(false), 3000);
+    // Calibración automática de 5 segundos
+    startAutoCalibration();
     
   }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
 
