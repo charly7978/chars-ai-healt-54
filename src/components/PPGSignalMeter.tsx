@@ -367,7 +367,7 @@ const PPGSignalMeter = ({
     if (isRunningRef.current) return;
     isRunningRef.current = true;
     
-    const frameTime = 1000 / CONFIG.TARGET_FPS;
+    const frameTime = 1500 / CONFIG.TARGET_FPS;
     let lastRenderTime = 0;
     
     const render = () => {
@@ -411,7 +411,7 @@ const PPGSignalMeter = ({
       
       // === PROCESAMIENTO DE SEÑAL ===
       // Escalar valor a amplitud visual controlada
-      const scaledValue = signalValue * 3; // Amplificación para visualización
+      const scaledValue = signalValue * 2; // Amplificación para visualización
       
       // Detectar si es arritmia
       const currentIsArrhythmia = peak && arrStatus?.includes('ARRITMIA');
