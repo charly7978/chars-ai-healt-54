@@ -26,9 +26,9 @@ interface PPGSignalMeterProps {
 const CONFIG = {
   CANVAS_WIDTH: 1400,
   CANVAS_HEIGHT: 2800,
-  WINDOW_MS: 2800, // 6 segundos de ventana
-  TARGET_FPS: 30,
-  BUFFER_SIZE: 400, // 6s @ 60fps
+  WINDOW_MS: 2200, // 6 segundos de ventana
+  TARGET_FPS: 60,
+  BUFFER_SIZE: 600, // 6s @ 60fps
   // Área de visualización (evitar solapamiento con info)
   PLOT_AREA: {
     LEFT: 80,    // Espacio para escala Y izquierda
