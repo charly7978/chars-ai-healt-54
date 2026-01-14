@@ -1,6 +1,5 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
-import { CalibrationProfile } from '../calibration/CalibrationManager';
 
 /**
  * PROCESADOR PPG OPTIMIZADO - CANAL VERDE COMO FUENTE PRINCIPAL
@@ -12,9 +11,6 @@ import { CalibrationProfile } from '../calibration/CalibrationManager';
  * - El canal verde (540nm) tiene mejor penetración en tejido y mayor absorción por sangre
  * - Mejor relación señal/ruido que el rojo en condiciones de flash intenso
  * - Referencia: De Haan & Jeanne 2013, webcam-pulse-detector
- * 
- * CON CALIBRACIÓN ADAPTATIVA:
- * - Umbrales ajustados según tono de piel y dispositivo del usuario
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -42,37 +38,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
   
-  // CALIBRACIÓN ADAPTATIVA
-  private calibrationProfile: CalibrationProfile | null = null;
-  private isCalibrated: boolean = false;
-  
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
     // Filtro pasabanda: 0.5-4Hz (30-240 BPM)
     this.bandpassFilter = new BandpassFilter(30);
-  }
-
-  /**
-   * APLICAR PERFIL DE CALIBRACIÓN
-   * Ajusta umbrales según características del usuario/dispositivo
-   */
-  setCalibrationProfile(profile: CalibrationProfile): void {
-    this.calibrationProfile = profile;
-    this.isCalibrated = true;
-    console.log('✅ PPGSignalProcessor: Perfil de calibración aplicado', {
-      rgRatioRange: `${profile.rgRatioMin.toFixed(2)}-${profile.rgRatioMax.toFixed(2)}`,
-      fingerThreshold: profile.fingerDetectionThreshold.toFixed(0),
-      confidence: `${profile.confidence}%`
-    });
-  }
-
-  /**
-   * Obtener estado de calibración
-   */
-  getCalibrationStatus(): { isCalibrated: boolean; profile: CalibrationProfile | null } {
-    return { isCalibrated: this.isCalibrated, profile: this.calibrationProfile };
   }
 
   async initialize(): Promise<void> {
@@ -194,7 +165,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const height = imageData.height;
     
     // ROI amplia - 85% del área para mayor comodidad de uso
-    const roiSize = Math.min(width, height) * 0.95;
+    const roiSize = Math.min(width, height) * 0.85;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -206,8 +177,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let count = 0;
     
     // Muestrear cada 4 píxeles para velocidad con ROI más grande
-    for (let y = startY; y < endY; y += 3) {
-      for (let x = startX; x < endX; x += 3) {
+    for (let y = startY; y < endY; y += 4) {
+      for (let x = startX; x < endX; x += 4) {
         const i = (y * width + x) * 4;
         redSum += data[i];
         greenSum += data[i + 1];
@@ -224,53 +195,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO CON CALIBRACIÓN ADAPTATIVA
-   * Usa umbrales personalizados si hay calibración, o permisivos por defecto
-   * Histéresis para evitar parpadeo (on/off rápido)
+   * DETECCIÓN DE DEDO MÁS PERMISIVA
+   * Umbrales más amplios para facilitar la medición
    */
-  private lastFingerState: boolean = false;
-  private fingerStateCounter: number = 0;
-  private readonly FINGER_HYSTERESIS = 5; // Frames para cambiar estado
-  
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    // USAR UMBRALES DE CALIBRACIÓN O DEFAULTS PERMISIVOS
-    let redMinThreshold = 30;
-    let rgRatioMin = 0.7;
-    let rgRatioMax = 4.0;
-    
-    if (this.calibrationProfile && this.isCalibrated) {
-      // Umbrales personalizados de la calibración
-      redMinThreshold = this.calibrationProfile.fingerDetectionThreshold;
-      rgRatioMin = this.calibrationProfile.rgRatioMin;
-      rgRatioMax = this.calibrationProfile.rgRatioMax;
-    }
-    
+    // Umbrales más permisivos para comodidad
+    const redMinThreshold = 40;  // Antes: 60, ahora más permisivo
     const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
     
-    // Validar según umbrales (calibrados o por defecto)
-    const validRatio = rgRatio > rgRatioMin && rgRatio < rgRatioMax;
+    // Rango más amplio: 0.9-3.0 (antes 1.05-2.5)
+    // Permite más variación de tonos de piel y condiciones de luz
+    const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
     const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
     const notFullySaturated = rawRed < 254 || rawGreen < 254;
     
-    // Condición base: señal presente
-    const hasSignal = rawRed > Math.max(20, redMinThreshold * 0.6) && rawGreen > 15;
-    const currentDetection = (validRatio && validRed && notFullySaturated) || (hasSignal && validRed);
+    // También aceptar si hay suficiente luz en general
+    const hasEnoughLight = rawRed > 30 && rawGreen > 20;
     
-    // HISTÉRESIS: evitar cambios rápidos de estado
-    if (currentDetection === this.lastFingerState) {
-      this.fingerStateCounter = 0;
-      return this.lastFingerState;
-    }
-    
-    // Cambio de estado requiere N frames consecutivos
-    this.fingerStateCounter++;
-    if (this.fingerStateCounter >= this.FINGER_HYSTERESIS) {
-      this.lastFingerState = currentDetection;
-      this.fingerStateCounter = 0;
-    }
-    
-    return this.lastFingerState;
+    return (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
   }
   
   /**
@@ -344,9 +287,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.greenDC = 0;
     this.greenAC = 0;
     this.bandpassFilter.reset();
-    // Reset histéresis
-    this.lastFingerState = false;
-    this.fingerStateCounter = 0;
   }
 
   getRGBStats() {

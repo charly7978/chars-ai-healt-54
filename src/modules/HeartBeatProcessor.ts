@@ -1,14 +1,11 @@
-import { CalibrationProfile } from './calibration/CalibrationManager';
-
 /**
- * PROCESADOR DE LATIDOS - VERSIÓN MEJORADA CON CALIBRACIÓN
+ * PROCESADOR DE LATIDOS - VERSIÓN MEJORADA
  * 
  * MEJORAS:
  * 1. Detección de picos más robusta con análisis de pendientes
  * 2. Filtrado de falsos positivos mejorado
  * 3. BPM más estable con validación de intervalos
  * 4. Mejor manejo de señales débiles
- * 5. CALIBRACIÓN ADAPTATIVA: umbrales ajustados según señal del usuario
  * 
  * Referencia: webcam-pulse-detector (thearn), De Haan & Jeanne 2013
  */
@@ -45,33 +42,8 @@ export class HeartBeatProcessor {
   private lastPeakValue: number = 0;
   private peakHistory: { time: number; value: number }[] = [];
 
-  // CALIBRACIÓN ADAPTATIVA
-  private calibrationProfile: CalibrationProfile | null = null;
-  private calibratedPeakThreshold: number = 8;
-  private calibratedMinRange: number = 0.3;
-
   constructor() {
     this.setupAudio();
-  }
-
-  /**
-   * APLICAR PERFIL DE CALIBRACIÓN
-   * Ajusta umbrales de detección de picos según la señal calibrada
-   */
-  setCalibrationProfile(profile: CalibrationProfile): void {
-    this.calibrationProfile = profile;
-    
-    // Umbral de pico calibrado: basado en amplitud típica de la señal
-    this.calibratedPeakThreshold = Math.max(5, profile.peakDetectionThreshold);
-    
-    // Rango mínimo calibrado: basado en nivel de ruido
-    this.calibratedMinRange = Math.max(0.2, profile.minSignalRange);
-    
-    console.log('✅ HeartBeatProcessor: Perfil de calibración aplicado', {
-      peakThreshold: this.calibratedPeakThreshold.toFixed(2),
-      minRange: this.calibratedMinRange.toFixed(2),
-      signalAmplitude: profile.signalAmplitude.toFixed(2)
-    });
   }
   
   private setupAudio() {
@@ -111,10 +83,10 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
     
-    // Necesitamos suficientes muestras - pero mantener último BPM válido
+    // Necesitamos suficientes muestras
     if (this.signalBuffer.length < 30) {
       return {
-        bpm: this.smoothBPM > 0 ? Math.round(this.smoothBPM) : 0,
+        bpm: 0,
         confidence: 0,
         isPeak: false,
         filteredValue: 0,
@@ -189,29 +161,17 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * NORMALIZACIÓN ADAPTATIVA CON ESTABILIDAD
+   * NORMALIZACIÓN ADAPTATIVA MEJORADA
    */
-  private lastValidRange: number = 0;
-  
   private normalizeSignal(value: number): { normalizedValue: number; range: number } {
-    const recent = this.signalBuffer.slice(-90); // 3 segundos (más estable)
+    const recent = this.signalBuffer.slice(-120); // 4 segundos
     const min = Math.min(...recent);
     const max = Math.max(...recent);
     const range = max - min;
     
-    // Usar umbral de rango calibrado o default
-    const minRangeThreshold = this.calibrationProfile ? this.calibratedMinRange : 0.3;
-    
-    if (range < minRangeThreshold) {
-      // Si no hay señal ahora pero tuvimos antes, usar último rango válido temporalmente
-      if (this.lastValidRange > 0) {
-        const normalizedValue = ((value - min) / this.lastValidRange - 0.5) * 100;
-        return { normalizedValue, range: 0 };
-      }
+    if (range < 0.5) {
       return { normalizedValue: 0, range: 0 };
     }
-    
-    this.lastValidRange = range;
     
     // Normalizar a -50 a +50
     const normalizedValue = ((value - min) / range - 0.5) * 100;
@@ -220,14 +180,11 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * UMBRAL DINÁMICO CON CALIBRACIÓN
+   * UMBRAL DINÁMICO MEJORADO
    */
   private updateThreshold(range: number): void {
-    // Base: umbral calibrado o default
-    const baseThreshold = this.calibrationProfile ? this.calibratedPeakThreshold : 8;
-    
-    // Umbral proporcional a la amplitud pero con límites ajustados
-    const newThreshold = Math.max(baseThreshold * 0.7, Math.min(25, range * 0.25));
+    // Umbral proporcional a la amplitud pero con límites
+    const newThreshold = Math.max(6, Math.min(25, range * 0.25));
     
     // Suavizar cambios
     this.peakThreshold = this.peakThreshold * 0.9 + newThreshold * 0.1;

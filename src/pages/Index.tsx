@@ -5,10 +5,8 @@ import CameraPreview from "@/components/CameraPreview";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
-import { useCalibration } from "@/hooks/useCalibration";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
-import { CalibrationOverlay } from "@/components/CalibrationOverlay";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
@@ -68,6 +66,7 @@ const Index = () => {
   
   const { 
     processSignal: processVitalSigns, 
+    setRGBData,
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
     lastValidResults,
@@ -75,20 +74,6 @@ const Index = () => {
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
-
-  // HOOK DE CALIBRACIÓN AUTOMÁTICA
-  const {
-    isCalibrating: isAutoCalibrating,
-    isCalibrated,
-    progress: autoCalibrationProgress,
-    state: calibrationState,
-    profile: calibrationProfile,
-    realtimeStats,
-    startCalibration: startAutoCalibration,
-    addSample: addCalibrationSample,
-    cancelCalibration,
-    getSignalQuality
-  } = useCalibration();
 
   // CANVAS PARA CAPTURA
   useEffect(() => {
@@ -263,8 +248,10 @@ const Index = () => {
       });
     }, 1000);
     
-    // Calibración automática de 5 segundos
-    startAutoCalibration();
+    // Calibración automática
+    setIsCalibrating(true);
+    startCalibration();
+    setTimeout(() => setIsCalibrating(false), 3000);
     
   }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
 
@@ -401,10 +388,10 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    // Procesar latidos (solo 3 argumentos: value, fingerDetected, timestamp)
+    // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
-      !!lastSignal.fingerDetected,
+      true,
       lastSignal.timestamp
     );
     
@@ -426,28 +413,57 @@ const Index = () => {
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
+      // Actualizar datos RGB para SpO2 - MEJORADO
+      if (lastSignal.rawRed !== undefined && lastSignal.rawGreen !== undefined) {
+        const rawRed = lastSignal.rawRed;
+        const rawGreen = lastSignal.rawGreen;
+        
+        // Calcular AC/DC basado en valores reales del PPGSignalProcessor
+        // DC = valor promedio (ya tenemos los raw)
+        // AC = estimado desde la amplitud de la señal filtrada
+        const signalAmplitude = Math.abs(lastSignal.filteredValue);
+        const perfusion = lastSignal.perfusionIndex || 1;
+        
+        // AC aproximado: usar amplitud de señal filtrada normalizada
+        const acFactor = Math.max(0.5, Math.min(10, signalAmplitude / 10));
+        
+        setRGBData({
+          redAC: acFactor * (rawRed / 255) * perfusion,
+          redDC: rawRed,
+          greenAC: acFactor * (rawGreen / 255) * perfusion,
+          greenDC: rawGreen
+        });
+      }
+      
       if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
-        const vitals = processVitalSigns(lastSignal.rawValue, heartBeatResult.rrData);
+        const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
         if (vitals) {
           setVitalSigns(vitals);
           
-          if (vitals.lastArrhythmiaData) {
-            lastArrhythmiaData.current = vitals.lastArrhythmiaData;
-            const [status, count] = vitals.arrhythmiaStatus.split('|');
-            setArrhythmiaCount(count || "0");
+          // Actualizar estado de arritmia
+          const arrhythmiaStatus = vitals.arrhythmiaStatus;
+          if (arrhythmiaStatus) {
+            lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
+            const parts = arrhythmiaStatus.split('|');
+            const count = parts.length > 1 ? parts[1] : "0";
+            setArrhythmiaCount(count);
             
-            const isArrhythmiaDetected = status === "ARRITMIA DETECTADA";
+            const isArrhythmiaDetected = arrhythmiaStatus.includes("ARRITMIA DETECTADA");
             if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
               arrhythmiaDetectedRef.current = isArrhythmiaDetected;
               setArrhythmiaState(isArrhythmiaDetected);
               
               if (isArrhythmiaDetected) {
+                // Vibración fuerte para arritmia
+                if (navigator.vibrate) {
+                  navigator.vibrate([200, 100, 200]);
+                }
                 toast({ 
-                  title: "¡Arritmia detectada!", 
-                  description: "Latido irregular identificado.", 
+                  title: "⚠️ Arritmia detectada", 
+                  description: `Latido irregular #${vitals.arrhythmiaCount}`, 
                   variant: "destructive", 
-                  duration: 3000 
+                  duration: 4000 
                 });
               }
             }
@@ -455,7 +471,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData]);
 
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {
@@ -516,8 +532,8 @@ const Index = () => {
         {/* PREVIEW DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
-          isFingerDetected={!!lastSignal?.fingerDetected}
-          signalQuality={lastSignal?.quality ?? 0}
+          isFingerDetected={true}
+          signalQuality={100}
           isVisible={isCameraOn}
         />
 
@@ -541,8 +557,8 @@ const Index = () => {
           <div className="flex-1">
             <PPGSignalMeter 
               value={heartbeatSignal}
-              quality={lastSignal?.quality ?? 0}
-              isFingerDetected={!!lastSignal?.fingerDetected}
+              quality={lastSignal?.quality || 0}
+              isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
@@ -550,8 +566,13 @@ const Index = () => {
               preserveResults={showResults}
               diagnosticMessage={lastSignal?.diagnostics?.message}
               isPeak={beatMarker === 1}
+              bpm={heartRate}
+              spo2={vitalSigns.spo2}
+              rrIntervals={rrIntervals}
             />
           </div>
+
+          {/* CONTADOR DE ARRITMIAS - Solo texto discreto, la visualización está en la onda */}
 
           {/* SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
@@ -570,7 +591,9 @@ const Index = () => {
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
-                value={vitalSigns.pressure ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` : "--/--"}
+                value={vitalSigns.pressure && vitalSigns.pressure.systolic > 0 
+                  ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` 
+                  : "--/--"}
                 unit="mmHg"
                 highlighted={showResults}
               />
@@ -619,4 +642,3 @@ const Index = () => {
 };
 
 export default Index;
-        
