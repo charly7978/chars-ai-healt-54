@@ -1,5 +1,6 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
+import { CalibrationProfile } from '../calibration/CalibrationManager';
 
 /**
  * PROCESADOR PPG OPTIMIZADO - CANAL VERDE COMO FUENTE PRINCIPAL
@@ -11,6 +12,9 @@ import { BandpassFilter } from './BandpassFilter';
  * - El canal verde (540nm) tiene mejor penetración en tejido y mayor absorción por sangre
  * - Mejor relación señal/ruido que el rojo en condiciones de flash intenso
  * - Referencia: De Haan & Jeanne 2013, webcam-pulse-detector
+ * 
+ * CON CALIBRACIÓN ADAPTATIVA:
+ * - Umbrales ajustados según tono de piel y dispositivo del usuario
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -38,12 +42,37 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
   
+  // CALIBRACIÓN ADAPTATIVA
+  private calibrationProfile: CalibrationProfile | null = null;
+  private isCalibrated: boolean = false;
+  
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
     // Filtro pasabanda: 0.5-4Hz (30-240 BPM)
     this.bandpassFilter = new BandpassFilter(30);
+  }
+
+  /**
+   * APLICAR PERFIL DE CALIBRACIÓN
+   * Ajusta umbrales según características del usuario/dispositivo
+   */
+  setCalibrationProfile(profile: CalibrationProfile): void {
+    this.calibrationProfile = profile;
+    this.isCalibrated = true;
+    console.log('✅ PPGSignalProcessor: Perfil de calibración aplicado', {
+      rgRatioRange: `${profile.rgRatioMin.toFixed(2)}-${profile.rgRatioMax.toFixed(2)}`,
+      fingerThreshold: profile.fingerDetectionThreshold.toFixed(0),
+      confidence: `${profile.confidence}%`
+    });
+  }
+
+  /**
+   * Obtener estado de calibración
+   */
+  getCalibrationStatus(): { isCalibrated: boolean; profile: CalibrationProfile | null } {
+    return { isCalibrated: this.isCalibrated, profile: this.calibrationProfile };
   }
 
   async initialize(): Promise<void> {
@@ -195,7 +224,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO MÁS ESTABLE Y PERMISIVA
+   * DETECCIÓN DE DEDO CON CALIBRACIÓN ADAPTATIVA
+   * Usa umbrales personalizados si hay calibración, o permisivos por defecto
    * Histéresis para evitar parpadeo (on/off rápido)
    */
   private lastFingerState: boolean = false;
@@ -203,18 +233,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private readonly FINGER_HYSTERESIS = 5; // Frames para cambiar estado
   
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    // Umbrales muy permisivos para comodidad
-    const redMinThreshold = 30;  // Muy permisivo
+    // USAR UMBRALES DE CALIBRACIÓN O DEFAULTS PERMISIVOS
+    let redMinThreshold = 30;
+    let rgRatioMin = 0.7;
+    let rgRatioMax = 4.0;
+    
+    if (this.calibrationProfile && this.isCalibrated) {
+      // Umbrales personalizados de la calibración
+      redMinThreshold = this.calibrationProfile.fingerDetectionThreshold;
+      rgRatioMin = this.calibrationProfile.rgRatioMin;
+      rgRatioMax = this.calibrationProfile.rgRatioMax;
+    }
+    
     const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
     
-    // Rango muy amplio: 0.7-4.0
-    const validRatio = rgRatio > 0.7 && rgRatio < 4.0;
+    // Validar según umbrales (calibrados o por defecto)
+    const validRatio = rgRatio > rgRatioMin && rgRatio < rgRatioMax;
     const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
     const notFullySaturated = rawRed < 254 || rawGreen < 254;
     
     // Condición base: señal presente
-    const hasSignal = rawRed > 25 && rawGreen > 15;
+    const hasSignal = rawRed > Math.max(20, redMinThreshold * 0.6) && rawGreen > 15;
     const currentDetection = (validRatio && validRed && notFullySaturated) || (hasSignal && validRed);
     
     // HISTÉRESIS: evitar cambios rápidos de estado
