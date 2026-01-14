@@ -24,9 +24,9 @@ interface PPGSignalMeterProps {
 
 // Configuración del monitor profesional
 const CONFIG = {
-  CANVAS_WIDTH: 1400,
-  CANVAS_HEIGHT: 2800,
-  WINDOW_MS: 2200, // 6 segundos de ventana
+  CANVAS_WIDTH: 1000,
+  CANVAS_HEIGHT: 1800,
+  WINDOW_MS: 1800, // 6 segundos de ventana
   TARGET_FPS: 60,
   BUFFER_SIZE: 600, // 6s @ 60fps
   // Área de visualización (evitar solapamiento con info)
@@ -367,7 +367,7 @@ const PPGSignalMeter = ({
     if (isRunningRef.current) return;
     isRunningRef.current = true;
     
-    const frameTime = 1500 / CONFIG.TARGET_FPS;
+    const frameTime = 1800 / CONFIG.TARGET_FPS;
     let lastRenderTime = 0;
     
     const render = () => {
@@ -411,7 +411,7 @@ const PPGSignalMeter = ({
       
       // === PROCESAMIENTO DE SEÑAL ===
       // Escalar valor a amplitud visual controlada
-      const scaledValue = signalValue * 2; // Amplificación para visualización
+      const scaledValue = signalValue * 3; // Amplificación para visualización
       
       // Detectar si es arritmia
       const currentIsArrhythmia = peak && arrStatus?.includes('ARRITMIA');
