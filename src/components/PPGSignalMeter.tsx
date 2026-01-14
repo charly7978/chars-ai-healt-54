@@ -24,11 +24,11 @@ interface PPGSignalMeterProps {
 
 // Configuración del monitor profesional
 const CONFIG = {
-  CANVAS_WIDTH: 900,
-  CANVAS_HEIGHT: 1080,
+  CANVAS_WIDTH: 1400,
+  CANVAS_HEIGHT: 2800,
   WINDOW_MS: 6000, // 6 segundos de ventana
-  TARGET_FPS: 60,
-  BUFFER_SIZE: 800, // 6s @ 60fps
+  TARGET_FPS: 90,
+  BUFFER_SIZE: 400, // 6s @ 60fps
   // Área de visualización (evitar solapamiento con info)
   PLOT_AREA: {
     LEFT: 80,    // Espacio para escala Y izquierda
