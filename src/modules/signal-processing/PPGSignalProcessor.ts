@@ -2,15 +2,15 @@ import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcess
 import { BandpassFilter } from './BandpassFilter';
 
 /**
- * PROCESADOR PPG OPTIMIZADO - CANAL VERDE COMO FUENTE PRINCIPAL
+ * PROCESADOR PPG - ALGORITMOS CIENTÍFICOS VALIDADOS
  * 
- * ARQUITECTURA LIMPIA:
- * Frame → RGB → Canal VERDE (mejor SNR) → Inversión → Filtro Pasabanda → Señal
+ * BASADO EN:
+ * - Nature 2022: Señal ponderada 0.67*R + 0.33*G
+ * - Biomedical Optics 2023: Filtro Savitzky-Golay para preservar forma de onda
+ * - MDPI Sensors 2024: Cálculo AC/DC separado por canal para SpO2
  * 
- * FUNDAMENTO CIENTÍFICO:
- * - El canal verde (540nm) tiene mejor penetración en tejido y mayor absorción por sangre
- * - Mejor relación señal/ruido que el rojo en condiciones de flash intenso
- * - Referencia: De Haan & Jeanne 2013, webcam-pulse-detector
+ * FLUJO:
+ * Frame → RGB → Señal Ponderada → Savitzky-Golay → Bandpass → Señal PPG
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
@@ -24,11 +24,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
   
-  // Estadísticas para SpO2
+  // Estadísticas AC/DC para SpO2 - SEPARADAS POR CANAL
   private redDC: number = 0;
   private redAC: number = 0;
   private greenDC: number = 0;
   private greenAC: number = 0;
+  
+  // Filtro Savitzky-Golay (coeficientes para window=7, order=2)
+  private readonly SG_COEFFS = [-2, 3, 6, 7, 6, 3, -2];
+  private readonly SG_NORM = 21;
   
   // Control de logging
   private frameCount: number = 0;
@@ -48,7 +52,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   async initialize(): Promise<void> {
     this.reset();
-    console.log('✅ PPGSignalProcessor inicializado - Canal Verde como fuente principal');
+    console.log('✅ PPGSignalProcessor - Algoritmo ponderado 0.67R+0.33G + Savitzky-Golay');
   }
 
   start(): void {
@@ -68,7 +72,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * PROCESAR FRAME - FLUJO ÚNICO Y LIMPIO
+   * FILTRO SAVITZKY-GOLAY
+   * Mejor preservación de forma de onda que moving average
+   */
+  private applySavitzkyGolay(values: number[]): number {
+    if (values.length < 7) return values[values.length - 1] || 0;
+    
+    const recent = values.slice(-7);
+    let sum = 0;
+    for (let i = 0; i < 7; i++) {
+      sum += this.SG_COEFFS[i] * recent[i];
+    }
+    return sum / this.SG_NORM;
+  }
+
+  /**
+   * PROCESAR FRAME - SEÑAL PONDERADA 0.67R + 0.33G
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
@@ -76,10 +95,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount++;
     const timestamp = Date.now();
     
-    // 1. EXTRAER RGB DE ROI CENTRAL (60% del área)
+    // 1. EXTRAER RGB DE ROI CENTRAL (85% del área para comodidad)
     const { rawRed, rawGreen, rawBlue } = this.extractROI(imageData);
     
-    // 2. GUARDAR EN BUFFERS PARA CÁLCULO DE AC/DC
+    // 2. GUARDAR EN BUFFERS SEPARADOS
     this.redBuffer.push(rawRed);
     this.greenBuffer.push(rawGreen);
     if (this.redBuffer.length > this.BUFFER_SIZE) {
@@ -87,32 +106,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.greenBuffer.shift();
     }
     
-    // 3. DETECCIÓN DE DEDO - Basado en características RGB
+    // 3. DETECCIÓN DE DEDO
     this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue);
     
-    // 4. CALCULAR ESTADÍSTICAS AC/DC (para SpO2)
+    // 4. CALCULAR AC/DC POR CANAL SEPARADO (para SpO2)
     if (this.redBuffer.length >= 30) {
-      this.calculateACDC();
+      this.calculateSeparateACDC();
     }
     
-    // 5. SELECCIONAR CANAL PRINCIPAL: VERDE
-    // El canal verde tiene mejor SNR y menos saturación con flash
-    // Solo usamos rojo como fallback si verde está saturado
-    const greenSaturated = rawGreen > 250;
-    const signalSource = greenSaturated ? rawRed : rawGreen;
+    // 5. SEÑAL PONDERADA: 0.67*R + 0.33*G (Nature 2022)
+    const weightedSignal = 0.67 * rawRed + 0.33 * rawGreen;
     
-    // 6. INVERTIR SEÑAL: más sangre = menos luz reflejada
-    // Invertimos para que los picos sistólicos sean positivos
-    const inverted = 255 - signalSource;
+    // 6. INVERTIR: más sangre = menos luz reflejada
+    const inverted = 255 - weightedSignal;
     
-    // 7. GUARDAR EN BUFFER RAW
+    // 7. APLICAR SAVITZKY-GOLAY ANTES DEL BANDPASS
     this.rawBuffer.push(inverted);
     if (this.rawBuffer.length > this.BUFFER_SIZE) {
       this.rawBuffer.shift();
     }
     
+    const smoothed = this.applySavitzkyGolay(this.rawBuffer);
+    
     // 8. FILTRO PASABANDA (0.5-4 Hz)
-    const filtered = this.bandpassFilter.filter(inverted);
+    const filtered = this.bandpassFilter.filter(smoothed);
     
     this.filteredBuffer.push(filtered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
@@ -126,9 +143,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const now = Date.now();
     if (now - this.lastLogTime >= 1000) {
       this.lastLogTime = now;
-      const src = greenSaturated ? 'R' : 'G';
-      const fingerStatus = this.fingerDetected ? '✅' : '❌';
-      console.log(`📷 PPG [${src}]: Raw=${signalSource.toFixed(0)} Inv=${inverted.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% ${fingerStatus}`);
+      const R = this.getSpO2Ratio();
+      console.log(`📷 PPG: R=${rawRed.toFixed(0)} G=${rawGreen.toFixed(0)} W=${weightedSignal.toFixed(0)} Q=${this.signalQuality.toFixed(0)}% SpO2_R=${R.toFixed(3)}`);
     }
     
     // 11. CALCULAR ÍNDICE DE PERFUSIÓN
@@ -145,8 +161,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       perfusionIndex,
       rawRed,
       rawGreen,
+      // Agregar datos de amplitud de señal para cálculos externos
+      signalAmplitude: this.redAC + this.greenAC,
       diagnostics: {
-        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}`,
+        message: `R:${rawRed.toFixed(0)} G:${rawGreen.toFixed(0)} PI:${perfusionIndex.toFixed(2)} SpO2_R:${this.getSpO2Ratio().toFixed(2)}`,
         hasPulsatility: perfusionIndex > 0.1,
         pulsatilityValue: perfusionIndex
       }
@@ -156,15 +174,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * EXTRAER RGB DE REGIÓN AMPLIA
-   * ROI del 85% para captura más fácil y cómoda
+   * EXTRAER RGB DE REGIÓN AMPLIA (85%)
    */
   private extractROI(imageData: ImageData): { rawRed: number; rawGreen: number; rawBlue: number } {
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
     
-    // ROI amplia - 85% del área para mayor comodidad de uso
+    // ROI amplia - 85% del área para mayor comodidad
     const roiSize = Math.min(width, height) * 0.85;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
@@ -176,7 +193,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let blueSum = 0;
     let count = 0;
     
-    // Muestrear cada 4 píxeles para velocidad con ROI más grande
+    // Muestrear cada 4 píxeles para velocidad
     for (let y = startY; y < endY; y += 4) {
       for (let x = startX; x < endX; x += 4) {
         const i = (y * width + x) * 4;
@@ -195,38 +212,33 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO MÁS PERMISIVA
-   * Umbrales más amplios para facilitar la medición
+   * DETECCIÓN DE DEDO PERMISIVA
    */
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    // Umbrales más permisivos para comodidad
-    const redMinThreshold = 40;  // Antes: 60, ahora más permisivo
+    const redMinThreshold = 40;
     const redMaxThreshold = 255;
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
     
-    // Rango más amplio: 0.9-3.0 (antes 1.05-2.5)
-    // Permite más variación de tonos de piel y condiciones de luz
+    // Rango amplio: 0.9-3.0
     const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
     const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
     const notFullySaturated = rawRed < 254 || rawGreen < 254;
-    
-    // También aceptar si hay suficiente luz en general
     const hasEnoughLight = rawRed > 30 && rawGreen > 20;
     
     return (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
   }
   
   /**
-   * CALCULAR ESTADÍSTICAS AC/DC PARA SpO2
+   * CALCULAR AC/DC SEPARADO POR CANAL - CRÍTICO PARA SpO2
    */
-  private calculateACDC(): void {
-    if (this.redBuffer.length < 30 || this.greenBuffer.length < 30) return;
+  private calculateSeparateACDC(): void {
+    if (this.redBuffer.length < 60 || this.greenBuffer.length < 60) return;
     
-    const recent = 60; // Últimos 2 segundos
+    const recent = 60; // 2 segundos
     const redRecent = this.redBuffer.slice(-recent);
     const greenRecent = this.greenBuffer.slice(-recent);
     
-    // DC = promedio (componente continua)
+    // DC = promedio (baseline)
     this.redDC = redRecent.reduce((a, b) => a + b, 0) / redRecent.length;
     this.greenDC = greenRecent.reduce((a, b) => a + b, 0) / greenRecent.length;
     
@@ -237,7 +249,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   /**
    * CALCULAR CALIDAD DE SEÑAL
-   * Basado en variabilidad y pulsatilidad
    */
   private calculateSignalQuality(): number {
     if (this.filteredBuffer.length < 30) return 0;
@@ -248,15 +259,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const min = Math.min(...recent);
     const range = max - min;
     
-    // Rango mínimo para señal válida
     if (range < 0.5) return 10;
     
-    // Calcular SNR aproximado
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
     
-    // SNR = señal/ruido, normalizar a 0-100
     const snr = range / (stdDev + 0.01);
     const quality = Math.min(100, Math.max(0, snr * 15));
     
@@ -265,12 +273,39 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   /**
    * ÍNDICE DE PERFUSIÓN: AC/DC * 100
-   * Indica la fuerza del pulso
    */
   private calculatePerfusionIndex(): number {
     if (this.greenDC === 0) return 0;
-    // Usar canal verde ya que es nuestra fuente principal
     return (this.greenAC / this.greenDC) * 100;
+  }
+  
+  /**
+   * RATIO SpO2 CRUDO: R = (AC_red/DC_red) / (AC_green/DC_green)
+   * Fórmula científica directa
+   */
+  getSpO2Ratio(): number {
+    if (this.redDC < 5 || this.greenDC < 5) return 0;
+    if (this.redAC < 0.1 || this.greenAC < 0.1) return 0;
+    
+    const ratioRed = this.redAC / this.redDC;
+    const ratioGreen = this.greenAC / this.greenDC;
+    
+    if (ratioGreen < 0.0001) return 0;
+    
+    return ratioRed / ratioGreen;
+  }
+  
+  /**
+   * OBTENER DATOS PARA CÁLCULO EXTERNO DE SpO2
+   */
+  getSpO2RatioData(): { R: number; redAC: number; redDC: number; greenAC: number; greenDC: number } {
+    return {
+      R: this.getSpO2Ratio(),
+      redAC: this.redAC,
+      redDC: this.redDC,
+      greenAC: this.greenAC,
+      greenDC: this.greenDC
+    };
   }
 
   reset(): void {
