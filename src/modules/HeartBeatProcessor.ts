@@ -1,39 +1,35 @@
 /**
- * PROCESADOR DE LATIDOS - ALGORITMO CIENTÍFICO VALIDADO
+ * PROCESADOR DE LATIDOS - VERSIÓN MEJORADA
  * 
- * BASADO EN:
- * - Nature 2022: Señal ponderada 0.67R + 0.33G
- * - Método del gradiente: 3 puntos ascendentes + 3 descendentes
- * - BPM crudo desde intervalos RR (sin suavizado excesivo)
+ * MEJORAS:
+ * 1. Detección de picos más robusta con análisis de pendientes
+ * 2. Filtrado de falsos positivos mejorado
+ * 3. BPM más estable con validación de intervalos
+ * 4. Mejor manejo de señales débiles
  * 
- * NO hay valores simulados - todo calculado desde señal real
+ * Referencia: webcam-pulse-detector (thearn), De Haan & Jeanne 2013
  */
 export class HeartBeatProcessor {
   // Constantes fisiológicas
   private readonly MIN_BPM = 40;
-  private readonly MAX_BPM = 200;
-  private readonly MIN_PEAK_INTERVAL_MS = 300;  // 200 BPM máximo
+  private readonly MAX_BPM = 180;
+  private readonly MIN_PEAK_INTERVAL_MS = 333;  // 180 BPM máximo
   private readonly MAX_PEAK_INTERVAL_MS = 1500; // 40 BPM mínimo
   
   // Buffers para análisis
   private signalBuffer: number[] = [];
   private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
   
-  // Filtro Savitzky-Golay (coeficientes para window=7, order=2)
-  private readonly SG_COEFFS = [-2, 3, 6, 7, 6, 3, -2]; // normalizados por 21
-  private readonly SG_NORM = 21;
-  
-  // Detección de picos - método del gradiente
+  // Detección de picos
   private lastPeakTime: number = 0;
-  private peakThreshold: number = 0;
-  private adaptiveMin: number = Infinity;
-  private adaptiveMax: number = -Infinity;
+  private peakThreshold: number = 8;
+  private adaptiveBaseline: number = 0;
   
-  // RR Intervals y BPM - SIN SUAVIZADO EXCESIVO
+  // RR Intervals y BPM
   private rrIntervals: number[] = [];
-  private readonly MAX_RR_INTERVALS = 15;
-  private rawBPM: number = 0;
-  private readonly BPM_SMOOTHING = 0.3; // Reducido de 0.75 a 0.3 para valores más crudos
+  private readonly MAX_RR_INTERVALS = 12;
+  private smoothBPM: number = 0;
+  private readonly BPM_SMOOTHING = 0.75;
   
   // Audio feedback
   private audioContext: AudioContext | null = null;
@@ -44,6 +40,7 @@ export class HeartBeatProcessor {
   private frameCount: number = 0;
   private consecutivePeaks: number = 0;
   private lastPeakValue: number = 0;
+  private peakHistory: { time: number; value: number }[] = [];
 
   constructor() {
     this.setupAudio();
@@ -59,6 +56,7 @@ export class HeartBeatProcessor {
         this.audioUnlocked = true;
         document.removeEventListener('touchstart', unlock);
         document.removeEventListener('click', unlock);
+        console.log('🔊 Audio desbloqueado');
       } catch {}
     };
     document.addEventListener('touchstart', unlock, { passive: true });
@@ -66,24 +64,8 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * FILTRO SAVITZKY-GOLAY
-   * Preserva forma de onda mejor que moving average
-   * Óptimo para PPG según literatura (window=7)
-   */
-  private applySavitzkyGolay(buffer: number[]): number {
-    if (buffer.length < 7) return buffer[buffer.length - 1] || 0;
-    
-    const recent = buffer.slice(-7);
-    let sum = 0;
-    for (let i = 0; i < 7; i++) {
-      sum += this.SG_COEFFS[i] * recent[i];
-    }
-    return sum / this.SG_NORM;
-  }
-
-  /**
-   * PROCESAR SEÑAL - ALGORITMO DEL GRADIENTE
-   * Detecta picos buscando 3 puntos ascendentes seguidos de 3 descendentes
+   * PROCESAR SEÑAL FILTRADA
+   * Recibe señal ya pasada por filtro pasabanda
    */
   processSignal(filteredValue: number, timestamp?: number): {
     bpm: number;
@@ -112,27 +94,18 @@ export class HeartBeatProcessor {
       };
     }
     
-    // 2. APLICAR FILTRO SAVITZKY-GOLAY
-    const smoothedValue = this.applySavitzkyGolay(this.signalBuffer);
+    // 2. NORMALIZACIÓN ADAPTATIVA
+    const { normalizedValue, range } = this.normalizeSignal(filteredValue);
     
-    // 3. ACTUALIZAR RANGO ADAPTATIVO
-    this.updateAdaptiveRange(smoothedValue);
-    
-    // 4. NORMALIZAR SEÑAL
-    const range = this.adaptiveMax - this.adaptiveMin;
-    const normalizedValue = range > 0.5 
-      ? ((smoothedValue - this.adaptiveMin) / range - 0.5) * 100 
-      : 0;
-    
-    // 5. ACTUALIZAR UMBRAL DINÁMICO
+    // 3. ACTUALIZAR UMBRAL DINÁMICO
     this.updateThreshold(range);
     
-    // 6. DETECCIÓN DE PICO - MÉTODO DEL GRADIENTE
+    // 4. DETECCIÓN DE PICO
     const timeSinceLastPeak = now - this.lastPeakTime;
     let isPeak = false;
     
     if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
-      isPeak = this.detectPeakGradient(normalizedValue, timeSinceLastPeak);
+      isPeak = this.detectPeak(normalizedValue, timeSinceLastPeak);
       
       if (isPeak) {
         // Registrar intervalo RR
@@ -142,18 +115,18 @@ export class HeartBeatProcessor {
             this.rrIntervals.shift();
           }
           
-          // BPM CRUDO - directo del intervalo RR
+          // Calcular BPM instantáneo
           const instantBPM = 60000 / timeSinceLastPeak;
           
-          // Suavizado mínimo (0.3) para valores más reactivos
-          if (this.rawBPM === 0) {
-            this.rawBPM = instantBPM;
+          // Suavizado exponencial
+          if (this.smoothBPM === 0) {
+            this.smoothBPM = instantBPM;
           } else {
-            this.rawBPM = this.rawBPM * this.BPM_SMOOTHING + instantBPM * (1 - this.BPM_SMOOTHING);
+            this.smoothBPM = this.smoothBPM * this.BPM_SMOOTHING + instantBPM * (1 - this.BPM_SMOOTHING);
           }
           
           // Clamp a rango fisiológico
-          this.rawBPM = Math.max(this.MIN_BPM, Math.min(this.MAX_BPM, this.rawBPM));
+          this.smoothBPM = Math.max(this.MIN_BPM, Math.min(this.MAX_BPM, this.smoothBPM));
           
           this.consecutivePeaks++;
         }
@@ -165,16 +138,21 @@ export class HeartBeatProcessor {
         this.playBeep();
         
         if (this.frameCount % 30 === 0 || this.consecutivePeaks <= 5) {
-          console.log(`💓 PICO #${this.consecutivePeaks} BPM=${Math.round(this.rawBPM)} RR=${timeSinceLastPeak}ms`);
+          console.log(`💓 PICO #${this.consecutivePeaks} BPM=${Math.round(this.smoothBPM)} RR=${timeSinceLastPeak}ms`);
         }
       }
     }
     
-    // 7. CALCULAR CONFIANZA basada en consistencia RR
+    // 5. CALCULAR CONFIANZA
     const confidence = this.calculateConfidence();
     
+    // Log periódico
+    if (this.frameCount % 60 === 0) {
+      console.log(`📊 BPM=${Math.round(this.smoothBPM)} Conf=${(confidence * 100).toFixed(0)}% Picos=${this.consecutivePeaks} Thresh=${this.peakThreshold.toFixed(1)}`);
+    }
+    
     return {
-      bpm: Math.round(this.rawBPM),
+      bpm: Math.round(this.smoothBPM),
       confidence,
       isPeak,
       filteredValue: normalizedValue,
@@ -183,100 +161,102 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * ACTUALIZAR RANGO ADAPTATIVO
-   * Ventana de 3 segundos para seguir cambios de señal
+   * NORMALIZACIÓN ADAPTATIVA MEJORADA
    */
-  private updateAdaptiveRange(value: number): void {
-    const recent = this.signalBuffer.slice(-90); // 3 segundos
-    this.adaptiveMin = Math.min(...recent);
-    this.adaptiveMax = Math.max(...recent);
-  }
-  
-  /**
-   * UMBRAL DINÁMICO basado en amplitud
-   */
-  private updateThreshold(range: number): void {
-    // Umbral = 30% de la amplitud
-    const newThreshold = Math.max(5, Math.min(30, range * 0.3 * 50));
-    // Suavizar cambios de umbral
-    this.peakThreshold = this.peakThreshold * 0.95 + newThreshold * 0.05;
-  }
-  
-  /**
-   * DETECCIÓN DE PICO - MÉTODO DEL GRADIENTE
-   * Busca patrón: 3 puntos subiendo + 1 pico + 3 puntos bajando
-   */
-  private detectPeakGradient(normalizedValue: number, timeSinceLastPeak: number): boolean {
-    const n = this.signalBuffer.length;
-    if (n < 9) return false;
+  private normalizeSignal(value: number): { normalizedValue: number; range: number } {
+    const recent = this.signalBuffer.slice(-120); // 4 segundos
+    const min = Math.min(...recent);
+    const max = Math.max(...recent);
+    const range = max - min;
     
-    // Obtener últimos 9 valores y normalizarlos
-    const recent = this.signalBuffer.slice(-9);
-    const range = this.adaptiveMax - this.adaptiveMin;
-    
-    if (range < 0.5) return false;
-    
-    const normalized = recent.map(v => 
-      ((v - this.adaptiveMin) / range - 0.5) * 100
-    );
-    
-    // Posición central (índice 4) debe ser candidato a pico
-    const [v0, v1, v2, v3, v4, v5, v6, v7, v8] = normalized;
-    
-    // CRITERIO 1: Máximo local
-    const isLocalMax = v4 > v3 && v4 > v5 && v4 >= v2 && v4 >= v6;
-    
-    // CRITERIO 2: Por encima del umbral
-    const aboveThreshold = v4 > this.peakThreshold;
-    
-    // CRITERIO 3: Gradiente ascendente (3 puntos antes suben)
-    const gradient1 = v2 - v0;
-    const gradient2 = v3 - v1;
-    const gradient3 = v4 - v2;
-    const risingGradient = gradient1 > 0 && gradient2 > 0 && gradient3 > 0;
-    
-    // CRITERIO 4: Gradiente descendente (3 puntos después bajan)
-    const gradient4 = v4 - v6;
-    const gradient5 = v5 - v7;
-    const gradient6 = v6 - v8;
-    const fallingGradient = gradient4 > 0 && gradient5 > 0 && gradient6 > 0;
-    
-    // CRITERIO 5: Amplitud mínima del pico
-    const minPeakAmplitude = this.peakThreshold * 0.5;
-    const hasMinAmplitude = v4 > minPeakAmplitude;
-    
-    // CRITERIO 6: Consistencia con pico anterior
-    let amplitudeValid = true;
-    if (this.lastPeakValue > 0) {
-      const ratio = v4 / this.lastPeakValue;
-      amplitudeValid = ratio > 0.4 && ratio < 2.5;
+    if (range < 0.5) {
+      return { normalizedValue: 0, range: 0 };
     }
     
-    // Requiere criterios principales + al menos uno de los gradientes
-    const isPeak = isLocalMax && 
-                   aboveThreshold && 
-                   hasMinAmplitude &&
-                   (risingGradient || fallingGradient) &&
-                   amplitudeValid;
+    // Normalizar a -50 a +50
+    const normalizedValue = ((value - min) / range - 0.5) * 100;
+    
+    return { normalizedValue, range };
+  }
+  
+  /**
+   * UMBRAL DINÁMICO MEJORADO
+   */
+  private updateThreshold(range: number): void {
+    // Umbral proporcional a la amplitud pero con límites
+    const newThreshold = Math.max(6, Math.min(25, range * 0.25));
+    
+    // Suavizar cambios
+    this.peakThreshold = this.peakThreshold * 0.9 + newThreshold * 0.1;
+  }
+  
+  /**
+   * DETECCIÓN DE PICO MEJORADA
+   * Usa análisis de pendiente además de máximo local
+   */
+  private detectPeak(normalizedValue: number, timeSinceLastPeak: number): boolean {
+    const n = this.signalBuffer.length;
+    if (n < 7) return false;
+    
+    // Obtener últimos 7 valores normalizados para mejor análisis
+    const recent = this.signalBuffer.slice(-7);
+    const recentNormalized = recent.map(v => {
+      const slice = this.signalBuffer.slice(-120);
+      const min = Math.min(...slice);
+      const max = Math.max(...slice);
+      const range = max - min;
+      if (range < 0.5) return 0;
+      return ((v - min) / range - 0.5) * 100;
+    });
+    
+    const [v0, v1, v2, v3, v4, v5, v6] = recentNormalized;
+    
+    // El valor central (v3) debe ser el máximo local
+    const isLocalMax = v3 > v2 && v3 > v4 && v3 >= v1 && v3 >= v5;
+    
+    // Debe estar por encima del umbral
+    const aboveThreshold = v3 > this.peakThreshold;
+    
+    // Pendiente ascendente antes (v0→v3 debe subir)
+    const risingSlope = (v3 - v0) > 3;
+    
+    // Pendiente descendente después (v3→v6 debe bajar)  
+    const fallingSlope = (v3 - v6) > 3;
+    
+    // No muy cerca del pico anterior
+    const notTooSoon = timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS;
+    
+    // Validación de amplitud vs último pico (no muy diferente)
+    let amplitudeValid = true;
+    if (this.lastPeakValue > 0) {
+      const ratio = v3 / this.lastPeakValue;
+      amplitudeValid = ratio > 0.3 && ratio < 3.0;
+    }
+    
+    const isPeak = isLocalMax && aboveThreshold && risingSlope && fallingSlope && notTooSoon && amplitudeValid;
     
     if (isPeak) {
-      this.lastPeakValue = v4;
+      this.lastPeakValue = v3;
     }
     
     return isPeak;
   }
   
   /**
-   * CALCULAR CONFIANZA basada en variabilidad RR
+   * CALCULAR CONFIANZA
+   * Basado en la consistencia de intervalos RR
    */
   private calculateConfidence(): number {
     if (this.rrIntervals.length < 3) return 0;
     
+    // Calcular variabilidad de intervalos RR
     const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
     const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
-    const cv = Math.sqrt(variance) / mean;
+    const cv = Math.sqrt(variance) / mean; // Coeficiente de variación
     
-    // CV bajo = intervalos consistentes = alta confianza
+    // Menor variabilidad = mayor confianza
+    // CV típico para ritmo normal: 0.02-0.08
+    // CV > 0.3 indica mucha irregularidad
     const confidence = Math.max(0, Math.min(1, 1 - cv * 2));
     
     return confidence;
@@ -285,7 +265,7 @@ export class HeartBeatProcessor {
   private vibrate(): void {
     try { 
       if (navigator.vibrate) {
-        navigator.vibrate(80);
+        navigator.vibrate(80); // 80ms de vibración
       }
     } catch {}
   }
@@ -293,7 +273,7 @@ export class HeartBeatProcessor {
   private async playBeep(): Promise<void> {
     if (!this.audioContext || !this.audioUnlocked) return;
     const now = Date.now();
-    if (now - this.lastBeepTime < 200) return;
+    if (now - this.lastBeepTime < 200) return; // Evitar beeps muy seguidos
     
     try {
       if (this.audioContext.state === 'suspended') {
@@ -304,6 +284,7 @@ export class HeartBeatProcessor {
       const osc = this.audioContext.createOscillator();
       const gain = this.audioContext.createGain();
       
+      // Tono descendente agradable
       osc.frequency.setValueAtTime(880, t);
       osc.frequency.exponentialRampToValueAtTime(440, t + 0.08);
       gain.gain.setValueAtTime(0.15, t);
@@ -332,14 +313,11 @@ export class HeartBeatProcessor {
   reset(): void {
     this.signalBuffer = [];
     this.rrIntervals = [];
-    this.rawBPM = 0;
+    this.smoothBPM = 0;
     this.lastPeakTime = 0;
-    this.peakThreshold = 0;
-    this.adaptiveMin = Infinity;
-    this.adaptiveMax = -Infinity;
+    this.peakThreshold = 10;
     this.frameCount = 0;
     this.consecutivePeaks = 0;
-    this.lastPeakValue = 0;
   }
   
   dispose(): void {

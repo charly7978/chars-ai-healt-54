@@ -16,8 +16,6 @@ export interface ProcessedSignal {
   // Valores RGB crudos para cálculos
   rawRed?: number;
   rawGreen?: number;
-  // Amplitud de señal para cálculos de SpO2
-  signalAmplitude?: number;
   // Diagnóstico de detección de dedo
   diagnostics?: {
     message: string;

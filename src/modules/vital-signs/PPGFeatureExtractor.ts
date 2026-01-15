@@ -1,16 +1,16 @@
 /**
- * EXTRACTOR DE CARACTERÍSTICAS PPG - CIENTÍFICAMENTE VALIDADO
- * 
- * Basado en literatura:
- * - IEEE TBME 2024: Stiffness Index para PA
- * - Bioengineering 2024: Ratio-of-Ratios para SpO2
- * - MDPI Sensors 2023: Características morfológicas para glucosa
+ * EXTRACTOR DE CARACTERÍSTICAS PPG
+ * Basado en literatura científica:
+ * - Satter et al. 2024 (MDPI) - Glucose estimation from PPG
+ * - NiADA 2024 (PubMed) - Hemoglobin via smartphone
+ * - Arguello-Prada et al. 2025 - Cholesterol from PPG
  */
 export class PPGFeatureExtractor {
   
   /**
    * Extrae el ratio AC/DC de la señal PPG
-   * AC = componente pulsátil, DC = componente base
+   * AC = componente pulsátil (variación), DC = componente base
+   * Usado para: SpO2, Glucosa
    */
   static extractACDCRatio(buffer: number[]): { ac: number; dc: number; ratio: number } {
     if (buffer.length < 10) {
@@ -18,121 +18,24 @@ export class PPGFeatureExtractor {
     }
     
     const recent = buffer.slice(-30);
+    
+    // DC: valor medio (componente no pulsátil)
     const dc = recent.reduce((a, b) => a + b, 0) / recent.length;
+    
+    // AC: amplitud pico a pico (componente pulsátil)
     const max = Math.max(...recent);
     const min = Math.min(...recent);
     const ac = max - min;
+    
+    // Ratio AC/DC (perfusion index relacionado)
     const ratio = dc !== 0 ? ac / Math.abs(dc) : 0;
     
     return { ac, dc, ratio };
   }
   
   /**
-   * STIFFNESS INDEX (SI) - Indicador de rigidez arterial
-   * SI = height / ΔT (donde ΔT es tiempo entre pico sistólico y dicrotic)
-   * Usado para: Presión Arterial
-   */
-  static extractStiffnessIndex(buffer: number[], sampleRate: number = 30): number {
-    if (buffer.length < 30) return 0;
-    
-    const recent = buffer.slice(-60);
-    
-    // Encontrar pico sistólico principal
-    let mainPeakIdx = 0;
-    let mainPeakVal = -Infinity;
-    
-    for (let i = 2; i < recent.length - 2; i++) {
-      if (recent[i] > recent[i-1] && recent[i] > recent[i+1] && recent[i] > mainPeakVal) {
-        mainPeakVal = recent[i];
-        mainPeakIdx = i;
-      }
-    }
-    
-    if (mainPeakIdx === 0) return 8; // Valor por defecto
-    
-    // Buscar pico dicrotic después del principal
-    let dicroticPeakIdx = mainPeakIdx;
-    let dicroticPeakVal = -Infinity;
-    
-    for (let i = mainPeakIdx + 3; i < recent.length - 2; i++) {
-      if (recent[i] > recent[i-1] && recent[i] > recent[i+1]) {
-        if (recent[i] < mainPeakVal * 0.9 && recent[i] > dicroticPeakVal) {
-          dicroticPeakVal = recent[i];
-          dicroticPeakIdx = i;
-        }
-      }
-    }
-    
-    if (dicroticPeakIdx === mainPeakIdx) return 8;
-    
-    // ΔT en segundos
-    const deltaT = (dicroticPeakIdx - mainPeakIdx) / sampleRate;
-    
-    // SI = height / ΔT (asumiendo height = 1.7m)
-    // SI típico: 5-15 m/s
-    const height = 1.7;
-    const SI = deltaT > 0.05 ? height / deltaT : 8;
-    
-    return Math.max(4, Math.min(20, SI));
-  }
-  
-  /**
-   * AUGMENTATION INDEX (AIx) - Ratio de amplificación de onda
-   * Relacionado con elasticidad arterial
-   */
-  static extractAugmentationIndex(buffer: number[]): number {
-    if (buffer.length < 30) return 0;
-    
-    const recent = buffer.slice(-45);
-    const max = Math.max(...recent);
-    const min = Math.min(...recent);
-    const amplitude = max - min;
-    
-    if (amplitude < 0.1) return 0;
-    
-    // Buscar picos en orden descendente
-    const peaks: { idx: number; val: number }[] = [];
-    for (let i = 1; i < recent.length - 1; i++) {
-      if (recent[i] > recent[i-1] && recent[i] > recent[i+1]) {
-        peaks.push({ idx: i, val: recent[i] });
-      }
-    }
-    
-    if (peaks.length < 2) return 0;
-    
-    peaks.sort((a, b) => b.val - a.val);
-    
-    // AIx = (P2 - P1) / amplitude * 100
-    // Donde P1 = primer pico, P2 = segundo pico
-    const P1 = peaks[0].val;
-    const P2 = peaks.length > 1 ? peaks[1].val : peaks[0].val;
-    
-    const AIx = ((P2 - min) / amplitude) * 100;
-    
-    return Math.max(0, Math.min(100, AIx));
-  }
-  
-  /**
-   * Pulse Wave Velocity (PWV) estimado
-   * Basado en características morfológicas
-   */
-  static extractPWVEstimate(buffer: number[], rrIntervals: number[]): number {
-    if (buffer.length < 30 || rrIntervals.length < 3) return 0;
-    
-    // PWV correlaciona con SI y edad/rigidez
-    const SI = this.extractStiffnessIndex(buffer, 30);
-    const avgRR = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
-    const hr = 60000 / avgRR;
-    
-    // PWV típico: 5-15 m/s
-    // Aumenta con SI y HR
-    let PWV = SI * 0.8 + (hr - 60) * 0.03;
-    
-    return Math.max(4, Math.min(18, PWV));
-  }
-  
-  /**
-   * Ancho del pulso sistólico
+   * Calcula el ancho del pulso sistólico
+   * Usado para: Lípidos, Viscosidad sanguínea
    */
   static extractPulseWidth(buffer: number[]): number {
     if (buffer.length < 20) return 0;
@@ -140,13 +43,15 @@ export class PPGFeatureExtractor {
     const recent = buffer.slice(-30);
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     
+    // Contar samples por encima del umbral (50% de amplitud)
+    const threshold = mean;
     let widthSum = 0;
     let pulseCount = 0;
     let inPulse = false;
     let currentWidth = 0;
     
     for (let i = 0; i < recent.length; i++) {
-      if (recent[i] > mean) {
+      if (recent[i] > threshold) {
         if (!inPulse) {
           inPulse = true;
           currentWidth = 0;
@@ -165,7 +70,8 @@ export class PPGFeatureExtractor {
   }
   
   /**
-   * Profundidad de la muesca dicrotica
+   * Detecta la profundidad de la muesca dicrotica
+   * Indica elasticidad arterial - relacionado con lípidos
    */
   static extractDicroticNotchDepth(buffer: number[]): number {
     if (buffer.length < 20) return 0;
@@ -177,6 +83,7 @@ export class PPGFeatureExtractor {
     
     if (amplitude < 0.001) return 0;
     
+    // Buscar el segundo pico local (muesca dicrotica)
     const peaks: number[] = [];
     for (let i = 1; i < recent.length - 1; i++) {
       if (recent[i] > recent[i-1] && recent[i] > recent[i+1]) {
@@ -186,20 +93,25 @@ export class PPGFeatureExtractor {
     
     if (peaks.length < 2) return 0;
     
+    // Ordenar picos de mayor a menor
     peaks.sort((a, b) => b - a);
+    
+    // Profundidad relativa entre primer y segundo pico
     const depth = (peaks[0] - peaks[1]) / amplitude;
     
     return Math.max(0, Math.min(1, depth));
   }
   
   /**
-   * Tiempo sistólico (tiempo de subida)
+   * Calcula el tiempo sistólico (tiempo de subida del pulso)
+   * Relacionado con presión arterial y rigidez arterial
    */
   static extractSystolicTime(buffer: number[]): number {
     if (buffer.length < 15) return 0;
     
     const recent = buffer.slice(-30);
     
+    // Encontrar valles (mínimos locales)
     const valleys: { index: number; value: number }[] = [];
     for (let i = 1; i < recent.length - 1; i++) {
       if (recent[i] < recent[i-1] && recent[i] < recent[i+1]) {
@@ -209,6 +121,7 @@ export class PPGFeatureExtractor {
     
     if (valleys.length < 1) return 0;
     
+    // Encontrar picos entre valles
     let totalRiseTime = 0;
     let count = 0;
     
@@ -226,6 +139,7 @@ export class PPGFeatureExtractor {
         }
       }
       
+      // Tiempo de subida = índice del pico - índice del valle
       const riseTime = maxIdx - startIdx;
       if (riseTime > 0) {
         totalRiseTime += riseTime;
@@ -237,13 +151,15 @@ export class PPGFeatureExtractor {
   }
   
   /**
-   * Variabilidad de amplitud de picos
+   * Calcula la variabilidad de amplitud de los picos
+   * Relacionada con glucosa y estado metabólico
    */
   static extractAmplitudeVariability(buffer: number[]): number {
     if (buffer.length < 20) return 0;
     
     const recent = buffer.slice(-45);
     
+    // Encontrar picos
     const peaks: number[] = [];
     for (let i = 1; i < recent.length - 1; i++) {
       if (recent[i] > recent[i-1] && recent[i] > recent[i+1]) {
@@ -253,6 +169,7 @@ export class PPGFeatureExtractor {
     
     if (peaks.length < 3) return 0;
     
+    // Calcular desviación estándar de las amplitudes de picos
     const mean = peaks.reduce((a, b) => a + b, 0) / peaks.length;
     const variance = peaks.reduce((sum, p) => sum + Math.pow(p - mean, 2), 0) / peaks.length;
     
@@ -260,7 +177,8 @@ export class PPGFeatureExtractor {
   }
   
   /**
-   * Variabilidad de intervalos RR (HRV)
+   * Calcula la variabilidad de intervalos RR
+   * Para HRV y detección de arritmias
    */
   static extractRRVariability(intervals: number[]): { sdnn: number; rmssd: number; cv: number } {
     if (intervals.length < 3) {
@@ -274,23 +192,26 @@ export class PPGFeatureExtractor {
     
     const mean = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
     
+    // SDNN: desviación estándar de intervalos NN
     const sdnn = Math.sqrt(
       validIntervals.reduce((sum, i) => sum + Math.pow(i - mean, 2), 0) / validIntervals.length
     );
     
+    // RMSSD: raíz cuadrada de la media de diferencias sucesivas al cuadrado
     let sumSquaredDiff = 0;
     for (let i = 1; i < validIntervals.length; i++) {
       sumSquaredDiff += Math.pow(validIntervals[i] - validIntervals[i-1], 2);
     }
     const rmssd = Math.sqrt(sumSquaredDiff / (validIntervals.length - 1));
     
+    // CV: coeficiente de variación
     const cv = mean !== 0 ? sdnn / mean : 0;
     
     return { sdnn, rmssd, cv };
   }
   
   /**
-   * Extrae todas las características
+   * Extrae todas las características de un buffer PPG
    */
   static extractAllFeatures(buffer: number[], rrIntervals?: number[]) {
     const acdc = this.extractACDCRatio(buffer);
@@ -299,9 +220,6 @@ export class PPGFeatureExtractor {
     const systolicTime = this.extractSystolicTime(buffer);
     const amplitudeVar = this.extractAmplitudeVariability(buffer);
     const rrVar = rrIntervals ? this.extractRRVariability(rrIntervals) : { sdnn: 0, rmssd: 0, cv: 0 };
-    const SI = this.extractStiffnessIndex(buffer, 30);
-    const AIx = this.extractAugmentationIndex(buffer);
-    const PWV = rrIntervals ? this.extractPWVEstimate(buffer, rrIntervals) : 0;
     
     return {
       ac: acdc.ac,
@@ -313,10 +231,7 @@ export class PPGFeatureExtractor {
       amplitudeVariability: amplitudeVar,
       sdnn: rrVar.sdnn,
       rmssd: rrVar.rmssd,
-      rrCV: rrVar.cv,
-      stiffnessIndex: SI,
-      augmentationIndex: AIx,
-      pwvEstimate: PWV
+      rrCV: rrVar.cv
     };
   }
 }

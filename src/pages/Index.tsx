@@ -379,9 +379,9 @@ const Index = () => {
     console.log('✅ Reset completado');
   }, [cameraStream, stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
 
-  // === PROCESAR SEÑAL PPG - DATOS CRUDOS ===
+  // === PROCESAR SEÑAL PPG ===
   const vitalSignsFrameCounter = useRef<number>(0);
-  const VITALS_PROCESS_EVERY_N_FRAMES = 3; // Más frecuente para valores más reactivos
+  const VITALS_PROCESS_EVERY_N_FRAMES = 5;
   
   useEffect(() => {
     if (!lastSignal || !isMonitoring) return;
@@ -395,9 +395,8 @@ const Index = () => {
       lastSignal.timestamp
     );
     
-    // BPM CRUDO - directo del procesador
     setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(heartBeatResult.filteredValue);
+    setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
     
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
@@ -414,21 +413,24 @@ const Index = () => {
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
-      // DATOS RGB DIRECTOS para SpO2
+      // Actualizar datos RGB para SpO2 - MEJORADO
       if (lastSignal.rawRed !== undefined && lastSignal.rawGreen !== undefined) {
         const rawRed = lastSignal.rawRed;
         const rawGreen = lastSignal.rawGreen;
-        const signalAmplitude = Math.abs(lastSignal.filteredValue);
-        const perfusion = lastSignal.perfusionIndex || 0.5;
         
-        // AC estimado desde amplitud de señal
-        const acRed = signalAmplitude * (rawRed / 255) * Math.max(0.5, perfusion);
-        const acGreen = signalAmplitude * (rawGreen / 255) * Math.max(0.5, perfusion);
+        // Calcular AC/DC basado en valores reales del PPGSignalProcessor
+        // DC = valor promedio (ya tenemos los raw)
+        // AC = estimado desde la amplitud de la señal filtrada
+        const signalAmplitude = Math.abs(lastSignal.filteredValue);
+        const perfusion = lastSignal.perfusionIndex || 1;
+        
+        // AC aproximado: usar amplitud de señal filtrada normalizada
+        const acFactor = Math.max(0.5, Math.min(10, signalAmplitude / 10));
         
         setRGBData({
-          redAC: acRed,
+          redAC: acFactor * (rawRed / 255) * perfusion,
           redDC: rawRed,
-          greenAC: acGreen,
+          greenAC: acFactor * (rawGreen / 255) * perfusion,
           greenDC: rawGreen
         });
       }
@@ -437,10 +439,9 @@ const Index = () => {
         const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
         if (vitals) {
-          // VALORES CRUDOS - sin modificar
           setVitalSigns(vitals);
           
-          // Arritmias
+          // Actualizar estado de arritmia
           const arrhythmiaStatus = vitals.arrhythmiaStatus;
           if (arrhythmiaStatus) {
             lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
@@ -454,6 +455,7 @@ const Index = () => {
               setArrhythmiaState(isArrhythmiaDetected);
               
               if (isArrhythmiaDetected) {
+                // Vibración fuerte para arritmia
                 if (navigator.vibrate) {
                   navigator.vibrate([200, 100, 200]);
                 }
