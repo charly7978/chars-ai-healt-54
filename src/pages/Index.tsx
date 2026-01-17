@@ -15,7 +15,7 @@ const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
-    spo2: Number.NaN as unknown as number,
+    spo2: 0,
     glucose: 0,
     hemoglobin: 0,
     pressure: { systolic: 0, diastolic: 0 },
@@ -24,7 +24,9 @@ const Index = () => {
     lipids: { totalCholesterol: 0, triglycerides: 0 },
     isCalibrating: false,
     calibrationProgress: 0,
-    lastArrhythmiaData: undefined
+    lastArrhythmiaData: undefined,
+    signalQuality: 0,
+    measurementConfidence: 'INVALID'
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
@@ -360,7 +362,7 @@ const Index = () => {
     setBeatMarker(0);
     setRRIntervals([]);
     setVitalSigns({ 
-      spo2: Number.NaN as unknown as number,
+      spo2: 0,
       glucose: 0,
       hemoglobin: 0,
       pressure: { systolic: 0, diastolic: 0 },
@@ -369,7 +371,9 @@ const Index = () => {
       lipids: { totalCholesterol: 0, triglycerides: 0 },
       isCalibrating: false,
       calibrationProgress: 0,
-      lastArrhythmiaData: undefined
+      lastArrhythmiaData: undefined,
+      signalQuality: 0,
+      measurementConfidence: 'INVALID'
     });
     setArrhythmiaCount("--");
     lastArrhythmiaData.current = null;
