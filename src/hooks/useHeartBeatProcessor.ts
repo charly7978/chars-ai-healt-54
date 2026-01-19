@@ -88,19 +88,21 @@ export const useHeartBeatProcessor = () => {
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };
     
-    // Actualizar BPM si hay confianza y está en rango válido
-    if (result.confidence >= 0.3 && result.bpm >= 40 && result.bpm <= 180) {
+    // Actualizar BPM si hay confianza suficiente
+    if (result.confidence >= 0.3 && result.bpm > 0) {
       const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
       const newBPM = currentBPM > 0 ? 
         currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
         result.bpm;
       
-      setCurrentBPM(Math.round(newBPM * 10) / 10);
+      // Guardar como entero
+      setCurrentBPM(Math.round(newBPM));
       setConfidence(result.confidence);
     }
 
+    // Retornar BPM redondeado a entero
     return {
-      bpm: result.bpm,
+      bpm: Math.round(result.bpm),
       confidence: result.confidence,
       isPeak: result.isPeak,
       filteredValue: result.filteredValue,

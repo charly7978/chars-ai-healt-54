@@ -208,25 +208,47 @@ export class VitalSignsProcessor {
     return 'INVALID';
   }
 
+  /**
+   * FORMATEO DE RESULTADOS - REDONDEO APROPIADO
+   * Cada signo vital tiene su formato específico:
+   * - SpO2: entero (97, 98, 99)
+   * - Presión arterial: enteros (120/80)
+   * - Glucosa: entero (95, 110, 120)
+   * - Hemoglobina: 1 decimal (13.5, 14.2)
+   * - Colesterol/Triglicéridos: enteros (180, 150)
+   */
   private getFormattedResult(): VitalSignsResult {
     return {
-      spo2: this.measurements.spo2, // Valor crudo, puede ser < 70 o > 100
-      glucose: this.measurements.glucose,
-      hemoglobin: this.measurements.hemoglobin,
+      // SpO2: entero (sin decimales)
+      spo2: Math.round(this.measurements.spo2),
+      
+      // Glucosa: entero (sin decimales)
+      glucose: Math.round(this.measurements.glucose),
+      
+      // Hemoglobina: 1 decimal
+      hemoglobin: Math.round(this.measurements.hemoglobin * 10) / 10,
+      
+      // Presión arterial: enteros
       pressure: {
-        systolic: this.measurements.systolicPressure,
-        diastolic: this.measurements.diastolicPressure
+        systolic: Math.round(this.measurements.systolicPressure),
+        diastolic: Math.round(this.measurements.diastolicPressure)
       },
+      
       arrhythmiaCount: this.measurements.arrhythmiaCount,
       arrhythmiaStatus: this.measurements.arrhythmiaStatus,
+      
+      // Lípidos: enteros
       lipids: {
-        totalCholesterol: this.measurements.totalCholesterol,
-        triglycerides: this.measurements.triglycerides
+        totalCholesterol: Math.round(this.measurements.totalCholesterol),
+        triglycerides: Math.round(this.measurements.triglycerides)
       },
+      
       isCalibrating: this.isCalibrating,
       calibrationProgress: Math.min(100, Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100)),
       lastArrhythmiaData: this.measurements.lastArrhythmiaData ?? undefined,
-      signalQuality: this.measurements.signalQuality,
+      
+      // Calidad: entero
+      signalQuality: Math.round(this.measurements.signalQuality),
       measurementConfidence: this.getMeasurementConfidence()
     };
   }
@@ -567,8 +589,13 @@ export class VitalSignsProcessor {
     return { totalCholesterol: cholesterol, triglycerides };
   }
 
+  /**
+   * Suavizado EMA - mantiene valores sin redondear internamente
+   * El redondeo se aplica solo en getFormattedResult()
+   */
   private smoothValue(current: number, newVal: number): number {
-    if (current === 0 || isNaN(current)) return newVal;
+    if (current === 0 || isNaN(current) || !isFinite(current)) return newVal;
+    if (isNaN(newVal) || !isFinite(newVal)) return current;
     return current * (1 - this.EMA_ALPHA) + newVal * this.EMA_ALPHA;
   }
 
