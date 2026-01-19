@@ -44,14 +44,23 @@ export const useVitalSignsProcessor = () => {
   const processSignal = useCallback((
     value: number, 
     rrData?: { intervals: number[], lastPeakTime: number | null }
-  ) => {
-    if (!processorRef.current) return {
-      spo2: 0, glucose: 0, hemoglobin: 0,
+  ): VitalSignsResult => {
+    const defaultResult: VitalSignsResult = {
+      spo2: 0, 
+      glucose: 0, 
+      hemoglobin: 0,
       pressure: { systolic: 0, diastolic: 0 },
-      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+      arrhythmiaCount: 0, 
+      arrhythmiaStatus: "SIN ARRITMIAS|0",
       lipids: { totalCholesterol: 0, triglycerides: 0 },
-      isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined
+      isCalibrating: false, 
+      calibrationProgress: 0, 
+      lastArrhythmiaData: undefined,
+      signalQuality: 0,
+      measurementConfidence: 'INVALID' as const
     };
+    
+    if (!processorRef.current) return defaultResult;
     
     processedSignals.current++;
     

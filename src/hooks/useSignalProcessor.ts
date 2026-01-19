@@ -124,6 +124,34 @@ export const useSignalProcessor = () => {
     }
   }, [isProcessing]);
 
+  // OBTENER ESTADÍSTICAS RGB REALES PARA SpO2
+  const getRGBStats = useCallback(() => {
+    if (!processorRef.current) {
+      return {
+        redAC: 0,
+        redDC: 0,
+        greenAC: 0,
+        greenDC: 0,
+        rgRatio: 0,
+        ratioOfRatios: 0
+      };
+    }
+    return processorRef.current.getRGBStats();
+  }, []);
+
+  // OBTENER BUFFERS DE DERIVADAS
+  const getVPGBuffer = useCallback(() => {
+    return processorRef.current?.getVPGBuffer() ?? [];
+  }, []);
+
+  const getAPGBuffer = useCallback(() => {
+    return processorRef.current?.getAPGBuffer() ?? [];
+  }, []);
+
+  const getFilteredBuffer = useCallback(() => {
+    return processorRef.current?.getFilteredBuffer() ?? [];
+  }, []);
+
   return {
     isProcessing,
     lastSignal,
@@ -133,6 +161,10 @@ export const useSignalProcessor = () => {
     stopProcessing,
     calibrate,
     processFrame,
+    getRGBStats,
+    getVPGBuffer,
+    getAPGBuffer,
+    getFilteredBuffer,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,
