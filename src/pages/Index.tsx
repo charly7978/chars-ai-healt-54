@@ -579,13 +579,13 @@ const Index = () => {
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign 
                 label="FRECUENCIA CARDÍACA"
-                value={heartRate || "--"}
+                value={heartRate > 0 ? Math.round(heartRate) : "--"}
                 unit="BPM"
                 highlighted={showResults}
               />
               <VitalSign 
                 label="SPO2"
-                value={vitalSigns.spo2 || "--"}
+                value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"}
                 unit="%"
                 highlighted={showResults}
               />
@@ -599,19 +599,23 @@ const Index = () => {
               />
               <VitalSign 
                 label="HEMOGLOBINA"
-                value={vitalSigns.hemoglobin || "--"}
+                value={vitalSigns.hemoglobin > 0 ? vitalSigns.hemoglobin : "--"}
                 unit="g/dL"
                 highlighted={showResults}
               />
               <VitalSign 
                 label="GLUCOSA"
-                value={vitalSigns.glucose || "--"}
+                value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
                 unit="mg/dL"
                 highlighted={showResults}
               />
               <VitalSign 
                 label="COLESTEROL/TRIGL."
-                value={`${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`}
+                value={
+                  vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
+                    ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`
+                    : "--/--"
+                }
                 unit="mg/dL"
                 highlighted={showResults}
               />
