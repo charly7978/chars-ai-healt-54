@@ -14,7 +14,117 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      calibration_settings: {
+        Row: {
+          created_at: string
+          diastolic_reference: number | null
+          id: string
+          is_active: boolean | null
+          last_calibration_date: string | null
+          perfusion_index: number | null
+          quality_threshold: number | null
+          red_threshold_max: number | null
+          red_threshold_min: number | null
+          stability_threshold: number | null
+          status: Database["public"]["Enums"]["calibration_status"] | null
+          systolic_reference: number | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          diastolic_reference?: number | null
+          id?: string
+          is_active?: boolean | null
+          last_calibration_date?: string | null
+          perfusion_index?: number | null
+          quality_threshold?: number | null
+          red_threshold_max?: number | null
+          red_threshold_min?: number | null
+          stability_threshold?: number | null
+          status?: Database["public"]["Enums"]["calibration_status"] | null
+          systolic_reference?: number | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          diastolic_reference?: number | null
+          id?: string
+          is_active?: boolean | null
+          last_calibration_date?: string | null
+          perfusion_index?: number | null
+          quality_threshold?: number | null
+          red_threshold_max?: number | null
+          red_threshold_min?: number | null
+          stability_threshold?: number | null
+          status?: Database["public"]["Enums"]["calibration_status"] | null
+          systolic_reference?: number | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      measurements: {
+        Row: {
+          arrhythmia_count: number
+          created_at: string
+          diastolic: number
+          heart_rate: number
+          id: string
+          measured_at: string
+          quality: number
+          spo2: number
+          systolic: number
+          user_id: string
+        }
+        Insert: {
+          arrhythmia_count?: number
+          created_at?: string
+          diastolic: number
+          heart_rate: number
+          id?: string
+          measured_at?: string
+          quality?: number
+          spo2: number
+          systolic: number
+          user_id: string
+        }
+        Update: {
+          arrhythmia_count?: number
+          created_at?: string
+          diastolic?: number
+          heart_rate?: number
+          id?: string
+          measured_at?: string
+          quality?: number
+          spo2?: number
+          systolic?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          full_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          full_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          full_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +133,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      calibration_status: "pending" | "in_progress" | "completed" | "failed"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +260,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      calibration_status: ["pending", "in_progress", "completed", "failed"],
+    },
   },
 } as const
