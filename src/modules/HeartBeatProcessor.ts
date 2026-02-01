@@ -26,11 +26,12 @@ export class HeartBeatProcessor {
   private peakThreshold: number = 8;
   private adaptiveBaseline: number = 0;
   
-  // RR Intervals y BPM
+  // RR Intervals y BPM - optimizado para estabilidad
   private rrIntervals: number[] = [];
-  private readonly MAX_RR_INTERVALS = 15;
+  private readonly MAX_RR_INTERVALS = 20; // Más intervalos para mejor promedio
   private smoothBPM: number = 0;
-  private readonly BPM_SMOOTHING = 0.6; // Menos suavizado para respuesta más rápida
+  private readonly BPM_SMOOTHING = 0.75; // Mayor suavizado para estabilidad
+  private readonly BPM_SMOOTHING_INITIAL = 0.5; // Menos suavizado al inicio
   
   // Audio feedback
   private audioContext: AudioContext | null = null;
@@ -131,11 +132,15 @@ export class HeartBeatProcessor {
           // Calcular BPM CRUDO - SIN CLAMP
           const instantBPM = 60000 / timeSinceLastPeak;
           
-          // Suavizado exponencial - SIN LÍMITES
+          // Suavizado exponencial adaptativo
+          // Más suavizado cuando ya tenemos valores estables
           if (this.smoothBPM === 0) {
             this.smoothBPM = instantBPM;
           } else {
-            this.smoothBPM = this.smoothBPM * this.BPM_SMOOTHING + instantBPM * (1 - this.BPM_SMOOTHING);
+            // Usar suavizado más agresivo cuando el valor es estable
+            const bpmDiff = Math.abs(instantBPM - this.smoothBPM);
+            const smoothingFactor = bpmDiff > 20 ? this.BPM_SMOOTHING_INITIAL : this.BPM_SMOOTHING;
+            this.smoothBPM = this.smoothBPM * smoothingFactor + instantBPM * (1 - smoothingFactor);
           }
           
           // NO HAY CLAMP - Valor directo

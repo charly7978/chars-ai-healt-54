@@ -118,23 +118,25 @@ export class ArrhythmiaProcessor {
     
     for (let i = 1; i < recentRR.length; i++) {
       const diff = recentRR[i] - recentRR[i-1];
-      // Only count intervals within physiological limits
-      if (recentRR[i] >= 500 && recentRR[i] <= 1500) {
+      // SIN FILTRO FISIOLÓGICO - Usar todos los intervalos reales
+      // Solo filtro técnico mínimo para evitar ruido extremo
+      if (recentRR[i] >= 150 && recentRR[i] <= 4000) {
         sumSquaredDiff += diff * diff;
         validIntervals++;
       }
     }
     
-    // Require at least 70% valid intervals
-    if (validIntervals < this.RR_WINDOW_SIZE * 0.7) {
+    // Reducir requerimiento de intervalos válidos
+    if (validIntervals < Math.max(2, this.RR_WINDOW_SIZE * 0.5)) {
       return;
     }
     
     const rmssd = Math.sqrt(sumSquaredDiff / validIntervals);
     
-    // Calculate mean RR and standard deviation with outlier rejection
-    const validRRs = recentRR.filter(rr => rr >= 500 && rr <= 1500);
-    if (validRRs.length < this.RR_WINDOW_SIZE * 0.7) return;
+    // SIN FILTRO FISIOLÓGICO - Usar todos los intervalos crudos
+    // Solo filtro técnico mínimo
+    const validRRs = recentRR.filter(rr => rr >= 150 && rr <= 4000);
+    if (validRRs.length < Math.max(2, this.RR_WINDOW_SIZE * 0.5)) return;
     
     const avgRR = validRRs.reduce((a, b) => a + b, 0) / validRRs.length;
     const lastRR = validRRs[validRRs.length - 1];
