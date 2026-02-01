@@ -75,12 +75,24 @@ export class VitalSignsProcessor {
   // RGB para SpO2
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   
-  // Suavizado MÍNIMO para mantener valores crudos
-  private readonly EMA_ALPHA = 0.35; // Mayor alpha = menos suavizado
+  // Suavizado adaptativo para estabilidad SIN perder respuesta
+  // Alpha más bajo = más suavizado = lecturas más estables
+  private readonly EMA_ALPHA_STABLE = 0.15;  // Para valores que cambian lento (SpO2, PA)
+  private readonly EMA_ALPHA_DYNAMIC = 0.25; // Para valores más variables (Glucosa, HRV)
+  
+  // Historial para validación de tendencias
+  private measurementHistory: { [key: string]: number[] } = {
+    spo2: [],
+    systolic: [],
+    diastolic: [],
+    glucose: [],
+    hemoglobin: []
+  };
+  private readonly HISTORY_SIZE_VALIDATION = 10; // Últimas 10 mediciones
   
   // Contador de pulsos válidos
   private validPulseCount: number = 0;
-  private readonly MIN_PULSES_REQUIRED = 3;
+  private readonly MIN_PULSES_REQUIRED = 2; // Reducido para inicio más rápido
   
   constructor() {
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
@@ -161,12 +173,14 @@ export class VitalSignsProcessor {
       return false;
     }
     
-    // Sin filtros de rango fisiológico estrictos
+    // SIN FILTROS FISIOLÓGICOS - Solo filtro técnico mínimo
+    // Intervalos de 100ms a 5000ms permiten desde 12 BPM hasta 600 BPM (cubre cualquier señal real)
     const validIntervals = rrData.intervals.filter(interval => 
-      interval >= 200 && interval <= 3000
+      interval >= 100 && interval <= 5000
     );
     
-    if (validIntervals.length < this.MIN_PULSES_REQUIRED) {
+    // Requerir menos pulsos para iniciar el procesamiento
+    if (validIntervals.length < 2) {
       return false;
     }
     
@@ -259,36 +273,41 @@ export class VitalSignsProcessor {
   ): void {
     const features = PPGFeatureExtractor.extractAllFeatures(this.signalHistory, rrData.intervals);
     
-    // 1. SpO2 - Fórmula PURA sin clamp
+    // 1. SpO2 - Fórmula PURA sin clamp - usa suavizado estable
     const spo2 = this.calculateSpO2Raw();
     if (spo2 !== 0) {
-      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2);
+      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
+      this.updateHistory('spo2', spo2);
     }
 
-    // 2. Presión arterial - Desde morfología PPG SIN BASE FIJA
+    // 2. Presión arterial - Desde morfología PPG SIN BASE FIJA - suavizado estable
     const pressure = this.calculateBloodPressureFromMorphology(rrData.intervals, features);
     if (pressure.systolic !== 0) {
-      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, pressure.systolic);
-      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, pressure.diastolic);
+      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, pressure.systolic, 'stable');
+      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, pressure.diastolic, 'stable');
+      this.updateHistory('systolic', pressure.systolic);
+      this.updateHistory('diastolic', pressure.diastolic);
     }
 
-    // 3. Glucosa - Desde características PPG
+    // 3. Glucosa - Desde características PPG - suavizado dinámico (más variable)
     const glucose = this.calculateGlucoseRaw(features, rrData.intervals);
     if (glucose !== 0) {
-      this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose);
+      this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
+      this.updateHistory('glucose', glucose);
     }
 
-    // 4. Hemoglobina - Desde absorción RGB
+    // 4. Hemoglobina - Desde absorción RGB - suavizado estable
     const hemoglobin = this.calculateHemoglobinRaw(features);
     if (hemoglobin !== 0) {
-      this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin);
+      this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin, 'stable');
+      this.updateHistory('hemoglobin', hemoglobin);
     }
 
-    // 5. Lípidos
+    // 5. Lípidos - suavizado dinámico
     const lipids = this.calculateLipidsRaw(features, rrData.intervals);
     if (lipids.totalCholesterol !== 0) {
-      this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipids.totalCholesterol);
-      this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipids.triglycerides);
+      this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipids.totalCholesterol, 'dynamic');
+      this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipids.triglycerides, 'dynamic');
     }
 
     // 6. Arritmias
@@ -364,8 +383,9 @@ export class VitalSignsProcessor {
     intervals: number[], 
     features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>
   ): { systolic: number; diastolic: number } {
-    const validIntervals = intervals.filter(i => i >= 200 && i <= 3000);
-    if (validIntervals.length < 3) {
+    // SIN FILTRO FISIOLÓGICO - Solo filtro técnico mínimo
+    const validIntervals = intervals.filter(i => i >= 100 && i <= 5000);
+    if (validIntervals.length < 2) {
       return { systolic: 0, diastolic: 0 };
     }
     
@@ -590,13 +610,29 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * Suavizado EMA - mantiene valores sin redondear internamente
-   * El redondeo se aplica solo en getFormattedResult()
+   * Actualizar historial de mediciones para análisis de tendencias
    */
-  private smoothValue(current: number, newVal: number): number {
+  private updateHistory(key: string, value: number): void {
+    if (!this.measurementHistory[key]) {
+      this.measurementHistory[key] = [];
+    }
+    this.measurementHistory[key].push(value);
+    if (this.measurementHistory[key].length > this.HISTORY_SIZE_VALIDATION) {
+      this.measurementHistory[key].shift();
+    }
+  }
+
+  /**
+   * Suavizado EMA adaptativo para estabilidad
+   * type: 'stable' para valores que cambian lentamente (SpO2, PA)
+   *       'dynamic' para valores más variables (Glucosa)
+   */
+  private smoothValue(current: number, newVal: number, type: 'stable' | 'dynamic' = 'stable'): number {
     if (current === 0 || isNaN(current) || !isFinite(current)) return newVal;
     if (isNaN(newVal) || !isFinite(newVal)) return current;
-    return current * (1 - this.EMA_ALPHA) + newVal * this.EMA_ALPHA;
+    
+    const alpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
+    return current * (1 - alpha) + newVal * alpha;
   }
 
   getCalibrationProgress(): number {
@@ -630,5 +666,13 @@ export class VitalSignsProcessor {
     this.isCalibrating = false;
     this.calibrationSamples = 0;
     this.arrhythmiaProcessor.reset();
+    // Limpiar historial de mediciones
+    this.measurementHistory = {
+      spo2: [],
+      systolic: [],
+      diastolic: [],
+      glucose: [],
+      hemoglobin: []
+    };
   }
 }

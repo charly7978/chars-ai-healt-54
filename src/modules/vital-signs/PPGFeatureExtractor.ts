@@ -99,10 +99,11 @@ export class PPGFeatureExtractor {
     const p2 = peaks.length > 1 ? peaks[1].val : p1 * 0.8;
     const minVal = Math.min(...recent);
     
-    // AIx como ratio
+    // AIx como ratio - SIN CLAMP, valor crudo directo
     const aix = p1 !== minVal ? ((p2 - minVal) / (p1 - minVal)) * 100 : 0;
     
-    return Math.max(-50, Math.min(100, aix)); // AIx puede ser negativo en jóvenes
+    // RETORNAR VALOR CRUDO - sin límites artificiales
+    return aix;
   }
   
   /**
@@ -170,11 +171,12 @@ export class PPGFeatureExtractor {
     
     if (systolicTime <= 0) return 0;
     
-    // PWV proxy formula empírica
-    // Normalizado a ~5-15 m/s (rango típico)
+    // PWV proxy formula empírica - SIN CLAMP
+    // Valor crudo calculado desde características PPG reales
     const pwvProxy = 5 + (1 / systolicTime) * 2 + (aix / 50) + (hr - 60) * 0.03;
     
-    return Math.max(3, Math.min(20, pwvProxy));
+    // RETORNAR VALOR CRUDO - sin límites artificiales
+    return pwvProxy;
   }
   
   /**
@@ -369,8 +371,9 @@ export class PPGFeatureExtractor {
       return { sdnn: 0, rmssd: 0, cv: 0 };
     }
     
-    const validIntervals = intervals.filter(i => i > 200 && i < 3000);
-    if (validIntervals.length < 3) {
+    // SIN FILTRO FISIOLÓGICO - Solo filtro técnico mínimo
+    const validIntervals = intervals.filter(i => i > 100 && i < 5000);
+    if (validIntervals.length < 2) {
       return { sdnn: 0, rmssd: 0, cv: 0 };
     }
     
