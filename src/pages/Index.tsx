@@ -5,6 +5,7 @@ import CameraPreview from "@/components/CameraPreview";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -80,6 +81,8 @@ const Index = () => {
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
+  
+  const { saveMeasurement } = useSaveMeasurement();
 
   // CANVAS PARA CAPTURA
   useEffect(() => {
@@ -290,7 +293,7 @@ const Index = () => {
   }, [startFrameLoop]);
 
   // === FINALIZAR MEDICIÓN ===
-  const finalizeMeasurement = useCallback(() => {
+  const finalizeMeasurement = useCallback(async () => {
     if (!isMonitoring) return;
     
     console.log('🛑 Finalizando medición...');
@@ -313,6 +316,16 @@ const Index = () => {
     
     const savedResults = resetVitalSigns();
     
+    // Guardar medición en la base de datos automáticamente
+    if (savedResults || vitalSigns.spo2 > 0) {
+      const dataToSave = savedResults || vitalSigns;
+      await saveMeasurement({
+        heartRate,
+        vitalSigns: dataToSave,
+        signalQuality: lastSignal?.quality || 0
+      });
+    }
+    
     // Detener cámara
     setIsCameraOn(false);
     
@@ -332,8 +345,8 @@ const Index = () => {
     setElapsedTime(0);
     setCalibrationProgress(0);
     
-    console.log('✅ Medición finalizada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns]);
+    console.log('✅ Medición finalizada y guardada');
+  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
 
   // === RESET COMPLETO ===
   const handleReset = useCallback(() => {
