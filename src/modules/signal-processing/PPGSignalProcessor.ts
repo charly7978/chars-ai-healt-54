@@ -213,8 +213,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS
-   * Más preciso para SpO2
+   * CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS - MÉTODO PROFESIONAL
+   * 
+   * Basado en Texas Instruments SLAA655:
+   * - DC = promedio (componente no pulsátil)
+   * - AC = RMS de la componente pulsátil (más preciso que pico-a-pico)
+   * 
+   * Para SpO2: R = (AC_red/DC_red) / (AC_green/DC_green)
    */
   private calculateACDCPrecise(): void {
     const windowSize = Math.min(this.ACDC_WINDOW, this.redBuffer.length);
@@ -223,38 +228,56 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redWindow = this.redBuffer.slice(-windowSize);
     const greenWindow = this.greenBuffer.slice(-windowSize);
     
-    // DC = promedio (componente continua)
+    // DC = promedio (componente continua / no pulsátil)
     this.redDC = redWindow.reduce((a, b) => a + b, 0) / redWindow.length;
     this.greenDC = greenWindow.reduce((a, b) => a + b, 0) / greenWindow.length;
     
-    // Para AC, usar RMS de la señal filtrada en lugar de pico a pico
-    // Esto es más robusto al ruido
-    const redMean = this.redDC;
-    const greenMean = this.greenDC;
+    // Protección contra DC muy bajo
+    if (this.redDC < 5 || this.greenDC < 5) return;
     
-    // Calcular variación RMS
-    let redRMS = 0;
-    let greenRMS = 0;
+    // === MÉTODO 1: RMS de la señal centrada ===
+    // RMS = sqrt(sum((x - mean)^2) / n)
+    let redSumSq = 0;
+    let greenSumSq = 0;
     
     for (let i = 0; i < windowSize; i++) {
-      redRMS += Math.pow(redWindow[i] - redMean, 2);
-      greenRMS += Math.pow(greenWindow[i] - greenMean, 2);
+      redSumSq += Math.pow(redWindow[i] - this.redDC, 2);
+      greenSumSq += Math.pow(greenWindow[i] - this.greenDC, 2);
     }
     
-    redRMS = Math.sqrt(redRMS / windowSize);
-    greenRMS = Math.sqrt(greenRMS / windowSize);
+    const redRMS = Math.sqrt(redSumSq / windowSize);
+    const greenRMS = Math.sqrt(greenSumSq / windowSize);
     
-    // AC como 2 * RMS (aproximación de amplitud pico a pico)
-    this.redAC = redRMS * 2;
-    this.greenAC = greenRMS * 2;
+    // === MÉTODO 2: Pico a pico con filtrado de outliers ===
+    // Ordenar y usar percentiles para evitar ruido extremo
+    const sortedRed = [...redWindow].sort((a, b) => a - b);
+    const sortedGreen = [...greenWindow].sort((a, b) => a - b);
     
-    // También calcular pico a pico para comparación
-    const redPeakToPeak = Math.max(...redWindow) - Math.min(...redWindow);
-    const greenPeakToPeak = Math.max(...greenWindow) - Math.min(...greenWindow);
+    const p5 = Math.floor(windowSize * 0.05);
+    const p95 = Math.floor(windowSize * 0.95);
     
-    // Usar el mayor de los dos métodos
-    this.redAC = Math.max(this.redAC, redPeakToPeak * 0.5);
-    this.greenAC = Math.max(this.greenAC, greenPeakToPeak * 0.5);
+    const redP2P = sortedRed[p95] - sortedRed[p5];
+    const greenP2P = sortedGreen[p95] - sortedGreen[p5];
+    
+    // === FUSIÓN: Usar RMS como base, pico-a-pico como validación ===
+    // AC_rms * sqrt(2) ≈ amplitud pico para señal sinusoidal
+    const redACFromRMS = redRMS * Math.sqrt(2);
+    const greenACFromRMS = greenRMS * Math.sqrt(2);
+    
+    // Promediar ambos métodos para robustez
+    this.redAC = (redACFromRMS + redP2P * 0.5) / 2;
+    this.greenAC = (greenACFromRMS + greenP2P * 0.5) / 2;
+    
+    // Validación: Si AC es muy pequeño relativo a DC, señal débil
+    const redPI = this.redAC / this.redDC;
+    const greenPI = this.greenAC / this.greenDC;
+    
+    // Perfusion Index típico: 0.1% - 20%
+    if (redPI < 0.001 || greenPI < 0.001) {
+      // Señal muy débil, puede ser ruido
+      this.redAC = 0;
+      this.greenAC = 0;
+    }
   }
   
   /**
