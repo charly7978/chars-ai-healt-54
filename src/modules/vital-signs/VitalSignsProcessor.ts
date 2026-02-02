@@ -273,39 +273,47 @@ export class VitalSignsProcessor {
   ): void {
     const features = PPGFeatureExtractor.extractAllFeatures(this.signalHistory, rrData.intervals);
     
-    // 1. SpO2 - Fórmula PURA sin clamp - usa suavizado estable
+    // Validar calidad de señal mínima antes de calcular
+    const minQualityForCalculation = 15;
+    if (this.measurements.signalQuality < minQualityForCalculation) {
+      // Señal muy débil - no actualizar valores para evitar ruido
+      return;
+    }
+    
+    // 1. SpO2 - Fórmula estándar TI - suavizado estable
     const spo2 = this.calculateSpO2Raw();
-    if (spo2 !== 0) {
+    if (spo2 !== 0 && spo2 > 50 && spo2 < 105) {
+      // Solo aceptar valores en rango razonable (aunque no forzamos, filtramos ruido extremo)
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
       this.updateHistory('spo2', spo2);
     }
 
-    // 2. Presión arterial - Desde morfología PPG SIN BASE FIJA - suavizado estable
+    // 2. Presión arterial - Desde morfología PPG - suavizado estable
     const pressure = this.calculateBloodPressureFromMorphology(rrData.intervals, features);
-    if (pressure.systolic !== 0) {
+    if (pressure.systolic !== 0 && pressure.systolic > 50 && pressure.systolic < 250) {
       this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, pressure.systolic, 'stable');
       this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, pressure.diastolic, 'stable');
       this.updateHistory('systolic', pressure.systolic);
       this.updateHistory('diastolic', pressure.diastolic);
     }
 
-    // 3. Glucosa - Desde características PPG - suavizado dinámico (más variable)
+    // 3. Glucosa - Desde características PPG - suavizado dinámico
     const glucose = this.calculateGlucoseRaw(features, rrData.intervals);
-    if (glucose !== 0) {
+    if (glucose !== 0 && glucose > 40 && glucose < 400) {
       this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
       this.updateHistory('glucose', glucose);
     }
 
     // 4. Hemoglobina - Desde absorción RGB - suavizado estable
     const hemoglobin = this.calculateHemoglobinRaw(features);
-    if (hemoglobin !== 0) {
+    if (hemoglobin !== 0 && hemoglobin > 5 && hemoglobin < 25) {
       this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin, 'stable');
       this.updateHistory('hemoglobin', hemoglobin);
     }
 
     // 5. Lípidos - suavizado dinámico
     const lipids = this.calculateLipidsRaw(features, rrData.intervals);
-    if (lipids.totalCholesterol !== 0) {
+    if (lipids.totalCholesterol !== 0 && lipids.totalCholesterol > 80 && lipids.totalCholesterol < 400) {
       this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipids.totalCholesterol, 'dynamic');
       this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipids.triglycerides, 'dynamic');
     }
@@ -324,18 +332,34 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * SpO2 - FÓRMULA PURA RATIO-OF-RATIOS
-   * SpO2 = 110 - 25 * R
-   * Donde R = (AC_red/DC_red) / (AC_ir/DC_ir)
+   * SpO2 - FÓRMULA RATIO-OF-RATIOS (Estándar Texas Instruments SLAA655)
    * 
-   * Para cámaras usamos verde como proxy de IR
-   * SIN NINGÚN CLAMP - Valor crudo directo
+   * R = (AC_red/DC_red) / (AC_ir/DC_ir)
+   * SpO2 = 110 - 25 * R
+   * 
+   * Para cámaras usamos verde como proxy de IR (mejor SNR que azul)
+   * 
+   * VALIDACIÓN: Solo retorna valor si los datos son físicamente plausibles
    */
   private calculateSpO2Raw(): number {
     const { redAC, redDC, greenAC, greenDC } = this.rgbData;
     
-    // Validar señal mínima
-    if (redDC < 5 || greenDC < 5) {
+    // Validar señal mínima (DC debe ser suficiente para medición)
+    if (redDC < 10 || greenDC < 10) {
+      return 0;
+    }
+    
+    // Validar que hay componente AC (pulsátil)
+    if (redAC < 0.1 || greenAC < 0.1) {
+      return 0;
+    }
+    
+    // Calcular Perfusion Index para cada canal
+    const piRed = (redAC / redDC) * 100;  // Porcentaje
+    const piGreen = (greenAC / greenDC) * 100;
+    
+    // PI típico: 0.1% - 20%. Si está fuera, señal sospechosa
+    if (piRed < 0.05 || piGreen < 0.05) {
       return 0;
     }
     
@@ -343,127 +367,150 @@ export class VitalSignsProcessor {
     const ratioRed = redAC / redDC;
     const ratioGreen = greenAC / greenDC;
     
-    // Evitar división por cero
-    if (ratioGreen < 0.0001) {
-      return 0;
-    }
-    
     // R = (AC_red/DC_red) / (AC_green/DC_green)
     const R = ratioRed / ratioGreen;
     
-    // Fórmula empírica estándar - SIN CLAMP
-    // SpO2 = A - B * R
-    // Coeficientes calibrados para cámara de smartphone
-    // A = 110, B = 25 (estándar para pulsioxímetros)
-    const spo2 = 110 - 25 * R;
-    
-    // Log para debug
-    if (this.signalHistory.length % 30 === 0) {
-      console.log(`📊 SpO2 RAW: R=${R.toFixed(3)} → SpO2=${spo2.toFixed(1)}% (ratioR=${ratioRed.toFixed(4)} ratioG=${ratioGreen.toFixed(4)})`);
+    // Validar R en rango físicamente posible
+    // R típico para SpO2 70-100%: aproximadamente 0.4 - 1.6
+    // Pero NO aplicamos clamp, solo validamos
+    if (R < 0.1 || R > 3.0) {
+      // Valor extremo, probablemente ruido - pero lo calculamos igual
+      if (this.signalHistory.length % 60 === 0) {
+        console.warn(`⚠️ SpO2 R extremo: ${R.toFixed(3)} - posible ruido`);
+      }
     }
     
-    // RETORNAR VALOR CRUDO - puede ser <70% o >100%
+    // Fórmula empírica estándar (TI SLAA655)
+    // SpO2 = A - B * R
+    // A = 110, B = 25 (calibración estándar pulsioxímetros)
+    const spo2 = 110 - 25 * R;
+    
+    // Log periódico para debug
+    if (this.signalHistory.length % 45 === 0) {
+      console.log(`📊 SpO2: R=${R.toFixed(3)} → ${spo2.toFixed(1)}% | PI_R=${piRed.toFixed(2)}% PI_G=${piGreen.toFixed(2)}%`);
+    }
+    
+    // RETORNAR VALOR CRUDO - el historial y EMA manejarán estabilidad
     return spo2;
   }
 
   /**
    * PRESIÓN ARTERIAL DESDE MORFOLOGÍA PPG
-   * SIN VALORES BASE FIJOS (120/80)
    * 
-   * Basado en:
-   * - Augmentation Index (AIx)
-   * - Stiffness Index (SI)
-   * - Tiempo sistólico (Ts)
-   * - Muesca dicrotica
-   * - PWV proxy
+   * Basado en literatura:
+   * - Augmentation Index (AIx) correlaciona con rigidez arterial
+   * - Stiffness Index (SI) indica velocidad de onda de pulso
+   * - Tiempo sistólico inversamente proporcional a presión
+   * - PTT (si disponible) es el gold standard
    * 
-   * Referencias: Mukkamala 2022, Elgendi 2019
+   * Referencias: Mukkamala 2022, Elgendi 2019, Schrumpf 2021
+   * 
+   * NOTA: Sin calibración individual, estos valores son ESTIMACIONES
    */
   private calculateBloodPressureFromMorphology(
     intervals: number[], 
     features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>
   ): { systolic: number; diastolic: number } {
-    // SIN FILTRO FISIOLÓGICO - Solo filtro técnico mínimo
-    const validIntervals = intervals.filter(i => i >= 100 && i <= 5000);
-    if (validIntervals.length < 2) {
+    // Solo filtro técnico mínimo (evitar ruido extremo)
+    const validIntervals = intervals.filter(i => i >= 200 && i <= 3000);
+    if (validIntervals.length < 3) {
       return { systolic: 0, diastolic: 0 };
     }
     
     const { systolicTime, dicroticDepth, acDcRatio, pulseWidth, sdnn, 
             augmentationIndex, stiffnessIndex, pwvProxy, apg } = features;
     
-    // Verificar que hay características válidas
-    if (systolicTime <= 0 && stiffnessIndex <= 0 && augmentationIndex === 0) {
+    // Verificar que hay características morfológicas válidas
+    if (systolicTime <= 0 && stiffnessIndex <= 0 && acDcRatio <= 0) {
       return { systolic: 0, diastolic: 0 };
     }
     
     const avgInterval = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
     const hr = 60000 / avgInterval;
     
-    // === CÁLCULO DE SISTÓLICA ===
-    // Fórmula basada en literatura: SBP correlaciona inversamente con tiempo sistólico
-    // y directamente con AIx y SI
+    // === MODELO DE ESTIMACIÓN SISTÓLICA ===
+    // Basado en características PPG sin valores base fijos
     
-    // K1: Coeficiente de tiempo sistólico (ms → mmHg)
-    // Tiempo sistólico más corto = arterias más rígidas = PA más alta
-    const K1 = 15;
-    const tsComponent = systolicTime > 0 ? K1 / systolicTime : 0;
+    // Componente 1: Tiempo sistólico (inversamente proporcional)
+    // Tiempo corto = arterias rígidas = PA alta
+    let systolicEstimate = 0;
     
-    // K2: Coeficiente de Augmentation Index
-    // AIx mayor = reflexión de onda mayor = PA central más alta
-    const K2 = 0.4;
-    const aixComponent = augmentationIndex * K2;
-    
-    // K3: Coeficiente de Stiffness Index
-    const K3 = 8;
-    const siComponent = stiffnessIndex * K3;
-    
-    // K4: Coeficiente de PWV proxy
-    const K4 = 3;
-    const pwvComponent = pwvProxy * K4;
-    
-    // K5: Componente de HR (correlación moderada con SBP)
-    const K5 = 0.3;
-    const hrComponent = hr * K5;
-    
-    // K6: Muesca dicrotica (profunda = arterias elásticas = PA más baja)
-    const K6 = -20;
-    const dicroticComponent = dicroticDepth * K6;
-    
-    // AGI (Aging Index) desde APG
-    const K7 = 5;
-    const agiComponent = apg.agi * K7;
-    
-    // Sistólica = suma de componentes morfológicos
-    let systolic = tsComponent + aixComponent + siComponent + pwvComponent + 
-                   hrComponent + dicroticComponent + agiComponent;
-    
-    // Ajuste por perfusión (AC/DC ratio)
-    // Baja perfusión puede indicar vasoconstricción
-    if (acDcRatio < 0.02 && acDcRatio > 0) {
-      systolic += (0.02 - acDcRatio) * 500;
+    if (systolicTime > 0) {
+      // Convertir samples a ms (asumiendo 30fps)
+      const systolicTimeMs = systolicTime * (1000 / 30);
+      // Tiempo sistólico típico: 100-200ms → PA 90-140
+      systolicEstimate += 180 - systolicTimeMs * 0.4;
     }
     
-    // === CÁLCULO DE DIASTÓLICA ===
-    // DBP correlaciona con resistencia periférica y elasticidad
+    // Componente 2: Stiffness Index
+    // SI alto = arterias rígidas = PA alta
+    if (stiffnessIndex > 0) {
+      systolicEstimate += stiffnessIndex * 12;
+    }
     
-    // Ratio SBP/DBP típico: ~1.4-1.6
-    // DBP desde SI y pulseWidth principalmente
-    const diastolicRatio = 0.6 + (stiffnessIndex * 0.02) + (pulseWidth * 0.01);
-    let diastolic = systolic * (1 / (1 + diastolicRatio));
+    // Componente 3: Augmentation Index
+    // AIx alto = reflexión de onda temprana = PA central alta
+    if (augmentationIndex !== 0) {
+      systolicEstimate += augmentationIndex * 0.5;
+    }
     
-    // Ajuste por HRV (baja variabilidad = tono simpático alto)
+    // Componente 4: HR (correlación moderada positiva con SBP)
+    systolicEstimate += hr * 0.35;
+    
+    // Componente 5: PWV proxy
+    if (pwvProxy > 0) {
+      systolicEstimate += pwvProxy * 4;
+    }
+    
+    // Componente 6: Muesca dicrotica
+    // Muesca profunda = arterias elásticas = PA más baja
+    if (dicroticDepth > 0) {
+      systolicEstimate -= dicroticDepth * 25;
+    }
+    
+    // Componente 7: AGI (Aging Index) desde APG
+    if (apg.agi !== 0) {
+      systolicEstimate += apg.agi * 8;
+    }
+    
+    // Componente 8: Perfusión (vasoconstricción)
+    if (acDcRatio > 0 && acDcRatio < 0.015) {
+      // Baja perfusión = posible vasoconstricción = PA elevada
+      systolicEstimate += (0.015 - acDcRatio) * 800;
+    }
+    
+    // === MODELO DE ESTIMACIÓN DIASTÓLICA ===
+    // DBP correlaciona con resistencia periférica
+    
+    // Ratio típico SBP/DBP: 1.4-1.6 en adultos sanos
+    let diastolicRatio = 1.5;
+    
+    // Ajustar ratio basado en rigidez arterial
+    if (stiffnessIndex > 0) {
+      diastolicRatio += stiffnessIndex * 0.03;
+    }
+    
+    // HRV baja = tono simpático alto = DBP relativamente más alta
     if (sdnn > 0 && sdnn < 30) {
-      diastolic += (30 - sdnn) * 0.2;
+      diastolicRatio -= (30 - sdnn) * 0.005;
     }
     
-    // Log para debug
+    diastolicRatio = Math.max(1.3, Math.min(2.0, diastolicRatio));
+    
+    let diastolicEstimate = systolicEstimate / diastolicRatio;
+    
+    // Ajuste por pulseWidth
+    if (pulseWidth > 0) {
+      diastolicEstimate += pulseWidth * 0.8;
+    }
+    
+    // Log periódico
     if (this.signalHistory.length % 60 === 0) {
-      console.log(`💉 PA RAW: Ts=${systolicTime.toFixed(1)} AIx=${augmentationIndex.toFixed(1)} SI=${stiffnessIndex.toFixed(2)} → ${systolic.toFixed(0)}/${diastolic.toFixed(0)}`);
+      console.log(`💉 PA: Ts=${systolicTime.toFixed(1)} SI=${stiffnessIndex.toFixed(2)} AIx=${augmentationIndex.toFixed(1)} → ${systolicEstimate.toFixed(0)}/${diastolicEstimate.toFixed(0)}`);
     }
     
-    // RETORNAR VALORES CRUDOS - SIN CLAMP
-    return { systolic, diastolic };
+    // Retornar valores calculados (el filtrado de outliers se hace en calculateVitalSigns)
+    return { systolic: systolicEstimate, diastolic: diastolicEstimate };
   }
 
   /**
@@ -623,16 +670,40 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * Suavizado EMA adaptativo para estabilidad
+   * Suavizado EMA adaptativo con detección de outliers
    * type: 'stable' para valores que cambian lentamente (SpO2, PA)
    *       'dynamic' para valores más variables (Glucosa)
+   * 
+   * MEJORA: Detecta cambios bruscos y ajusta alpha dinámicamente
    */
   private smoothValue(current: number, newVal: number, type: 'stable' | 'dynamic' = 'stable'): number {
     if (current === 0 || isNaN(current) || !isFinite(current)) return newVal;
     if (isNaN(newVal) || !isFinite(newVal)) return current;
     
-    const alpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
-    return current * (1 - alpha) + newVal * alpha;
+    const baseAlpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
+    
+    // Calcular cambio relativo
+    const relativeChange = Math.abs(newVal - current) / (Math.abs(current) + 0.01);
+    
+    // Si el cambio es muy grande (>50%), podría ser ruido - suavizar más
+    // Si el cambio es moderado (<20%), responder más rápido
+    let adaptiveAlpha = baseAlpha;
+    
+    if (relativeChange > 0.5) {
+      // Cambio muy grande - probablemente ruido, suavizar mucho más
+      adaptiveAlpha = baseAlpha * 0.3;
+    } else if (relativeChange > 0.3) {
+      // Cambio grande - suavizar un poco más
+      adaptiveAlpha = baseAlpha * 0.5;
+    } else if (relativeChange < 0.1) {
+      // Cambio pequeño - responder más rápido para seguir tendencia
+      adaptiveAlpha = baseAlpha * 1.5;
+    }
+    
+    // Limitar alpha entre 0.05 y 0.4
+    adaptiveAlpha = Math.max(0.05, Math.min(0.4, adaptiveAlpha));
+    
+    return current * (1 - adaptiveAlpha) + newVal * adaptiveAlpha;
   }
 
   getCalibrationProgress(): number {

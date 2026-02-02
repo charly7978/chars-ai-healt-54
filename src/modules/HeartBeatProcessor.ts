@@ -129,22 +129,45 @@ export class HeartBeatProcessor {
             this.rrIntervals.shift();
           }
           
-          // Calcular BPM CRUDO - SIN CLAMP
+          // Calcular BPM instantáneo
           const instantBPM = 60000 / timeSinceLastPeak;
           
-          // Suavizado exponencial adaptativo
-          // Más suavizado cuando ya tenemos valores estables
+          // === SUAVIZADO ADAPTATIVO MEJORADO ===
+          // Basado en la cantidad de datos y la estabilidad
           if (this.smoothBPM === 0) {
+            // Primera medición - usar directamente
             this.smoothBPM = instantBPM;
           } else {
-            // Usar suavizado más agresivo cuando el valor es estable
+            // Calcular diferencia relativa
             const bpmDiff = Math.abs(instantBPM - this.smoothBPM);
-            const smoothingFactor = bpmDiff > 20 ? this.BPM_SMOOTHING_INITIAL : this.BPM_SMOOTHING;
+            const relativeDiff = bpmDiff / this.smoothBPM;
+            
+            // Seleccionar factor de suavizado basado en:
+            // 1. Cuántos picos consecutivos tenemos (más = más confianza)
+            // 2. Cuán diferente es el nuevo valor (muy diferente = más suavizado)
+            let smoothingFactor: number;
+            
+            if (relativeDiff > 0.4) {
+              // Cambio muy grande (>40%) - probablemente ruido, suavizar mucho
+              smoothingFactor = 0.92;
+            } else if (relativeDiff > 0.25) {
+              // Cambio grande - suavizar bastante
+              smoothingFactor = 0.85;
+            } else if (relativeDiff > 0.15) {
+              // Cambio moderado - suavizado normal
+              smoothingFactor = 0.75;
+            } else {
+              // Cambio pequeño - responder más rápido
+              smoothingFactor = 0.6;
+            }
+            
+            // Si tenemos pocos picos, ser más conservador
+            if (this.consecutivePeaks < 5) {
+              smoothingFactor = Math.min(0.9, smoothingFactor + 0.1);
+            }
+            
             this.smoothBPM = this.smoothBPM * smoothingFactor + instantBPM * (1 - smoothingFactor);
           }
-          
-          // NO HAY CLAMP - Valor directo
-          // El SQI indica la confiabilidad del valor
           
           this.consecutivePeaks++;
         }
