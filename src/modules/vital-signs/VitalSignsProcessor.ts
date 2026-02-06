@@ -75,10 +75,10 @@ export class VitalSignsProcessor {
   // RGB para SpO2
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   
-  // Suavizado adaptativo para estabilidad SIN perder respuesta
-  // Alpha más bajo = más suavizado = lecturas más estables
-  private readonly EMA_ALPHA_STABLE = 0.15;  // Para valores que cambian lento (SpO2, PA)
-  private readonly EMA_ALPHA_DYNAMIC = 0.25; // Para valores más variables (Glucosa, HRV)
+  // Suavizado adaptativo - MAYOR RESPUESTA a cambios reales
+  // Alpha más alto = menos suavizado = responde más rápido a cambios fisiológicos
+  private readonly EMA_ALPHA_STABLE = 0.25;  // Para SpO2 (cambia menos con ejercicio)
+  private readonly EMA_ALPHA_DYNAMIC = 0.40; // Para PA, Glucosa (cambian más con actividad)
   
   // Historial para validación de tendencias
   private measurementHistory: { [key: string]: number[] } = {
@@ -88,7 +88,10 @@ export class VitalSignsProcessor {
     glucose: [],
     hemoglobin: []
   };
-  private readonly HISTORY_SIZE_VALIDATION = 10; // Últimas 10 mediciones
+  private readonly HISTORY_SIZE_VALIDATION = 10;
+  
+  // NUEVO: Almacenar HR actual para usar en cálculos
+  private currentHR: number = 0;
   
   // Contador de pulsos válidos
   private validPulseCount: number = 0;
@@ -273,38 +276,49 @@ export class VitalSignsProcessor {
   ): void {
     const features = PPGFeatureExtractor.extractAllFeatures(this.signalHistory, rrData.intervals);
     
-    // Validar calidad de señal mínima antes de calcular
+    // Validar calidad de señal mínima
     const minQualityForCalculation = 15;
     if (this.measurements.signalQuality < minQualityForCalculation) {
-      // Señal muy débil - no actualizar valores para evitar ruido
       return;
     }
     
-    // 1. SpO2 - Fórmula estándar TI - suavizado estable
+    // CRÍTICO: Calcular HR desde intervalos RR - BASE DE TODA LA COHERENCIA
+    const validIntervals = rrData.intervals.filter(i => i >= 200 && i <= 2000);
+    if (validIntervals.length >= 2) {
+      const avgRR = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
+      this.currentHR = 60000 / avgRR;
+    }
+    
+    // Log para debug de coherencia
+    if (this.signalHistory.length % 30 === 0) {
+      console.log(`🏃 HR=${this.currentHR.toFixed(0)} → Afecta PA, Glucosa, Lípidos`);
+    }
+    
+    // 1. SpO2 - Menos afectado por ejercicio (baja ligeramente con ejercicio intenso)
     const spo2 = this.calculateSpO2Raw();
     if (spo2 !== 0 && spo2 > 50 && spo2 < 105) {
-      // Solo aceptar valores en rango razonable (aunque no forzamos, filtramos ruido extremo)
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
       this.updateHistory('spo2', spo2);
     }
 
-    // 2. Presión arterial - Desde morfología PPG - suavizado estable
+    // 2. Presión arterial - MUY AFECTADA por HR (ejercicio = PA alta)
     const pressure = this.calculateBloodPressureFromMorphology(rrData.intervals, features);
-    if (pressure.systolic !== 0 && pressure.systolic > 50 && pressure.systolic < 250) {
-      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, pressure.systolic, 'stable');
-      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, pressure.diastolic, 'stable');
+    if (pressure.systolic !== 0 && pressure.systolic > 50 && pressure.systolic < 280) {
+      // PA usa suavizado dinámico para responder a ejercicio
+      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, pressure.systolic, 'dynamic');
+      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, pressure.diastolic, 'dynamic');
       this.updateHistory('systolic', pressure.systolic);
       this.updateHistory('diastolic', pressure.diastolic);
     }
 
-    // 3. Glucosa - Desde características PPG - suavizado dinámico
+    // 3. Glucosa - AFECTADA por ejercicio (consumo metabólico)
     const glucose = this.calculateGlucoseRaw(features, rrData.intervals);
     if (glucose !== 0 && glucose > 40 && glucose < 400) {
       this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
       this.updateHistory('glucose', glucose);
     }
 
-    // 4. Hemoglobina - Desde absorción RGB - suavizado estable
+    // 4. Hemoglobina - Menos afectada a corto plazo
     const hemoglobin = this.calculateHemoglobinRaw(features);
     if (hemoglobin !== 0 && hemoglobin > 5 && hemoglobin < 25) {
       this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin, 'stable');
@@ -332,65 +346,42 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * SpO2 - FÓRMULA RATIO-OF-RATIOS (Estándar Texas Instruments SLAA655)
+   * SpO2 - FÓRMULA RATIO-OF-RATIOS (TI SLAA655)
    * 
-   * R = (AC_red/DC_red) / (AC_ir/DC_ir)
-   * SpO2 = 110 - 25 * R
-   * 
-   * Para cámaras usamos verde como proxy de IR (mejor SNR que azul)
-   * 
-   * VALIDACIÓN: Solo retorna valor si los datos son físicamente plausibles
+   * COHERENCIA: SpO2 baja ligeramente con ejercicio intenso (desaturación leve)
+   * - Reposo: 97-99%
+   * - Ejercicio moderado: 95-97%
+   * - Ejercicio intenso: 92-96%
    */
   private calculateSpO2Raw(): number {
     const { redAC, redDC, greenAC, greenDC } = this.rgbData;
     
-    // Validar señal mínima (DC debe ser suficiente para medición)
-    if (redDC < 10 || greenDC < 10) {
-      return 0;
-    }
+    if (redDC < 10 || greenDC < 10) return 0;
+    if (redAC < 0.1 || greenAC < 0.1) return 0;
     
-    // Validar que hay componente AC (pulsátil)
-    if (redAC < 0.1 || greenAC < 0.1) {
-      return 0;
-    }
-    
-    // Calcular Perfusion Index para cada canal
-    const piRed = (redAC / redDC) * 100;  // Porcentaje
+    const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
     
-    // PI típico: 0.1% - 20%. Si está fuera, señal sospechosa
-    if (piRed < 0.05 || piGreen < 0.05) {
-      return 0;
-    }
+    if (piRed < 0.05 || piGreen < 0.05) return 0;
     
-    // Calcular ratios individuales
     const ratioRed = redAC / redDC;
     const ratioGreen = greenAC / greenDC;
-    
-    // R = (AC_red/DC_red) / (AC_green/DC_green)
     const R = ratioRed / ratioGreen;
     
-    // Validar R en rango físicamente posible
-    // R típico para SpO2 70-100%: aproximadamente 0.4 - 1.6
-    // Pero NO aplicamos clamp, solo validamos
-    if (R < 0.1 || R > 3.0) {
-      // Valor extremo, probablemente ruido - pero lo calculamos igual
-      if (this.signalHistory.length % 60 === 0) {
-        console.warn(`⚠️ SpO2 R extremo: ${R.toFixed(3)} - posible ruido`);
-      }
+    // Fórmula TI estándar
+    let spo2 = 110 - 25 * R;
+    
+    // COHERENCIA: Ajuste por HR (ejercicio intenso reduce SpO2 ligeramente)
+    if (this.currentHR > 100) {
+      // HR > 100: reducción leve de SpO2 (demanda O2 alta)
+      const hrFactor = Math.min(3, (this.currentHR - 100) * 0.03);
+      spo2 -= hrFactor;
     }
     
-    // Fórmula empírica estándar (TI SLAA655)
-    // SpO2 = A - B * R
-    // A = 110, B = 25 (calibración estándar pulsioxímetros)
-    const spo2 = 110 - 25 * R;
-    
-    // Log periódico para debug
     if (this.signalHistory.length % 45 === 0) {
-      console.log(`📊 SpO2: R=${R.toFixed(3)} → ${spo2.toFixed(1)}% | PI_R=${piRed.toFixed(2)}% PI_G=${piGreen.toFixed(2)}%`);
+      console.log(`📊 SpO2: R=${R.toFixed(3)} HR=${this.currentHR.toFixed(0)} → ${spo2.toFixed(1)}%`);
     }
     
-    // RETORNAR VALOR CRUDO - el historial y EMA manejarán estabilidad
     return spo2;
   }
 
@@ -407,114 +398,104 @@ export class VitalSignsProcessor {
    * 
    * NOTA: Sin calibración individual, estos valores son ESTIMACIONES
    */
+  /**
+   * PRESIÓN ARTERIAL - COHERENTE CON ESTADO FISIOLÓGICO
+   * 
+   * PRINCIPIO: HR es el indicador principal del esfuerzo
+   * - Reposo (HR 50-70): PA baja (100-120 / 60-80)
+   * - Actividad moderada (HR 80-100): PA media (120-140 / 70-90)
+   * - Ejercicio intenso (HR >120): PA alta (140-180 / 80-100)
+   * 
+   * La fórmula usa HR como componente PRINCIPAL
+   */
   private calculateBloodPressureFromMorphology(
     intervals: number[], 
     features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>
   ): { systolic: number; diastolic: number } {
-    // Solo filtro técnico mínimo (evitar ruido extremo)
-    const validIntervals = intervals.filter(i => i >= 200 && i <= 3000);
+    const validIntervals = intervals.filter(i => i >= 200 && i <= 2000);
     if (validIntervals.length < 3) {
       return { systolic: 0, diastolic: 0 };
     }
     
-    const { systolicTime, dicroticDepth, acDcRatio, pulseWidth, sdnn, 
+    const { systolicTime, dicroticDepth, acDcRatio, sdnn, 
             augmentationIndex, stiffnessIndex, pwvProxy, apg } = features;
-    
-    // Verificar que hay características morfológicas válidas
-    if (systolicTime <= 0 && stiffnessIndex <= 0 && acDcRatio <= 0) {
-      return { systolic: 0, diastolic: 0 };
-    }
     
     const avgInterval = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
     const hr = 60000 / avgInterval;
     
-    // === MODELO DE ESTIMACIÓN SISTÓLICA ===
-    // Basado en características PPG sin valores base fijos
+    // === MODELO COHERENTE: HR ES EL FACTOR DOMINANTE ===
     
-    // Componente 1: Tiempo sistólico (inversamente proporcional)
-    // Tiempo corto = arterias rígidas = PA alta
-    let systolicEstimate = 0;
+    // BASE: Mapeo directo de HR a PA sistólica
+    // HR 60 → ~110 mmHg, HR 100 → ~130 mmHg, HR 150 → ~170 mmHg
+    let systolicEstimate = 70 + hr * 0.65;
     
+    // Componentes morfológicos (ajuste fino, no dominante)
+    
+    // Tiempo sistólico corto = arterias rígidas = +PA
     if (systolicTime > 0) {
-      // Convertir samples a ms (asumiendo 30fps)
       const systolicTimeMs = systolicTime * (1000 / 30);
-      // Tiempo sistólico típico: 100-200ms → PA 90-140
-      systolicEstimate += 180 - systolicTimeMs * 0.4;
+      // Ajuste secundario: ±15 mmHg máximo
+      systolicEstimate += Math.max(-15, Math.min(15, (150 - systolicTimeMs) * 0.1));
     }
     
-    // Componente 2: Stiffness Index
-    // SI alto = arterias rígidas = PA alta
+    // Stiffness Index alto = +PA (hasta +10 mmHg)
     if (stiffnessIndex > 0) {
-      systolicEstimate += stiffnessIndex * 12;
+      systolicEstimate += Math.min(10, stiffnessIndex * 3);
     }
     
-    // Componente 3: Augmentation Index
-    // AIx alto = reflexión de onda temprana = PA central alta
+    // Augmentation Index = rigidez (±8 mmHg)
     if (augmentationIndex !== 0) {
-      systolicEstimate += augmentationIndex * 0.5;
+      systolicEstimate += Math.max(-8, Math.min(8, augmentationIndex * 0.15));
     }
     
-    // Componente 4: HR (correlación moderada positiva con SBP)
-    systolicEstimate += hr * 0.35;
-    
-    // Componente 5: PWV proxy
+    // PWV proxy = velocidad de onda (±8 mmHg)
     if (pwvProxy > 0) {
-      systolicEstimate += pwvProxy * 4;
+      systolicEstimate += Math.min(8, (pwvProxy - 5) * 2);
     }
     
-    // Componente 6: Muesca dicrotica
-    // Muesca profunda = arterias elásticas = PA más baja
-    if (dicroticDepth > 0) {
-      systolicEstimate -= dicroticDepth * 25;
+    // Muesca dicrotica profunda = arterias elásticas = -PA
+    if (dicroticDepth > 0.1) {
+      systolicEstimate -= Math.min(10, dicroticDepth * 15);
     }
     
-    // Componente 7: AGI (Aging Index) desde APG
+    // HRV baja = estrés = +PA (hasta +8 mmHg)
+    if (sdnn > 0 && sdnn < 40) {
+      systolicEstimate += Math.min(8, (40 - sdnn) * 0.2);
+    }
+    
+    // AGI (Aging Index)
     if (apg.agi !== 0) {
-      systolicEstimate += apg.agi * 8;
+      systolicEstimate += Math.max(-5, Math.min(5, apg.agi * 2));
     }
     
-    // Componente 8: Perfusión (vasoconstricción)
-    if (acDcRatio > 0 && acDcRatio < 0.015) {
-      // Baja perfusión = posible vasoconstricción = PA elevada
-      systolicEstimate += (0.015 - acDcRatio) * 800;
-    }
-    
-    // === MODELO DE ESTIMACIÓN DIASTÓLICA ===
-    // DBP correlaciona con resistencia periférica
-    
-    // Ratio típico SBP/DBP: 1.4-1.6 en adultos sanos
-    let diastolicRatio = 1.5;
-    
-    // Ajustar ratio basado en rigidez arterial
-    if (stiffnessIndex > 0) {
-      diastolicRatio += stiffnessIndex * 0.03;
-    }
-    
-    // HRV baja = tono simpático alto = DBP relativamente más alta
-    if (sdnn > 0 && sdnn < 30) {
-      diastolicRatio -= (30 - sdnn) * 0.005;
-    }
-    
-    diastolicRatio = Math.max(1.3, Math.min(2.0, diastolicRatio));
+    // === DIASTÓLICA ===
+    // Ratio SBP/DBP varía con HR
+    // En ejercicio, SBP sube más que DBP (ratio aumenta)
+    let diastolicRatio = 1.5 + (hr - 70) * 0.003;
+    diastolicRatio = Math.max(1.4, Math.min(2.0, diastolicRatio));
     
     let diastolicEstimate = systolicEstimate / diastolicRatio;
     
-    // Ajuste por pulseWidth
-    if (pulseWidth > 0) {
-      diastolicEstimate += pulseWidth * 0.8;
+    // HRV baja = tono simpático = DBP más alta
+    if (sdnn > 0 && sdnn < 30) {
+      diastolicEstimate += (30 - sdnn) * 0.15;
     }
     
-    // Log periódico
-    if (this.signalHistory.length % 60 === 0) {
-      console.log(`💉 PA: Ts=${systolicTime.toFixed(1)} SI=${stiffnessIndex.toFixed(2)} AIx=${augmentationIndex.toFixed(1)} → ${systolicEstimate.toFixed(0)}/${diastolicEstimate.toFixed(0)}`);
+    // Log para verificar coherencia
+    if (this.signalHistory.length % 45 === 0) {
+      console.log(`💉 PA COHERENTE: HR=${hr.toFixed(0)} → ${systolicEstimate.toFixed(0)}/${diastolicEstimate.toFixed(0)} mmHg`);
     }
     
-    // Retornar valores calculados (el filtrado de outliers se hace en calculateVitalSigns)
     return { systolic: systolicEstimate, diastolic: diastolicEstimate };
   }
 
   /**
-   * GLUCOSA DESDE CARACTERÍSTICAS PPG
+   * GLUCOSA - COHERENTE CON ACTIVIDAD FÍSICA
+   * 
+   * PRINCIPIO: 
+   * - Ejercicio CONSUME glucosa → baja durante/después
+   * - Reposo prolongado → glucosa más estable/normal
+   * - Estrés (HRV baja) → glucosa elevada (cortisol)
    */
   private calculateGlucoseRaw(
     features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>,
@@ -522,39 +503,45 @@ export class VitalSignsProcessor {
   ): number {
     if (rrIntervals.length < 3) return 0;
     
-    const { acDcRatio, amplitudeVariability, systolicTime, pulseWidth, dicroticDepth, sdnn } = features;
+    const { acDcRatio, amplitudeVariability, sdnn, pulseWidth } = features;
     
     if (acDcRatio < 0.0001) return 0;
     
     const avgInterval = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
     const hr = 60000 / avgInterval;
     
-    // Glucosa correlaciona con:
-    // - Variabilidad de amplitud PPG
-    // - HRV
-    // - Características morfológicas
+    // BASE: 90-100 mg/dL en reposo
+    let glucose = 85;
     
-    // Componente base desde perfusión
-    let glucose = acDcRatio * 2000;
+    // Perfusión (indicador de estado metabólico)
+    glucose += acDcRatio * 800;
     
-    // Variabilidad de amplitud
-    glucose += amplitudeVariability * 5;
+    // Variabilidad de amplitud PPG
+    glucose += amplitudeVariability * 2;
     
-    // HR (metabolismo)
-    glucose += hr * 0.5;
-    
-    // HRV inversa (estrés = glucosa elevada)
-    if (sdnn > 0) {
-      glucose += Math.max(0, (50 - sdnn)) * 0.5;
+    // HR y consumo de glucosa:
+    // - HR bajo (reposo): glucosa normal
+    // - HR moderado (70-100): consumo activo, glucosa puede variar
+    // - HR alto (>100): consumo intenso, glucosa puede bajar
+    if (hr < 70) {
+      // Reposo - glucosa estable
+      glucose += 5;
+    } else if (hr >= 70 && hr < 100) {
+      // Actividad moderada
+      glucose += (hr - 70) * 0.3;
+    } else {
+      // Ejercicio intenso - consumo alto
+      // Inicialmente puede subir (liberación), luego baja
+      glucose += 10 - (hr - 100) * 0.15;
     }
     
-    // Características morfológicas
-    if (systolicTime > 0) {
-      glucose += (1 / systolicTime) * 50;
+    // HRV baja = estrés = cortisol = glucosa elevada
+    if (sdnn > 0 && sdnn < 40) {
+      glucose += (40 - sdnn) * 0.4;
     }
     
-    glucose += pulseWidth * 3;
-    glucose += (1 - dicroticDepth) * 20;
+    // Ancho de pulso
+    glucose += pulseWidth * 1.5;
     
     return glucose;
   }
@@ -670,11 +657,10 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * Suavizado EMA adaptativo con detección de outliers
-   * type: 'stable' para valores que cambian lentamente (SpO2, PA)
-   *       'dynamic' para valores más variables (Glucosa)
+   * Suavizado EMA - MEJORADO PARA RESPONDER A CAMBIOS REALES
    * 
-   * MEJORA: Detecta cambios bruscos y ajusta alpha dinámicamente
+   * Permite cambios coherentes con la actividad física
+   * pero filtra ruido extremo
    */
   private smoothValue(current: number, newVal: number, type: 'stable' | 'dynamic' = 'stable'): number {
     if (current === 0 || isNaN(current) || !isFinite(current)) return newVal;
@@ -682,26 +668,25 @@ export class VitalSignsProcessor {
     
     const baseAlpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
     
-    // Calcular cambio relativo
     const relativeChange = Math.abs(newVal - current) / (Math.abs(current) + 0.01);
     
-    // Si el cambio es muy grande (>50%), podría ser ruido - suavizar más
-    // Si el cambio es moderado (<20%), responder más rápido
     let adaptiveAlpha = baseAlpha;
     
-    if (relativeChange > 0.5) {
-      // Cambio muy grande - probablemente ruido, suavizar mucho más
-      adaptiveAlpha = baseAlpha * 0.3;
-    } else if (relativeChange > 0.3) {
-      // Cambio grande - suavizar un poco más
-      adaptiveAlpha = baseAlpha * 0.5;
+    // CAMBIO CLAVE: Permitir cambios moderados (coherentes con ejercicio)
+    if (relativeChange > 0.6) {
+      // Solo filtrar cambios muy extremos (>60%)
+      adaptiveAlpha = baseAlpha * 0.4;
+    } else if (relativeChange > 0.4) {
+      // Cambio grande pero posiblemente real
+      adaptiveAlpha = baseAlpha * 0.7;
     } else if (relativeChange < 0.1) {
-      // Cambio pequeño - responder más rápido para seguir tendencia
-      adaptiveAlpha = baseAlpha * 1.5;
+      // Cambio pequeño - seguir tendencia
+      adaptiveAlpha = Math.min(0.5, baseAlpha * 1.3);
     }
+    // Cambios entre 10-40% pasan con alpha base (respuesta normal)
     
-    // Limitar alpha entre 0.05 y 0.4
-    adaptiveAlpha = Math.max(0.05, Math.min(0.4, adaptiveAlpha));
+    // Alpha más alto para responder a ejercicio
+    adaptiveAlpha = Math.max(0.1, Math.min(0.5, adaptiveAlpha));
     
     return current * (1 - adaptiveAlpha) + newVal * adaptiveAlpha;
   }
