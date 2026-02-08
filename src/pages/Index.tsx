@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import VitalSign from "@/components/VitalSign";
-import CameraView, { CameraViewHandle } from "@/components/CameraView";
+import PPGCamera, { PPGCameraHandle } from "@/components/PPGCamera";
 import CameraPreview from "@/components/CameraPreview";
+import { useCamera } from "@/hooks/useCamera";
 import { usePPGPipeline } from "@/hooks/usePPGPipeline";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
@@ -12,30 +13,45 @@ import DisclaimerOverlay from "@/components/DisclaimerOverlay";
 import MeasurementConfidenceIndicator from "@/components/MeasurementConfidenceIndicator";
 import { toast } from "@/components/ui/use-toast";
 
+/**
+ * MONITOR PPG PRINCIPAL
+ * 
+ * FLUJO CRÍTICO DE CÁMARA:
+ * 1. Usuario hace click en "Iniciar"
+ * 2. handleToggleMonitoring() llama a startMonitoring()
+ * 3. startMonitoring() llama a requestCamera() DIRECTAMENTE desde el click
+ * 4. Esto cumple el requisito de seguridad del navegador (gesto de usuario)
+ * 5. Una vez que la cámara está activa, se inicia el loop de captura
+ */
 const Index = () => {
   // ESTADOS PRINCIPALES
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   
   // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
-  const cameraRef = useRef<CameraViewHandle>(null);
+  const cameraComponentRef = useRef<PPGCameraHandle>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
   
-  // HOOK UNIFICADO DE PPG - Reemplaza useSignalProcessor, useHeartBeatProcessor, useVitalSignsProcessor
+  // HOOK DE CÁMARA - Acceso directo desde gesto
+  const { 
+    state: cameraState, 
+    requestCamera, 
+    stopCamera,
+    setVideoElement 
+  } = useCamera();
+  
+  // HOOK UNIFICADO DE PPG
   const {
-    // Estado
     isCalibrating,
     calibrationProgress,
-    isProcessing,
     heartRate,
     spo2,
     perfusionIndex,
@@ -47,24 +63,12 @@ const Index = () => {
     rrIntervals,
     hrv,
     rgbStats,
-    framesProcessed,
-    
-    // Métodos de control
     start: startPipeline,
     stop: stopPipeline,
     startCalibration,
     forceCalibration,
     reset: resetPipeline,
-    
-    // Procesamiento
     processFrame,
-    
-    // Getters
-    getRGBStats,
-    getRRIntervals,
-    getLastFrame,
-    
-    // Callbacks
     setOnPeak
   } = usePPGPipeline();
   
@@ -83,7 +87,7 @@ const Index = () => {
     }
   }, []);
 
-  // CALLBACK PARA PICOS - Vibración y marcador
+  // CALLBACK PARA PICOS - Vibración
   useEffect(() => {
     setOnPeak((timestamp, bpm) => {
       if (navigator.vibrate) {
@@ -174,7 +178,7 @@ const Index = () => {
     const captureFrame = () => {
       if (!isProcessingRef.current) return;
       
-      const video = cameraRef.current?.getVideoElement();
+      const video = cameraComponentRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
         frameLoopRef.current = requestAnimationFrame(captureFrame);
         return;
@@ -208,24 +212,50 @@ const Index = () => {
     console.log('🛑 Loop de captura detenido');
   }, []);
 
+  // === CUANDO EL VIDEO ESTÁ LISTO ===
+  const handleVideoReady = useCallback((video: HTMLVideoElement) => {
+    console.log('📹 Video PPG listo, iniciando captura...');
+    startFrameLoop();
+  }, [startFrameLoop]);
+
   // === INICIO DE MONITOREO ===
-  const startMonitoring = useCallback(() => {
+  // CRÍTICO: Esta función se llama DIRECTAMENTE desde el onClick del botón
+  const startMonitoring = useCallback(async () => {
     if (isMonitoring) return;
     
-    console.log('🚀 Iniciando monitoreo con Pipeline Unificado...');
+    console.log('🚀 Iniciando monitoreo (gesto directo)...');
+    setCameraError(null);
     
     if (navigator.vibrate) {
       navigator.vibrate([200]);
     }
     
+    // Intentar pantalla completa (no bloquea si falla)
     enterFullScreen();
+    
     setShowResults(false);
     setElapsedTime(0);
     
-    // Iniciar pipeline unificado
+    // CRÍTICO: Solicitar cámara DIRECTAMENTE desde el gesto del usuario
+    // Esto es requerido por las políticas de seguridad del navegador
+    const stream = await requestCamera();
+    
+    if (!stream) {
+      console.error('❌ No se pudo obtener acceso a la cámara');
+      setCameraError(cameraState.error || 'No se pudo acceder a la cámara');
+      toast({
+        title: "Error de cámara",
+        description: cameraState.error || "No se pudo acceder a la cámara. Verifica los permisos.",
+        variant: "destructive",
+        duration: 5000
+      });
+      return;
+    }
+    
+    // Cámara OK - Iniciar pipeline
+    console.log('✅ Cámara activa, iniciando pipeline...');
     startPipeline();
     startCalibration();
-    setIsCameraOn(true);
     setIsMonitoring(true);
     
     // Timer de medición
@@ -244,35 +274,7 @@ const Index = () => {
       });
     }, 1000);
     
-  }, [isMonitoring, startPipeline, startCalibration, enterFullScreen]);
-
-  // === CUANDO LA CÁMARA ESTÁ LISTA ===
-  const handleStreamReady = useCallback((stream: MediaStream) => {
-    console.log('📹 Stream recibido');
-    setCameraStream(stream);
-    
-    // Esperar a que el video esté listo y comenzar captura
-    setTimeout(() => {
-      const video = cameraRef.current?.getVideoElement();
-      if (video && video.readyState >= 2) {
-        console.log('✅ Video listo:', video.videoWidth, 'x', video.videoHeight);
-        startFrameLoop();
-      } else {
-        // Reintentar
-        const checkReady = setInterval(() => {
-          const v = cameraRef.current?.getVideoElement();
-          if (v && v.readyState >= 2 && v.videoWidth > 0) {
-            clearInterval(checkReady);
-            console.log('✅ Video listo (retry):', v.videoWidth, 'x', v.videoHeight);
-            startFrameLoop();
-          }
-        }, 100);
-        
-        // Timeout después de 5 segundos
-        setTimeout(() => clearInterval(checkReady), 5000);
-      }
-    }, 500);
-  }, [startFrameLoop]);
+  }, [isMonitoring, requestCamera, cameraState.error, startPipeline, startCalibration]);
 
   // === FINALIZAR MEDICIÓN ===
   const finalizeMeasurement = useCallback(async () => {
@@ -319,19 +321,14 @@ const Index = () => {
     }
     
     // Detener cámara
-    setIsCameraOn(false);
-    
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
+    stopCamera();
     
     setIsMonitoring(false);
     setShowResults(true);
     setElapsedTime(0);
     
-    console.log('✅ Medición finalizada y guardada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopPipeline, forceCalibration, saveMeasurement, heartRate, spo2, signalQuality, confidence]);
+    console.log('✅ Medición finalizada');
+  }, [isMonitoring, isCalibrating, stopFrameLoop, stopPipeline, forceCalibration, saveMeasurement, heartRate, spo2, signalQuality, confidence, stopCamera]);
 
   // === RESET COMPLETO ===
   const handleReset = useCallback(() => {
@@ -344,29 +341,22 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    // Reset pipeline unificado
     resetPipeline();
-    
-    setIsCameraOn(false);
-    
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
+    stopCamera();
     
     setIsMonitoring(false);
     setShowResults(false);
     setElapsedTime(0);
+    setCameraError(null);
     arrhythmiaDetectedRef.current = false;
     
     console.log('✅ Reset completado');
-  }, [cameraStream, stopFrameLoop, resetPipeline]);
+  }, [stopFrameLoop, resetPipeline, stopCamera]);
 
   // Detectar arritmias basadas en HRV
   useEffect(() => {
     if (!isMonitoring || !hrv) return;
     
-    // Detectar irregularidad usando métricas HRV
     const isIrregular = hrv.rmssd > 50 || hrv.pnn50 > 20;
     
     if (isIrregular !== arrhythmiaDetectedRef.current) {
@@ -390,6 +380,8 @@ const Index = () => {
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
+      // CRÍTICO: startMonitoring contiene requestCamera que debe ejecutarse
+      // en el contexto directo de este click handler
       startMonitoring();
     }
   };
@@ -424,34 +416,46 @@ const Index = () => {
         </button>
       )}
 
+      {/* ERROR DE CÁMARA */}
+      {cameraError && (
+        <div className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 bg-destructive/90 text-white p-6 rounded-lg max-w-sm text-center">
+          <h3 className="text-lg font-bold mb-2">Error de Cámara</h3>
+          <p className="text-sm mb-4">{cameraError}</p>
+          <button 
+            onClick={() => setCameraError(null)}
+            className="bg-white text-destructive px-4 py-2 rounded font-semibold"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 relative">
         {/* PREVIEW DE CÁMARA */}
         <CameraPreview 
-          stream={cameraStream}
+          stream={cameraState.stream}
           isFingerDetected={fingerDetected}
           signalQuality={signalQuality}
-          isVisible={isCameraOn}
+          isVisible={cameraState.isActive}
         />
 
-        {/* CÁMARA - Con ref directo */}
+        {/* CÁMARA PPG */}
         <div className="absolute inset-0">
-          <CameraView 
-            ref={cameraRef}
-            onStreamReady={handleStreamReady}
-            isMonitoring={isCameraOn}
+          <PPGCamera 
+            ref={cameraComponentRef}
+            stream={cameraState.stream}
+            onVideoReady={handleVideoReady}
           />
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER - Tiempo restante, PI y Confianza */}
+          {/* HEADER */}
           <div className="px-4 py-2 flex justify-between items-center bg-black/30">
-            {/* Indicador de Perfusion Index */}
             <PerfusionIndexIndicator 
               perfusionIndex={perfusionIndex}
               isMonitoring={isMonitoring}
             />
             
-            {/* Indicador de Confianza */}
             {isMonitoring && (
               <MeasurementConfidenceIndicator 
                 confidence={confidence}
@@ -461,13 +465,12 @@ const Index = () => {
               />
             )}
             
-            {/* Timer */}
             <div className="text-white text-xl font-bold">
               {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
             </div>
           </div>
 
-          {/* RGB Debug Indicator - debajo del header */}
+          {/* RGB Debug Indicator */}
           {isMonitoring && (
             <div className="px-4 pb-2">
               <RGBDebugIndicator 
@@ -493,6 +496,15 @@ const Index = () => {
                     style={{ width: `${calibrationProgress}%` }}
                   />
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Flash indicator */}
+          {cameraState.isActive && !cameraState.hasFlash && (
+            <div className="px-4 pb-2">
+              <div className="bg-muted text-muted-foreground text-xs p-2 rounded text-center">
+                ⚠️ Flash no disponible - La lectura puede ser menos precisa
               </div>
             </div>
           )}
