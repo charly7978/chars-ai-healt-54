@@ -116,6 +116,22 @@ export class VitalSignsProcessor {
    */
   setRGBData(data: RGBData): void {
     this.rgbData = data;
+    
+    // LOG DE DATOS RGB RECIBIDOS (cada segundo)
+    const now = Date.now();
+    if (now - this.lastLogTime >= 1000) {
+      this.lastLogTime = now;
+      const ratioR = data.greenDC > 0 && data.greenAC > 0 
+        ? (data.redAC / data.redDC) / (data.greenAC / data.greenDC) 
+        : 0;
+      const estimatedSpO2 = ratioR > 0 ? 110 - 25 * ratioR : 0;
+      
+      console.log('───────────────────────────────────────────────────────────');
+      console.log(`🩺 VitalSignsProcessor - RGB RECIBIDOS desde cámara`);
+      console.log(`   🔴 RED:   AC=${data.redAC.toFixed(3)} | DC=${data.redDC.toFixed(1)}`);
+      console.log(`   🟢 GREEN: AC=${data.greenAC.toFixed(3)} | DC=${data.greenDC.toFixed(1)}`);
+      console.log(`   📐 Ratio R: ${ratioR.toFixed(4)} → SpO2 estimado: ${estimatedSpO2.toFixed(1)}%`);
+    }
   }
 
   /**
@@ -673,26 +689,31 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * LOG PERIÓDICO PARA DEBUGGING
+   * LOG PERIÓDICO DETALLADO PARA DEBUGGING
    */
   private logVitals(intervals: number[], features: any): void {
-    const now = Date.now();
-    if (now - this.lastLogTime < 2000) return;
-    this.lastLogTime = now;
-    
+    // LOG siempre cada 2 segundos para debugging intensivo
     const avgRR = intervals.reduce((a, b) => a + b, 0) / intervals.length;
     const hr = 60000 / avgRR;
     
-    const ratioR = this.rgbData.greenDC > 0 && this.rgbData.greenAC > 0 
-      ? ((this.rgbData.redAC/this.rgbData.redDC)/(this.rgbData.greenAC/this.rgbData.greenDC)).toFixed(3) 
-      : 'N/A';
+    const { redAC, redDC, greenAC, greenDC } = this.rgbData;
+    const ratioR = greenDC > 0 && greenAC > 0 
+      ? (redAC/redDC)/(greenAC/greenDC) 
+      : 0;
     
-    console.log(`📊 VITALES PUROS desde PPG:`);
-    console.log(`   HR=${hr.toFixed(0)} (RR=${avgRR.toFixed(0)}ms)`);
-    console.log(`   SpO2=${this.measurements.spo2.toFixed(1)}% (R=${ratioR})`);
-    console.log(`   PA=${this.measurements.systolicPressure.toFixed(0)}/${this.measurements.diastolicPressure.toFixed(0)} mmHg`);
-    console.log(`   Glucosa=${this.measurements.glucose.toFixed(0)} | Hb=${this.measurements.hemoglobin.toFixed(1)}`);
-    console.log(`   SQI=${this.measurements.signalQuality.toFixed(0)}% | Pulsos=${this.validPulseCount}`);
+    console.log('═══════════════════════════════════════════════════════════');
+    console.log(`🩺 SIGNOS VITALES CALCULADOS - 100% desde PPG real`);
+    console.log('───────────────────────────────────────────────────────────');
+    console.log(`   ❤️  HR: ${hr.toFixed(0)} bpm (RR promedio: ${avgRR.toFixed(0)} ms)`);
+    console.log(`   🫁 SpO2: ${this.measurements.spo2.toFixed(1)}% (Ratio R: ${ratioR.toFixed(4)})`);
+    console.log(`   🩸 PA: ${this.measurements.systolicPressure.toFixed(0)}/${this.measurements.diastolicPressure.toFixed(0)} mmHg`);
+    console.log(`   🍬 Glucosa: ${this.measurements.glucose.toFixed(0)} mg/dL`);
+    console.log(`   🔬 Hemoglobina: ${this.measurements.hemoglobin.toFixed(1)} g/dL`);
+    console.log('───────────────────────────────────────────────────────────');
+    console.log(`   📊 Calidad: ${this.measurements.signalQuality.toFixed(0)}% | Pulsos válidos: ${this.validPulseCount}`);
+    console.log(`   🎯 Confianza: ${this.getMeasurementConfidence()}`);
+    console.log(`   📦 RGB: R_AC=${redAC.toFixed(3)} R_DC=${redDC.toFixed(1)} | G_AC=${greenAC.toFixed(3)} G_DC=${greenDC.toFixed(1)}`);
+    console.log('═══════════════════════════════════════════════════════════');
   }
 
   /**

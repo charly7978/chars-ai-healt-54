@@ -125,13 +125,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // 10. CALCULAR CALIDAD DE SEÑAL
     this.signalQuality = this.calculateSignalQuality();
     
-    // 11. LOG CADA SEGUNDO
+    // 11. LOG DETALLADO CADA SEGUNDO - RGB AC/DC CRUDOS
     const now = Date.now();
     if (now - this.lastLogTime >= 1000) {
       this.lastLogTime = now;
-      const src = greenSaturated ? 'R' : 'G';
-      const fingerStatus = this.fingerDetected ? '✅' : '❌';
-      console.log(`📷 PPG [${src}]: Raw=${signalSource.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus}`);
+      const src = greenSaturated ? 'RED' : 'GREEN';
+      const fingerStatus = this.fingerDetected ? '✅ DEDO' : '❌ SIN DEDO';
+      const ratioR = this.greenDC > 0 ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) : 0;
+      
+      console.log('═══════════════════════════════════════════════════════════');
+      console.log(`📷 PPGSignalProcessor - DATOS CRUDOS CÁMARA (${fingerStatus})`);
+      console.log(`   Canal activo: ${src} | Valor crudo: ${signalSource.toFixed(1)} | Filtrado: ${filtered.toFixed(2)}`);
+      console.log(`   🔴 RED:   AC=${this.redAC.toFixed(3)} | DC=${this.redDC.toFixed(1)} | PI=${((this.redAC/this.redDC)*100).toFixed(3)}%`);
+      console.log(`   🟢 GREEN: AC=${this.greenAC.toFixed(3)} | DC=${this.greenDC.toFixed(1)} | PI=${((this.greenAC/this.greenDC)*100).toFixed(3)}%`);
+      console.log(`   📊 Ratio R (SpO2): ${ratioR.toFixed(4)} | Calidad: ${this.signalQuality.toFixed(0)}%`);
+      console.log(`   📦 Buffer size: ${this.filteredBuffer.length}/${this.BUFFER_SIZE}`);
     }
     
     // 12. CALCULAR ÍNDICE DE PERFUSIÓN
