@@ -8,6 +8,7 @@ import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
+import PerfusionIndexIndicator from "@/components/PerfusionIndexIndicator";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
@@ -40,6 +41,7 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [perfusionIndex, setPerfusionIndex] = useState<number>(0);
   
   // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
@@ -446,6 +448,10 @@ const Index = () => {
           greenAC: rgbStats.greenAC,
           greenDC: rgbStats.greenDC
         });
+        
+        // Calcular y actualizar Perfusion Index (PI) del canal verde
+        const pi = (rgbStats.greenAC / rgbStats.greenDC) * 100;
+        setPerfusionIndex(pi);
       }
       
       if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
@@ -560,11 +566,21 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER - Tiempo restante */}
-          <div className="px-4 py-2 flex justify-center items-center bg-black/30">
+          {/* HEADER - Tiempo restante y PI */}
+          <div className="px-4 py-2 flex justify-between items-center bg-black/30">
+            {/* Indicador de Perfusion Index */}
+            <PerfusionIndexIndicator 
+              perfusionIndex={perfusionIndex}
+              isMonitoring={isMonitoring}
+            />
+            
+            {/* Timer */}
             <div className="text-white text-xl font-bold">
               {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
             </div>
+            
+            {/* Espaciador para centrar timer cuando PI no está visible */}
+            {!isMonitoring && <div className="w-24" />}
           </div>
 
           <div className="flex-1">
