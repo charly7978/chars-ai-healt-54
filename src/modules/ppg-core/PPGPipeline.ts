@@ -131,9 +131,9 @@ export class PPGPipeline {
   private greenAC: number = 0;
   private greenDC: number = 0;
   
-  // NUEVO: Validación temporal de dedo (10 frames consecutivos)
+  // NUEVO: Validación temporal de dedo (5 frames consecutivos - reducido)
   private consecutiveFingerFrames: number = 0;
-  private readonly MIN_FINGER_FRAMES = 10; // 333ms @ 30fps
+  private readonly MIN_FINGER_FRAMES = 5; // 166ms @ 30fps (era 10, muy estricto)
   private fingerStabilityBuffer: number[] = [];
   
   // Estado
@@ -284,10 +284,10 @@ export class PPGPipeline {
     // 6. CALCULAR PERFUSION INDEX DESDE CANAL ROJO (mejor SNR)
     const perfusionIndex = this.redDC > 0 ? (this.redAC / this.redDC) * 100 : 0;
     
-    // 7. VALIDAR PI FISIOLÓGICO (gatekeeper crítico)
-    // Con dedo real: PI típico 0.1% - 10%
-    // Sin dedo (ruido): PI > 15% o < 0.05%
-    const piIsValid = perfusionIndex >= 0.1 && perfusionIndex <= 15;
+    // 7. VALIDAR PI FISIOLÓGICO (gatekeeper pero más tolerante)
+    // Con dedo real: PI típico 0.05% - 20% (rango ampliado)
+    // Sin dedo (ruido puro): PI = 0 o muy bajo/alto
+    const piIsValid = perfusionIndex >= 0.05 && perfusionIndex <= 20;
     
     // 8. SELECCIONAR CANAL ROJO COMO PRIMARIO (mejor SNR con flash LED)
     // Solo usar verde como fallback si rojo está saturado
@@ -434,11 +434,13 @@ export class PPGPipeline {
    */
   private detectFinger(rawRed: number, rawGreen: number): boolean {
     // Con flash encendido, el dedo iluminado debe dar valores ALTOS
-    const hasHighRed = rawRed > 120;
+    // RELAJADO: Red > 80 (era 120, demasiado estricto para algunos dispositivos)
+    const hasHighRed = rawRed > 80;
     
-    // Ratio R/G: sangre absorbe verde más que rojo (más estricto)
+    // Ratio R/G: sangre absorbe verde más que rojo
+    // RELAJADO: 1.0 - 4.0 (era 1.2 - 3.5, demasiado estricto)
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
-    const validRatio = rgRatio > 1.2 && rgRatio < 3.5;
+    const validRatio = rgRatio > 1.0 && rgRatio < 4.0;
     
     // No saturado
     const notSaturated = rawRed < 253 && rawGreen < 253;
@@ -458,12 +460,12 @@ export class PPGPipeline {
       this.fingerStabilityBuffer = [];
     }
     
-    // Verificar estabilidad (varianza < 5 en los últimos 10 frames)
+    // Verificar estabilidad (varianza más tolerante)
     let isStable = true;
-    if (this.fingerStabilityBuffer.length >= 10) {
+    if (this.fingerStabilityBuffer.length >= 5) {
       const mean = this.fingerStabilityBuffer.reduce((a, b) => a + b, 0) / this.fingerStabilityBuffer.length;
       const variance = this.fingerStabilityBuffer.reduce((acc, v) => acc + (v - mean) ** 2, 0) / this.fingerStabilityBuffer.length;
-      isStable = variance < 25; // Sqrt(25) = 5
+      isStable = variance < 100; // Más tolerante (era 25)
     }
     
     // Solo considerar dedo válido después de N frames consecutivos Y estable

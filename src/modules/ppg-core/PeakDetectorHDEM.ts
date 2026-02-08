@@ -179,11 +179,12 @@ export class PeakDetectorHDEM {
       };
     }
     
-    // VALIDACIÓN DE PI: Si está fuera de rango, no detectar picos
-    if (perfusionIndex !== undefined && (perfusionIndex < 0.1 || perfusionIndex > 15)) {
+    // VALIDACIÓN DE PI: Si está muy fuera de rango, no detectar picos
+    // RELAJADO: 0.01% - 25% (era 0.1% - 15%)
+    if (perfusionIndex !== undefined && (perfusionIndex < 0.01 || perfusionIndex > 25)) {
       return {
         isPeak: false,
-        bpm: 0, // Reset BPM si PI inválido
+        bpm: this.smoothedBPM, // Mantener último BPM conocido
         rrInterval: null,
         confidence: 0
       };
@@ -224,12 +225,12 @@ export class PeakDetectorHDEM {
           // NUEVO: Calcular SNR = (amplitude - mean) / std
           const snr = std > 0 ? (amplitude - mean) / std : 0;
           
-          // CRITERIOS ESTRICTOS:
-          // 1. Amplitud > threshold * 1.2 (era 0.7)
-          // 2. SNR > 2.0 (significativamente mayor al ruido)
-          // 3. Amplitud > promedio * 1.2
-          const amplitudeValid = amplitude > localThreshold * 1.2 && amplitude > mean * 1.2;
-          const snrValid = snr > 2.0;
+          // CRITERIOS BALANCEADOS (relajados pero robustos):
+          // 1. Amplitud > threshold * 0.9 (era 1.2, muy estricto)
+          // 2. SNR > 1.0 (era 2.0, muy estricto)
+          // 3. Amplitud > promedio * 1.05 (era 1.2, muy estricto)
+          const amplitudeValid = amplitude > localThreshold * 0.9 && amplitude > mean * 1.05;
+          const snrValid = snr > 1.0;
           
           if (amplitudeValid && snrValid) {
             isPeak = true;
