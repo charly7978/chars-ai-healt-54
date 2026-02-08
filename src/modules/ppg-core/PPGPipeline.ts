@@ -232,14 +232,27 @@ export class PPGPipeline {
     // 1. EXTRAER RGB DE ROI (85%)
     const { rawRed, rawGreen, rawBlue } = this.extractROI(imageData);
     
-    // 2. CALIBRACIÓN ZLO (si está activa)
-    if (this.state.isCalibrating) {
-      const complete = this.calibrator.addCalibrationSample(rawRed, rawGreen, rawBlue);
-      this.state.calibrationProgress = this.calibrator.getCalibrationProgress();
-      
-      if (complete) {
+    // 2. AUTO-CALIBRACIÓN INSTANTÁNEA (sin esperar frames sin dedo)
+    // Detectar si hay dedo ANTES de calibrar
+    const fingerDetected = this.detectFinger(rawRed, rawGreen);
+    
+    if (!this.calibrator.isCalibrated()) {
+      if (fingerDetected && rawRed > 100) {
+        // Hay dedo con buena señal - calibrar instantáneamente desde medición activa
+        this.calibrator.forceCalibrationFromMeasurement(rawRed, rawGreen, rawBlue);
         this.state.isCalibrating = false;
+        this.state.calibrationProgress = 100;
         this.emitEvent('calibration_complete', { calibration: this.calibrator.getCalibration() });
+        console.log('⚡ Calibración instantánea desde dedo detectado');
+      } else if (this.state.isCalibrating) {
+        // Sin dedo - calibración ZLO tradicional
+        const complete = this.calibrator.addCalibrationSample(rawRed, rawGreen, rawBlue);
+        this.state.calibrationProgress = this.calibrator.getCalibrationProgress();
+        
+        if (complete) {
+          this.state.isCalibrating = false;
+          this.emitEvent('calibration_complete', { calibration: this.calibrator.getCalibration() });
+        }
       }
     }
     
@@ -257,8 +270,7 @@ export class PPGPipeline {
       this.blueBuffer.shift();
     }
     
-    // 5. DETECCIÓN DE DEDO
-    const fingerDetected = this.detectFinger(rawRed, rawGreen);
+    // 5. Ya tenemos fingerDetected de arriba
     
     // 6. CALCULAR AC/DC
     if (this.redBuffer.length >= 60) {
@@ -386,17 +398,36 @@ export class PPGPipeline {
   }
   
   /**
-   * DETECCIÓN DE DEDO PERMISIVA
+   * DETECCIÓN DE DEDO ROBUSTA (Oxford/IEEE 2020)
+   * 
+   * Con flash encendido, el dedo iluminado debe dar valores ALTOS de rojo.
+   * La sangre absorbe más verde que rojo, por lo que R/G > 1.1
+   * 
+   * Criterios:
+   * 1. Red > 120 (con flash, valores altos)
+   * 2. R/G ratio > 1.1 y < 4.0 (sangre real)
+   * 3. No saturado (< 253)
    */
   private detectFinger(rawRed: number, rawGreen: number): boolean {
+    // Con flash encendido, el dedo iluminado debe dar valores ALTOS
+    const hasHighRed = rawRed > 120;
+    
+    // Ratio R/G: sangre absorbe verde más que rojo
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
+    const validRatio = rgRatio > 1.1 && rgRatio < 4.0;
     
-    const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
-    const validRed = rawRed > 40 && rawRed < 255;
-    const notSaturated = rawRed < 254 || rawGreen < 254;
-    const hasLight = rawRed > 30 && rawGreen > 20;
+    // No saturado
+    const notSaturated = rawRed < 253 && rawGreen < 253;
     
-    return (validRatio && validRed && notSaturated) || (hasLight && validRed);
+    // Todos los criterios deben cumplirse
+    const fingerDetected = hasHighRed && validRatio && notSaturated;
+    
+    // Log cada 30 frames para debugging
+    if (this.state.framesProcessed % 30 === 0) {
+      console.log(`👆 Finger: R=${rawRed.toFixed(0)} G=${rawGreen.toFixed(0)} R/G=${rgRatio.toFixed(2)} → ${fingerDetected ? '✅' : '❌'}`);
+    }
+    
+    return fingerDetected;
   }
   
   /**

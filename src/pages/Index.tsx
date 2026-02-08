@@ -9,7 +9,7 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import PerfusionIndexIndicator from "@/components/PerfusionIndexIndicator";
 import RGBDebugIndicator from "@/components/RGBDebugIndicator";
-import DisclaimerOverlay from "@/components/DisclaimerOverlay";
+
 import MeasurementConfidenceIndicator from "@/components/MeasurementConfidenceIndicator";
 import { toast } from "@/components/ui/use-toast";
 
@@ -180,6 +180,13 @@ const Index = () => {
       
       const video = cameraComponentRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
+        frameLoopRef.current = requestAnimationFrame(captureFrame);
+        return;
+      }
+      
+      // NUEVO: Verificar que el video está reproduciendo
+      if (video.paused || video.ended) {
+        video.play().catch(() => {});
         frameLoopRef.current = requestAnimationFrame(captureFrame);
         return;
       }
@@ -398,8 +405,6 @@ const Index = () => {
       WebkitTouchCallout: 'none',
       WebkitUserSelect: 'none'
     }}>
-      {/* DISCLAIMER PERMANENTE */}
-      <DisclaimerOverlay />
       
       {/* OVERLAY PANTALLA COMPLETA */}
       {!isFullscreen && (
