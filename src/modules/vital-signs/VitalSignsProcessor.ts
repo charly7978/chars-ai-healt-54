@@ -90,7 +90,8 @@ export class VitalSignsProcessor {
   // Contador de pulsos válidos detectados
   private validPulseCount: number = 0;
   
-  // Log throttle
+  // Log throttle determinístico (contador de frames)
+  private logCounter: number = 0;
   private lastLogTime: number = 0;
   
   constructor() {
@@ -336,15 +337,24 @@ export class VitalSignsProcessor {
     // - R = 1.2 → SpO2 = 94%
     // - R = 1.5 → SpO2 = 89.5%
     
-    // Limitar R a rango válido (evitar valores extremos por ruido)
-    const clampedR = Math.max(0.5, Math.min(2.0, R));
+    // VALIDAR R sin clampear - retornar 0 si fuera de rango válido
+    if (R < 0.4 || R > 2.5) {
+      // Señal fuera de rango fisiológico - no calcular
+      return 0;
+    }
     
-    // Fórmula calibrada para smartphone
-    const spo2 = 100 - 15 * (clampedR - 0.8);
+    // Fórmula calibrada para smartphone (SIN CLAMP)
+    const spo2 = 100 - 15 * (R - 0.8);
     
-    // Log para debug
-    if (Math.random() < 0.05) { // 5% de frames
-      console.log(`🫁 SpO2 calc: R=${R.toFixed(4)} → clampedR=${clampedR.toFixed(4)} → SpO2=${spo2.toFixed(1)}%`);
+    // Validar resultado fisiológico
+    if (spo2 < 50 || spo2 > 105) {
+      return 0; // Resultado implausible - señal errónea
+    }
+    
+    // Log determinístico cada 20 frames
+    this.logCounter++;
+    if (this.logCounter % 20 === 0) {
+      console.log(`🫁 SpO2 calc: R=${R.toFixed(4)} → SpO2=${spo2.toFixed(1)}%`);
     }
     
     return spo2;
@@ -467,8 +477,8 @@ export class VitalSignsProcessor {
     
     let diastolic = systolic - pulsePressure;
     
-    // Log para debug
-    if (Math.random() < 0.05) {
+    // Log determinístico cada 20 frames
+    if (this.logCounter % 20 === 0) {
       console.log(`🩸 PA calc: HR=${hr.toFixed(0)} → PAS=${systolic.toFixed(0)} PAD=${diastolic.toFixed(0)} (PP=${pulsePressure.toFixed(0)})`);
     }
     
