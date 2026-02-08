@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
@@ -11,21 +11,8 @@ import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
-/**
- * =========================================================================
- * INDEX - MONITOR PPG OPTIMIZADO
- * =========================================================================
- * 
- * OPTIMIZACIONES APLICADAS:
- * 1. UN SOLO requestAnimationFrame loop (no en PPGSignalMeter)
- * 2. Throttle de signos vitales aumentado a 15 frames (2 Hz)
- * 3. Throttle de HeartBeat a 2 frames (15 Hz)
- * 4. Uso de refs para valores que no necesitan re-render
- * 5. Callbacks memoizados correctamente
- * =========================================================================
- */
 const Index = () => {
-  // ESTADOS PRINCIPALES (solo los que necesitan re-render)
+  // ESTADOS PRINCIPALES
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
@@ -43,21 +30,18 @@ const Index = () => {
     measurementConfidence: 'INVALID'
   });
   const [heartRate, setHeartRate] = useState(0);
+  const [heartbeatSignal, setHeartbeatSignal] = useState(0);
+  const [beatMarker, setBeatMarker] = useState(0);
+  const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   
-  // REFS PARA VALORES QUE NO NECESITAN RE-RENDER
-  const heartbeatSignalRef = useRef(0);
-  const beatMarkerRef = useRef(0);
-  const rrIntervalsRef = useRef<number[]>([]);
-  const arrhythmiaCountRef = useRef<string | number>("--");
-  const lastSignalRef = useRef<any>(null);
-  
-  // REFERENCIAS DE CONTROL
+  // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
@@ -67,16 +51,6 @@ const Index = () => {
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
   
-  // CONTADORES DE THROTTLING
-  const frameCounterRef = useRef(0);
-  const heartBeatFrameCounter = useRef(0);
-  const vitalSignsFrameCounter = useRef(0);
-  
-  // CONSTANTES DE THROTTLING OPTIMIZADAS
-  const HEARTBEAT_PROCESS_EVERY_N_FRAMES = 2;  // 15 Hz
-  const VITALS_PROCESS_EVERY_N_FRAMES = 15;    // 2 Hz (mucho más eficiente)
-  const UI_UPDATE_EVERY_N_FRAMES = 3;          // 10 Hz para UI
-  
   // HOOKS DE PROCESAMIENTO
   const { 
     startProcessing, 
@@ -84,7 +58,11 @@ const Index = () => {
     lastSignal, 
     processFrame, 
     isProcessing, 
+    framesProcessed,
     getRGBStats,
+    getVPGBuffer,
+    getAPGBuffer,
+    getFilteredBuffer,
   } = useSignalProcessor();
   
   const { 
@@ -120,7 +98,7 @@ const Index = () => {
   }, []);
 
   // PANTALLA COMPLETA
-  const enterFullScreen = useCallback(async () => {
+  const enterFullScreen = async () => {
     if (isFullscreen) return;
     try {
       const docEl = document.documentElement;
@@ -136,9 +114,9 @@ const Index = () => {
     } catch (err) {
       console.log('Error pantalla completa:', err);
     }
-  }, [isFullscreen]);
+  };
   
-  const exitFullScreen = useCallback(() => {
+  const exitFullScreen = () => {
     if (!isFullscreen) return;
     try {
       if (document.exitFullscreen) {
@@ -149,7 +127,7 @@ const Index = () => {
       screen.orientation?.unlock();
       setIsFullscreen(false);
     } catch {}
-  }, [isFullscreen]);
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => enterFullScreen(), 1000);
@@ -169,7 +147,7 @@ const Index = () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
     };
-  }, [enterFullScreen]);
+  }, []);
 
   // PREVENIR SCROLL
   useEffect(() => {
@@ -190,7 +168,7 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  // === LOOP DE CAPTURA DE FRAMES OPTIMIZADO ===
+  // === LOOP DE CAPTURA DE FRAMES ===
   const startFrameLoop = useCallback(() => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
@@ -222,7 +200,6 @@ const Index = () => {
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           processFrame(imageData);
           lastFrameTime = now;
-          frameCounterRef.current++;
         } catch (e) {
           console.error('Error capturando frame:', e);
         }
@@ -231,7 +208,7 @@ const Index = () => {
       frameLoopRef.current = requestAnimationFrame(captureFrame);
     };
     
-    console.log('🎬 Iniciando loop de captura optimizado');
+    console.log('🎬 Iniciando loop de captura');
     frameLoopRef.current = requestAnimationFrame(captureFrame);
   }, [processFrame]);
 
@@ -248,7 +225,7 @@ const Index = () => {
   const startMonitoring = useCallback(() => {
     if (isMonitoring) return;
     
-    console.log('🚀 Iniciando monitoreo optimizado...');
+    console.log('🚀 Iniciando monitoreo...');
     
     if (navigator.vibrate) {
       navigator.vibrate([200]);
@@ -258,11 +235,6 @@ const Index = () => {
     setShowResults(false);
     setElapsedTime(0);
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
-    
-    // Reset contadores
-    frameCounterRef.current = 0;
-    heartBeatFrameCounter.current = 0;
-    vitalSignsFrameCounter.current = 0;
     
     // Iniciar procesamiento
     startProcessing();
@@ -350,7 +322,7 @@ const Index = () => {
       await saveMeasurement({
         heartRate,
         vitalSigns: dataToSave,
-        signalQuality: lastSignalRef.current?.quality || 0
+        signalQuality: lastSignal?.quality || 0
       });
     }
     
@@ -374,7 +346,7 @@ const Index = () => {
     setCalibrationProgress(0);
     
     console.log('✅ Medición finalizada y guardada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns]);
+  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
 
   // === RESET COMPLETO ===
   const handleReset = useCallback(() => {
@@ -403,9 +375,9 @@ const Index = () => {
     setIsCalibrating(false);
     setElapsedTime(0);
     setHeartRate(0);
-    heartbeatSignalRef.current = 0;
-    beatMarkerRef.current = 0;
-    rrIntervalsRef.current = [];
+    setHeartbeatSignal(0);
+    setBeatMarker(0);
+    setRRIntervals([]);
     setVitalSigns({ 
       spo2: 0,
       glucose: 0,
@@ -420,69 +392,54 @@ const Index = () => {
       signalQuality: 0,
       measurementConfidence: 'INVALID'
     });
-    arrhythmiaCountRef.current = "--";
+    setArrhythmiaCount("--");
     lastArrhythmiaData.current = null;
     setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
-    frameCounterRef.current = 0;
-    heartBeatFrameCounter.current = 0;
-    vitalSignsFrameCounter.current = 0;
     
     console.log('✅ Reset completado');
   }, [cameraStream, stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
 
-  // === PROCESAR SEÑAL PPG CON THROTTLING OPTIMIZADO ===
+  // === PROCESAR SEÑAL PPG ===
+  const vitalSignsFrameCounter = useRef<number>(0);
+  const VITALS_PROCESS_EVERY_N_FRAMES = 5;
+  
   useEffect(() => {
     if (!lastSignal || !isMonitoring) return;
     
-    // Guardar referencia
-    lastSignalRef.current = lastSignal;
-    
     const signalValue = lastSignal.filteredValue;
+
+    // Procesar latidos
+    const heartBeatResult = processHeartBeat(
+      signalValue,
+      true,
+      lastSignal.timestamp
+    );
     
-    // THROTTLE HEARTBEAT: cada 2 frames (15 Hz)
-    heartBeatFrameCounter.current++;
-    let heartBeatResult: any = null;
+    setHeartRate(heartBeatResult.bpm);
+    setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
     
-    if (heartBeatFrameCounter.current >= HEARTBEAT_PROCESS_EVERY_N_FRAMES) {
-      heartBeatFrameCounter.current = 0;
-      
-      heartBeatResult = processHeartBeat(
-        signalValue,
-        true,
-        lastSignal.timestamp
-      );
-      
-      // Actualizar refs (no causa re-render)
-      heartbeatSignalRef.current = heartBeatResult.filteredValue;
-      
-      if (heartBeatResult.isPeak) {
-        beatMarkerRef.current = 1;
-        setTimeout(() => { beatMarkerRef.current = 0; }, 300);
-      }
-      
-      if (heartBeatResult.rrData?.intervals) {
-        rrIntervalsRef.current = heartBeatResult.rrData.intervals.slice(-5);
-      }
+    if (heartBeatResult.isPeak) {
+      setBeatMarker(1);
+      setTimeout(() => setBeatMarker(0), 300);
     }
     
-    // THROTTLE UI UPDATE: cada 3 frames (10 Hz)
-    if (frameCounterRef.current % UI_UPDATE_EVERY_N_FRAMES === 0) {
-      if (heartBeatResult) {
-        setHeartRate(heartBeatResult.bpm);
-      }
+    if (heartBeatResult.rrData?.intervals) {
+      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
     
-    // THROTTLE SIGNOS VITALES: cada 15 frames (2 Hz)
+    // Throttle signos vitales
     vitalSignsFrameCounter.current++;
     
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       
-      // Obtener datos RGB
+      // INTEGRACIÓN DE DATOS RGB REALES DESDE PPGSignalProcessor
+      // Usar getRGBStats() para obtener AC/DC calculados con precisión
       const rgbStats = getRGBStats();
       
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
+        // Usar valores calculados con ventana de 4 segundos (más precisos)
         setRGBData({
           redAC: rgbStats.redAC,
           redDC: rgbStats.redDC,
@@ -491,13 +448,8 @@ const Index = () => {
         });
       }
       
-      // Usar el último resultado de heartbeat disponible
-      const currentRRData = rrIntervalsRef.current.length >= 3 
-        ? { intervals: rrIntervalsRef.current, lastPeakTime: Date.now() }
-        : null;
-      
-      if (currentRRData) {
-        const vitals = processVitalSigns(lastSignal.filteredValue, currentRRData);
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
+        const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
         if (vitals) {
           setVitalSigns(vitals);
@@ -508,7 +460,7 @@ const Index = () => {
             lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
             const parts = arrhythmiaStatus.split('|');
             const count = parts.length > 1 ? parts[1] : "0";
-            arrhythmiaCountRef.current = count;
+            setArrhythmiaCount(count);
             
             const isArrhythmiaDetected = arrhythmiaStatus.includes("ARRITMIA DETECTADA");
             if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
@@ -516,6 +468,7 @@ const Index = () => {
               setArrhythmiaState(isArrhythmiaDetected);
               
               if (isArrhythmiaDetected) {
+                // Vibración fuerte para arritmia
                 if (navigator.vibrate) {
                   navigator.vibrate([200, 100, 200]);
                 }
@@ -553,28 +506,13 @@ const Index = () => {
     return () => clearInterval(interval);
   }, [isCalibrating, getCalibrationProgress]);
 
-  const handleToggleMonitoring = useCallback(() => {
+  const handleToggleMonitoring = () => {
     if (isMonitoring) {
       finalizeMeasurement();
     } else {
       startMonitoring();
     }
-  }, [isMonitoring, finalizeMeasurement, startMonitoring]);
-
-  // Memoizar props del PPGSignalMeter para evitar re-renders
-  const signalMeterProps = useMemo(() => ({
-    value: heartbeatSignalRef.current,
-    quality: lastSignalRef.current?.quality || 0,
-    isFingerDetected: lastSignalRef.current?.fingerDetected || false,
-    arrhythmiaStatus: vitalSigns.arrhythmiaStatus,
-    rawArrhythmiaData: lastArrhythmiaData.current,
-    preserveResults: showResults,
-    diagnosticMessage: lastSignalRef.current?.diagnostics?.message,
-    isPeak: beatMarkerRef.current === 1,
-    bpm: heartRate,
-    spo2: vitalSigns.spo2,
-    rrIntervals: rrIntervalsRef.current
-  }), [heartRate, vitalSigns.arrhythmiaStatus, vitalSigns.spo2, showResults]);
+  };
 
   return (
     <div className="fixed inset-0 flex flex-col bg-black" style={{ 
@@ -631,11 +569,23 @@ const Index = () => {
 
           <div className="flex-1">
             <PPGSignalMeter 
-              {...signalMeterProps}
+              value={heartbeatSignal}
+              quality={lastSignal?.quality || 0}
+              isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
+              arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
+              rawArrhythmiaData={lastArrhythmiaData.current}
+              preserveResults={showResults}
+              diagnosticMessage={lastSignal?.diagnostics?.message}
+              isPeak={beatMarker === 1}
+              bpm={heartRate}
+              spo2={vitalSigns.spo2}
+              rrIntervals={rrIntervals}
             />
           </div>
+
+          {/* CONTADOR DE ARRITMIAS - Solo texto discreto, la visualización está en la onda */}
 
           {/* SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
