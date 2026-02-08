@@ -307,8 +307,9 @@ export class PPGPipeline {
     // CRÍTICO: Bloquear detección si no hay dedo real
     let peakResult = { isPeak: false, bpm: 0, rrInterval: null as number | null, confidence: 0 };
     
-    if (fingerDetected && piIsValid) {
-      // Solo procesar picos con señal real validada
+    // CORRECCIÓN: Procesar picos siempre que hay dedo detectado
+    // El PI se usa para filtrar DESPUÉS, no como gatekeeper
+    if (fingerDetected) {
       peakResult = this.peakDetector.processSample(filtered, timestamp, perfusionIndex);
     }
     
@@ -484,7 +485,8 @@ export class PPGPipeline {
    */
   private calculateACDC(): void {
     const windowSize = Math.min(this.ACDC_WINDOW, this.redBuffer.length);
-    if (windowSize < 60) return;
+    // CORRECCIÓN: Permitir cálculo desde 30 frames (1 segundo) en lugar de 60
+    if (windowSize < 30) return;
     
     const redWindow = this.redBuffer.slice(-windowSize);
     const greenWindow = this.greenBuffer.slice(-windowSize);

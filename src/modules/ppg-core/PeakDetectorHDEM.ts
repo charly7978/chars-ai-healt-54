@@ -179,9 +179,9 @@ export class PeakDetectorHDEM {
       };
     }
     
-    // VALIDACIÓN DE PI: Muy relajado para permitir señales débiles
-    // Rango: 0.005% - 30% (ultra-permisivo)
-    if (perfusionIndex !== undefined && (perfusionIndex < 0.005 || perfusionIndex > 30)) {
+    // CORRECCIÓN: PI = 0 es válido al inicio antes de que calculateACDC() tenga datos
+    // Solo rechazar si PI es claramente inválido (> 50%)
+    if (perfusionIndex !== undefined && perfusionIndex > 50) {
       return {
         isPeak: false,
         bpm: this.smoothedBPM,

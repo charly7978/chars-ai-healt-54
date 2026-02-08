@@ -179,7 +179,8 @@ export class VitalSignsProcessor {
    * Sin filtros fisiológicos - solo validación técnica
    */
   private hasValidPulse(rrData?: { intervals: number[], lastPeakTime: number | null }): boolean {
-    if (!rrData || !rrData.intervals || rrData.intervals.length < 2) {
+    // CORRECCIÓN: Permitir continuar con 0 intervalos para calcular SpO2 al menos
+    if (!rrData || !rrData.intervals) {
       this.validPulseCount = 0;
       return false;
     }
