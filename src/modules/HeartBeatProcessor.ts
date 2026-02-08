@@ -1,19 +1,23 @@
 /**
- * PROCESADOR DE LATIDOS - VERSIÓN SIN CLAMPS
+ * =========================================================================
+ * PROCESADOR DE LATIDOS - VERSIÓN PROFESIONAL
+ * =========================================================================
  * 
- * CAMBIOS PRINCIPALES:
- * 1. SIN límites MIN_BPM / MAX_BPM - BPM calculado directo
- * 2. Detección de picos con análisis de primera derivada (VPG)
- * 3. Zero-crossing detection para picos sistólicos
- * 4. BPM crudo desde intervalos RR reales
- * 5. Indicador de calidad (SQI) en lugar de clamps
+ * MEJORAS IMPLEMENTADAS:
+ * 1. Detección de picos con zero-crossing de VPG
+ * 2. Refinamiento sub-frame (interpolación parabólica)
+ * 3. BPM calculado con mediana de RR (más robusto que promedio)
+ * 4. Suavizado adaptativo según variabilidad
+ * 5. Período refractario adaptativo
  * 
- * Referencia: De Haan & Jeanne 2013, MIT/ETH 2024
+ * SIN CLAMPS FISIOLÓGICOS - BPM es el cálculo directo
+ * 
+ * Referencia: De Haan & Jeanne 2013, Elgendi 2012, IEEE Trans BME
+ * =========================================================================
  */
 export class HeartBeatProcessor {
-  // SIN LÍMITES FISIOLÓGICOS - Cálculo directo
-  // Solo intervalos mínimos para evitar ruido de alta frecuencia
-  private readonly MIN_PEAK_INTERVAL_MS = 250;  // Evitar detectar mismo pico
+  // Intervalos mínimos técnicos (no fisiológicos)
+  private readonly MIN_PEAK_INTERVAL_MS = 250;  // 240 BPM máximo técnico
   private readonly MAX_PEAK_INTERVAL_MS = 3000; // 20 BPM mínimo técnico
   
   // Buffers para análisis
@@ -25,13 +29,12 @@ export class HeartBeatProcessor {
   private lastPeakTime: number = 0;
   private peakThreshold: number = 8;
   private adaptiveBaseline: number = 0;
+  private refractoryPeriod: number = 250; // Período refractario adaptativo
   
-  // RR Intervals y BPM - optimizado para estabilidad
+  // RR Intervals y BPM
   private rrIntervals: number[] = [];
-  private readonly MAX_RR_INTERVALS = 20; // Más intervalos para mejor promedio
+  private readonly MAX_RR_INTERVALS = 15; // Suficientes para mediana robusta
   private smoothBPM: number = 0;
-  private readonly BPM_SMOOTHING = 0.75; // Mayor suavizado para estabilidad
-  private readonly BPM_SMOOTHING_INITIAL = 0.5; // Menos suavizado al inicio
   
   // Audio feedback
   private audioContext: AudioContext | null = null;
@@ -42,7 +45,7 @@ export class HeartBeatProcessor {
   private frameCount: number = 0;
   private consecutivePeaks: number = 0;
   private lastPeakValue: number = 0;
-  private signalQualityIndex: number = 0; // SQI 0-100
+  private signalQualityIndex: number = 0;
 
   constructor() {
     this.setupAudio();
@@ -66,8 +69,8 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * PROCESAR SEÑAL FILTRADA - SIN CLAMPS
-   * Retorna BPM crudo directamente calculado
+   * PROCESAR SEÑAL FILTRADA
+   * Retorna BPM calculado directamente desde intervalos RR
    */
   processSignal(filteredValue: number, timestamp?: number): {
     bpm: number;
@@ -75,7 +78,8 @@ export class HeartBeatProcessor {
     isPeak: boolean;
     filteredValue: number;
     arrhythmiaCount: number;
-    sqi: number; // Signal Quality Index
+    sqi: number;
+    rrData: { intervals: number[]; lastPeakTime: number | null };
   } {
     this.frameCount++;
     const now = timestamp || Date.now();
@@ -86,7 +90,7 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
     
-    // 2. CALCULAR PRIMERA DERIVADA (VPG - Velocidad)
+    // 2. CALCULAR PRIMERA DERIVADA (VPG)
     const derivative = this.calculateDerivative();
     this.derivativeBuffer.push(derivative);
     if (this.derivativeBuffer.length > this.BUFFER_SIZE) {
@@ -101,85 +105,60 @@ export class HeartBeatProcessor {
         isPeak: false,
         filteredValue: 0,
         arrhythmiaCount: 0,
-        sqi: 0
+        sqi: 0,
+        rrData: { intervals: [], lastPeakTime: null }
       };
     }
     
     // 3. NORMALIZACIÓN ADAPTATIVA
     const { normalizedValue, range } = this.normalizeSignal(filteredValue);
     
-    // 4. ACTUALIZAR UMBRAL DINÁMICO
-    this.updateThreshold(range);
+    // 4. ACTUALIZAR UMBRAL Y PERÍODO REFRACTARIO
+    this.updateAdaptiveParameters(range);
     
-    // 5. CALCULAR SQI (Signal Quality Index)
+    // 5. CALCULAR SQI
     this.signalQualityIndex = this.calculateSQI();
     
-    // 6. DETECCIÓN DE PICO CON ANÁLISIS DE DERIVADA
+    // 6. DETECCIÓN DE PICO CON ZERO-CROSSING DE VPG
     const timeSinceLastPeak = now - this.lastPeakTime;
     let isPeak = false;
     
-    if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
-      isPeak = this.detectPeakWithDerivative(normalizedValue, timeSinceLastPeak);
+    if (timeSinceLastPeak >= this.refractoryPeriod) {
+      isPeak = this.detectPeakWithZeroCrossing(normalizedValue, timeSinceLastPeak);
       
       if (isPeak) {
+        // REFINAMIENTO SUB-FRAME
+        const refinedTime = this.refineSubFrame(now);
+        const actualInterval = refinedTime - this.lastPeakTime;
+        
         // Registrar intervalo RR
-        if (this.lastPeakTime > 0 && timeSinceLastPeak <= this.MAX_PEAK_INTERVAL_MS) {
-          this.rrIntervals.push(timeSinceLastPeak);
+        if (this.lastPeakTime > 0 && actualInterval <= this.MAX_PEAK_INTERVAL_MS && actualInterval >= this.MIN_PEAK_INTERVAL_MS) {
+          this.rrIntervals.push(actualInterval);
           if (this.rrIntervals.length > this.MAX_RR_INTERVALS) {
             this.rrIntervals.shift();
           }
           
-          // Calcular BPM instantáneo
-          const instantBPM = 60000 / timeSinceLastPeak;
+          // CALCULAR BPM CON MEDIANA (más robusto que promedio)
+          const medianRR = this.calculateMedian(this.rrIntervals);
+          const instantBPM = 60000 / medianRR;
           
-          // === SUAVIZADO ADAPTATIVO MEJORADO ===
-          // Basado en la cantidad de datos y la estabilidad
-          if (this.smoothBPM === 0) {
-            // Primera medición - usar directamente
-            this.smoothBPM = instantBPM;
-          } else {
-            // Calcular diferencia relativa
-            const bpmDiff = Math.abs(instantBPM - this.smoothBPM);
-            const relativeDiff = bpmDiff / this.smoothBPM;
-            
-            // Seleccionar factor de suavizado basado en:
-            // 1. Cuántos picos consecutivos tenemos (más = más confianza)
-            // 2. Cuán diferente es el nuevo valor (muy diferente = más suavizado)
-            let smoothingFactor: number;
-            
-            if (relativeDiff > 0.4) {
-              // Cambio muy grande (>40%) - probablemente ruido, suavizar mucho
-              smoothingFactor = 0.92;
-            } else if (relativeDiff > 0.25) {
-              // Cambio grande - suavizar bastante
-              smoothingFactor = 0.85;
-            } else if (relativeDiff > 0.15) {
-              // Cambio moderado - suavizado normal
-              smoothingFactor = 0.75;
-            } else {
-              // Cambio pequeño - responder más rápido
-              smoothingFactor = 0.6;
-            }
-            
-            // Si tenemos pocos picos, ser más conservador
-            if (this.consecutivePeaks < 5) {
-              smoothingFactor = Math.min(0.9, smoothingFactor + 0.1);
-            }
-            
-            this.smoothBPM = this.smoothBPM * smoothingFactor + instantBPM * (1 - smoothingFactor);
-          }
+          // SUAVIZADO ADAPTATIVO
+          this.smoothBPM = this.adaptiveSmoothBPM(instantBPM);
+          
+          // ACTUALIZAR PERÍODO REFRACTARIO
+          this.refractoryPeriod = Math.max(200, medianRR * 0.4);
           
           this.consecutivePeaks++;
         }
         
-        this.lastPeakTime = now;
+        this.lastPeakTime = refinedTime;
         
         // Feedback
         this.vibrate();
         this.playBeep();
         
-        if (this.frameCount % 30 === 0 || this.consecutivePeaks <= 5) {
-          console.log(`💓 PICO #${this.consecutivePeaks} BPM=${this.smoothBPM.toFixed(1)} RR=${timeSinceLastPeak}ms SQI=${this.signalQualityIndex.toFixed(0)}%`);
+        if (this.consecutivePeaks <= 5 || this.frameCount % 30 === 0) {
+          console.log(`💓 PICO #${this.consecutivePeaks} BPM=${this.smoothBPM.toFixed(1)} RR=${timeSinceLastPeak.toFixed(0)}ms SQI=${this.signalQualityIndex.toFixed(0)}%`);
         }
       }
     }
@@ -187,41 +166,125 @@ export class HeartBeatProcessor {
     // 7. CALCULAR CONFIANZA
     const confidence = this.calculateConfidence();
     
-    // Log periódico
-    if (this.frameCount % 60 === 0) {
-      console.log(`📊 BPM=${this.smoothBPM.toFixed(1)} Conf=${(confidence * 100).toFixed(0)}% SQI=${this.signalQualityIndex.toFixed(0)}% Picos=${this.consecutivePeaks}`);
-    }
-    
     return {
-      bpm: this.smoothBPM, // BPM crudo, puede ser decimal
+      bpm: this.smoothBPM,
       confidence,
       isPeak,
       filteredValue: normalizedValue,
       arrhythmiaCount: 0,
-      sqi: this.signalQualityIndex
+      sqi: this.signalQualityIndex,
+      rrData: { 
+        intervals: [...this.rrIntervals], 
+        lastPeakTime: this.lastPeakTime > 0 ? this.lastPeakTime : null 
+      }
     };
   }
   
   /**
    * CALCULAR PRIMERA DERIVADA (VPG)
-   * Detecta cambios de pendiente para zero-crossing
    */
   private calculateDerivative(): number {
     const n = this.signalBuffer.length;
     if (n < 3) return 0;
     
     // Derivada central: (f(x+h) - f(x-h)) / 2h
-    const current = this.signalBuffer[n - 1];
-    const previous = this.signalBuffer[n - 2];
-    const older = this.signalBuffer[n - 3];
-    
-    // Derivada suavizada
-    return (current - older) / 2;
+    return (this.signalBuffer[n - 1] - this.signalBuffer[n - 3]) / 2;
   }
   
   /**
-   * CALCULAR SIGNAL QUALITY INDEX (SQI)
-   * Reemplaza los clamps fisiológicos
+   * CALCULAR MEDIANA (más robusta que promedio)
+   */
+  private calculateMedian(arr: number[]): number {
+    if (arr.length === 0) return 0;
+    
+    const sorted = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    
+    return sorted.length % 2 !== 0
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  
+  /**
+   * SUAVIZADO ADAPTATIVO DE BPM
+   * Responde rápido a cambios pequeños, lento a cambios grandes
+   */
+  private adaptiveSmoothBPM(instantBPM: number): number {
+    if (this.smoothBPM === 0) {
+      return instantBPM;
+    }
+    
+    const relativeDiff = Math.abs(instantBPM - this.smoothBPM) / this.smoothBPM;
+    
+    let alpha: number;
+    
+    if (relativeDiff < 0.1) {
+      // Cambio pequeño (<10%) - responder rápido
+      alpha = 0.4;
+    } else if (relativeDiff < 0.2) {
+      // Cambio moderado - suavizado normal
+      alpha = 0.25;
+    } else if (relativeDiff < 0.35) {
+      // Cambio grande - más suavizado
+      alpha = 0.15;
+    } else {
+      // Cambio muy grande (>35%) - probablemente ruido
+      alpha = 0.08;
+    }
+    
+    // Si tenemos pocos picos, ser más conservador
+    if (this.consecutivePeaks < 4) {
+      alpha = Math.min(0.5, alpha * 1.5);
+    }
+    
+    return alpha * instantBPM + (1 - alpha) * this.smoothBPM;
+  }
+  
+  /**
+   * REFINAMIENTO SUB-FRAME (interpolación parabólica)
+   * Mejora la precisión del timestamp del pico
+   */
+  private refineSubFrame(baseTimestamp: number): number {
+    const n = this.signalBuffer.length;
+    if (n < 3) return baseTimestamp;
+    
+    const yPrev = this.signalBuffer[n - 3];
+    const yPeak = this.signalBuffer[n - 2];
+    const yNext = this.signalBuffer[n - 1];
+    
+    // Interpolación parabólica
+    const denominator = yPrev - 2 * yPeak + yNext;
+    
+    if (Math.abs(denominator) < 0.001) {
+      return baseTimestamp;
+    }
+    
+    const offset = (yPrev - yNext) / (2 * denominator);
+    
+    // offset está en frames, convertir a ms (asumiendo 30fps)
+    const frameInterval = 1000 / 30;
+    
+    return baseTimestamp + offset * frameInterval;
+  }
+  
+  /**
+   * ACTUALIZAR PARÁMETROS ADAPTATIVOS
+   */
+  private updateAdaptiveParameters(range: number): void {
+    // Umbral proporcional a la amplitud
+    const newThreshold = Math.max(4, range * 0.18);
+    this.peakThreshold = this.peakThreshold * 0.92 + newThreshold * 0.08;
+    
+    // Baseline adaptativo
+    if (this.signalBuffer.length >= 30) {
+      const recent = this.signalBuffer.slice(-30);
+      const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+      this.adaptiveBaseline = this.adaptiveBaseline * 0.95 + mean * 0.05;
+    }
+  }
+  
+  /**
+   * CALCULAR SQI
    */
   private calculateSQI(): number {
     if (this.signalBuffer.length < 60) return 0;
@@ -231,21 +294,20 @@ export class HeartBeatProcessor {
     const min = Math.min(...recent);
     const range = max - min;
     
-    // Factor 1: Rango de señal (debe ser suficiente para detectar pulsos)
-    const rangeFactor = Math.min(1, range / 20) * 40;
+    // Factor 1: Rango de señal
+    const rangeFactor = Math.min(1, range / 15) * 35;
     
-    // Factor 2: Consistencia de RR intervals
+    // Factor 2: Consistencia de RR
     let rrFactor = 0;
     if (this.rrIntervals.length >= 3) {
       const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
       const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
       const cv = Math.sqrt(variance) / mean;
-      // CV bajo = ritmo regular = mayor calidad
-      rrFactor = Math.max(0, (1 - cv * 2)) * 30;
+      rrFactor = Math.max(0, (1 - cv * 2.5)) * 35;
     }
     
-    // Factor 3: Número de picos detectados
-    const peakFactor = Math.min(1, this.consecutivePeaks / 5) * 30;
+    // Factor 3: Número de picos
+    const peakFactor = Math.min(1, this.consecutivePeaks / 4) * 30;
     
     return Math.min(100, rangeFactor + rrFactor + peakFactor);
   }
@@ -254,7 +316,7 @@ export class HeartBeatProcessor {
    * NORMALIZACIÓN ADAPTATIVA
    */
   private normalizeSignal(value: number): { normalizedValue: number; range: number } {
-    const recent = this.signalBuffer.slice(-120); // 4 segundos
+    const recent = this.signalBuffer.slice(-120);
     const min = Math.min(...recent);
     const max = Math.max(...recent);
     const range = max - min;
@@ -263,73 +325,47 @@ export class HeartBeatProcessor {
       return { normalizedValue: 0, range: 0 };
     }
     
-    // Normalizar a -50 a +50
     const normalizedValue = ((value - min) / range - 0.5) * 100;
-    
     return { normalizedValue, range };
   }
   
   /**
-   * UMBRAL DINÁMICO
+   * DETECCIÓN DE PICO CON ZERO-CROSSING DE VPG
    */
-  private updateThreshold(range: number): void {
-    // Umbral proporcional a la amplitud pero adaptativo
-    const newThreshold = Math.max(5, range * 0.2);
-    
-    // Suavizar cambios
-    this.peakThreshold = this.peakThreshold * 0.9 + newThreshold * 0.1;
-  }
-  
-  /**
-   * DETECCIÓN DE PICO CON ANÁLISIS DE DERIVADA
-   * Usa zero-crossing del VPG y análisis morfológico
-   */
-  private detectPeakWithDerivative(normalizedValue: number, timeSinceLastPeak: number): boolean {
+  private detectPeakWithZeroCrossing(normalizedValue: number, timeSinceLastPeak: number): boolean {
     const n = this.signalBuffer.length;
     const dn = this.derivativeBuffer.length;
     if (n < 7 || dn < 5) return false;
     
-    // 1. ANÁLISIS DE DERIVADA (VPG)
-    // Pico sistólico = zero-crossing descendente del VPG
+    // 1. ZERO-CROSSING DE VPG (derivada cruza de + a -)
     const deriv = this.derivativeBuffer.slice(-5);
-    const zeroCrossing = deriv[3] >= 0 && deriv[4] < 0; // Cruzando de + a -
+    const zeroCrossing = deriv[2] >= 0 && deriv[3] < 0 && deriv[4] < 0;
     
-    // 2. MÁXIMO LOCAL EN SEÑAL ORIGINAL
+    // 2. MÁXIMO LOCAL EN SEÑAL
     const recent = this.signalBuffer.slice(-7);
-    const recentNormalized = recent.map(v => {
-      const slice = this.signalBuffer.slice(-120);
-      const min = Math.min(...slice);
-      const max = Math.max(...slice);
-      const range = max - min;
-      if (range < 0.5) return 0;
-      return ((v - min) / range - 0.5) * 100;
-    });
+    const recentNorm = this.normalizeWindow(recent);
     
-    const [v0, v1, v2, v3, v4, v5, v6] = recentNormalized;
-    
-    // Verificar máximo local
+    const [v0, v1, v2, v3, v4, v5, v6] = recentNorm;
     const isLocalMax = v3 > v2 && v3 > v4 && v3 >= v1 && v3 >= v5;
     
     // 3. UMBRAL DE AMPLITUD
     const aboveThreshold = v3 > this.peakThreshold;
     
     // 4. PENDIENTES ADECUADAS
-    const risingSlope = (v3 - v0) > 2;
-    const fallingSlope = (v3 - v6) > 2;
+    const risingSlope = (v3 - v0) > 1.5;
+    const fallingSlope = (v3 - v6) > 1.5;
     
     // 5. INTERVALO MÍNIMO
-    const notTooSoon = timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS;
+    const notTooSoon = timeSinceLastPeak >= this.refractoryPeriod;
     
-    // 6. VALIDACIÓN DE AMPLITUD RELATIVA
+    // 6. AMPLITUD RELATIVA
     let amplitudeValid = true;
     if (this.lastPeakValue > 0) {
       const ratio = v3 / this.lastPeakValue;
-      amplitudeValid = ratio > 0.2 && ratio < 5.0; // Más permisivo
+      amplitudeValid = ratio > 0.25 && ratio < 4.0;
     }
     
-    // Combinar criterios:
-    // - Zero-crossing O máximo local (flexibilidad)
-    // - Más: umbral, pendientes, timing, amplitud
+    // Combinar: (zero-crossing O máximo local) + otros criterios
     const isPeak = (zeroCrossing || isLocalMax) && 
                    aboveThreshold && 
                    risingSlope && 
@@ -344,22 +380,28 @@ export class HeartBeatProcessor {
     return isPeak;
   }
   
+  private normalizeWindow(window: number[]): number[] {
+    const fullBuffer = this.signalBuffer.slice(-120);
+    const min = Math.min(...fullBuffer);
+    const max = Math.max(...fullBuffer);
+    const range = max - min;
+    
+    if (range < 0.5) return window.map(() => 0);
+    
+    return window.map(v => ((v - min) / range - 0.5) * 100);
+  }
+  
   /**
    * CALCULAR CONFIANZA
-   * Basado en la consistencia de intervalos RR
    */
   private calculateConfidence(): number {
     if (this.rrIntervals.length < 3) return 0;
     
-    // Calcular variabilidad de intervalos RR
     const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
     const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
-    const cv = Math.sqrt(variance) / mean; // Coeficiente de variación
+    const cv = Math.sqrt(variance) / mean;
     
-    // Menor variabilidad = mayor confianza
-    const confidence = Math.max(0, Math.min(1, 1 - cv * 1.5));
-    
-    return confidence;
+    return Math.max(0, Math.min(1, 1 - cv * 1.8));
   }
 
   private vibrate(): void {
@@ -384,7 +426,6 @@ export class HeartBeatProcessor {
       const osc = this.audioContext.createOscillator();
       const gain = this.audioContext.createGain();
       
-      // Tono descendente
       osc.frequency.setValueAtTime(880, t);
       osc.frequency.exponentialRampToValueAtTime(440, t + 0.08);
       gain.gain.setValueAtTime(0.15, t);
@@ -415,6 +456,10 @@ export class HeartBeatProcessor {
     return [...this.derivativeBuffer];
   }
   
+  getSmoothedBPM(): number {
+    return this.smoothBPM;
+  }
+  
   setArrhythmiaDetected(_isDetected: boolean): void {}
   setFingerDetected(_detected: boolean): void {}
   
@@ -428,6 +473,9 @@ export class HeartBeatProcessor {
     this.frameCount = 0;
     this.consecutivePeaks = 0;
     this.signalQualityIndex = 0;
+    this.refractoryPeriod = 250;
+    this.lastPeakValue = 0;
+    this.adaptiveBaseline = 0;
   }
   
   dispose(): void {
