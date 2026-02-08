@@ -9,6 +9,7 @@ import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import PerfusionIndexIndicator from "@/components/PerfusionIndexIndicator";
+import RGBDebugIndicator from "@/components/RGBDebugIndicator";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 
@@ -42,6 +43,7 @@ const Index = () => {
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [perfusionIndex, setPerfusionIndex] = useState<number>(0);
+  const [rgbDebugData, setRgbDebugData] = useState({ redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 });
   
   // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
@@ -452,6 +454,14 @@ const Index = () => {
         // Calcular y actualizar Perfusion Index (PI) del canal verde
         const pi = (rgbStats.greenAC / rgbStats.greenDC) * 100;
         setPerfusionIndex(pi);
+        
+        // Actualizar datos RGB para debug
+        setRgbDebugData({
+          redAC: rgbStats.redAC,
+          redDC: rgbStats.redDC,
+          greenAC: rgbStats.greenAC,
+          greenDC: rgbStats.greenDC
+        });
       }
       
       if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
@@ -582,6 +592,19 @@ const Index = () => {
             {/* Espaciador para centrar timer cuando PI no está visible */}
             {!isMonitoring && <div className="w-24" />}
           </div>
+
+          {/* RGB Debug Indicator - debajo del header */}
+          {isMonitoring && (
+            <div className="px-4 pb-2">
+              <RGBDebugIndicator 
+                redAC={rgbDebugData.redAC}
+                redDC={rgbDebugData.redDC}
+                greenAC={rgbDebugData.greenAC}
+                greenDC={rgbDebugData.greenDC}
+                isMonitoring={isMonitoring}
+              />
+            </div>
+          )}
 
           <div className="flex-1">
             <PPGSignalMeter 
