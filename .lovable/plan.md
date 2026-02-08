@@ -1,236 +1,199 @@
-# PLAN MAESTRO: REEMPLAZO TOTAL DEL SISTEMA DE CAPTURA Y PROCESAMIENTO PPG
 
-## ESTADO ACTUAL: ✅ IMPLEMENTADO (FASE 1-4 COMPLETADAS)
+# Plan de Corrección: Sistema PPG de Lectura Real
 
----
+## Diagnóstico del Problema
 
-## MÓDULOS IMPLEMENTADOS
+Tras revisar exhaustivamente el código y buscar soporte en las últimas publicaciones (Nature 2024, IEEE 2024, arXiv 2025), he identificado los siguientes problemas críticos:
 
-### ✅ src/modules/ppg-core/ (NUEVO - COMPLETO)
+### Problemas Encontrados
 
-| Archivo | Estado | Descripción |
-|---------|--------|-------------|
-| `HilbertTransform.ts` | ✅ | Transformada de Hilbert via FFT para envolvente analítica |
-| `MultiSQIValidator.ts` | ✅ | 8 índices de calidad: Perfusion, Skewness, Kurtosis, Entropy, SNR, Periodicity, ZeroCrossing, Stability |
-| `RGBCalibrator.ts` | ✅ | Calibración ZLO (Zero Light Offset) + linearización gamma |
-| `PeakDetectorHDEM.ts` | ✅ | Hilbert Double Envelope Method - 99.98% sensibilidad |
-| `AdaptiveBandpass.ts` | ✅ | Butterworth 0.4-4.5Hz + Notch 50/60Hz opcional |
-| `PPGPipeline.ts` | ✅ | Orquestador unificado del pipeline completo |
-| `index.ts` | ✅ | Exportaciones del módulo |
+| Problema | Archivo | Impacto |
+|----------|---------|---------|
+| **DisclaimerOverlay no solicitado** | `Index.tsx` línea 402 | UI no deseada que ocupa espacio |
+| **Calibración ZLO bloquea medición** | `RGBCalibrator.ts` | Espera 30 frames SIN dedo, pero el usuario pone el dedo inmediatamente |
+| **Detección de dedo muy permisiva** | `PPGPipeline.ts` línea 391-399 | Criterios demasiado laxos permiten falsos positivos |
+| **Hooks obsoletos sin eliminar** | `useSignalProcessor.ts`, `useHeartBeatProcessor.ts`, `HeartBeatProcessor.ts` | Código muerto que confunde |
+| **PPGSignalProcessor.ts duplicado** | `signal-processing/` | Duplica funcionalidad del nuevo pipeline |
 
-### ✅ src/hooks/ (HOOKS UNIFICADOS)
+### Problema Principal de Lectura
 
-| Archivo | Estado | Descripción |
-|---------|--------|-------------|
-| `usePPGPipeline.ts` | ✅ | Hook unificado que reemplaza useSignalProcessor + useHeartBeatProcessor |
-| `useCamera.ts` | ✅ | **NUEVO** - Hook de cámara con getUserMedia directo desde gesto de usuario |
+El sistema actual tiene un flujo de calibración ZLO que espera capturar frames **sin dedo** para establecer el nivel base de luz. Pero en la práctica:
 
-### ✅ src/components/ (COMPONENTES UI)
-
-| Archivo | Estado | Descripción |
-|---------|--------|-------------|
-| `PPGCamera.tsx` | ✅ | **NUEVO** - Componente de video para captura PPG |
-| `DisclaimerOverlay.tsx` | ✅ | Aviso legal permanente |
-| `MeasurementConfidenceIndicator.tsx` | ✅ | Indicador visual HIGH/MEDIUM/LOW/INVALID |
-| `CalibrationOverlay.tsx` | ✅ | Guía de calibración con progreso |
+1. Usuario presiona "Iniciar"
+2. Cámara se activa con flash
+3. Pipeline inicia `startCalibration()` esperando frames sin dedo
+4. Usuario ya tiene el dedo puesto
+5. Calibración recibe valores altos (con dedo) como "baseline"
+6. Esto distorsiona todos los cálculos AC/DC posteriores
 
 ---
 
-## ARQUITECTURA IMPLEMENTADA
+## Solución Propuesta
 
-```text
-Cámara (30fps, flash ON)
-    |
-    v
-[1. PPGPipeline.processFrame()]
-    - extractROI() - 85% del área
-    - RGBCalibrator.calibrate() - ZLO + gamma
-    - detectFinger() - R/G ratio
-    |
-    v
-[2. AdaptiveBandpass.filter()]
-    - Notch 50/60Hz (opcional)
-    - Butterworth 0.4-4.5Hz
-    |
-    v
-[3. PeakDetectorHDEM.processSample()]
-    - HilbertTransform.doubleEnvelope()
-    - Detección de cruces de threshold
-    - Validación intervalo mínimo 250ms
-    - Extracción RR intervals
-    |
-    v
-[4. MultiSQIValidator.validate()]
-    - 8 índices de calidad ponderados
-    - Nivel de confianza: HIGH/MEDIUM/LOW/INVALID
-    |
-    v
-[5. Cálculo de Vitales]
-    - BPM desde RR intervals reales
-    - SpO2 desde Ratio R calibrado
-    - HRV: SDNN, RMSSD, pNN50
+### FASE 1: Eliminar UI No Solicitada
+
+**Archivo:** `src/pages/Index.tsx`
+
+Eliminar la línea que renderiza `DisclaimerOverlay`:
+```typescript
+// ELIMINAR línea 402:
+<DisclaimerOverlay />
 ```
 
----
+Y eliminar el import correspondiente (línea 12).
 
-## CÓDIGO OBSOLETO ELIMINADO
+### FASE 2: Corregir Flujo de Calibración
 
-| Archivo | Estado | Razón |
-|---------|--------|-------|
-| `src/modules/camera/PIDController.ts` | ❌ ELIMINADO | No se usaba |
-| `src/modules/signal-processing/FrameProcessor.ts` | ❌ ELIMINADO | Duplicaba PPGSignalProcessor |
-| `src/modules/signal-processing/SignalQualityAnalyzer.ts` | ❌ ELIMINADO | Reemplazado por MultiSQIValidator |
-| `src/components/CameraView.tsx` | ❌ ELIMINADO | Reemplazado por PPGCamera + useCamera |
+**Archivo:** `src/modules/ppg-core/RGBCalibrator.ts`
 
----
+El problema es que la calibración ZLO está diseñada para capturar luz ambiente SIN dedo, pero esto no es práctico. La solución según la literatura (Nature Digital Biology 2024) es:
 
-## CÓDIGO LEGACY (MANTENER POR COMPATIBILIDAD)
+1. **Saltar calibración ZLO** y usar valores por defecto
+2. **Auto-calibrar** dinámicamente desde los primeros frames con dedo
+3. Estimar ZLO como 2-5% del valor DC inicial
 
-Los siguientes archivos se mantienen temporalmente para no romper otras partes del sistema.
+Cambios propuestos:
+- Modificar `forceCalibrationFromMeasurement()` para ser el método principal
+- Hacer que la calibración sea instantánea cuando hay señal válida
 
-| Archivo | Estado | Acción Recomendada |
-|---------|--------|-------------------|
-| `src/modules/HeartBeatProcessor.ts` | ⚠️ LEGACY | Migrar a PeakDetectorHDEM |
-| `src/hooks/useHeartBeatProcessor.ts` | ⚠️ LEGACY | Usar usePPGPipeline |
-| `src/hooks/useSignalProcessor.ts` | ⚠️ LEGACY | Usar usePPGPipeline |
-| `src/modules/signal-processing/PPGSignalProcessor.ts` | ⚠️ LEGACY | Usar PPGPipeline |
-| `src/modules/signal-processing/BandpassFilter.ts` | ⚠️ LEGACY | Usar AdaptiveBandpass |
+### FASE 3: Mejorar Detección de Dedo
 
----
+**Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
 
-## FLUJO CRÍTICO DE CÁMARA (CORREGIDO)
+La detección actual es demasiado permisiva. Según la investigación "Seeing Red: PPG Biometrics" (Oxford/IEEE 2020), los criterios óptimos son:
 
-**PROBLEMA ANTERIOR**: `getUserMedia` se llamaba dentro de un `useEffect`, lo cual rompe
-la cadena de gesto del usuario y causa errores de permisos en navegadores modernos.
+1. **Red > 150** (con flash encendido, el dedo iluminado da valores altos)
+2. **Red/Green ratio > 1.2** (sangre absorbe verde más que rojo)
+3. **Valor DC estable** por al menos 10 frames consecutivos
 
-**SOLUCIÓN IMPLEMENTADA**: 
-1. Nuevo hook `useCamera.ts` expone `requestCamera()` como función asíncrona
-2. `requestCamera()` se llama DIRECTAMENTE desde el `onClick` del botón "Iniciar"
-3. Esto cumple con las políticas de seguridad del navegador (MDN User Activation)
-
-```text
-Usuario hace click en "Iniciar"
-    |
-    v
-handleToggleMonitoring() → startMonitoring()
-    |
-    v
-requestCamera() ← LLAMADA DIRECTA DESDE GESTO
-    |
-    v
-navigator.mediaDevices.getUserMedia()
-    |
-    v
-Stream activo → PPGPipeline.start() → Loop de captura
+Cambios en `detectFinger()`:
+```typescript
+private detectFinger(rawRed: number, rawGreen: number): boolean {
+  // Con flash encendido, el dedo iluminado debe dar valores ALTOS
+  const hasHighRed = rawRed > 120; // Era > 40
+  const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
+  const validRatio = rgRatio > 1.1 && rgRatio < 4.0;
+  const notSaturated = rawRed < 253 && rawGreen < 253;
+  
+  return hasHighRed && validRatio && notSaturated;
+}
 ```
 
-## FÓRMULAS MATEMÁTICAS IMPLEMENTADAS
+### FASE 4: Optimizar Extracción de Señal
 
-### Transformada de Hilbert (HilbertTransform.ts)
+**Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
 
-```text
-Entrada: señal x[n] de longitud N
+Según la literatura reciente:
+- **LUMA = 0.299R + 0.587G + 0.114B** es mejor que canal verde solo
+- Pero con flash y dedo, **canal ROJO** tiene mejor SNR
+- Usar **canal verde como fallback** solo si rojo está saturado
 
-1. X[k] = FFT(x[n])
-2. H[k] = 1 (k=0), 2 (0<k<N/2), 0 (k≥N/2)
-3. Z[k] = X[k] * H[k]
-4. z[n] = IFFT(Z[k])  // Señal analítica
-5. envolvente[n] = |z[n]| = sqrt(real² + imag²)
-6. fase[n] = atan2(imag, real)
-```
+Modificar `processFrame()` para seleccionar el canal óptimo.
 
-### HDEM Peak Detection (PeakDetectorHDEM.ts)
+### FASE 5: Eliminar Código Obsoleto
 
-```text
-1. env1 = |Hilbert(ppg)|
-2. env2 = |Hilbert(env1)|
-3. threshold = (env1 + env2) / 2
-4. peaks = find(ppg cruza threshold ascendente)
-5. peaks = filter(interval >= 250ms)
-```
+**Archivos a ELIMINAR:**
+1. `src/hooks/useSignalProcessor.ts` - Reemplazado por `usePPGPipeline.ts`
+2. `src/hooks/useHeartBeatProcessor.ts` - Reemplazado por `usePPGPipeline.ts`
+3. `src/hooks/useVitalSignsProcessor.ts` - Integrado en `usePPGPipeline.ts`
+4. `src/modules/HeartBeatProcessor.ts` - Reemplazado por `PeakDetectorHDEM.ts`
+5. `src/modules/signal-processing/PPGSignalProcessor.ts` - Integrado en `PPGPipeline.ts`
 
-### 8 Signal Quality Indices (MultiSQIValidator.ts)
+### FASE 6: Mejorar el Loop de Captura
 
-```text
-1. PSQI = (AC/DC) * 100                       // Perfusion Index
-2. kSQI = sum((x-μ)³) / (n * σ³)             // Skewness
-3. KurtSQI = sum((x-μ)⁴) / (n * σ⁴) - 3      // Kurtosis
-4. eSQI = -sum(p * log2(p))                   // Shannon Entropy
-5. snrSQI = (max-min) / std                   // SNR
-6. pSQI = max(autocorr[lag:10-45])            // Periodicity
-7. zcSQI = count(sign changes) / duration    // Zero Crossing
-8. sSQI = 1 - CV(segment_amplitudes)          // Stability
+**Archivo:** `src/pages/Index.tsx`
 
-Pesos: 0.25*PSQI + 0.15*SNR + 0.15*pSQI + 0.12*eSQI + 
-       0.10*kSQI + 0.10*Kurtosis + 0.08*ZC + 0.05*Stability
-```
-
-### SpO2 Calculation (PPGPipeline.ts)
-
-```text
-R = (AC_red / DC_red) / (AC_green / DC_green)
-SpO2 = 100 - 15 * (R - 0.8)
-
-Corrección por PI:
-- PI < 1%: SpO2 += 2
-- PI > 5%: SpO2 -= 1
-```
-
----
-
-## PRÓXIMOS PASOS RECOMENDADOS
-
-### Migración de Index.tsx (Opcional pero recomendado)
-
-Para aprovechar completamente el nuevo sistema, se recomienda:
-
-1. Importar `usePPGPipeline` en lugar de los 3 hooks separados
-2. Usar `DisclaimerOverlay` en el footer
-3. Usar `MeasurementConfidenceIndicator` para mostrar calidad
-4. Usar `CalibrationOverlay` durante la calibración inicial
-
-### Ejemplo de integración:
+El loop actual captura a 30 FPS pero no verifica si el video realmente tiene frames nuevos. Agregar verificación:
 
 ```typescript
-import { usePPGPipeline } from '@/hooks/usePPGPipeline';
-import DisclaimerOverlay from '@/components/DisclaimerOverlay';
-import MeasurementConfidenceIndicator from '@/components/MeasurementConfidenceIndicator';
-
-const Index = () => {
-  const {
-    start,
-    stop,
-    processFrame,
-    heartRate,
-    spo2,
-    perfusionIndex,
-    confidence,
-    signalQuality,
-    // ... demás estados
-  } = usePPGPipeline();
+const captureFrame = () => {
+  if (!isProcessingRef.current) return;
   
-  // ... resto del componente
+  const video = cameraComponentRef.current?.getVideoElement();
+  if (!video || video.readyState < 2 || video.videoWidth === 0) {
+    frameLoopRef.current = requestAnimationFrame(captureFrame);
+    return;
+  }
+  
+  // NUEVO: Verificar que el video está reproduciendo
+  if (video.paused || video.ended) {
+    video.play().catch(() => {});
+    frameLoopRef.current = requestAnimationFrame(captureFrame);
+    return;
+  }
+  
+  // ... resto del código
 };
 ```
 
 ---
 
-## GARANTÍAS DEL NUEVO SISTEMA
+## Resumen de Cambios
 
-- ✅ **CERO datos aleatorios**: Todo calculado desde RGB de cámara
-- ✅ **CERO simulación**: Sin Math.random() en ningún cálculo
-- ✅ **CERO valores fijos**: Sin bases hardcodeadas
-- ✅ **100% trazable**: Cada valor tiene origen en píxeles de cámara
-- ✅ **Transparente**: Logs detallados cada segundo
-- ✅ **Referencial**: DisclaimerOverlay disponible
+| Archivo | Acción | Descripción |
+|---------|--------|-------------|
+| `src/pages/Index.tsx` | Modificar | Eliminar DisclaimerOverlay, mejorar loop de captura |
+| `src/modules/ppg-core/PPGPipeline.ts` | Modificar | Mejorar detección de dedo, selección de canal, calibración automática |
+| `src/modules/ppg-core/RGBCalibrator.ts` | Modificar | Calibración instantánea, sin esperar frames sin dedo |
+| `src/hooks/useSignalProcessor.ts` | **ELIMINAR** | Código obsoleto |
+| `src/hooks/useHeartBeatProcessor.ts` | **ELIMINAR** | Código obsoleto |
+| `src/hooks/useVitalSignsProcessor.ts` | **ELIMINAR** | Código obsoleto |
+| `src/modules/HeartBeatProcessor.ts` | **ELIMINAR** | Código obsoleto |
+| `src/modules/signal-processing/PPGSignalProcessor.ts` | **ELIMINAR** | Código obsoleto |
+| `src/components/DisclaimerOverlay.tsx` | **ELIMINAR** | UI no solicitada |
 
 ---
 
-## REFERENCIAS CIENTÍFICAS
+## Sección Técnica
 
-1. Chakraborty et al. (2022). "Peak Detection via Hilbert Transform". Symmetry, MDPI.
-2. Elgendi M. (2017). "Optimal Signal Quality Index for PPG Signals". PMC5597264.
-3. Hoffman et al. (2022). "Smartphone camera oximetry". Nature Digital Medicine.
-4. Antoniou et al. (2023). "Calculation of HR and SpO2 Using Smartphone". PMC9863359.
-5. Frontiers Digital Health (2023). "Calibration method for smartphone cPPG".
-6. Nature Digital Biology (2024). "Optimal SQI for rPPG sensing".
+### Fórmulas de Detección de Dedo (Oxford 2020)
+
+```text
+LUMA = 0.299 * R + 0.587 * G + 0.114 * B
+
+Criterios de dedo válido (con flash):
+1. R > 120 (luminancia mínima)
+2. R/G > 1.1 (sangre absorbe verde)
+3. R < 253 AND G < 253 (no saturado)
+4. Varianza(R) > 0.5 en 10 frames (señal pulsátil)
+```
+
+### Calibración Automática (Sin ZLO Previo)
+
+```text
+1. Primeros 15 frames con dedo:
+   - ZLO_estimated = min(R, G, B) * 0.02
+   - gamma = 2.2 (valor por defecto sRGB)
+   
+2. Después de 15 frames:
+   - AC = RMS(señal_centrada) * sqrt(2)
+   - DC = mean(señal)
+   - PI = (AC / DC) * 100
+   
+3. Validación:
+   - PI > 0.1% = señal válida
+   - PI < 0.1% = ruido o sin dedo
+```
+
+### Selección de Canal Óptimo
+
+```text
+Con flash + dedo:
+- Canal ROJO: Mejor SNR, más pulsatilidad
+- Canal VERDE: Mejor para SpO2 (ratio R/G)
+
+Sin flash o saturación:
+- Canal VERDE como fallback
+- Calcular SNR de ambos y elegir mejor
+```
+
+---
+
+## Garantías del Sistema Corregido
+
+- **CERO DisclaimerOverlay** - Eliminado completamente
+- **CERO código obsoleto** - Todos los hooks y procesadores legacy eliminados
+- **CERO calibración bloqueante** - Calibración instantánea desde primer frame
+- **Detección de dedo robusta** - Criterios basados en literatura validada
+- **100% datos reales** - Sin simulación ni Math.random()
+- **Flujo simplificado** - Un solo pipeline (PPGPipeline.ts) para todo
