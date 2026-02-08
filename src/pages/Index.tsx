@@ -2,89 +2,71 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
-import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
-import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
+import { usePPGPipeline } from "@/hooks/usePPGPipeline";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import PerfusionIndexIndicator from "@/components/PerfusionIndexIndicator";
 import RGBDebugIndicator from "@/components/RGBDebugIndicator";
-import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
+import DisclaimerOverlay from "@/components/DisclaimerOverlay";
+import MeasurementConfidenceIndicator from "@/components/MeasurementConfidenceIndicator";
 import { toast } from "@/components/ui/use-toast";
 
 const Index = () => {
   // ESTADOS PRINCIPALES
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
-  const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
-    spo2: 0,
-    glucose: 0,
-    hemoglobin: 0,
-    pressure: { systolic: 0, diastolic: 0 },
-    arrhythmiaCount: 0,
-    arrhythmiaStatus: "SIN ARRITMIAS|0",
-    lipids: { totalCholesterol: 0, triglycerides: 0 },
-    isCalibrating: false,
-    calibrationProgress: 0,
-    lastArrhythmiaData: undefined,
-    signalQuality: 0,
-    measurementConfidence: 'INVALID'
-  });
-  const [heartRate, setHeartRate] = useState(0);
-  const [heartbeatSignal, setHeartbeatSignal] = useState(0);
-  const [beatMarker, setBeatMarker] = useState(0);
-  const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
-  const [isCalibrating, setIsCalibrating] = useState(false);
-  const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [perfusionIndex, setPerfusionIndex] = useState<number>(0);
-  const [rgbDebugData, setRgbDebugData] = useState({ redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 });
   
   // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
   const arrhythmiaDetectedRef = useRef(false);
-  const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const cameraRef = useRef<CameraViewHandle>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
   
-  // HOOKS DE PROCESAMIENTO
-  const { 
-    startProcessing, 
-    stopProcessing, 
-    lastSignal, 
-    processFrame, 
-    isProcessing, 
+  // HOOK UNIFICADO DE PPG - Reemplaza useSignalProcessor, useHeartBeatProcessor, useVitalSignsProcessor
+  const {
+    // Estado
+    isCalibrating,
+    calibrationProgress,
+    isProcessing,
+    heartRate,
+    spo2,
+    perfusionIndex,
+    signalQuality,
+    confidence,
+    fingerDetected,
+    filteredValue,
+    isPeak,
+    rrIntervals,
+    hrv,
+    rgbStats,
     framesProcessed,
-    getRGBStats,
-    getVPGBuffer,
-    getAPGBuffer,
-    getFilteredBuffer,
-  } = useSignalProcessor();
-  
-  const { 
-    processSignal: processHeartBeat, 
-    setArrhythmiaState,
-    reset: resetHeartBeat,
-  } = useHeartBeatProcessor();
-  
-  const { 
-    processSignal: processVitalSigns, 
-    setRGBData,
-    reset: resetVitalSigns,
-    fullReset: fullResetVitalSigns,
-    lastValidResults,
+    
+    // Métodos de control
+    start: startPipeline,
+    stop: stopPipeline,
     startCalibration,
-    forceCalibrationCompletion,
-    getCalibrationProgress
-  } = useVitalSignsProcessor();
+    forceCalibration,
+    reset: resetPipeline,
+    
+    // Procesamiento
+    processFrame,
+    
+    // Getters
+    getRGBStats,
+    getRRIntervals,
+    getLastFrame,
+    
+    // Callbacks
+    setOnPeak
+  } = usePPGPipeline();
   
   const { saveMeasurement } = useSaveMeasurement();
 
@@ -100,6 +82,15 @@ const Index = () => {
       });
     }
   }, []);
+
+  // CALLBACK PARA PICOS - Vibración y marcador
+  useEffect(() => {
+    setOnPeak((timestamp, bpm) => {
+      if (navigator.vibrate) {
+        navigator.vibrate(50);
+      }
+    });
+  }, [setOnPeak]);
 
   // PANTALLA COMPLETA
   const enterFullScreen = async () => {
@@ -164,14 +155,6 @@ const Index = () => {
     };
   }, []);
 
-  // SINCRONIZACIÓN DE RESULTADOS
-  useEffect(() => {
-    if (lastValidResults && !isMonitoring) {
-      setVitalSigns(lastValidResults);
-      setShowResults(true);
-    }
-  }, [lastValidResults, isMonitoring]);
-
   // === LOOP DE CAPTURA DE FRAMES ===
   const startFrameLoop = useCallback(() => {
     if (isProcessingRef.current) return;
@@ -229,7 +212,7 @@ const Index = () => {
   const startMonitoring = useCallback(() => {
     if (isMonitoring) return;
     
-    console.log('🚀 Iniciando monitoreo...');
+    console.log('🚀 Iniciando monitoreo con Pipeline Unificado...');
     
     if (navigator.vibrate) {
       navigator.vibrate([200]);
@@ -238,10 +221,10 @@ const Index = () => {
     enterFullScreen();
     setShowResults(false);
     setElapsedTime(0);
-    setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // Iniciar procesamiento
-    startProcessing();
+    // Iniciar pipeline unificado
+    startPipeline();
+    startCalibration();
     setIsCameraOn(true);
     setIsMonitoring(true);
     
@@ -261,12 +244,7 @@ const Index = () => {
       });
     }, 1000);
     
-    // Calibración automática
-    setIsCalibrating(true);
-    startCalibration();
-    setTimeout(() => setIsCalibrating(false), 3000);
-    
-  }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
+  }, [isMonitoring, startPipeline, startCalibration, enterFullScreen]);
 
   // === CUANDO LA CÁMARA ESTÁ LISTA ===
   const handleStreamReady = useCallback((stream: MediaStream) => {
@@ -311,22 +289,32 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    // Detener procesadores
-    stopProcessing();
+    // Detener pipeline
+    stopPipeline();
     
     if (isCalibrating) {
-      forceCalibrationCompletion();
+      forceCalibration();
     }
     
-    const savedResults = resetVitalSigns();
-    
-    // Guardar medición en la base de datos automáticamente
-    if (savedResults || vitalSigns.spo2 > 0) {
-      const dataToSave = savedResults || vitalSigns;
+    // Guardar medición en la base de datos
+    if (heartRate > 0 || spo2 > 0) {
       await saveMeasurement({
         heartRate,
-        vitalSigns: dataToSave,
-        signalQuality: lastSignal?.quality || 0
+        vitalSigns: {
+          spo2,
+          glucose: 0,
+          hemoglobin: 0,
+          pressure: { systolic: 0, diastolic: 0 },
+          arrhythmiaCount: 0,
+          arrhythmiaStatus: "SIN ARRITMIAS|0",
+          lipids: { totalCholesterol: 0, triglycerides: 0 },
+          isCalibrating: false,
+          calibrationProgress: 100,
+          lastArrhythmiaData: undefined,
+          signalQuality,
+          measurementConfidence: confidence
+        },
+        signalQuality
       });
     }
     
@@ -339,18 +327,11 @@ const Index = () => {
     }
     
     setIsMonitoring(false);
-    setIsCalibrating(false);
-    
-    if (savedResults) {
-      setVitalSigns(savedResults);
-      setShowResults(true);
-    }
-    
+    setShowResults(true);
     setElapsedTime(0);
-    setCalibrationProgress(0);
     
     console.log('✅ Medición finalizada y guardada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
+  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopPipeline, forceCalibration, saveMeasurement, heartRate, spo2, signalQuality, confidence]);
 
   // === RESET COMPLETO ===
   const handleReset = useCallback(() => {
@@ -363,9 +344,8 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     
-    stopProcessing();
-    fullResetVitalSigns();
-    resetHeartBeat();
+    // Reset pipeline unificado
+    resetPipeline();
     
     setIsCameraOn(false);
     
@@ -376,151 +356,35 @@ const Index = () => {
     
     setIsMonitoring(false);
     setShowResults(false);
-    setIsCalibrating(false);
     setElapsedTime(0);
-    setHeartRate(0);
-    setHeartbeatSignal(0);
-    setBeatMarker(0);
-    setRRIntervals([]);
-    setVitalSigns({ 
-      spo2: 0,
-      glucose: 0,
-      hemoglobin: 0,
-      pressure: { systolic: 0, diastolic: 0 },
-      arrhythmiaCount: 0,
-      arrhythmiaStatus: "SIN ARRITMIAS|0",
-      lipids: { totalCholesterol: 0, triglycerides: 0 },
-      isCalibrating: false,
-      calibrationProgress: 0,
-      lastArrhythmiaData: undefined,
-      signalQuality: 0,
-      measurementConfidence: 'INVALID'
-    });
-    setArrhythmiaCount("--");
-    lastArrhythmiaData.current = null;
-    setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
     
     console.log('✅ Reset completado');
-  }, [cameraStream, stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
+  }, [cameraStream, stopFrameLoop, resetPipeline]);
 
-  // === PROCESAR SEÑAL PPG ===
-  const vitalSignsFrameCounter = useRef<number>(0);
-  const VITALS_PROCESS_EVERY_N_FRAMES = 5;
-  
+  // Detectar arritmias basadas en HRV
   useEffect(() => {
-    if (!lastSignal || !isMonitoring) return;
+    if (!isMonitoring || !hrv) return;
     
-    const signalValue = lastSignal.filteredValue;
-
-    // Procesar latidos
-    const heartBeatResult = processHeartBeat(
-      signalValue,
-      true,
-      lastSignal.timestamp
-    );
+    // Detectar irregularidad usando métricas HRV
+    const isIrregular = hrv.rmssd > 50 || hrv.pnn50 > 20;
     
-    setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
-    
-    if (heartBeatResult.isPeak) {
-      setBeatMarker(1);
-      setTimeout(() => setBeatMarker(0), 300);
-    }
-    
-    if (heartBeatResult.rrData?.intervals) {
-      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
-    }
-    
-    // Throttle signos vitales
-    vitalSignsFrameCounter.current++;
-    
-    if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
-      vitalSignsFrameCounter.current = 0;
+    if (isIrregular !== arrhythmiaDetectedRef.current) {
+      arrhythmiaDetectedRef.current = isIrregular;
       
-      // INTEGRACIÓN DE DATOS RGB REALES DESDE PPGSignalProcessor
-      // Usar getRGBStats() para obtener AC/DC calculados con precisión
-      const rgbStats = getRGBStats();
-      
-      if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
-        // Usar valores calculados con ventana de 4 segundos (más precisos)
-        setRGBData({
-          redAC: rgbStats.redAC,
-          redDC: rgbStats.redDC,
-          greenAC: rgbStats.greenAC,
-          greenDC: rgbStats.greenDC
-        });
-        
-        // Calcular y actualizar Perfusion Index (PI) del canal verde
-        const pi = (rgbStats.greenAC / rgbStats.greenDC) * 100;
-        setPerfusionIndex(pi);
-        
-        // Actualizar datos RGB para debug
-        setRgbDebugData({
-          redAC: rgbStats.redAC,
-          redDC: rgbStats.redDC,
-          greenAC: rgbStats.greenAC,
-          greenDC: rgbStats.greenDC
-        });
-      }
-      
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
-        const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-          
-        if (vitals) {
-          setVitalSigns(vitals);
-          
-          // Actualizar estado de arritmia
-          const arrhythmiaStatus = vitals.arrhythmiaStatus;
-          if (arrhythmiaStatus) {
-            lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
-            const parts = arrhythmiaStatus.split('|');
-            const count = parts.length > 1 ? parts[1] : "0";
-            setArrhythmiaCount(count);
-            
-            const isArrhythmiaDetected = arrhythmiaStatus.includes("ARRITMIA DETECTADA");
-            if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-              arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-              setArrhythmiaState(isArrhythmiaDetected);
-              
-              if (isArrhythmiaDetected) {
-                // Vibración fuerte para arritmia
-                if (navigator.vibrate) {
-                  navigator.vibrate([200, 100, 200]);
-                }
-                toast({ 
-                  title: "⚠️ Arritmia detectada", 
-                  description: `Latido irregular #${vitals.arrhythmiaCount}`, 
-                  variant: "destructive", 
-                  duration: 4000 
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, getRGBStats]);
-
-  // CONTROL DE CALIBRACIÓN
-  useEffect(() => {
-    if (!isCalibrating) return;
-    
-    const interval = setInterval(() => {
-      const currentProgress = getCalibrationProgress();
-      setCalibrationProgress(currentProgress);
-
-      if (currentProgress >= 100) {
-        clearInterval(interval);
-        setIsCalibrating(false);
+      if (isIrregular) {
         if (navigator.vibrate) {
-          navigator.vibrate([100]);
+          navigator.vibrate([200, 100, 200]);
         }
+        toast({ 
+          title: "⚠️ Variabilidad alta detectada", 
+          description: `RMSSD: ${hrv.rmssd.toFixed(1)}ms`, 
+          variant: "destructive", 
+          duration: 4000 
+        });
       }
-    }, 500);
-
-    return () => clearInterval(interval);
-  }, [isCalibrating, getCalibrationProgress]);
+    }
+  }, [isMonitoring, hrv]);
 
   const handleToggleMonitoring = () => {
     if (isMonitoring) {
@@ -542,6 +406,9 @@ const Index = () => {
       WebkitTouchCallout: 'none',
       WebkitUserSelect: 'none'
     }}>
+      {/* DISCLAIMER PERMANENTE */}
+      <DisclaimerOverlay />
+      
       {/* OVERLAY PANTALLA COMPLETA */}
       {!isFullscreen && (
         <button 
@@ -561,8 +428,8 @@ const Index = () => {
         {/* PREVIEW DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
-          isFingerDetected={true}
-          signalQuality={100}
+          isFingerDetected={fingerDetected}
+          signalQuality={signalQuality}
           isVisible={isCameraOn}
         />
 
@@ -576,7 +443,7 @@ const Index = () => {
         </div>
 
         <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER - Tiempo restante y PI */}
+          {/* HEADER - Tiempo restante, PI y Confianza */}
           <div className="px-4 py-2 flex justify-between items-center bg-black/30">
             {/* Indicador de Perfusion Index */}
             <PerfusionIndexIndicator 
@@ -584,47 +451,69 @@ const Index = () => {
               isMonitoring={isMonitoring}
             />
             
+            {/* Indicador de Confianza */}
+            {isMonitoring && (
+              <MeasurementConfidenceIndicator 
+                confidence={confidence}
+                signalQuality={signalQuality}
+                perfusionIndex={perfusionIndex}
+                isMonitoring={isMonitoring}
+              />
+            )}
+            
             {/* Timer */}
             <div className="text-white text-xl font-bold">
               {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
             </div>
-            
-            {/* Espaciador para centrar timer cuando PI no está visible */}
-            {!isMonitoring && <div className="w-24" />}
           </div>
 
           {/* RGB Debug Indicator - debajo del header */}
           {isMonitoring && (
             <div className="px-4 pb-2">
               <RGBDebugIndicator 
-                redAC={rgbDebugData.redAC}
-                redDC={rgbDebugData.redDC}
-                greenAC={rgbDebugData.greenAC}
-                greenDC={rgbDebugData.greenDC}
+                redAC={rgbStats.redAC}
+                redDC={rgbStats.redDC}
+                greenAC={rgbStats.greenAC}
+                greenDC={rgbStats.greenDC}
                 isMonitoring={isMonitoring}
               />
             </div>
           )}
 
+          {/* Barra de calibración */}
+          {isCalibrating && (
+            <div className="px-4 pb-2">
+              <div className="bg-black/50 rounded-lg p-2">
+                <div className="text-white text-xs mb-1 text-center">
+                  Calibrando ZLO... {calibrationProgress}%
+                </div>
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary transition-all duration-300"
+                    style={{ width: `${calibrationProgress}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex-1">
             <PPGSignalMeter 
-              value={heartbeatSignal}
-              quality={lastSignal?.quality || 0}
-              isFingerDetected={lastSignal?.fingerDetected || false}
+              value={filteredValue}
+              quality={signalQuality}
+              isFingerDetected={fingerDetected}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
-              arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
-              rawArrhythmiaData={lastArrhythmiaData.current}
+              arrhythmiaStatus={arrhythmiaDetectedRef.current ? "ARRITMIA DETECTADA|1" : "SIN ARRITMIAS|0"}
+              rawArrhythmiaData={null}
               preserveResults={showResults}
-              diagnosticMessage={lastSignal?.diagnostics?.message}
-              isPeak={beatMarker === 1}
+              diagnosticMessage={isCalibrating ? "Calibrando..." : undefined}
+              isPeak={isPeak}
               bpm={heartRate}
-              spo2={vitalSigns.spo2}
+              spo2={spo2}
               rrIntervals={rrIntervals}
             />
           </div>
-
-          {/* CONTADOR DE ARRITMIAS - Solo texto discreto, la visualización está en la onda */}
 
           {/* SIGNOS VITALES */}
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
@@ -637,38 +526,32 @@ const Index = () => {
               />
               <VitalSign 
                 label="SPO2"
-                value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"}
+                value={spo2 > 0 ? spo2 : "--"}
                 unit="%"
                 highlighted={showResults}
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
-                value={vitalSigns.pressure && vitalSigns.pressure.systolic > 0 
-                  ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` 
-                  : "--/--"}
+                value="--/--"
                 unit="mmHg"
                 highlighted={showResults}
               />
               <VitalSign 
-                label="HEMOGLOBINA"
-                value={vitalSigns.hemoglobin > 0 ? vitalSigns.hemoglobin : "--"}
-                unit="g/dL"
+                label="SDNN"
+                value={hrv.sdnn > 0 ? hrv.sdnn.toFixed(0) : "--"}
+                unit="ms"
                 highlighted={showResults}
               />
               <VitalSign 
-                label="GLUCOSA"
-                value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
-                unit="mg/dL"
+                label="RMSSD"
+                value={hrv.rmssd > 0 ? hrv.rmssd.toFixed(0) : "--"}
+                unit="ms"
                 highlighted={showResults}
               />
               <VitalSign 
-                label="COLESTEROL/TRIGL."
-                value={
-                  vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
-                    ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`
-                    : "--/--"
-                }
-                unit="mg/dL"
+                label="pNN50"
+                value={hrv.pnn50 > 0 ? hrv.pnn50.toFixed(1) : "--"}
+                unit="%"
                 highlighted={showResults}
               />
             </div>
