@@ -151,8 +151,13 @@ export class PeakDetectorHDEM {
   /**
    * PROCESAR MUESTRA EN TIEMPO REAL
    * Para streaming continuo de señal
+   * 
+   * MEJORADO: Umbral más estricto con validación SNR
+   * - amplitude > mean * 1.2 (era 0.7)
+   * - SNR > 2.0 requerido
+   * - PI debe estar en rango válido
    */
-  processSample(value: number, timestamp: number): {
+  processSample(value: number, timestamp: number, perfusionIndex?: number): {
     isPeak: boolean;
     bpm: number;
     rrInterval: number | null;
@@ -174,9 +179,24 @@ export class PeakDetectorHDEM {
       };
     }
     
+    // VALIDACIÓN DE PI: Si está fuera de rango, no detectar picos
+    if (perfusionIndex !== undefined && (perfusionIndex < 0.1 || perfusionIndex > 15)) {
+      return {
+        isPeak: false,
+        bpm: 0, // Reset BPM si PI inválido
+        rrInterval: null,
+        confidence: 0
+      };
+    }
+    
     // Analizar últimas muestras
     const recentSignal = this.signalBuffer.slice(-90);
     const { envelope1, threshold } = this.hilbert.doubleEnvelope(recentSignal);
+    
+    // Calcular estadísticas para SNR
+    const mean = recentSignal.reduce((a, b) => a + b, 0) / recentSignal.length;
+    const variance = recentSignal.reduce((acc, v) => acc + (v - mean) ** 2, 0) / recentSignal.length;
+    const std = Math.sqrt(variance);
     
     // Verificar si hay pico en la posición reciente
     const checkIdx = recentSignal.length - 5; // Mirar 5 samples atrás
@@ -197,13 +217,23 @@ export class PeakDetectorHDEM {
                           recentSignal[checkIdx] >= recentSignal[checkIdx + 1];
         
         if (crossUp || isLocalMax) {
-          // Validar amplitud significativa
-          const mean = threshold[checkIdx];
+          // Validar amplitud significativa con umbral ESTRICTO
+          const localThreshold = threshold[checkIdx];
           const amplitude = recentSignal[checkIdx];
           
-          if (amplitude > mean * 0.7) {
+          // NUEVO: Calcular SNR = (amplitude - mean) / std
+          const snr = std > 0 ? (amplitude - mean) / std : 0;
+          
+          // CRITERIOS ESTRICTOS:
+          // 1. Amplitud > threshold * 1.2 (era 0.7)
+          // 2. SNR > 2.0 (significativamente mayor al ruido)
+          // 3. Amplitud > promedio * 1.2
+          const amplitudeValid = amplitude > localThreshold * 1.2 && amplitude > mean * 1.2;
+          const snrValid = snr > 2.0;
+          
+          if (amplitudeValid && snrValid) {
             isPeak = true;
-            confidence = Math.min(1, amplitude / Math.max(mean, 1));
+            confidence = Math.min(1, snr / 5); // Confianza basada en SNR
             
             // Registrar RR interval
             if (this.lastPeakTime > 0 && timeSinceLastPeak <= this.MAX_PEAK_INTERVAL_MS) {

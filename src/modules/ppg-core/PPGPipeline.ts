@@ -122,13 +122,19 @@ export class PPGPipeline {
   private blueBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   private readonly BUFFER_SIZE = 300; // 10 segundos @ 30fps
-  private readonly ACDC_WINDOW = 120; // 4 segundos para AC/DC
+  private readonly ACDC_WINDOW = 90; // 3 segundos para AC/DC (reducido)
+  private readonly MIN_ACDC_FRAMES = 30; // 1 segundo mínimo
   
   // AC/DC actuales
   private redAC: number = 0;
   private redDC: number = 0;
   private greenAC: number = 0;
   private greenDC: number = 0;
+  
+  // NUEVO: Validación temporal de dedo (10 frames consecutivos)
+  private consecutiveFingerFrames: number = 0;
+  private readonly MIN_FINGER_FRAMES = 10; // 333ms @ 30fps
+  private fingerStabilityBuffer: number[] = [];
   
   // Estado
   private state: PipelineState = {
@@ -270,49 +276,61 @@ export class PPGPipeline {
       this.blueBuffer.shift();
     }
     
-    // 5. Ya tenemos fingerDetected de arriba
-    
-    // 6. CALCULAR AC/DC
-    if (this.redBuffer.length >= 60) {
+    // 5. CALCULAR AC/DC (ahora con menos frames mínimos)
+    if (this.redBuffer.length >= this.MIN_ACDC_FRAMES) {
       this.calculateACDC();
     }
     
-    // 7. SELECCIONAR CANAL Y FILTRAR
-    const greenSaturated = rawGreen > 250;
-    const signalSource = greenSaturated ? calibratedRGB.linearRed : calibratedRGB.linearGreen;
-    const inverted = 255 - signalSource;
-    const filtered = this.bandpass.filter(inverted);
+    // 6. CALCULAR PERFUSION INDEX DESDE CANAL ROJO (mejor SNR)
+    const perfusionIndex = this.redDC > 0 ? (this.redAC / this.redDC) * 100 : 0;
+    
+    // 7. VALIDAR PI FISIOLÓGICO (gatekeeper crítico)
+    // Con dedo real: PI típico 0.1% - 10%
+    // Sin dedo (ruido): PI > 15% o < 0.05%
+    const piIsValid = perfusionIndex >= 0.1 && perfusionIndex <= 15;
+    
+    // 8. SELECCIONAR CANAL ROJO COMO PRIMARIO (mejor SNR con flash LED)
+    // Solo usar verde como fallback si rojo está saturado
+    const redSaturated = rawRed > 250;
+    const signalSource = redSaturated ? calibratedRGB.linearGreen : calibratedRGB.linearRed;
+    
+    // NO INVERTIR - modo reflectivo con flash no requiere inversión
+    // La inversión amplificaba ruido cuando no hay dedo
+    const filtered = this.bandpass.filter(signalSource);
     
     this.filteredBuffer.push(filtered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
       this.filteredBuffer.shift();
     }
     
-    // 8. DETECTAR PICO CON HDEM
-    const peakResult = this.peakDetector.processSample(filtered, timestamp);
+    // 9. DETECTAR PICO SOLO SI HAY DEDO VÁLIDO Y PI EN RANGO
+    // CRÍTICO: Bloquear detección si no hay dedo real
+    let peakResult = { isPeak: false, bpm: 0, rrInterval: null as number | null, confidence: 0 };
     
-    // 9. CALCULAR CALIDAD DE SEÑAL
+    if (fingerDetected && piIsValid) {
+      // Solo procesar picos con señal real validada
+      peakResult = this.peakDetector.processSample(filtered, timestamp, perfusionIndex);
+    }
+    
+    // 10. CALCULAR CALIDAD DE SEÑAL
     const signalQuality = this.sqiValidator.validate(
       this.filteredBuffer.slice(-90),
-      this.greenAC,
-      this.greenDC
+      this.redAC, // Usar red AC (canal principal)
+      this.redDC  // Usar red DC (canal principal)
     );
     
-    // 10. CALCULAR SpO2
+    // 11. CALCULAR SpO2
     const ratioR = this.calculateRatioR();
-    const spo2 = this.calculateSpO2(ratioR, signalQuality.raw.perfusionIndex);
+    const spo2 = this.calculateSpO2(ratioR, perfusionIndex);
     
-    // 11. CALCULAR HRV
+    // 12. CALCULAR HRV
     const rrIntervals = this.peakDetector.getRRIntervals();
     const hrv = this.peakDetector.calculateHRV(rrIntervals);
-    
-    // 12. CALCULAR PERFUSION INDEX
-    const perfusionIndex = this.greenDC > 0 ? (this.greenAC / this.greenDC) * 100 : 0;
     
     // ACTUALIZAR ESTADO
     this.state.lastBPM = peakResult.bpm;
     this.state.lastSpO2 = spo2;
-    this.state.lastConfidence = signalQuality.confidence;
+    this.state.lastConfidence = fingerDetected && piIsValid ? signalQuality.confidence : 'INVALID';
     
     // EMITIR EVENTOS
     if (peakResult.isPeak) {
@@ -324,9 +342,10 @@ export class PPGPipeline {
       this.lastLogTime = timestamp;
       console.log('═══════════════════════════════════════════════════════════');
       console.log(`📊 PPGPipeline | Frame #${this.state.framesProcessed}`);
+      console.log(`   👆 DEDO: ${fingerDetected ? '✅ DETECTADO' : '❌ NO'} | Frames: ${this.consecutiveFingerFrames}`);
       console.log(`   🔴 RED:   AC=${this.redAC.toFixed(3)} DC=${this.redDC.toFixed(1)}`);
       console.log(`   🟢 GREEN: AC=${this.greenAC.toFixed(3)} DC=${this.greenDC.toFixed(1)}`);
-      console.log(`   📈 PI=${perfusionIndex.toFixed(2)}% | R=${ratioR.toFixed(3)} | SpO2=${spo2}%`);
+      console.log(`   📈 PI=${perfusionIndex.toFixed(2)}% ${piIsValid ? '✅' : '❌'} | R=${ratioR.toFixed(3)} | SpO2=${spo2}%`);
       console.log(`   💓 BPM=${peakResult.bpm} | SQI=${signalQuality.globalSQI.toFixed(0)}% (${signalQuality.confidence})`);
     }
     
@@ -334,7 +353,7 @@ export class PPGPipeline {
     const result: ProcessedPPGFrame = {
       timestamp,
       filteredValue: filtered,
-      rawValue: inverted,
+      rawValue: signalSource, // Sin inversión
       fingerDetected,
       calibratedRGB,
       redAC: this.redAC,
@@ -350,7 +369,7 @@ export class PPGPipeline {
       rrIntervals,
       hrv,
       signalQuality,
-      confidence: signalQuality.confidence,
+      confidence: fingerDetected && piIsValid ? signalQuality.confidence : 'INVALID',
       spo2
     };
     
@@ -398,33 +417,61 @@ export class PPGPipeline {
   }
   
   /**
-   * DETECCIÓN DE DEDO ROBUSTA (Oxford/IEEE 2020)
+   * DETECCIÓN DE DEDO ROBUSTA (Oxford/IEEE 2020 + Nature 2025)
    * 
    * Con flash encendido, el dedo iluminado debe dar valores ALTOS de rojo.
-   * La sangre absorbe más verde que rojo, por lo que R/G > 1.1
+   * La sangre absorbe más verde que rojo, por lo que R/G > 1.2
+   * 
+   * CRÍTICO: Requiere validación TEMPORAL (10 frames consecutivos)
+   * para evitar falsos positivos por objetos transitorios.
    * 
    * Criterios:
    * 1. Red > 120 (con flash, valores altos)
-   * 2. R/G ratio > 1.1 y < 4.0 (sangre real)
+   * 2. R/G ratio > 1.2 y < 3.5 (sangre real, más estricto)
    * 3. No saturado (< 253)
+   * 4. 10 frames consecutivos cumpliendo criterios
+   * 5. Varianza estable en ventana de 10 frames
    */
   private detectFinger(rawRed: number, rawGreen: number): boolean {
     // Con flash encendido, el dedo iluminado debe dar valores ALTOS
     const hasHighRed = rawRed > 120;
     
-    // Ratio R/G: sangre absorbe verde más que rojo
+    // Ratio R/G: sangre absorbe verde más que rojo (más estricto)
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
-    const validRatio = rgRatio > 1.1 && rgRatio < 4.0;
+    const validRatio = rgRatio > 1.2 && rgRatio < 3.5;
     
     // No saturado
     const notSaturated = rawRed < 253 && rawGreen < 253;
     
-    // Todos los criterios deben cumplirse
-    const fingerDetected = hasHighRed && validRatio && notSaturated;
+    // Criterios instantáneos
+    const instantFingerDetected = hasHighRed && validRatio && notSaturated;
+    
+    // VALIDACIÓN TEMPORAL: Requiere frames consecutivos
+    if (instantFingerDetected) {
+      this.consecutiveFingerFrames++;
+      this.fingerStabilityBuffer.push(rawRed);
+      if (this.fingerStabilityBuffer.length > 10) {
+        this.fingerStabilityBuffer.shift();
+      }
+    } else {
+      this.consecutiveFingerFrames = 0;
+      this.fingerStabilityBuffer = [];
+    }
+    
+    // Verificar estabilidad (varianza < 5 en los últimos 10 frames)
+    let isStable = true;
+    if (this.fingerStabilityBuffer.length >= 10) {
+      const mean = this.fingerStabilityBuffer.reduce((a, b) => a + b, 0) / this.fingerStabilityBuffer.length;
+      const variance = this.fingerStabilityBuffer.reduce((acc, v) => acc + (v - mean) ** 2, 0) / this.fingerStabilityBuffer.length;
+      isStable = variance < 25; // Sqrt(25) = 5
+    }
+    
+    // Solo considerar dedo válido después de N frames consecutivos Y estable
+    const fingerDetected = this.consecutiveFingerFrames >= this.MIN_FINGER_FRAMES && isStable;
     
     // Log cada 30 frames para debugging
     if (this.state.framesProcessed % 30 === 0) {
-      console.log(`👆 Finger: R=${rawRed.toFixed(0)} G=${rawGreen.toFixed(0)} R/G=${rgRatio.toFixed(2)} → ${fingerDetected ? '✅' : '❌'}`);
+      console.log(`👆 Finger: R=${rawRed.toFixed(0)} G=${rawGreen.toFixed(0)} R/G=${rgRatio.toFixed(2)} | Frames=${this.consecutiveFingerFrames} Stable=${isStable} → ${fingerDetected ? '✅' : '❌'}`);
     }
     
     return fingerDetected;
@@ -577,6 +624,10 @@ export class PPGPipeline {
     this.redDC = 0;
     this.greenAC = 0;
     this.greenDC = 0;
+    
+    // Reset validación temporal de dedo
+    this.consecutiveFingerFrames = 0;
+    this.fingerStabilityBuffer = [];
     
     this.bandpass.reset();
     this.calibrator.reset();
