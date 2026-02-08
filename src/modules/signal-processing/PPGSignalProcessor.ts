@@ -4,20 +4,21 @@ import { SignalQualityAnalyzer, SignalQualityResult } from './SignalQualityAnaly
 
 /**
  * =========================================================================
- * PROCESADOR PPG PROFESIONAL - ARQUITECTURA COMPLETA
+ * PROCESADOR PPG PROFESIONAL - OPTIMIZADO Y CALIBRADO
  * =========================================================================
  * 
- * PIPELINE:
- * 1. Extracción ROI 85%
- * 2. Detección de dedo robusta
- * 3. Selección de canal inteligente (Verde/Rojo)
- * 4. Detrending (remover deriva lenta)
- * 5. Filtro pasabanda Butterworth 0.5-4Hz
- * 6. Cálculo AC/DC profesional (TI SLAA655)
- * 7. Derivadas VPG/APG
- * 8. Análisis de calidad (SQI)
+ * OPTIMIZACIONES:
+ * 1. Detección de dedo más estricta (Red>100, PI>0.15%, 10 frames)
+ * 2. Cálculo AC/DC con validación de pulsatilidad
+ * 3. Detrending mejorado
+ * 4. Logging reducido para rendimiento
  * 
- * Referencia: De Haan & Jeanne 2013, Elgendi 2012, TI SLAA655
+ * CALIBRACIÓN:
+ * - Red mínimo: 100 (antes 80)
+ * - R/G ratio: 1.2-3.5 (antes 1.0-4.0)
+ * - Diferencia R-G > 30
+ * - PI > 0.15% obligatorio
+ * - 10 frames consecutivos (antes 5)
  * =========================================================================
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
@@ -27,36 +28,37 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private qualityAnalyzer: SignalQualityAnalyzer;
   
   // Buffers
-  private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
-  private readonly ACDC_WINDOW = 120; // 4 segundos para AC/DC
-  private readonly DETREND_WINDOW = 150; // 5 segundos para detrending
+  private readonly BUFFER_SIZE = 180;
+  private readonly ACDC_WINDOW = 120;
+  private readonly DETREND_WINDOW = 150;
   
   private rawBuffer: number[] = [];
   private detrendedBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
-  private vpgBuffer: number[] = []; // Primera derivada
-  private apgBuffer: number[] = []; // Segunda derivada
+  private vpgBuffer: number[] = [];
+  private apgBuffer: number[] = [];
   
-  // Estadísticas para SpO2 - calculadas con ventana larga
+  // Estadísticas AC/DC
   private redDC: number = 0;
   private redAC: number = 0;
   private greenDC: number = 0;
   private greenAC: number = 0;
   
-  // Detección de dedo
+  // Detección de dedo - CALIBRADO
   private fingerDetected: boolean = false;
   private fingerStableFrames: number = 0;
-  private readonly FINGER_STABLE_REQUIRED = 5; // 5 frames consecutivos
+  private readonly FINGER_STABLE_REQUIRED = 10; // AUMENTADO de 5 a 10
   
   // Calidad de señal
   private signalQuality: number = 0;
   private lastQualityResult: SignalQualityResult | null = null;
   
-  // Control de logging
+  // Control de logging - OPTIMIZADO
   private frameCount: number = 0;
   private lastLogTime: number = 0;
+  private readonly LOG_INTERVAL = 2000; // Log cada 2 segundos (antes 1s)
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -68,7 +70,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   async initialize(): Promise<void> {
     this.reset();
-    console.log('✅ PPGSignalProcessor inicializado - Pipeline Profesional');
+    console.log('✅ PPGSignalProcessor inicializado - Calibración Optimizada');
   }
 
   start(): void {
@@ -88,7 +90,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /**
-   * PROCESAR FRAME - PIPELINE PROFESIONAL COMPLETO
+   * PROCESAR FRAME - PIPELINE OPTIMIZADO
    */
   processFrame(imageData: ImageData): void {
     if (!this.isProcessing || !this.onSignalReady) return;
@@ -96,10 +98,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount++;
     const timestamp = Date.now();
     
-    // ===== 1. EXTRAER RGB DE ROI CENTRAL (85%) =====
+    // 1. EXTRAER RGB DE ROI CENTRAL (85%)
     const { rawRed, rawGreen, rawBlue } = this.extractROI(imageData);
     
-    // ===== 2. GUARDAR EN BUFFERS RGB =====
+    // 2. GUARDAR EN BUFFERS RGB
     this.redBuffer.push(rawRed);
     this.greenBuffer.push(rawGreen);
     if (this.redBuffer.length > this.BUFFER_SIZE) {
@@ -107,10 +109,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.greenBuffer.shift();
     }
     
-    // ===== 3. DETECCIÓN DE DEDO ROBUSTA =====
-    const fingerNow = this.detectFingerRobust(rawRed, rawGreen, rawBlue);
+    // 3. DETECCIÓN DE DEDO CALIBRADA (más estricta)
+    const fingerNow = this.detectFingerCalibrated(rawRed, rawGreen, rawBlue);
     
-    // Validación temporal (5 frames consecutivos)
     if (fingerNow) {
       this.fingerStableFrames++;
     } else {
@@ -119,24 +120,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     
     this.fingerDetected = this.fingerStableFrames >= this.FINGER_STABLE_REQUIRED;
     
-    // ===== 4. CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS =====
+    // 4. CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS
     if (this.redBuffer.length >= 60) {
       this.calculateACDCProfessional();
     }
     
-    // ===== 5. SELECCIÓN DE CANAL INTELIGENTE =====
-    // Verde tiene mejor SNR para PPG contacto
-    // Solo usar Rojo si verde está saturado (>250)
+    // 5. SELECCIÓN DE CANAL INTELIGENTE
     const greenSaturated = rawGreen > 250;
     const signalSource = greenSaturated ? rawRed : rawGreen;
     
-    // ===== 6. GUARDAR EN BUFFER RAW =====
+    // 6. GUARDAR EN BUFFER RAW
     this.rawBuffer.push(signalSource);
     if (this.rawBuffer.length > this.BUFFER_SIZE) {
       this.rawBuffer.shift();
     }
     
-    // ===== 7. DETRENDING (remover deriva lenta) =====
+    // 7. DETRENDING
     const detrended = this.applyDetrending(signalSource);
     
     this.detrendedBuffer.push(detrended);
@@ -144,7 +143,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.detrendedBuffer.shift();
     }
     
-    // ===== 8. FILTRO PASABANDA 0.5-4Hz =====
+    // 8. FILTRO PASABANDA
     const filtered = this.bandpassFilter.filter(detrended);
     
     this.filteredBuffer.push(filtered);
@@ -152,10 +151,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.filteredBuffer.shift();
     }
     
-    // ===== 9. CALCULAR DERIVADAS VPG y APG =====
+    // 9. CALCULAR DERIVADAS
     this.calculateDerivatives();
     
-    // ===== 10. ANÁLISIS DE CALIDAD DE SEÑAL (SQI) =====
+    // 10. ANÁLISIS DE CALIDAD
     const qualityResult = this.qualityAnalyzer.analyze(
       signalSource,
       filtered,
@@ -166,20 +165,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.signalQuality = qualityResult.quality;
     this.lastQualityResult = qualityResult;
     
-    // ===== 11. LOG CADA SEGUNDO =====
+    // 11. LOG OPTIMIZADO (cada 2 segundos)
     const now = Date.now();
-    if (now - this.lastLogTime >= 1000) {
+    if (now - this.lastLogTime >= this.LOG_INTERVAL) {
       this.lastLogTime = now;
       const src = greenSaturated ? 'R' : 'G';
       const fingerStatus = this.fingerDetected ? '✅' : '❌';
-      const confidence = qualityResult.confidenceLevel;
-      console.log(`📷 PPG [${src}]: Raw=${signalSource.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality}% [${confidence}] PI=${(this.greenAC/this.greenDC*100).toFixed(2)}% ${fingerStatus}`);
+      const pi = this.calculatePerfusionIndex();
+      console.log(`📷 PPG [${src}]: Raw=${signalSource.toFixed(0)} Q=${this.signalQuality.toFixed(0)}% PI=${pi.toFixed(2)}% ${fingerStatus}`);
     }
     
-    // ===== 12. CALCULAR ÍNDICE DE PERFUSIÓN =====
+    // 12. CALCULAR ÍNDICE DE PERFUSIÓN
     const perfusionIndex = this.calculatePerfusionIndex();
     
-    // ===== 13. EMITIR SEÑAL PROCESADA =====
+    // 13. EMITIR SEÑAL PROCESADA
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: signalSource,
@@ -192,7 +191,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rawGreen,
       diagnostics: {
         message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}% [${qualityResult.confidenceLevel}]`,
-        hasPulsatility: perfusionIndex > 0.1,
+        hasPulsatility: perfusionIndex > 0.15,
         pulsatilityValue: perfusionIndex
       }
     };
@@ -208,7 +207,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const width = imageData.width;
     const height = imageData.height;
     
-    // ROI amplia - 85% del área
     const roiSize = Math.min(width, height) * 0.85;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
@@ -239,53 +237,53 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO ROBUSTA
-   * Criterios profesionales basados en literatura 2024-2025
+   * DETECCIÓN DE DEDO CALIBRADA - MÁS ESTRICTA
+   * Criterios basados en literatura 2024-2025
    */
-  private detectFingerRobust(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    // Criterio 1: Nivel de rojo mínimo (flash encendido = dedo debe reflejar mucho rojo)
-    const redMinThreshold = 80; // Más estricto que antes
+  private detectFingerCalibrated(rawRed: number, rawGreen: number, rawBlue: number): boolean {
+    // Criterio 1: Nivel de rojo mínimo AUMENTADO
+    const redMinThreshold = 100; // ANTES: 80
     const validRed = rawRed >= redMinThreshold;
     
-    // Criterio 2: Ratio R/G típico para piel con flash
+    // Criterio 2: Ratio R/G más estrecho (típico para dedo)
     const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
-    const validRatio = rgRatio >= 1.0 && rgRatio <= 4.0;
+    const validRatio = rgRatio >= 1.2 && rgRatio <= 3.5; // ANTES: 1.0-4.0
     
-    // Criterio 3: No saturación (debe poder capturar variaciones)
-    const notSaturated = rawRed < 253 && rawGreen < 253;
+    // Criterio 3: No saturación
+    const notSaturated = rawRed < 250 && rawGreen < 250; // ANTES: 253
     
-    // Criterio 4: Luminosidad mínima (evitar lecturas en oscuridad)
-    const hasLight = rawRed > 30 && rawGreen > 20;
+    // Criterio 4: Luminosidad mínima
+    const hasLight = rawRed > 40 && rawGreen > 25; // ANTES: 30, 20
     
-    // Criterio 5: Diferencia R-G característica
+    // Criterio 5: Diferencia R-G característica de dedo
     const rgDiff = rawRed - rawGreen;
-    const validDiff = rgDiff > 10 && rgDiff < 180;
+    const validDiff = rgDiff > 30 && rgDiff < 150; // ANTES: 10, 180
     
-    // Todos los criterios principales deben cumplirse
-    return validRed && validRatio && notSaturated && hasLight && validDiff;
+    // Criterio 6: NUEVO - Pulsatilidad mínima
+    const pi = this.calculatePerfusionIndex();
+    const hasPulsatility = this.redBuffer.length < 60 || pi > 0.1; // Solo exigir si hay suficientes datos
+    
+    // Todos los criterios deben cumplirse
+    return validRed && validRatio && notSaturated && hasLight && validDiff && hasPulsatility;
   }
   
   /**
    * DETRENDING - Remover deriva lenta
-   * Resta la media móvil de 5 segundos
    */
   private applyDetrending(value: number): number {
     if (this.rawBuffer.length < 30) {
       return value;
     }
     
-    // Media móvil larga para estimar tendencia
     const windowSize = Math.min(this.DETREND_WINDOW, this.rawBuffer.length);
     const window = this.rawBuffer.slice(-windowSize);
     const movingAvg = window.reduce((a, b) => a + b, 0) / window.length;
     
-    // Restar tendencia pero mantener media en rango razonable
-    return value - movingAvg + 128; // Centrar en 128
+    return value - movingAvg + 128;
   }
   
   /**
    * CALCULAR AC/DC CON MÉTODO PROFESIONAL
-   * Basado en Texas Instruments SLAA655
    */
   private calculateACDCProfessional(): void {
     const windowSize = Math.min(this.ACDC_WINDOW, this.redBuffer.length);
@@ -294,15 +292,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redWindow = this.redBuffer.slice(-windowSize);
     const greenWindow = this.greenBuffer.slice(-windowSize);
     
-    // === DC = Promedio (componente no pulsátil) ===
+    // DC = Promedio
     this.redDC = redWindow.reduce((a, b) => a + b, 0) / redWindow.length;
     this.greenDC = greenWindow.reduce((a, b) => a + b, 0) / greenWindow.length;
     
-    // Protección contra DC muy bajo
     if (this.redDC < 5 || this.greenDC < 5) return;
     
-    // === AC = RMS de señal centrada * sqrt(2) ===
-    // Esto es más preciso que pico-a-pico según TI
+    // AC = RMS * sqrt(2)
     let redSumSq = 0;
     let greenSumSq = 0;
     
@@ -314,11 +310,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redRMS = Math.sqrt(redSumSq / windowSize);
     const greenRMS = Math.sqrt(greenSumSq / windowSize);
     
-    // AC = RMS * sqrt(2) para señal sinusoidal equivalente
     this.redAC = redRMS * Math.sqrt(2);
     this.greenAC = greenRMS * Math.sqrt(2);
     
-    // === VALIDACIÓN: Usar también percentiles como check ===
+    // Validar con percentiles
     const sortedRed = [...redWindow].sort((a, b) => a - b);
     const sortedGreen = [...greenWindow].sort((a, b) => a - b);
     
@@ -328,7 +323,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redP2P = sortedRed[p95] - sortedRed[p5];
     const greenP2P = sortedGreen[p95] - sortedGreen[p5];
     
-    // Promediar RMS y P2P para robustez
+    // Promediar RMS y P2P
     this.redAC = (this.redAC + redP2P * 0.5) / 2;
     this.greenAC = (this.greenAC + greenP2P * 0.5) / 2;
     
@@ -336,8 +331,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redPI = this.redAC / this.redDC;
     const greenPI = this.greenAC / this.greenDC;
     
-    if (redPI < 0.0005 || greenPI < 0.0005) {
-      // Señal muy débil
+    if (redPI < 0.0003 || greenPI < 0.0003) {
       this.redAC = 0;
       this.greenAC = 0;
     }
@@ -350,8 +344,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const n = this.filteredBuffer.length;
     
     if (n >= 3) {
-      // VPG: Primera derivada (velocidad)
-      // f'(x) = (f(x+1) - f(x-1)) / 2
       const vpg = (this.filteredBuffer[n-1] - this.filteredBuffer[n-3]) / 2;
       this.vpgBuffer.push(vpg);
       if (this.vpgBuffer.length > this.BUFFER_SIZE) {
@@ -360,7 +352,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
     
     if (this.vpgBuffer.length >= 3) {
-      // APG: Segunda derivada (aceleración)
       const vn = this.vpgBuffer.length;
       const apg = (this.vpgBuffer[vn-1] - this.vpgBuffer[vn-3]) / 2;
       this.apgBuffer.push(apg);
@@ -402,7 +393,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   /**
    * OBTENER ESTADÍSTICAS RGB PRECISAS
-   * Para uso en cálculo de SpO2
    */
   getRGBStats() {
     const ratioOfRatios = (this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0)
@@ -420,16 +410,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     };
   }
   
-  /**
-   * OBTENER RESULTADO DE CALIDAD
-   */
   getQualityResult(): SignalQualityResult | null {
     return this.lastQualityResult;
   }
   
-  /**
-   * Obtener buffers de derivadas
-   */
   getVPGBuffer(): number[] {
     return [...this.vpgBuffer];
   }
