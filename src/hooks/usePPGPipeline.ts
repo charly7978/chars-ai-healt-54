@@ -5,6 +5,7 @@ import {
   PipelineState,
   ConfidenceLevel 
 } from '../modules/ppg-core';
+import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 /**
  * HOOK UNIFICADO DE PPG
@@ -27,10 +28,20 @@ export interface PPGPipelineState {
   calibrationProgress: number;
   isProcessing: boolean;
   
-  // Datos vitales
+  // Datos vitales básicos
   heartRate: number;
   spo2: number;
   perfusionIndex: number;
+  
+  // NUEVOS - Signos vitales completos del VitalSignsProcessor
+  glucose: number;
+  hemoglobin: number;
+  systolicPressure: number;
+  diastolicPressure: number;
+  cholesterol: number;
+  triglycerides: number;
+  arrhythmiaStatus: string;
+  arrhythmiaCount: number;
   
   // Calidad
   signalQuality: number;
@@ -66,6 +77,9 @@ export const usePPGPipeline = () => {
   // Referencia al pipeline
   const pipelineRef = useRef<PPGPipeline | null>(null);
   
+  // Referencia al VitalSignsProcessor
+  const vitalSignsProcessorRef = useRef<VitalSignsProcessor | null>(null);
+  
   // Estado
   const [state, setState] = useState<PPGPipelineState>({
     isCalibrating: false,
@@ -74,6 +88,16 @@ export const usePPGPipeline = () => {
     heartRate: 0,
     spo2: 0,
     perfusionIndex: 0,
+    // NUEVOS - Signos vitales completos
+    glucose: 0,
+    hemoglobin: 0,
+    systolicPressure: 0,
+    diastolicPressure: 0,
+    cholesterol: 0,
+    triglycerides: 0,
+    arrhythmiaStatus: "SIN ARRITMIAS|0",
+    arrhythmiaCount: 0,
+    // Calidad
     signalQuality: 0,
     confidence: 'INVALID',
     fingerDetected: false,
@@ -91,19 +115,54 @@ export const usePPGPipeline = () => {
   // Callbacks de eventos
   const onPeakRef = useRef<((timestamp: number, bpm: number) => void) | null>(null);
   
-  // Inicializar pipeline
+  // Inicializar pipeline y VitalSignsProcessor
   useEffect(() => {
+    // Crear VitalSignsProcessor
+    vitalSignsProcessorRef.current = new VitalSignsProcessor();
+    console.log('✅ VitalSignsProcessor: Conectado al pipeline');
+    
     // Crear pipeline con callback de frame
     const handleFrame = (frame: ProcessedPPGFrame) => {
       lastFrameRef.current = frame;
       
-      // Actualizar estado (throttled)
+      // INTEGRACIÓN: Alimentar VitalSignsProcessor con datos RGB
+      let vitals: VitalSignsResult | null = null;
+      if (vitalSignsProcessorRef.current && frame.fingerDetected) {
+        // Pasar datos RGB
+        vitalSignsProcessorRef.current.setRGBData({
+          redAC: frame.redAC,
+          redDC: frame.redDC,
+          greenAC: frame.greenAC,
+          greenDC: frame.greenDC
+        });
+        
+        // Procesar señal para obtener signos vitales completos
+        vitals = vitalSignsProcessorRef.current.processSignal(
+          frame.filteredValue,
+          { 
+            intervals: frame.rrIntervals, 
+            lastPeakTime: frame.isPeak ? frame.timestamp : null 
+          }
+        );
+      }
+      
+      // Actualizar estado con TODOS los valores
       setState(prev => ({
         ...prev,
-        isCalibrating: false, // Se actualiza por startCalibration
+        isCalibrating: false,
         heartRate: frame.smoothedBPM,
-        spo2: frame.spo2,
+        spo2: vitals?.spo2 || frame.spo2,
         perfusionIndex: frame.perfusionIndex,
+        // NUEVOS - Del VitalSignsProcessor
+        glucose: vitals?.glucose || 0,
+        hemoglobin: vitals?.hemoglobin || 0,
+        systolicPressure: vitals?.pressure.systolic || 0,
+        diastolicPressure: vitals?.pressure.diastolic || 0,
+        cholesterol: vitals?.lipids.totalCholesterol || 0,
+        triglycerides: vitals?.lipids.triglycerides || 0,
+        arrhythmiaStatus: vitals?.arrhythmiaStatus || "SIN ARRITMIAS|0",
+        arrhythmiaCount: vitals?.arrhythmiaCount || 0,
+        // Calidad
         signalQuality: frame.signalQuality.globalSQI,
         confidence: frame.confidence,
         fingerDetected: frame.fingerDetected,
@@ -141,13 +200,14 @@ export const usePPGPipeline = () => {
       }));
     });
     
-    console.log('✅ usePPGPipeline: Inicializado');
+    console.log('✅ usePPGPipeline: Inicializado con VitalSignsProcessor');
     
     return () => {
       if (pipelineRef.current) {
         pipelineRef.current.dispose();
         pipelineRef.current = null;
       }
+      vitalSignsProcessorRef.current = null;
     };
   }, []);
   
@@ -258,6 +318,14 @@ export const usePPGPipeline = () => {
       heartRate: 0,
       spo2: 0,
       perfusionIndex: 0,
+      glucose: 0,
+      hemoglobin: 0,
+      systolicPressure: 0,
+      diastolicPressure: 0,
+      cholesterol: 0,
+      triglycerides: 0,
+      arrhythmiaStatus: "SIN ARRITMIAS|0",
+      arrhythmiaCount: 0,
       signalQuality: 0,
       confidence: 'INVALID',
       fingerDetected: false,

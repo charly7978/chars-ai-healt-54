@@ -39,6 +39,7 @@ const Index = () => {
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
   
   // HOOK DE CÁMARA - Acceso directo desde gesto
   const { 
@@ -63,6 +64,16 @@ const Index = () => {
     rrIntervals,
     hrv,
     rgbStats,
+    // NUEVOS - Signos vitales completos
+    glucose,
+    hemoglobin,
+    systolicPressure,
+    diastolicPressure,
+    cholesterol,
+    triglycerides,
+    arrhythmiaStatus,
+    arrhythmiaCount,
+    // Métodos
     start: startPipeline,
     stop: stopPipeline,
     startCalibration,
@@ -87,11 +98,45 @@ const Index = () => {
     }
   }, []);
 
-  // CALLBACK PARA PICOS - Vibración
+  // CALLBACK PARA PICOS - Vibración + Beep
   useEffect(() => {
     setOnPeak((timestamp, bpm) => {
+      // Vibración
       if (navigator.vibrate) {
         navigator.vibrate(50);
+      }
+      
+      // Beep cardíaco audible
+      try {
+        if (!audioContextRef.current) {
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        
+        const ctx = audioContextRef.current;
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+        
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.frequency.value = 880; // La4 - tono cardíaco
+        osc.type = 'sine';
+        gain.gain.value = 0.15; // Volumen bajo
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.start();
+        osc.stop(ctx.currentTime + 0.08); // 80ms de duración
+        
+        // Cleanup
+        osc.onended = () => {
+          osc.disconnect();
+          gain.disconnect();
+        };
+      } catch (e) {
+        // Silenciar errores de audio
       }
     });
   }, [setOnPeak]);
@@ -305,18 +350,18 @@ const Index = () => {
       forceCalibration();
     }
     
-    // Guardar medición en la base de datos
+    // Guardar medición en la base de datos con TODOS los signos vitales
     if (heartRate > 0 || spo2 > 0) {
       await saveMeasurement({
         heartRate,
         vitalSigns: {
           spo2,
-          glucose: 0,
-          hemoglobin: 0,
-          pressure: { systolic: 0, diastolic: 0 },
-          arrhythmiaCount: 0,
-          arrhythmiaStatus: "SIN ARRITMIAS|0",
-          lipids: { totalCholesterol: 0, triglycerides: 0 },
+          glucose,
+          hemoglobin,
+          pressure: { systolic: systolicPressure, diastolic: diastolicPressure },
+          arrhythmiaCount,
+          arrhythmiaStatus,
+          lipids: { totalCholesterol: cholesterol, triglycerides },
           isCalibrating: false,
           calibrationProgress: 100,
           lastArrhythmiaData: undefined,
@@ -521,7 +566,7 @@ const Index = () => {
               isFingerDetected={fingerDetected}
               onStartMeasurement={startMonitoring}
               onReset={handleReset}
-              arrhythmiaStatus={arrhythmiaDetectedRef.current ? "ARRITMIA DETECTADA|1" : "SIN ARRITMIAS|0"}
+              arrhythmiaStatus={arrhythmiaStatus}
               rawArrhythmiaData={null}
               preserveResults={showResults}
               diagnosticMessage={isCalibrating ? "Calibrando..." : undefined}
@@ -533,8 +578,8 @@ const Index = () => {
           </div>
 
           {/* SIGNOS VITALES */}
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
-            <div className="grid grid-cols-3 gap-4 place-items-center">
+          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-4 overflow-y-auto">
+            <div className="grid grid-cols-3 gap-3 place-items-center">
               <VitalSign 
                 label="FRECUENCIA CARDÍACA"
                 value={heartRate > 0 ? Math.round(heartRate) : "--"}
@@ -543,14 +588,32 @@ const Index = () => {
               />
               <VitalSign 
                 label="SPO2"
-                value={spo2 > 0 ? spo2 : "--"}
+                value={spo2 > 0 ? Math.round(spo2) : "--"}
                 unit="%"
                 highlighted={showResults}
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
-                value="--/--"
+                value={systolicPressure > 0 ? `${Math.round(systolicPressure)}/${Math.round(diastolicPressure)}` : "--/--"}
                 unit="mmHg"
+                highlighted={showResults}
+              />
+              <VitalSign 
+                label="GLUCOSA"
+                value={glucose > 0 ? Math.round(glucose) : "--"}
+                unit="mg/dL"
+                highlighted={showResults}
+              />
+              <VitalSign 
+                label="HEMOGLOBINA"
+                value={hemoglobin > 0 ? hemoglobin.toFixed(1) : "--"}
+                unit="g/dL"
+                highlighted={showResults}
+              />
+              <VitalSign 
+                label="COLESTEROL"
+                value={cholesterol > 0 ? Math.round(cholesterol) : "--"}
+                unit="mg/dL"
                 highlighted={showResults}
               />
               <VitalSign 
