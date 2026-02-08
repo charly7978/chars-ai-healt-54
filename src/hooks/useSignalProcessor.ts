@@ -1,11 +1,15 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { PPGSignalProcessor } from '../modules/signal-processing/PPGSignalProcessor';
 import { ProcessedSignal, ProcessingError } from '../types/signal';
+import { SignalQualityResult } from '../modules/signal-processing/SignalQualityAnalyzer';
 
 /**
- * HOOK ÚNICO Y DEFINITIVO - ELIMINADAS TODAS LAS DUPLICIDADES
- * Sistema completamente unificado con prevención absoluta de múltiples instancias
+ * HOOK ÚNICO Y DEFINITIVO - PROCESAMIENTO PPG PROFESIONAL
+ * 
+ * Integra:
+ * - PPGSignalProcessor con pipeline completo
+ * - SignalQualityAnalyzer para SQI robusto
+ * - Prevención de múltiples instancias
  */
 export const useSignalProcessor = () => {
   const processorRef = useRef<PPGSignalProcessor | null>(null);
@@ -13,15 +17,15 @@ export const useSignalProcessor = () => {
   const [lastSignal, setLastSignal] = useState<ProcessedSignal | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
+  const [qualityResult, setQualityResult] = useState<SignalQualityResult | null>(null);
   
-  // CONTROL ÚNICO DE INSTANCIA - PREVENIR DUPLICIDADES ABSOLUTAMENTE
+  // Control de instancia única
   const instanceLock = useRef<boolean>(false);
   const sessionIdRef = useRef<string>("");
   const initializationState = useRef<'IDLE' | 'INITIALIZING' | 'READY' | 'ERROR'>('IDLE');
   
-  // INICIALIZACIÓN ÚNICA Y DEFINITIVA
+  // Inicialización única
   useEffect(() => {
-    // BLOQUEO DE MÚLTIPLES INSTANCIAS
     if (instanceLock.current || initializationState.current !== 'IDLE') {
       return;
     }
@@ -33,14 +37,18 @@ export const useSignalProcessor = () => {
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `sig_${t}_${p}`;
 
-    // CALLBACKS ÚNICOS SIN MEMORY LEAKS
     const onSignalReady = (signal: ProcessedSignal) => {
       if (initializationState.current !== 'READY') return;
       
       setLastSignal(signal);
       setError(null);
-      // CRÍTICO: Limitar contador para evitar números infinitos que afectan rendimiento
       setFramesProcessed(prev => (prev + 1) % 10000);
+      
+      // Obtener resultado de calidad del procesador
+      const qr = processorRef.current?.getQualityResult();
+      if (qr) {
+        setQualityResult(qr);
+      }
     };
 
     const onError = (error: ProcessingError) => {
@@ -48,7 +56,6 @@ export const useSignalProcessor = () => {
       setError(error);
     };
 
-    // CREAR PROCESADOR ÚNICO
     try {
       processorRef.current = new PPGSignalProcessor(onSignalReady, onError);
       initializationState.current = 'READY';
@@ -67,7 +74,6 @@ export const useSignalProcessor = () => {
     };
   }, []);
 
-  // INICIO ÚNICO SIN DUPLICIDADES
   const startProcessing = useCallback(() => {
     if (!processorRef.current || initializationState.current !== 'READY') {
       return;
@@ -80,24 +86,23 @@ export const useSignalProcessor = () => {
     setIsProcessing(true);
     setFramesProcessed(0);
     setError(null);
+    setQualityResult(null);
     
     processorRef.current.start();
   }, [isProcessing]);
 
-  // PARADA ÚNICA Y LIMPIA - SIN DEPENDER DE isProcessing STATE
   const stopProcessing = useCallback(() => {
     if (!processorRef.current) {
       return;
     }
     
-    // Primero detener el procesador, luego actualizar estado
     processorRef.current.stop();
     setIsProcessing(false);
     setLastSignal(null);
     setFramesProcessed(0);
+    setQualityResult(null);
   }, []);
 
-  // CALIBRACIÓN ÚNICA
   const calibrate = useCallback(async () => {
     if (!processorRef.current || initializationState.current !== 'READY') {
       return false;
@@ -111,7 +116,6 @@ export const useSignalProcessor = () => {
     }
   }, []);
 
-  // PROCESAMIENTO DE FRAME ÚNICO
   const processFrame = useCallback((imageData: ImageData) => {
     if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
       return;
@@ -124,7 +128,6 @@ export const useSignalProcessor = () => {
     }
   }, [isProcessing]);
 
-  // OBTENER ESTADÍSTICAS RGB REALES PARA SpO2
   const getRGBStats = useCallback(() => {
     if (!processorRef.current) {
       return {
@@ -133,13 +136,13 @@ export const useSignalProcessor = () => {
         greenAC: 0,
         greenDC: 0,
         rgRatio: 0,
-        ratioOfRatios: 0
+        ratioOfRatios: 0,
+        perfusionIndex: 0
       };
     }
     return processorRef.current.getRGBStats();
   }, []);
 
-  // OBTENER BUFFERS DE DERIVADAS
   const getVPGBuffer = useCallback(() => {
     return processorRef.current?.getVPGBuffer() ?? [];
   }, []);
@@ -152,11 +155,20 @@ export const useSignalProcessor = () => {
     return processorRef.current?.getFilteredBuffer() ?? [];
   }, []);
 
+  const getDetrendedBuffer = useCallback(() => {
+    return processorRef.current?.getDetrendedBuffer() ?? [];
+  }, []);
+
+  const getQualityResult = useCallback(() => {
+    return processorRef.current?.getQualityResult() ?? null;
+  }, []);
+
   return {
     isProcessing,
     lastSignal,
     error,
     framesProcessed,
+    qualityResult,
     startProcessing,
     stopProcessing,
     calibrate,
@@ -165,6 +177,8 @@ export const useSignalProcessor = () => {
     getVPGBuffer,
     getAPGBuffer,
     getFilteredBuffer,
+    getDetrendedBuffer,
+    getQualityResult,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,
