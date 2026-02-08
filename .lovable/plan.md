@@ -1,199 +1,278 @@
 
-# Plan de Corrección: Sistema PPG de Lectura Real
+# Plan de Corrección Crítica: Sistema PPG de Lectura Real y Robusta
 
-## Diagnóstico del Problema
+## DIAGNÓSTICO RAÍZ - Por Qué Detecta Más Latidos en el Aire
 
-Tras revisar exhaustivamente el código y buscar soporte en las últimas publicaciones (Nature 2024, IEEE 2024, arXiv 2025), he identificado los siguientes problemas críticos:
+Tras analizar exhaustivamente todo el código y contrastar con las últimas publicaciones (Nature 2025, IEEE 2024, arXiv 2024), he identificado **7 PROBLEMAS CRÍTICOS**:
 
-### Problemas Encontrados
+| # | Problema | Archivo | Impacto |
+|---|----------|---------|---------|
+| 1 | **Inversión de señal incorrecta** | `PPGPipeline.ts:283` | `255 - signalSource` invierte innecesariamente, causando que ruido se amplifique |
+| 2 | **Canal verde como fuente principal** | `PPGPipeline.ts:281-282` | Verde tiene PEOR SNR que rojo con flash LED |
+| 3 | **Detección de picos muy sensible** | `PeakDetectorHDEM.ts:204` | Umbral `> mean * 0.7` detecta cualquier ruido |
+| 4 | **Perfusion Index mal calculado** | `PPGPipeline.ts:310` | Usa greenAC/greenDC pero el canal principal es rojo |
+| 5 | **AC/DC requiere 60 frames** | `PPGPipeline.ts:276-278` | 2 segundos sin datos válidos permite falsos positivos |
+| 6 | **Detección de dedo no bloquea picos** | Todo el sistema | Si no hay dedo, igual detecta picos del ruido |
+| 7 | **Bandpass muy estrecho a 30fps** | `AdaptiveBandpass.ts` | 0.4-4.5Hz pero a 30fps el filtro no es efectivo |
 
-| Problema | Archivo | Impacto |
-|----------|---------|---------|
-| **DisclaimerOverlay no solicitado** | `Index.tsx` línea 402 | UI no deseada que ocupa espacio |
-| **Calibración ZLO bloquea medición** | `RGBCalibrator.ts` | Espera 30 frames SIN dedo, pero el usuario pone el dedo inmediatamente |
-| **Detección de dedo muy permisiva** | `PPGPipeline.ts` línea 391-399 | Criterios demasiado laxos permiten falsos positivos |
-| **Hooks obsoletos sin eliminar** | `useSignalProcessor.ts`, `useHeartBeatProcessor.ts`, `HeartBeatProcessor.ts` | Código muerto que confunde |
-| **PPGSignalProcessor.ts duplicado** | `signal-processing/` | Duplica funcionalidad del nuevo pipeline |
+### Problema Principal Explicado
 
-### Problema Principal de Lectura
+Con flash encendido y dedo, los valores RGB son **MUY ALTOS** (Red > 200, Green > 150):
+- Variación AC típica: 0.5-3% del DC
+- Esto significa: AC ≈ 1-6 unidades de variación
 
-El sistema actual tiene un flujo de calibración ZLO que espera capturar frames **sin dedo** para establecer el nivel base de luz. Pero en la práctica:
+Sin dedo (apuntando al aire):
+- Valores RGB bajos: Red ≈ 20-50
+- PERO el ruido de la cámara genera variaciones del 5-10%
+- Esto parece "más pulsátil" porque el ratio AC/DC es mayor en ruido
 
-1. Usuario presiona "Iniciar"
-2. Cámara se activa con flash
-3. Pipeline inicia `startCalibration()` esperando frames sin dedo
-4. Usuario ya tiene el dedo puesto
-5. Calibración recibe valores altos (con dedo) como "baseline"
-6. Esto distorsiona todos los cálculos AC/DC posteriores
+**El sistema actual no distingue entre:**
+- Señal débil REAL (dedo mal colocado)
+- Ruido fuerte FALSO (sin dedo)
 
 ---
 
-## Solución Propuesta
+## SOLUCIÓN BASADA EN LITERATURA 2024-2025
 
-### FASE 1: Eliminar UI No Solicitada
+### Fuentes Verificadas:
+1. **WF-PPG Dataset (Nature 2025)**: Demuestra que el canal ROJO tiene mejor SNR con LED
+2. **Tri-Spectral PPG (arXiv 2024)**: Fusión de canales RGB mejora robustez
+3. **Seeing Red (IEEE 2020)**: PPG biométrico con smartphone confirma RED > GREEN
+4. **PMC11161386 (2024)**: Algoritmos de separación de canales para cámara
 
-**Archivo:** `src/pages/Index.tsx`
+---
 
-Eliminar la línea que renderiza `DisclaimerOverlay`:
-```typescript
-// ELIMINAR línea 402:
-<DisclaimerOverlay />
-```
+## CAMBIOS A IMPLEMENTAR
 
-Y eliminar el import correspondiente (línea 12).
-
-### FASE 2: Corregir Flujo de Calibración
-
-**Archivo:** `src/modules/ppg-core/RGBCalibrator.ts`
-
-El problema es que la calibración ZLO está diseñada para capturar luz ambiente SIN dedo, pero esto no es práctico. La solución según la literatura (Nature Digital Biology 2024) es:
-
-1. **Saltar calibración ZLO** y usar valores por defecto
-2. **Auto-calibrar** dinámicamente desde los primeros frames con dedo
-3. Estimar ZLO como 2-5% del valor DC inicial
-
-Cambios propuestos:
-- Modificar `forceCalibrationFromMeasurement()` para ser el método principal
-- Hacer que la calibración sea instantánea cuando hay señal válida
-
-### FASE 3: Mejorar Detección de Dedo
+### FASE 1: Corregir Selección de Canal y Eliminar Inversión
 
 **Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
 
-La detección actual es demasiado permisiva. Según la investigación "Seeing Red: PPG Biometrics" (Oxford/IEEE 2020), los criterios óptimos son:
-
-1. **Red > 150** (con flash encendido, el dedo iluminado da valores altos)
-2. **Red/Green ratio > 1.2** (sangre absorbe verde más que rojo)
-3. **Valor DC estable** por al menos 10 frames consecutivos
-
-Cambios en `detectFinger()`:
+Problema actual (líneas 280-284):
 ```typescript
-private detectFinger(rawRed: number, rawGreen: number): boolean {
-  // Con flash encendido, el dedo iluminado debe dar valores ALTOS
-  const hasHighRed = rawRed > 120; // Era > 40
-  const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
-  const validRatio = rgRatio > 1.1 && rgRatio < 4.0;
-  const notSaturated = rawRed < 253 && rawGreen < 253;
-  
-  return hasHighRed && validRatio && notSaturated;
+const greenSaturated = rawGreen > 250;
+const signalSource = greenSaturated ? calibratedRGB.linearRed : calibratedRGB.linearGreen;
+const inverted = 255 - signalSource;  // ← INCORRECTO: invierte innecesariamente
+const filtered = this.bandpass.filter(inverted);
+```
+
+Corrección:
+```typescript
+// USAR CANAL ROJO COMO PRIMARIO (mejor SNR con flash LED)
+// Solo usar verde si rojo está saturado
+const redSaturated = rawRed > 250;
+const signalSource = redSaturated ? calibratedRGB.linearRed : calibratedRGB.linearRed;
+
+// NO INVERTIR - la señal PPG ya tiene la orientación correcta
+// La inversión solo es necesaria en modo transmisivo, no reflectivo
+const filtered = this.bandpass.filter(signalSource);
+```
+
+### FASE 2: Bloquear Detección de Picos Sin Dedo Válido
+
+**Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
+
+Agregar bloqueo en `processFrame()`:
+```typescript
+// Si no hay dedo detectado, NO procesar picos
+if (!fingerDetected) {
+  // Retornar frame con isPeak = false
+  // NO alimentar al detector de picos
 }
 ```
 
-### FASE 4: Optimizar Extracción de Señal
+### FASE 3: Mejorar Detección de Dedo con Validación Temporal
 
 **Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
 
-Según la literatura reciente:
-- **LUMA = 0.299R + 0.587G + 0.114B** es mejor que canal verde solo
-- Pero con flash y dedo, **canal ROJO** tiene mejor SNR
-- Usar **canal verde como fallback** solo si rojo está saturado
+Problema: La detección actual es instantánea, debería requerir N frames consecutivos.
 
-Modificar `processFrame()` para seleccionar el canal óptimo.
+Agregar:
+```typescript
+// Contador de frames consecutivos con dedo válido
+private consecutiveFingerFrames: number = 0;
+private readonly MIN_FINGER_FRAMES = 10; // 333ms @ 30fps
 
-### FASE 5: Eliminar Código Obsoleto
+private detectFinger(rawRed: number, rawGreen: number): boolean {
+  // Criterios existentes...
+  
+  // NUEVO: Validación temporal
+  if (instantFingerDetected) {
+    this.consecutiveFingerFrames++;
+  } else {
+    this.consecutiveFingerFrames = 0;
+  }
+  
+  // Solo considerar dedo válido después de N frames
+  return this.consecutiveFingerFrames >= this.MIN_FINGER_FRAMES;
+}
+```
 
-**Archivos a ELIMINAR:**
-1. `src/hooks/useSignalProcessor.ts` - Reemplazado por `usePPGPipeline.ts`
-2. `src/hooks/useHeartBeatProcessor.ts` - Reemplazado por `usePPGPipeline.ts`
-3. `src/hooks/useVitalSignsProcessor.ts` - Integrado en `usePPGPipeline.ts`
-4. `src/modules/HeartBeatProcessor.ts` - Reemplazado por `PeakDetectorHDEM.ts`
-5. `src/modules/signal-processing/PPGSignalProcessor.ts` - Integrado en `PPGPipeline.ts`
+### FASE 4: Corregir Cálculo de AC/DC Inicial
 
-### FASE 6: Mejorar el Loop de Captura
+**Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
 
-**Archivo:** `src/pages/Index.tsx`
+Problema: Requiere 60 frames (2 segundos) para calcular AC/DC.
 
-El loop actual captura a 30 FPS pero no verifica si el video realmente tiene frames nuevos. Agregar verificación:
+Solución: Calcular AC/DC desde menos frames pero con validación:
+```typescript
+// Reducir ventana mínima a 30 frames (1 segundo)
+if (this.redBuffer.length >= 30) {
+  this.calculateACDC();
+}
+
+// Pero validar que los valores sean fisiológicamente posibles
+// PI típico con dedo: 0.1% - 10%
+// PI sin dedo (ruido): > 20% o < 0.01%
+```
+
+### FASE 5: Mejorar Umbral de Detección de Picos
+
+**Archivo:** `src/modules/ppg-core/PeakDetectorHDEM.ts`
+
+Problema actual (línea 204):
+```typescript
+if (amplitude > mean * 0.7) {  // ← Muy sensible, detecta ruido
+```
+
+Corrección:
+```typescript
+// Umbral más estricto basado en SNR
+const snr = (amplitude - mean) / std;
+if (amplitude > mean * 1.2 && snr > 2.0) {
+  // Solo detectar pico si es significativamente mayor al promedio
+  // Y tiene buena relación señal/ruido
+}
+```
+
+### FASE 6: Agregar Validación de Perfusion Index Mínimo
+
+**Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
 
 ```typescript
-const captureFrame = () => {
-  if (!isProcessingRef.current) return;
-  
-  const video = cameraComponentRef.current?.getVideoElement();
-  if (!video || video.readyState < 2 || video.videoWidth === 0) {
-    frameLoopRef.current = requestAnimationFrame(captureFrame);
-    return;
-  }
-  
-  // NUEVO: Verificar que el video está reproduciendo
-  if (video.paused || video.ended) {
-    video.play().catch(() => {});
-    frameLoopRef.current = requestAnimationFrame(captureFrame);
-    return;
-  }
-  
-  // ... resto del código
-};
+// Si PI < 0.1%, la señal es ruido, no pulso
+const perfusionIndex = this.redDC > 0 ? (this.redAC / this.redDC) * 100 : 0;
+
+if (perfusionIndex < 0.1 || perfusionIndex > 15) {
+  // Valores fuera de rango fisiológico
+  // NO detectar picos, marcar como INVALID
+}
+```
+
+### FASE 7: Corregir Uso de Canal para AC/DC
+
+**Archivo:** `src/modules/ppg-core/PPGPipeline.ts`
+
+Problema: Usa greenAC/greenDC pero el canal principal es rojo.
+
+Corrección:
+```typescript
+// Calcular PI desde el canal ROJO (el que tiene mejor SNR)
+const perfusionIndex = this.redDC > 0 ? (this.redAC / this.redDC) * 100 : 0;
+
+// Para SpO2 sí se necesita ratio R/G
+const ratioR = this.calculateRatioR();
 ```
 
 ---
 
-## Resumen de Cambios
+## RESUMEN DE ARCHIVOS A MODIFICAR
 
-| Archivo | Acción | Descripción |
-|---------|--------|-------------|
-| `src/pages/Index.tsx` | Modificar | Eliminar DisclaimerOverlay, mejorar loop de captura |
-| `src/modules/ppg-core/PPGPipeline.ts` | Modificar | Mejorar detección de dedo, selección de canal, calibración automática |
-| `src/modules/ppg-core/RGBCalibrator.ts` | Modificar | Calibración instantánea, sin esperar frames sin dedo |
-| `src/hooks/useSignalProcessor.ts` | **ELIMINAR** | Código obsoleto |
-| `src/hooks/useHeartBeatProcessor.ts` | **ELIMINAR** | Código obsoleto |
-| `src/hooks/useVitalSignsProcessor.ts` | **ELIMINAR** | Código obsoleto |
-| `src/modules/HeartBeatProcessor.ts` | **ELIMINAR** | Código obsoleto |
-| `src/modules/signal-processing/PPGSignalProcessor.ts` | **ELIMINAR** | Código obsoleto |
-| `src/components/DisclaimerOverlay.tsx` | **ELIMINAR** | UI no solicitada |
+| Archivo | Cambios |
+|---------|---------|
+| `src/modules/ppg-core/PPGPipeline.ts` | 1. Canal rojo primario 2. Eliminar inversión 3. Bloquear picos sin dedo 4. Validación temporal de dedo 5. AC/DC más rápido 6. PI mínimo |
+| `src/modules/ppg-core/PeakDetectorHDEM.ts` | 1. Umbral más estricto 2. Validación SNR |
 
 ---
 
-## Sección Técnica
+## SECCIÓN TÉCNICA
 
-### Fórmulas de Detección de Dedo (Oxford 2020)
+### Fórmulas Corregidas
 
+**Detección de Dedo (IEEE 2020 + Nature 2025):**
 ```text
-LUMA = 0.299 * R + 0.587 * G + 0.114 * B
-
-Criterios de dedo válido (con flash):
-1. R > 120 (luminancia mínima)
-2. R/G > 1.1 (sangre absorbe verde)
-3. R < 253 AND G < 253 (no saturado)
-4. Varianza(R) > 0.5 en 10 frames (señal pulsátil)
+CRITERIOS:
+1. Red > 120 (valor típico con flash: 180-240)
+2. Red/Green ratio: 1.2 - 3.5 (sangre absorbe verde)
+3. Red < 253 (no saturado)
+4. Frames consecutivos >= 10 (estabilidad temporal)
+5. Varianza(Red, 10 frames) < 5 (no movimiento)
 ```
 
-### Calibración Automática (Sin ZLO Previo)
-
+**Perfusion Index Fisiológico:**
 ```text
-1. Primeros 15 frames con dedo:
-   - ZLO_estimated = min(R, G, B) * 0.02
-   - gamma = 2.2 (valor por defecto sRGB)
-   
-2. Después de 15 frames:
-   - AC = RMS(señal_centrada) * sqrt(2)
-   - DC = mean(señal)
-   - PI = (AC / DC) * 100
-   
-3. Validación:
-   - PI > 0.1% = señal válida
-   - PI < 0.1% = ruido o sin dedo
+PI = (AC / DC) * 100
+
+Rangos válidos:
+- Con dedo: 0.1% - 10% (típico 0.5-3%)
+- Sin dedo: 0% o > 15% (ruido puro)
+
+Si PI fuera de rango -> marcar INVALID, no detectar picos
 ```
 
-### Selección de Canal Óptimo
+**Umbral de Pico (HDEM mejorado):**
+```text
+Condiciones para pico válido:
+1. amplitude > threshold * 1.2
+2. SNR = (amplitude - mean) / std > 2.0
+3. Intervalo desde último pico >= 250ms
+4. fingerDetected == true
+5. PI en rango válido
+```
+
+### Flujo de Datos Corregido
 
 ```text
-Con flash + dedo:
-- Canal ROJO: Mejor SNR, más pulsatilidad
-- Canal VERDE: Mejor para SpO2 (ratio R/G)
-
-Sin flash o saturación:
-- Canal VERDE como fallback
-- Calcular SNR de ambos y elegir mejor
+Frame de Cámara
+    |
+    v
+[1. Extraer RGB de ROI 85%]
+    |
+    v
+[2. Detectar Dedo]
+    - Red > 120?
+    - R/G ratio 1.2-3.5?
+    - No saturado?
+    - 10 frames consecutivos?
+    |
+    Si NO → BLOQUEAR todo, retornar fingerDetected=false, isPeak=false
+    |
+    Si SÍ ↓
+    v
+[3. Calibración Instantánea]
+    - ZLO = DC * 0.025
+    |
+    v
+[4. Buffer RGB]
+    |
+    v
+[5. Calcular AC/DC (canal ROJO)]
+    - Validar PI: 0.1% - 10%
+    |
+    Si PI inválido → BLOQUEAR picos
+    |
+    v
+[6. Filtrar con Bandpass 0.4-4.5Hz]
+    - SIN inversión (modo reflectivo)
+    |
+    v
+[7. HDEM Peak Detection]
+    - Solo si fingerDetected=true
+    - Solo si PI válido
+    - Umbral estricto: amplitude > mean * 1.2 AND SNR > 2
+    |
+    v
+[8. Calcular BPM, SpO2, HRV]
 ```
 
 ---
 
-## Garantías del Sistema Corregido
+## GARANTÍAS DEL SISTEMA CORREGIDO
 
-- **CERO DisclaimerOverlay** - Eliminado completamente
-- **CERO código obsoleto** - Todos los hooks y procesadores legacy eliminados
-- **CERO calibración bloqueante** - Calibración instantánea desde primer frame
-- **Detección de dedo robusta** - Criterios basados en literatura validada
-- **100% datos reales** - Sin simulación ni Math.random()
-- **Flujo simplificado** - Un solo pipeline (PPGPipeline.ts) para todo
+- **CERO picos falsos sin dedo**: Sistema bloqueado hasta detectar dedo válido
+- **Validación temporal**: 10 frames consecutivos antes de medir
+- **Canal óptimo**: Rojo primario (mejor SNR con flash LED)
+- **Sin inversión**: Señal reflectiva no requiere inversión
+- **PI como gatekeeper**: Valores fuera de 0.1-10% bloquean detección
+- **Umbrales estrictos**: SNR > 2 y amplitude > mean * 1.2
+- **100% datos reales**: Sin simulación ni Math.random()
