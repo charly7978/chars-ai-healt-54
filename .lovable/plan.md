@@ -1,6 +1,6 @@
 # PLAN MAESTRO: REEMPLAZO TOTAL DEL SISTEMA DE CAPTURA Y PROCESAMIENTO PPG
 
-## ESTADO ACTUAL: ✅ IMPLEMENTADO (FASE 1-3 COMPLETADAS)
+## ESTADO ACTUAL: ✅ IMPLEMENTADO (FASE 1-4 COMPLETADAS)
 
 ---
 
@@ -18,17 +18,19 @@
 | `PPGPipeline.ts` | ✅ | Orquestador unificado del pipeline completo |
 | `index.ts` | ✅ | Exportaciones del módulo |
 
-### ✅ src/hooks/ (NUEVO HOOK UNIFICADO)
+### ✅ src/hooks/ (HOOKS UNIFICADOS)
 
 | Archivo | Estado | Descripción |
 |---------|--------|-------------|
 | `usePPGPipeline.ts` | ✅ | Hook unificado que reemplaza useSignalProcessor + useHeartBeatProcessor |
+| `useCamera.ts` | ✅ | **NUEVO** - Hook de cámara con getUserMedia directo desde gesto de usuario |
 
-### ✅ src/components/ (NUEVOS COMPONENTES UI)
+### ✅ src/components/ (COMPONENTES UI)
 
 | Archivo | Estado | Descripción |
 |---------|--------|-------------|
-| `DisclaimerOverlay.tsx` | ✅ | Aviso legal permanente (modal o footer) |
+| `PPGCamera.tsx` | ✅ | **NUEVO** - Componente de video para captura PPG |
+| `DisclaimerOverlay.tsx` | ✅ | Aviso legal permanente |
 | `MeasurementConfidenceIndicator.tsx` | ✅ | Indicador visual HIGH/MEDIUM/LOW/INVALID |
 | `CalibrationOverlay.tsx` | ✅ | Guía de calibración con progreso |
 
@@ -78,13 +80,13 @@ Cámara (30fps, flash ON)
 | `src/modules/camera/PIDController.ts` | ❌ ELIMINADO | No se usaba |
 | `src/modules/signal-processing/FrameProcessor.ts` | ❌ ELIMINADO | Duplicaba PPGSignalProcessor |
 | `src/modules/signal-processing/SignalQualityAnalyzer.ts` | ❌ ELIMINADO | Reemplazado por MultiSQIValidator |
+| `src/components/CameraView.tsx` | ❌ ELIMINADO | Reemplazado por PPGCamera + useCamera |
 
 ---
 
 ## CÓDIGO LEGACY (MANTENER POR COMPATIBILIDAD)
 
-Los siguientes archivos se mantienen temporalmente para no romper la integración existente.
-Se recomienda migrar Index.tsx para usar `usePPGPipeline` en lugar de los hooks individuales.
+Los siguientes archivos se mantienen temporalmente para no romper otras partes del sistema.
 
 | Archivo | Estado | Acción Recomendada |
 |---------|--------|-------------------|
@@ -93,7 +95,34 @@ Se recomienda migrar Index.tsx para usar `usePPGPipeline` en lugar de los hooks 
 | `src/hooks/useSignalProcessor.ts` | ⚠️ LEGACY | Usar usePPGPipeline |
 | `src/modules/signal-processing/PPGSignalProcessor.ts` | ⚠️ LEGACY | Usar PPGPipeline |
 | `src/modules/signal-processing/BandpassFilter.ts` | ⚠️ LEGACY | Usar AdaptiveBandpass |
+
 ---
+
+## FLUJO CRÍTICO DE CÁMARA (CORREGIDO)
+
+**PROBLEMA ANTERIOR**: `getUserMedia` se llamaba dentro de un `useEffect`, lo cual rompe
+la cadena de gesto del usuario y causa errores de permisos en navegadores modernos.
+
+**SOLUCIÓN IMPLEMENTADA**: 
+1. Nuevo hook `useCamera.ts` expone `requestCamera()` como función asíncrona
+2. `requestCamera()` se llama DIRECTAMENTE desde el `onClick` del botón "Iniciar"
+3. Esto cumple con las políticas de seguridad del navegador (MDN User Activation)
+
+```text
+Usuario hace click en "Iniciar"
+    |
+    v
+handleToggleMonitoring() → startMonitoring()
+    |
+    v
+requestCamera() ← LLAMADA DIRECTA DESDE GESTO
+    |
+    v
+navigator.mediaDevices.getUserMedia()
+    |
+    v
+Stream activo → PPGPipeline.start() → Loop de captura
+```
 
 ## FÓRMULAS MATEMÁTICAS IMPLEMENTADAS
 
