@@ -169,8 +169,8 @@ export class PeakDetectorHDEM {
       this.signalBuffer.shift();
     }
     
-    // Necesitamos suficientes muestras
-    if (this.signalBuffer.length < 60) {
+    // Necesitamos suficientes muestras - REDUCIDO de 60 a 45
+    if (this.signalBuffer.length < 45) {
       return {
         isPeak: false,
         bpm: this.smoothedBPM,
@@ -179,12 +179,12 @@ export class PeakDetectorHDEM {
       };
     }
     
-    // VALIDACIÓN DE PI: Si está muy fuera de rango, no detectar picos
-    // RELAJADO: 0.01% - 25% (era 0.1% - 15%)
-    if (perfusionIndex !== undefined && (perfusionIndex < 0.01 || perfusionIndex > 25)) {
+    // VALIDACIÓN DE PI: Muy relajado para permitir señales débiles
+    // Rango: 0.005% - 30% (ultra-permisivo)
+    if (perfusionIndex !== undefined && (perfusionIndex < 0.005 || perfusionIndex > 30)) {
       return {
         isPeak: false,
-        bpm: this.smoothedBPM, // Mantener último BPM conocido
+        bpm: this.smoothedBPM,
         rrInterval: null,
         confidence: 0
       };
@@ -225,16 +225,16 @@ export class PeakDetectorHDEM {
           // NUEVO: Calcular SNR = (amplitude - mean) / std
           const snr = std > 0 ? (amplitude - mean) / std : 0;
           
-          // CRITERIOS BALANCEADOS (relajados pero robustos):
-          // 1. Amplitud > threshold * 0.9 (era 1.2, muy estricto)
-          // 2. SNR > 1.0 (era 2.0, muy estricto)
-          // 3. Amplitud > promedio * 1.05 (era 1.2, muy estricto)
-          const amplitudeValid = amplitude > localThreshold * 0.9 && amplitude > mean * 1.05;
-          const snrValid = snr > 1.0;
+          // CRITERIOS MUY RELAJADOS para detectar picos reales:
+          // 1. Amplitud > threshold * 0.7 (era 0.9)
+          // 2. SNR > 0.5 (era 1.0)
+          // 3. Amplitud > promedio * 1.02 (era 1.05)
+          const amplitudeValid = amplitude > localThreshold * 0.7 && amplitude > mean * 1.02;
+          const snrValid = snr > 0.5;
           
           if (amplitudeValid && snrValid) {
             isPeak = true;
-            confidence = Math.min(1, snr / 5); // Confianza basada en SNR
+            confidence = Math.min(1, snr / 3); // Confianza basada en SNR (más sensible)
             
             // Registrar RR interval
             if (this.lastPeakTime > 0 && timeSinceLastPeak <= this.MAX_PEAK_INTERVAL_MS) {
