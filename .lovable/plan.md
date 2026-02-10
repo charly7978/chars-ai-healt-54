@@ -1,49 +1,75 @@
 
 
-## Plan: Eliminacion de Codigo Muerto
+## Plan: Visualizacion Completa de Latidos Normales y Arritmicos
 
-### Resumen
-Eliminar 5 archivos no utilizados y funciones huerfanas para reducir el bundle y simplificar el mantenimiento. Sin cambios en UI, funcionalidad ni rendimiento.
+### Problema Actual
+El monitor solo marca como "arritmia" el punto exacto del pico (`isPeak && arrStatus.includes('ARRITMIA')`), lo que produce un unico segmento rojo en vez de colorear el latido completo. El resultado visual es confuso: la mayoria de la onda queda verde aunque haya arritmia activa.
 
-### Archivos a eliminar (5)
+### Solucion
 
-| Archivo | Razon |
-|---------|-------|
-| `src/modules/signal-processing/FrameProcessor.ts` | No importado en ningun otro archivo |
-| `src/modules/signal-processing/SignalQualityAnalyzer.ts` | No importado en ningun otro archivo |
-| `src/modules/signal-processing/types.ts` | Solo importado por FrameProcessor (tambien muerto) |
-| `src/modules/camera/PIDController.ts` | No importado en ningun otro archivo |
-| `src/modules/camera/CameraController.ts` | No importado en ningun otro archivo |
+Cambiar la logica para que el estado de arritmia se propague a **todo el ciclo del latido** (de valle a valle), no solo al instante del pico.
 
-### Funciones a eliminar
+### Cambios en `src/components/PPGSignalMeter.tsx`
 
-**En `src/modules/signal-processing/PPGSignalProcessor.ts`:**
-- `getVPGBuffer()` - nunca invocado externamente
-- `getAPGBuffer()` - nunca invocado externamente
-- `getFilteredBuffer()` - nunca invocado externamente
-- `getRawBuffer()` - nunca invocado externamente
-- `getLastNSamples()` - nunca invocado externamente
-- Tambien eliminar los buffers `vpgBuffer` y `apgBuffer` si solo existen para estas funciones
+**1. Propagar estado de arritmia por latido completo**
 
-**En `src/hooks/useSignalProcessor.ts`:**
-- Eliminar las 3 funciones wrapper: `getVPGBuffer`, `getAPGBuffer`, `getFilteredBuffer`
-- Eliminar sus exports del objeto return
+En el bloque de insercion al buffer (linea ~417-424), reemplazar la logica puntual por un estado persistente que se activa cuando se detecta arritmia y se mantiene hasta el siguiente pico normal:
 
-**En `src/pages/Index.tsx`:**
-- Eliminar la destructuracion de `getVPGBuffer`, `getAPGBuffer`, `getFilteredBuffer` del hook
+- Agregar una ref `currentBeatIsArrhythmia` que rastrea si el latido actual (en curso) es arritmico.
+- Cuando llega un pico (`isPeak`):
+  - Si `arrStatus` incluye "ARRITMIA": marcar `currentBeatIsArrhythmia = true`
+  - Si no: marcar `currentBeatIsArrhythmia = false`
+- Todos los puntos entre picos heredan el estado del latido actual.
 
-### Secuencia de implementacion
+```
+// Logica actual (solo marca el instante del pico):
+const currentIsArrhythmia = peak && arrStatus?.includes('ARRITMIA');
 
-1. Eliminar los 5 archivos muertos
-2. Limpiar `PPGSignalProcessor.ts` (funciones + buffers no usados)
-3. Limpiar `useSignalProcessor.ts` (wrappers + exports)
-4. Limpiar `Index.tsx` (destructuracion)
+// Logica nueva (marca todo el latido):
+if (peak) {
+  beatArrhythmiaRef.current = arrStatus?.includes('ARRITMIA') || false;
+}
+const currentIsArrhythmia = beatArrhythmiaRef.current;
+```
+
+**2. Mejorar marcadores de pico**
+
+- Picos normales (verdes): circulo verde con etiqueta "N" (Normal) y valor de amplitud
+- Picos arritmicos (rojos): circulo rojo mas grande con etiqueta "A" (Arritmia), halo pulsante, y linea vertical de referencia
+
+**3. Agregar lineas verticales de referencia en picos**
+
+Dibujar lineas verticales punteadas en cada pico detectado:
+- Verde para picos normales
+- Rojo para picos arritmicos
+
+Esto facilita la lectura visual de cada latido individual.
+
+**4. Mejorar leyenda**
+
+Actualizar la leyenda inferior para reflejar:
+- Linea verde + "Normal (N)"
+- Linea roja + "Arritmia (A)"
+- Circulo + "Pico"
+- Triangulo + "Valle"
+
+### Secuencia de Cambios
+
+1. Agregar `beatArrhythmiaRef` como nueva ref en el componente
+2. Modificar logica de asignacion de `isArrhythmia` en el buffer push
+3. Actualizar renderizado de picos con marcadores mas descriptivos
+4. Agregar lineas verticales de referencia por pico
+5. Actualizar leyenda
+
+### Archivos Modificados
+
+| Archivo | Cambio |
+|---------|--------|
+| `src/components/PPGSignalMeter.tsx` | Logica de propagacion de arritmia por latido + marcadores mejorados |
 
 ### Impacto
 
-- Estetica: ninguno
-- Funcionalidad: ninguna
-- Rendimiento: mejora menor (menos copias de arrays innecesarias, menor bundle)
-- Archivos eliminados: 5
-- Lineas removidas: ~350 aproximadamente
+- Estetica: mejorada (latidos completos coloreados, marcadores claros)
+- Funcionalidad: mejorada (visualizacion profesional de arritmias)
+- Rendimiento: sin impacto (misma cantidad de operaciones canvas)
 
