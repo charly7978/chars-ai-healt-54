@@ -81,6 +81,9 @@ const PPGSignalMeter = ({
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   
+  // Estado de arritmia persistente por latido completo
+  const beatArrhythmiaRef = useRef(false);
+  
   // Estadísticas de amplitud para escala dinámica
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
 
@@ -413,14 +416,17 @@ const PPGSignalMeter = ({
       // Escalar valor a amplitud visual controlada
       const scaledValue = signalValue * 2; // Amplificación para visualización
       
-      // Detectar si es arritmia
-      const currentIsArrhythmia = peak && arrStatus?.includes('ARRITMIA');
+      // Propagar estado de arritmia por latido completo (de pico a pico)
+      if (peak) {
+        beatArrhythmiaRef.current = arrStatus?.includes('ARRITMIA') || false;
+      }
+      const currentIsArrhythmia = beatArrhythmiaRef.current;
       
       // Agregar punto al buffer
       buffer.push({
         time: now,
         value: scaledValue,
-        isArrhythmia: currentIsArrhythmia || false
+        isArrhythmia: currentIsArrhythmia
       });
       
       // Actualizar estadísticas de amplitud dinámicamente
@@ -532,27 +538,40 @@ const PPGSignalMeter = ({
           }
         }
         
-        // Dibujar marcadores de pico
+        // Dibujar marcadores de pico con líneas verticales de referencia
         peaks.forEach(p => {
+          const color = p.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.SIGNAL_NORMAL;
+          
+          // Línea vertical de referencia (punteada)
+          ctx.save();
+          ctx.strokeStyle = p.isArrhythmia ? 'rgba(239, 68, 68, 0.35)' : 'rgba(34, 197, 94, 0.25)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(p.x, plot.y);
+          ctx.lineTo(p.x, plot.y + plot.height);
+          ctx.stroke();
+          ctx.restore();
+          
           // Círculo del pico
           ctx.beginPath();
-          ctx.arc(p.x, p.y, p.isArrhythmia ? 7 : 5, 0, Math.PI * 2);
-          ctx.fillStyle = p.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
+          ctx.arc(p.x, p.y, p.isArrhythmia ? 8 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = color;
           ctx.fill();
           
-          // Etiqueta
-          ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
-          ctx.fillStyle = p.isArrhythmia ? COLORS.TEXT_DANGER : '#ffffff';
+          // Etiqueta N (Normal) o A (Arritmia)
+          ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = p.isArrhythmia ? COLORS.TEXT_DANGER : COLORS.SIGNAL_NORMAL;
           ctx.textAlign = 'center';
-          ctx.fillText(p.isArrhythmia ? 'A' : 'R', p.x, p.y - 12);
+          ctx.fillText(p.isArrhythmia ? 'A' : 'N', p.x, p.y - 14);
           
-          // Halo para arritmia
+          // Halo pulsante para arritmia
           if (p.isArrhythmia) {
             const alpha = (Math.sin(now / 80) + 1) / 2;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(239, 68, 68, ${0.4 + alpha * 0.5})`;
-            ctx.lineWidth = 2;
+            ctx.arc(p.x, p.y, 15, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(239, 68, 68, ${0.3 + alpha * 0.5})`;
+            ctx.lineWidth = 2.5;
             ctx.stroke();
           }
         });
@@ -580,37 +599,44 @@ const PPGSignalMeter = ({
       const legendY = CONFIG.CANVAS_HEIGHT - 15;
       ctx.font = '9px "SF Mono", Consolas, monospace';
       ctx.textAlign = 'left';
+      const lx = CONFIG.PLOT_AREA.LEFT;
       
-      // Normal
+      // Normal (N) - línea verde + círculo
       ctx.fillStyle = COLORS.SIGNAL_NORMAL;
-      ctx.fillRect(CONFIG.PLOT_AREA.LEFT, legendY - 6, 15, 3);
-      ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Normal', CONFIG.PLOT_AREA.LEFT + 20, legendY);
-      
-      // Arritmia
-      ctx.fillStyle = COLORS.SIGNAL_ARRHYTHMIA;
-      ctx.fillRect(CONFIG.PLOT_AREA.LEFT + 80, legendY - 6, 15, 3);
-      ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Arritmia', CONFIG.PLOT_AREA.LEFT + 100, legendY);
-      
-      // Pico R
+      ctx.fillRect(lx, legendY - 6, 15, 3);
       ctx.beginPath();
-      ctx.arc(CONFIG.PLOT_AREA.LEFT + 175, legendY - 4, 4, 0, Math.PI * 2);
+      ctx.arc(lx + 22, legendY - 4, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = COLORS.TEXT_SECONDARY;
+      ctx.fillText('Normal (N)', lx + 30, legendY);
+      
+      // Arritmia (A) - línea roja + círculo
+      ctx.fillStyle = COLORS.SIGNAL_ARRHYTHMIA;
+      ctx.fillRect(lx + 110, legendY - 6, 15, 3);
+      ctx.beginPath();
+      ctx.arc(lx + 132, legendY - 4, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = COLORS.TEXT_SECONDARY;
+      ctx.fillText('Arritmia (A)', lx + 140, legendY);
+      
+      // Pico
+      ctx.beginPath();
+      ctx.arc(lx + 230, legendY - 4, 4, 0, Math.PI * 2);
       ctx.fillStyle = COLORS.PEAK_NORMAL;
       ctx.fill();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Pico R', CONFIG.PLOT_AREA.LEFT + 185, legendY);
+      ctx.fillText('Pico', lx + 240, legendY);
       
       // Valle
       ctx.beginPath();
-      ctx.moveTo(CONFIG.PLOT_AREA.LEFT + 240, legendY - 6);
-      ctx.lineTo(CONFIG.PLOT_AREA.LEFT + 236, legendY);
-      ctx.lineTo(CONFIG.PLOT_AREA.LEFT + 244, legendY);
+      ctx.moveTo(lx + 275, legendY - 6);
+      ctx.lineTo(lx + 271, legendY);
+      ctx.lineTo(lx + 279, legendY);
       ctx.closePath();
       ctx.fillStyle = COLORS.VALLEY_COLOR;
       ctx.fill();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Valle', CONFIG.PLOT_AREA.LEFT + 250, legendY);
+      ctx.fillText('Valle', lx + 285, legendY);
       
       animationRef.current = requestAnimationFrame(render);
     };
