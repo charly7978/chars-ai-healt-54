@@ -375,26 +375,4 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     };
   }
   
-  /**
-   * Obtener buffers de derivadas
-   */
-  getVPGBuffer(): number[] {
-    return [...this.vpgBuffer];
-  }
-  
-  getAPGBuffer(): number[] {
-    return [...this.apgBuffer];
-  }
-
-  getLastNSamples(n: number): number[] {
-    return this.filteredBuffer.slice(-n);
-  }
-  
-  getRawBuffer(): number[] {
-    return [...this.rawBuffer];
-  }
-  
-  getFilteredBuffer(): number[] {
-    return [...this.filteredBuffer];
-  }
 }

@@ -139,19 +139,6 @@ export const useSignalProcessor = () => {
     return processorRef.current.getRGBStats();
   }, []);
 
-  // OBTENER BUFFERS DE DERIVADAS
-  const getVPGBuffer = useCallback(() => {
-    return processorRef.current?.getVPGBuffer() ?? [];
-  }, []);
-
-  const getAPGBuffer = useCallback(() => {
-    return processorRef.current?.getAPGBuffer() ?? [];
-  }, []);
-
-  const getFilteredBuffer = useCallback(() => {
-    return processorRef.current?.getFilteredBuffer() ?? [];
-  }, []);
-
   return {
     isProcessing,
     lastSignal,
@@ -162,9 +149,6 @@ export const useSignalProcessor = () => {
     calibrate,
     processFrame,
     getRGBStats,
-    getVPGBuffer,
-    getAPGBuffer,
-    getFilteredBuffer,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,
