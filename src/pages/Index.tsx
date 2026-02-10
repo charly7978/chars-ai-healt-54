@@ -60,9 +60,6 @@ const Index = () => {
     isProcessing, 
     framesProcessed,
     getRGBStats,
-    getVPGBuffer,
-    getAPGBuffer,
-    getFilteredBuffer,
   } = useSignalProcessor();
   
   const { 
