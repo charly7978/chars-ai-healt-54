@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Heart, AlertTriangle, Activity, X } from "lucide-react";
+import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2 } from "lucide-react";
+import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
@@ -301,6 +302,13 @@ const Index = () => {
     
     console.log('🛑 Finalizando medición...');
     
+    // Sonido de finalización
+    playCompletionSound();
+    
+    // Vibración de finalización
+    if (navigator.vibrate) {
+      navigator.vibrate([100, 50, 100, 50, 200]);
+    }
     // Detener loop primero
     stopFrameLoop();
     
@@ -669,86 +677,131 @@ const Index = () => {
           {showResults && measurementSummary && (() => {
             const { totalBeats, arrhythmiaBeats, normalPercent } = measurementSummary;
             const normalBeats = totalBeats - arrhythmiaBeats;
-            const arrPercent = totalBeats > 0 ? Math.round((arrhythmiaBeats / totalBeats) * 100) : 0;
+            const avgBpm = heartRate > 0 ? Math.round(heartRate) : '--';
+            const statusColor = normalPercent >= 95 ? 'emerald' : normalPercent >= 80 ? 'yellow' : 'red';
+            const statusText = normalPercent >= 95 ? 'RITMO NORMAL' : normalPercent >= 80 ? 'LEVE IRREGULARIDAD' : 'IRREGULARIDAD DETECTADA';
+            const statusIcon = normalPercent >= 95 ? CheckCircle2 : normalPercent >= 80 ? AlertTriangle : AlertTriangle;
+            const StatusIcon = statusIcon;
+            
             return (
-              <div className="fixed inset-x-0 top-[28%] z-50 flex justify-center px-3 animate-fade-in">
-                <div className="bg-slate-900/95 border border-emerald-500/30 rounded-2xl p-4 backdrop-blur-sm max-w-sm w-full shadow-xl shadow-emerald-500/10 relative">
-                  {/* Botón cerrar */}
-                  <button 
-                    onClick={() => setMeasurementSummary(null)}
-                    className="absolute top-2 right-2 p-1 rounded-full bg-slate-800/80 hover:bg-slate-700 transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5 text-slate-400" />
-                  </button>
-
-                  {/* Header */}
-                  <div className="flex items-center justify-center gap-2 mb-3">
-                    <Activity className="w-4 h-4 text-emerald-400" />
-                    <h3 className="text-emerald-400 text-xs font-bold tracking-widest">
-                      RESUMEN DE MEDICIÓN
-                    </h3>
-                  </div>
-
-                  {/* Latidos totales */}
-                  <div className="flex items-center gap-3 mb-3 bg-slate-800/50 rounded-lg p-2.5">
-                    <div className="p-1.5 rounded-full bg-emerald-500/20">
-                      <Heart className="w-5 h-5 text-emerald-400" fill="currentColor" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-slate-400 text-[10px] font-medium">LATIDOS TOTALES</span>
-                        <span className="text-white text-lg font-bold">{totalBeats}</span>
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
+                <div className="bg-slate-950 border border-slate-700/50 rounded-2xl max-w-sm w-[92%] shadow-2xl overflow-hidden">
+                  
+                  {/* Header con estado */}
+                  <div className={`px-4 py-3 bg-${statusColor}-500/10 border-b border-slate-800`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <StatusIcon className={`w-5 h-5 text-${statusColor}-400`} />
+                        <div>
+                          <h3 className="text-white text-sm font-bold tracking-wide">MEDICIÓN COMPLETADA</h3>
+                          <p className={`text-${statusColor}-400 text-[10px] font-semibold tracking-wider`}>{statusText}</p>
+                        </div>
                       </div>
-                      <div className="w-full h-1.5 bg-slate-700 rounded-full mt-1 overflow-hidden">
-                        <div className="h-full bg-emerald-500 rounded-full transition-all duration-700" 
-                             style={{ width: `${Math.min(100, (totalBeats / 50) * 100)}%` }} />
-                      </div>
+                      <button 
+                        onClick={() => setMeasurementSummary(null)}
+                        className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors"
+                      >
+                        <X className="w-4 h-4 text-slate-400" />
+                      </button>
                     </div>
                   </div>
 
-                  {/* Arritmias */}
-                  <div className="flex items-center gap-3 mb-3 bg-slate-800/50 rounded-lg p-2.5">
-                    <div className={`p-1.5 rounded-full ${arrhythmiaBeats > 0 ? 'bg-red-500/20' : 'bg-emerald-500/20'}`}>
-                      <AlertTriangle className={`w-5 h-5 ${arrhythmiaBeats > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-slate-400 text-[10px] font-medium">ARRITMIAS DETECTADAS</span>
-                        <span className={`text-lg font-bold ${arrhythmiaBeats > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                          {arrhythmiaBeats}
-                        </span>
+                  {/* Métricas principales */}
+                  <div className="p-4 space-y-2">
+                    
+                    {/* BPM y SpO2 en fila */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="bg-slate-900/80 rounded-xl p-3 text-center border border-slate-800/50">
+                        <Heart className="w-4 h-4 text-red-400 mx-auto mb-1" fill="currentColor" />
+                        <div className="text-white text-2xl font-bold leading-none">{avgBpm}</div>
+                        <div className="text-slate-500 text-[9px] mt-1 font-medium">BPM PROMEDIO</div>
                       </div>
-                      <div className="w-full h-1.5 bg-slate-700 rounded-full mt-1 overflow-hidden">
-                        <div className={`h-full rounded-full transition-all duration-700 ${arrhythmiaBeats > 0 ? 'bg-red-500' : 'bg-emerald-500'}`}
-                             style={{ width: `${arrPercent}%` }} />
+                      <div className="bg-slate-900/80 rounded-xl p-3 text-center border border-slate-800/50">
+                        <Activity className="w-4 h-4 text-cyan-400 mx-auto mb-1" />
+                        <div className="text-white text-2xl font-bold leading-none">
+                          {vitalSigns.spo2 > 0 ? vitalSigns.spo2 : '--'}
+                          <span className="text-sm text-slate-400">%</span>
+                        </div>
+                        <div className="text-slate-500 text-[9px] mt-1 font-medium">SpO₂</div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Ritmo normal */}
-                  <div className="flex items-center gap-3 bg-slate-800/50 rounded-lg p-2.5">
-                    <div className={`p-1.5 rounded-full ${normalPercent >= 95 ? 'bg-emerald-500/20' : normalPercent >= 80 ? 'bg-yellow-500/20' : 'bg-red-500/20'}`}>
-                      <Activity className={`w-5 h-5 ${normalPercent >= 95 ? 'text-emerald-400' : normalPercent >= 80 ? 'text-yellow-400' : 'text-red-400'}`} />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex justify-between items-baseline">
-                        <span className="text-slate-400 text-[10px] font-medium">RITMO NORMAL</span>
-                        <span className={`text-lg font-bold ${normalPercent >= 95 ? 'text-emerald-400' : normalPercent >= 80 ? 'text-yellow-400' : 'text-red-400'}`}>
-                          {normalPercent}%
-                        </span>
+                    {/* Presión arterial */}
+                    {vitalSigns.pressure?.systolic > 0 && (
+                      <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800/50 flex items-center gap-3">
+                        <Shield className="w-5 h-5 text-blue-400" />
+                        <div className="flex-1">
+                          <div className="text-slate-500 text-[9px] font-medium">PRESIÓN ARTERIAL</div>
+                          <div className="text-white text-lg font-bold">
+                            {vitalSigns.pressure.systolic}/{vitalSigns.pressure.diastolic}
+                            <span className="text-xs text-slate-500 ml-1">mmHg</span>
+                          </div>
+                        </div>
                       </div>
-                      <div className="w-full h-1.5 bg-slate-700 rounded-full mt-1 overflow-hidden">
-                        <div className={`h-full rounded-full transition-all duration-700 ${normalPercent >= 95 ? 'bg-emerald-500' : normalPercent >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}
-                             style={{ width: `${normalPercent}%` }} />
-                      </div>
-                    </div>
-                  </div>
+                    )}
 
-                  {/* Footer */}
-                  <div className="mt-2 text-center">
-                    <span className="text-slate-500 text-[9px]">
-                      {normalBeats} normales · {arrhythmiaBeats} irregulares · 30s medición
-                    </span>
+                    {/* Barras de ritmo */}
+                    <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800/50">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-slate-400 text-[10px] font-semibold tracking-wide">ANÁLISIS DE RITMO</span>
+                        <div className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-slate-500" />
+                          <span className="text-slate-500 text-[9px]">30s</span>
+                        </div>
+                      </div>
+                      
+                      {/* Latidos normales */}
+                      <div className="mb-2">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <span className="text-emerald-400 text-[9px] font-medium">■ Normales</span>
+                          <span className="text-white text-xs font-bold">{normalBeats}</span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                          <div className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 rounded-full transition-all duration-1000 ease-out"
+                               style={{ width: `${totalBeats > 0 ? (normalBeats / totalBeats) * 100 : 0}%` }} />
+                        </div>
+                      </div>
+                      
+                      {/* Arritmias */}
+                      <div>
+                        <div className="flex justify-between items-center mb-0.5">
+                          <span className="text-red-400 text-[9px] font-medium">■ Arrítmicos</span>
+                          <span className="text-white text-xs font-bold">{arrhythmiaBeats}</span>
+                        </div>
+                        <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden">
+                          <div className={`h-full rounded-full transition-all duration-1000 ease-out ${arrhythmiaBeats > 0 ? 'bg-gradient-to-r from-red-600 to-red-400' : 'bg-slate-700'}`}
+                               style={{ width: `${totalBeats > 0 ? (arrhythmiaBeats / totalBeats) * 100 : 100}%` }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Porcentaje circular visual */}
+                    <div className="flex items-center justify-center gap-4 pt-1">
+                      <div className="relative w-16 h-16">
+                        <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                          <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                fill="none" stroke="#1e293b" strokeWidth="3" />
+                          <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                fill="none"
+                                className={`${statusColor === 'emerald' ? 'stroke-emerald-400' : statusColor === 'yellow' ? 'stroke-yellow-400' : 'stroke-red-400'}`}
+                                strokeWidth="3"
+                                strokeDasharray={`${normalPercent}, 100`}
+                                strokeLinecap="round" />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <span className={`text-sm font-bold ${statusColor === 'emerald' ? 'text-emerald-400' : statusColor === 'yellow' ? 'text-yellow-400' : 'text-red-400'}`}>
+                            {normalPercent}%
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-white text-xs font-semibold">Ritmo Normal</div>
+                        <div className="text-slate-500 text-[9px]">{totalBeats} latidos analizados</div>
+                        <div className={`text-[10px] font-semibold mt-0.5 ${statusColor === 'emerald' ? 'text-emerald-400' : statusColor === 'yellow' ? 'text-yellow-400' : 'text-red-400'}`}>
+                          {statusText}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
