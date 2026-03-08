@@ -351,6 +351,15 @@ const Index = () => {
       setShowResults(true);
     }
     
+    // Generar resumen estadístico
+    const total = totalBeatsRef.current;
+    const arrBeats = arrhythmiaBeatsRef.current;
+    setMeasurementSummary({
+      totalBeats: total,
+      arrhythmiaBeats: arrBeats,
+      normalPercent: total > 0 ? Math.round(((total - arrBeats) / total) * 100) : 100
+    });
+    
     setElapsedTime(0);
     setCalibrationProgress(0);
     
