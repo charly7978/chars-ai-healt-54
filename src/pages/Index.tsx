@@ -733,7 +733,18 @@ const Index = () => {
                       <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800/50 flex items-center gap-3">
                         <Shield className="w-5 h-5 text-blue-400" />
                         <div className="flex-1">
-                          <div className="text-slate-500 text-[9px] font-medium">PRESIÓN ARTERIAL</div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-slate-500 text-[9px] font-medium">PRESIÓN ARTERIAL</div>
+                            {vitalSigns.pressure.confidence && vitalSigns.pressure.confidence !== 'INSUFFICIENT' && (
+                              <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${
+                                vitalSigns.pressure.confidence === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400' :
+                                vitalSigns.pressure.confidence === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+                                'bg-orange-500/20 text-orange-400'
+                              }`}>
+                                {vitalSigns.pressure.confidence}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-white text-lg font-bold">
                             {vitalSigns.pressure.systolic}/{vitalSigns.pressure.diastolic}
                             <span className="text-xs text-slate-500 ml-1">mmHg</span>
