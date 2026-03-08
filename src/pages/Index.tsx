@@ -390,9 +390,13 @@ const Index = () => {
     
     setIsMonitoring(false);
     setShowResults(false);
+    setMeasurementSummary(null);
     setIsCalibrating(false);
     setElapsedTime(0);
     setHeartRate(0);
+    totalBeatsRef.current = 0;
+    arrhythmiaBeatsRef.current = 0;
+    lastArrhythmiaCountForBeatsRef.current = 0;
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setRRIntervals([]);
