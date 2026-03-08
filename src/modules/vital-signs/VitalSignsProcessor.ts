@@ -301,6 +301,8 @@ export class VitalSignsProcessor {
     const bpEstimate = this.bloodPressureProcessor.estimate(
       this.signalHistory, rrData.intervals, 30
     );
+    this.lastBPConfidence = bpEstimate.confidence;
+    this.lastBPFeatureQuality = bpEstimate.featureQuality;
     if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
       this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
       this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
