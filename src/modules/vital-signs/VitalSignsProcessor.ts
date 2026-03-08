@@ -8,6 +8,8 @@ export interface VitalSignsResult {
   pressure: {
     systolic: number;
     diastolic: number;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
+    featureQuality: number;
   };
   arrhythmiaCount: number;
   arrhythmiaStatus: string;
