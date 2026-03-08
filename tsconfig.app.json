@@ -1,43 +1,45 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "useDefineForClassFields": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "module": "ESNext",
-    "skipLibCheck": true,
-
-    /* Bundler mode */
-    "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "esModuleInterop": true,
-    "resolveJsonModule": true,
     "allowSyntheticDefaultImports": true,
-
-    /* Linting */
-    "strict": false,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "noFallthroughCasesInSwitch": false,
+    "noImplicitAny": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noImplicitAny": false,
-    "noFallthroughCasesInSwitch": false,
-
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     },
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "target": "ES2020",
     "typeRoots": [
       "./node_modules/@types",
       "./src/types"
-    ]
+    ],
+    "useDefineForClassFields": true
   },
+  "exclude": [
+    "node_modules"
+  ],
   "include": [
     "src",
     "src/**/*.ts",
     "src/**/*.tsx",
     "src/**/*.d.ts"
-  ],
-  "exclude": ["node_modules"]
+  ]
 }
