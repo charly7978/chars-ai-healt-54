@@ -119,7 +119,7 @@ export default {
   					transform: 'rotateY(180deg)'
   				}
   			},
-  			'progress': {
+  			progress: {
   				'0%': {
   					transform: 'translateX(-100%)'
   				},
@@ -130,7 +130,7 @@ export default {
   					transform: 'translateX(-100%)'
   				}
   			},
-  			'equalize': {
+  			equalize: {
   				'0%, 100%': {
   					height: '2rem'
   				},
@@ -149,7 +149,7 @@ export default {
   		},
   		animation: {
   			'heart-beat': 'heart-beat 1s ease-in-out infinite',
-  			'flip': 'card-flip 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards',
+  			flip: 'card-flip 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards',
   			'value-glow': 'value-glow 3s ease-in-out infinite'
   		},
   		fontFamily: {
@@ -164,6 +164,7 @@ export default {
   				'Noto Color Emoji'
   			],
   			serif: [
+  				'Lora',
   				'ui-serif',
   				'Georgia',
   				'Cambria',
@@ -172,6 +173,7 @@ export default {
   				'serif'
   			],
   			mono: [
+  				'Source Code Pro',
   				'ui-monospace',
   				'SFMono-Regular',
   				'Menlo',
