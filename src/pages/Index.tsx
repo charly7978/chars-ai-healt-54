@@ -585,7 +585,7 @@ const Index = () => {
           {/* HEADER - Tiempo restante */}
           <div className="px-4 py-2 flex justify-center items-center bg-black/30">
             <div className="text-white text-xl font-bold">
-              {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
+              {isMonitoring ? `${30 - elapsedTime}s` : "LISTO"}
             </div>
           </div>
 
