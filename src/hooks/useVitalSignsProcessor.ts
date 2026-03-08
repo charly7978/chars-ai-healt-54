@@ -49,7 +49,7 @@ export const useVitalSignsProcessor = () => {
       spo2: 0, 
       glucose: 0, 
       hemoglobin: 0,
-      pressure: { systolic: 0, diastolic: 0 },
+      pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
       arrhythmiaCount: 0, 
       arrhythmiaStatus: "SIN ARRITMIAS|0",
       lipids: { totalCholesterol: 0, triglycerides: 0 },

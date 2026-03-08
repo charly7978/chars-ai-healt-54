@@ -8,6 +8,8 @@ export interface VitalSignsResult {
   pressure: {
     systolic: number;
     diastolic: number;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
+    featureQuality: number;
   };
   arrhythmiaCount: number;
   arrhythmiaStatus: string;
@@ -51,6 +53,8 @@ export interface RGBData {
 export class VitalSignsProcessor {
   private arrhythmiaProcessor: ArrhythmiaProcessor;
   private bloodPressureProcessor: BloodPressureProcessor;
+  private lastBPConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT' = 'INSUFFICIENT';
+  private lastBPFeatureQuality: number = 0;
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
@@ -245,10 +249,12 @@ export class VitalSignsProcessor {
       // Hemoglobina: 1 decimal
       hemoglobin: Math.round(this.measurements.hemoglobin * 10) / 10,
       
-      // Presión arterial: enteros
+      // Presión arterial: enteros + confianza
       pressure: {
         systolic: Math.round(this.measurements.systolicPressure),
-        diastolic: Math.round(this.measurements.diastolicPressure)
+        diastolic: Math.round(this.measurements.diastolicPressure),
+        confidence: this.lastBPConfidence,
+        featureQuality: this.lastBPFeatureQuality,
       },
       
       arrhythmiaCount: this.measurements.arrhythmiaCount,
@@ -295,6 +301,8 @@ export class VitalSignsProcessor {
     const bpEstimate = this.bloodPressureProcessor.estimate(
       this.signalHistory, rrData.intervals, 30
     );
+    this.lastBPConfidence = bpEstimate.confidence;
+    this.lastBPFeatureQuality = bpEstimate.featureQuality;
     if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
       this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
       this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
