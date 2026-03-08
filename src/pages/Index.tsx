@@ -256,14 +256,7 @@ const Index = () => {
     }
     
     measurementTimerRef.current = window.setInterval(() => {
-      setElapsedTime(prev => {
-        const newTime = prev + 1;
-        if (newTime >= 60) {
-          finalizeMeasurement();
-          return 60;
-        }
-        return newTime;
-      });
+      setElapsedTime(prev => prev + 1);
     }, 1000);
     
     // Calibración automática
@@ -515,6 +508,13 @@ const Index = () => {
     }
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, getRGBStats]);
 
+  // AUTO-FINALIZAR a los 30 segundos
+  useEffect(() => {
+    if (isMonitoring && elapsedTime >= 30) {
+      finalizeMeasurement();
+    }
+  }, [elapsedTime, isMonitoring, finalizeMeasurement]);
+
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {
     if (!isCalibrating) return;
@@ -592,7 +592,7 @@ const Index = () => {
           {/* HEADER - Tiempo restante */}
           <div className="px-4 py-2 flex justify-center items-center bg-black/30">
             <div className="text-white text-xl font-bold">
-              {isMonitoring ? `${60 - elapsedTime}s` : "LISTO"}
+              {isMonitoring ? `${30 - elapsedTime}s` : "LISTO"}
             </div>
           </div>
 
