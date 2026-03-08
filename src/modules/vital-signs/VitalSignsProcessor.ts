@@ -1,5 +1,6 @@
 import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
+import { BloodPressureProcessor } from './BloodPressureProcessor';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -49,6 +50,7 @@ export interface RGBData {
  */
 export class VitalSignsProcessor {
   private arrhythmiaProcessor: ArrhythmiaProcessor;
+  private bloodPressureProcessor: BloodPressureProcessor;
   private calibrationSamples: number = 0;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
@@ -96,6 +98,7 @@ export class VitalSignsProcessor {
   
   constructor() {
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
+    this.bloodPressureProcessor = new BloodPressureProcessor();
     this.arrhythmiaProcessor.setArrhythmiaDetectionCallback((detected) => {
       console.log(`ArrhythmiaProcessor: Cambio de estado → ${detected ? 'ARRITMIA' : 'NORMAL'}`);
     });
@@ -288,13 +291,15 @@ export class VitalSignsProcessor {
       this.updateHistory('spo2', spo2);
     }
 
-    // 2. Presión arterial - Desde morfología PPG - suavizado estable
-    const pressure = this.calculateBloodPressureFromMorphology(rrData.intervals, features);
-    if (pressure.systolic !== 0 && pressure.systolic > 50 && pressure.systolic < 250) {
-      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, pressure.systolic, 'stable');
-      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, pressure.diastolic, 'stable');
-      this.updateHistory('systolic', pressure.systolic);
-      this.updateHistory('diastolic', pressure.diastolic);
+    // 2. Presión arterial - Desde BloodPressureProcessor avanzado
+    const bpEstimate = this.bloodPressureProcessor.estimate(
+      this.signalHistory, rrData.intervals, 30
+    );
+    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
+      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
+      this.updateHistory('systolic', bpEstimate.systolic);
+      this.updateHistory('diastolic', bpEstimate.diastolic);
     }
 
     // 3. Glucosa - Desde características PPG - suavizado dinámico
@@ -394,124 +399,7 @@ export class VitalSignsProcessor {
     return spo2;
   }
 
-  /**
-   * PRESIÓN ARTERIAL DESDE MORFOLOGÍA PPG
-   * 
-   * Basado en literatura:
-   * - Augmentation Index (AIx) correlaciona con rigidez arterial
-   * - Stiffness Index (SI) indica velocidad de onda de pulso
-   * - Tiempo sistólico inversamente proporcional a presión
-   * - PTT (si disponible) es el gold standard
-   * 
-   * Referencias: Mukkamala 2022, Elgendi 2019, Schrumpf 2021
-   * 
-   * NOTA: Sin calibración individual, estos valores son ESTIMACIONES
-   */
-  private calculateBloodPressureFromMorphology(
-    intervals: number[], 
-    features: ReturnType<typeof PPGFeatureExtractor.extractAllFeatures>
-  ): { systolic: number; diastolic: number } {
-    // Solo filtro técnico mínimo (evitar ruido extremo)
-    const validIntervals = intervals.filter(i => i >= 200 && i <= 3000);
-    if (validIntervals.length < 3) {
-      return { systolic: 0, diastolic: 0 };
-    }
-    
-    const { systolicTime, dicroticDepth, acDcRatio, pulseWidth, sdnn, 
-            augmentationIndex, stiffnessIndex, pwvProxy, apg } = features;
-    
-    // Verificar que hay características morfológicas válidas
-    if (systolicTime <= 0 && stiffnessIndex <= 0 && acDcRatio <= 0) {
-      return { systolic: 0, diastolic: 0 };
-    }
-    
-    const avgInterval = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
-    const hr = 60000 / avgInterval;
-    
-    // === MODELO DE ESTIMACIÓN SISTÓLICA ===
-    // Basado en características PPG sin valores base fijos
-    
-    // Componente 1: Tiempo sistólico (inversamente proporcional)
-    // Tiempo corto = arterias rígidas = PA alta
-    let systolicEstimate = 0;
-    
-    if (systolicTime > 0) {
-      // Convertir samples a ms (asumiendo 30fps)
-      const systolicTimeMs = systolicTime * (1000 / 30);
-      // Tiempo sistólico típico: 100-200ms → PA 90-140
-      systolicEstimate += 180 - systolicTimeMs * 0.4;
-    }
-    
-    // Componente 2: Stiffness Index
-    // SI alto = arterias rígidas = PA alta
-    if (stiffnessIndex > 0) {
-      systolicEstimate += stiffnessIndex * 12;
-    }
-    
-    // Componente 3: Augmentation Index
-    // AIx alto = reflexión de onda temprana = PA central alta
-    if (augmentationIndex !== 0) {
-      systolicEstimate += augmentationIndex * 0.5;
-    }
-    
-    // Componente 4: HR (correlación moderada positiva con SBP)
-    systolicEstimate += hr * 0.35;
-    
-    // Componente 5: PWV proxy
-    if (pwvProxy > 0) {
-      systolicEstimate += pwvProxy * 4;
-    }
-    
-    // Componente 6: Muesca dicrotica
-    // Muesca profunda = arterias elásticas = PA más baja
-    if (dicroticDepth > 0) {
-      systolicEstimate -= dicroticDepth * 25;
-    }
-    
-    // Componente 7: AGI (Aging Index) desde APG
-    if (apg.agi !== 0) {
-      systolicEstimate += apg.agi * 8;
-    }
-    
-    // Componente 8: Perfusión (vasoconstricción)
-    if (acDcRatio > 0 && acDcRatio < 0.015) {
-      // Baja perfusión = posible vasoconstricción = PA elevada
-      systolicEstimate += (0.015 - acDcRatio) * 800;
-    }
-    
-    // === MODELO DE ESTIMACIÓN DIASTÓLICA ===
-    // DBP correlaciona con resistencia periférica
-    
-    // Ratio típico SBP/DBP: 1.4-1.6 en adultos sanos
-    let diastolicRatio = 1.5;
-    
-    // Ajustar ratio basado en rigidez arterial
-    if (stiffnessIndex > 0) {
-      diastolicRatio += stiffnessIndex * 0.03;
-    }
-    
-    // HRV baja = tono simpático alto = DBP relativamente más alta
-    if (sdnn > 0 && sdnn < 30) {
-      diastolicRatio -= (30 - sdnn) * 0.005;
-    }
-    
-    diastolicRatio = Math.max(1.3, Math.min(2.0, diastolicRatio));
-    
-    let diastolicEstimate = systolicEstimate / diastolicRatio;
-    
-    // Ajuste por pulseWidth
-    if (pulseWidth > 0) {
-      diastolicEstimate += pulseWidth * 0.8;
-    }
-    
-    // Log periódico
-    if (this.signalHistory.length % 60 === 0) {
-      console.log(`💉 PA: Ts=${systolicTime.toFixed(1)} SI=${stiffnessIndex.toFixed(2)} AIx=${augmentationIndex.toFixed(1)} → ${systolicEstimate.toFixed(0)}/${diastolicEstimate.toFixed(0)}`);
-    }
-    
-    // Retornar valores calculados (el filtrado de outliers se hace en calculateVitalSigns)
-    return { systolic: systolicEstimate, diastolic: diastolicEstimate };
-  }
+  // Blood pressure is now handled by BloodPressureProcessor
 
   /**
    * GLUCOSA DESDE CARACTERÍSTICAS PPG
@@ -737,7 +625,7 @@ export class VitalSignsProcessor {
     this.isCalibrating = false;
     this.calibrationSamples = 0;
     this.arrhythmiaProcessor.reset();
-    // Limpiar historial de mediciones
+    this.bloodPressureProcessor.fullReset();
     this.measurementHistory = {
       spo2: [],
       systolic: [],
