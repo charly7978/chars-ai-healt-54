@@ -247,10 +247,12 @@ export class VitalSignsProcessor {
       // Hemoglobina: 1 decimal
       hemoglobin: Math.round(this.measurements.hemoglobin * 10) / 10,
       
-      // Presión arterial: enteros
+      // Presión arterial: enteros + confianza
       pressure: {
         systolic: Math.round(this.measurements.systolicPressure),
-        diastolic: Math.round(this.measurements.diastolicPressure)
+        diastolic: Math.round(this.measurements.diastolicPressure),
+        confidence: this.lastBPConfidence,
+        featureQuality: this.lastBPFeatureQuality,
       },
       
       arrhythmiaCount: this.measurements.arrhythmiaCount,
