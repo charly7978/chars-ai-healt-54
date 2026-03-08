@@ -11,6 +11,8 @@ interface VitalSignProps {
   normalRange?: { min: number; max: number };
   median?: number;
   average?: number;
+  confidenceLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
+  featureQuality?: number;
 }
 
 const VitalSign = ({ 
