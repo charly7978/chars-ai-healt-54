@@ -40,9 +40,17 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [measurementSummary, setMeasurementSummary] = useState<{
+    totalBeats: number;
+    arrhythmiaBeats: number;
+    normalPercent: number;
+  } | null>(null);
   
   // REFERENCIAS
   const measurementTimerRef = useRef<number | null>(null);
+  const totalBeatsRef = useRef(0);
+  const arrhythmiaBeatsRef = useRef(0);
+  const lastArrhythmiaCountForBeatsRef = useRef(0);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const cameraRef = useRef<CameraViewHandle>(null);
