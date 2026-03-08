@@ -98,6 +98,7 @@ export class VitalSignsProcessor {
   
   constructor() {
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
+    this.bloodPressureProcessor = new BloodPressureProcessor();
     this.arrhythmiaProcessor.setArrhythmiaDetectionCallback((detected) => {
       console.log(`ArrhythmiaProcessor: Cambio de estado → ${detected ? 'ARRITMIA' : 'NORMAL'}`);
     });
