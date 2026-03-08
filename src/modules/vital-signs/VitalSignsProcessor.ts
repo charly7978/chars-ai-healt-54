@@ -291,13 +291,15 @@ export class VitalSignsProcessor {
       this.updateHistory('spo2', spo2);
     }
 
-    // 2. Presión arterial - Desde morfología PPG - suavizado estable
-    const pressure = this.calculateBloodPressureFromMorphology(rrData.intervals, features);
-    if (pressure.systolic !== 0 && pressure.systolic > 50 && pressure.systolic < 250) {
-      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, pressure.systolic, 'stable');
-      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, pressure.diastolic, 'stable');
-      this.updateHistory('systolic', pressure.systolic);
-      this.updateHistory('diastolic', pressure.diastolic);
+    // 2. Presión arterial - Desde BloodPressureProcessor avanzado
+    const bpEstimate = this.bloodPressureProcessor.estimate(
+      this.signalHistory, rrData.intervals, 30
+    );
+    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
+      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
+      this.updateHistory('systolic', bpEstimate.systolic);
+      this.updateHistory('diastolic', bpEstimate.diastolic);
     }
 
     // 3. Glucosa - Desde características PPG - suavizado dinámico
