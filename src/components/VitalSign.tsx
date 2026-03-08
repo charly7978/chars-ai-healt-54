@@ -23,7 +23,9 @@ const VitalSign = ({
   calibrationProgress,
   normalRange,
   median,
-  average
+  average,
+  confidenceLevel,
+  featureQuality
 }: VitalSignProps) => {
   const [showDetails, setShowDetails] = useState(false);
 
