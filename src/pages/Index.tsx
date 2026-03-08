@@ -647,6 +647,8 @@ const Index = () => {
                   : "--/--"}
                 unit="mmHg"
                 highlighted={showResults}
+                confidenceLevel={vitalSigns.pressure?.confidence}
+                featureQuality={vitalSigns.pressure?.featureQuality}
               />
               <VitalSign 
                 label="HEMOGLOBINA"
