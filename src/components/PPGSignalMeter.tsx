@@ -86,6 +86,9 @@ const PPGSignalMeter = ({
   // Rastrear el último conteo de arritmias para detectar incrementos individuales
   const lastArrhythmiaCountRef = useRef(0);
   
+  // Historial de últimos 20 latidos (true = arrítmico, false = normal)
+  const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
+  
   // Estadísticas de amplitud para escala dinámica
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
 
