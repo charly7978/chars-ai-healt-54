@@ -86,6 +86,9 @@ const PPGSignalMeter = ({
   // Rastrear el último conteo de arritmias para detectar incrementos individuales
   const lastArrhythmiaCountRef = useRef(0);
   
+  // Historial de últimos 20 latidos (true = arrítmico, false = normal)
+  const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
+  
   // Estadísticas de amplitud para escala dinámica
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
 
@@ -423,12 +426,15 @@ const PPGSignalMeter = ({
       if (peak) {
         const currentCount = arrStatus ? parseInt(arrStatus.split('|')[1] || '0') : 0;
         if (currentCount > lastArrhythmiaCountRef.current) {
-          // El conteo subió → este latido específico es arrítmico
           beatArrhythmiaRef.current = true;
           lastArrhythmiaCountRef.current = currentCount;
         } else {
-          // Sin incremento → latido normal
           beatArrhythmiaRef.current = false;
+        }
+        // Registrar en historial de latidos (últimos 20)
+        beatHistoryRef.current.push({ isArrhythmia: beatArrhythmiaRef.current, time: now });
+        if (beatHistoryRef.current.length > 20) {
+          beatHistoryRef.current = beatHistoryRef.current.slice(-20);
         }
       }
       const currentIsArrhythmia = beatArrhythmiaRef.current;
@@ -606,6 +612,56 @@ const PPGSignalMeter = ({
         });
       }
       
+      // === HISTORIAL DE LATIDOS (últimos 20) ===
+      const history = beatHistoryRef.current;
+      if (history.length > 0) {
+        const histX = plot.x;
+        const histY = plot.y + plot.height + 30;
+        const dotRadius = 7;
+        const dotSpacing = 18;
+        const totalWidth = history.length * dotSpacing;
+        const startX = histX + (plot.width - totalWidth) / 2;
+        
+        // Fondo del panel
+        ctx.fillStyle = 'rgba(10, 15, 30, 0.85)';
+        const panelPad = 8;
+        ctx.fillRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 14);
+        ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 14);
+        
+        // Título
+        ctx.font = '8px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_SECONDARY;
+        ctx.textAlign = 'center';
+        ctx.fillText('HISTORIAL DE LATIDOS', startX + totalWidth / 2, histY - dotRadius - 1);
+        
+        // Puntos
+        history.forEach((beat, i) => {
+          const cx = startX + i * dotSpacing + dotSpacing / 2;
+          const cy = histY + 6;
+          
+          // Glow para arrítmicos
+          if (beat.isArrhythmia) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, dotRadius + 3, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+            ctx.fill();
+          }
+          
+          ctx.beginPath();
+          ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2);
+          ctx.fillStyle = beat.isArrhythmia ? COLORS.SIGNAL_ARRHYTHMIA : COLORS.SIGNAL_NORMAL;
+          ctx.fill();
+          
+          // Número del latido
+          ctx.font = 'bold 7px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = '#fff';
+          ctx.textAlign = 'center';
+          ctx.fillText(`${i + 1}`, cx, cy + 3);
+        });
+      }
+      
       // === LEYENDA ===
       const legendY = CONFIG.CANVAS_HEIGHT - 15;
       ctx.font = '9px "SF Mono", Consolas, monospace';
@@ -663,6 +719,8 @@ const PPGSignalMeter = ({
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
     amplitudeStatsRef.current = { min: -50, max: 50, range: 100 };
+    beatHistoryRef.current = [];
+    lastArrhythmiaCountRef.current = 0;
     onReset();
   }, [onReset]);
 
