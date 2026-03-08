@@ -508,6 +508,13 @@ const Index = () => {
     }
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, getRGBStats]);
 
+  // AUTO-FINALIZAR a los 30 segundos
+  useEffect(() => {
+    if (isMonitoring && elapsedTime >= 30) {
+      finalizeMeasurement();
+    }
+  }, [elapsedTime, isMonitoring, finalizeMeasurement]);
+
   // CONTROL DE CALIBRACIÓN
   useEffect(() => {
     if (!isCalibrating) return;
