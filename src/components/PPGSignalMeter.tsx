@@ -719,6 +719,8 @@ const PPGSignalMeter = ({
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
     amplitudeStatsRef.current = { min: -50, max: 50, range: 100 };
+    beatHistoryRef.current = [];
+    lastArrhythmiaCountRef.current = 0;
     onReset();
   }, [onReset]);
 
