@@ -341,8 +341,8 @@ const Index = () => {
     
     if (savedResults) {
       setVitalSigns(savedResults);
-      setShowResults(true);
     }
+    setShowResults(true);
     
     // Generar resumen estadístico
     const total = totalBeatsRef.current;
