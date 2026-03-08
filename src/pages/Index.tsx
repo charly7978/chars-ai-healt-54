@@ -341,8 +341,8 @@ const Index = () => {
     
     if (savedResults) {
       setVitalSigns(savedResults);
-      setShowResults(true);
     }
+    setShowResults(true);
     
     // Generar resumen estadístico
     const total = totalBeatsRef.current;
@@ -667,7 +667,13 @@ const Index = () => {
           {/* RESUMEN ESTADÍSTICO POST-MEDICIÓN - fixed para estar sobre PPGSignalMeter */}
           {showResults && measurementSummary && (
             <div className="fixed inset-x-0 top-[35%] z-50 flex justify-center px-4 animate-fade-in">
-              <div className="bg-slate-900/95 border border-emerald-500/30 rounded-xl px-5 py-3 backdrop-blur-sm max-w-xs w-full shadow-lg shadow-emerald-500/10">
+              <div className="bg-slate-900/95 border border-emerald-500/30 rounded-xl px-5 py-3 backdrop-blur-sm max-w-xs w-full shadow-lg shadow-emerald-500/10 relative">
+                <button 
+                  onClick={() => setMeasurementSummary(null)}
+                  className="absolute top-1 right-2 text-slate-400 hover:text-white text-lg leading-none"
+                >
+                  ✕
+                </button>
                 <h3 className="text-emerald-400 text-xs font-bold text-center mb-2 tracking-wider">
                   RESUMEN DE MEDICIÓN
                 </h3>
