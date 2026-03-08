@@ -160,6 +160,33 @@ const VitalSign = ({
         {unit && <span className="text-xs text-white/70 ml-1">{unit}</span>}
       </div>
 
+      {/* Confidence indicator for BP */}
+      {confidenceLevel && confidenceLevel !== 'INSUFFICIENT' && label === 'PRESIÓN ARTERIAL' && (
+        <div className="flex items-center gap-1.5 mt-1">
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+            confidenceLevel === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400' :
+            confidenceLevel === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+            'bg-orange-500/20 text-orange-400'
+          }`}>
+            {confidenceLevel}
+          </span>
+          {featureQuality !== undefined && featureQuality > 0 && (
+            <div className="flex items-center gap-0.5">
+              <div className="w-8 h-1 bg-white/10 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    featureQuality >= 75 ? 'bg-emerald-400' :
+                    featureQuality >= 50 ? 'bg-yellow-400' :
+                    'bg-orange-400'
+                  }`}
+                  style={{ width: `${featureQuality}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {!isArrhytmia && riskLabel && (
         <div className={`text-sm font-medium mt-1 ${riskColor}`}>
           {riskLabel}
