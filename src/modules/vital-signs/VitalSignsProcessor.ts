@@ -50,7 +50,7 @@ export interface RGBData {
  */
 export class VitalSignsProcessor {
   private arrhythmiaProcessor: ArrhythmiaProcessor;
-  private calibrationSamples: number = 0;
+  private bloodPressureProcessor: BloodPressureProcessor;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating: boolean = false;
   
