@@ -625,7 +625,7 @@ export class VitalSignsProcessor {
     this.isCalibrating = false;
     this.calibrationSamples = 0;
     this.arrhythmiaProcessor.reset();
-    // Limpiar historial de mediciones
+    this.bloodPressureProcessor.fullReset();
     this.measurementHistory = {
       spo2: [],
       systolic: [],
