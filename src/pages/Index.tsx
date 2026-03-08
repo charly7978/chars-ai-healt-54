@@ -664,10 +664,10 @@ const Index = () => {
             </div>
           </div>
 
-          {/* RESUMEN ESTADÍSTICO POST-MEDICIÓN */}
+          {/* RESUMEN ESTADÍSTICO POST-MEDICIÓN - fixed para estar sobre PPGSignalMeter */}
           {showResults && measurementSummary && (
-            <div className="absolute inset-x-0 top-[38%] z-20 flex justify-center px-4">
-              <div className="bg-slate-900/95 border border-emerald-500/30 rounded-xl px-5 py-3 backdrop-blur-sm max-w-xs w-full">
+            <div className="fixed inset-x-0 top-[35%] z-50 flex justify-center px-4 animate-fade-in">
+              <div className="bg-slate-900/95 border border-emerald-500/30 rounded-xl px-5 py-3 backdrop-blur-sm max-w-xs w-full shadow-lg shadow-emerald-500/10">
                 <h3 className="text-emerald-400 text-xs font-bold text-center mb-2 tracking-wider">
                   RESUMEN DE MEDICIÓN
                 </h3>
