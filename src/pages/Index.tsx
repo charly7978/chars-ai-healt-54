@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Heart, AlertTriangle, Activity, X } from "lucide-react";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
