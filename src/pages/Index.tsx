@@ -302,6 +302,13 @@ const Index = () => {
     
     console.log('🛑 Finalizando medición...');
     
+    // Sonido de finalización
+    playCompletionSound();
+    
+    // Vibración de finalización
+    if (navigator.vibrate) {
+      navigator.vibrate([100, 50, 100, 50, 200]);
+    }
     // Detener loop primero
     stopFrameLoop();
     
