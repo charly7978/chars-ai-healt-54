@@ -1,5 +1,6 @@
 import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
+import { BloodPressureProcessor } from './BloodPressureProcessor';
 
 export interface VitalSignsResult {
   spo2: number;
