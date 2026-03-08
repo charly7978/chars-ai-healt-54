@@ -238,7 +238,11 @@ const Index = () => {
     
     enterFullScreen();
     setShowResults(false);
+    setMeasurementSummary(null);
     setElapsedTime(0);
+    totalBeatsRef.current = 0;
+    arrhythmiaBeatsRef.current = 0;
+    lastArrhythmiaCountForBeatsRef.current = 0;
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
     // Iniciar procesamiento
