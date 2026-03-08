@@ -664,6 +664,35 @@ const Index = () => {
             </div>
           </div>
 
+          {/* RESUMEN ESTADÍSTICO POST-MEDICIÓN */}
+          {showResults && measurementSummary && (
+            <div className="absolute inset-x-0 top-[38%] z-20 flex justify-center px-4">
+              <div className="bg-slate-900/95 border border-emerald-500/30 rounded-xl px-5 py-3 backdrop-blur-sm max-w-xs w-full">
+                <h3 className="text-emerald-400 text-xs font-bold text-center mb-2 tracking-wider">
+                  RESUMEN DE MEDICIÓN
+                </h3>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <div className="text-white text-lg font-bold">{measurementSummary.totalBeats}</div>
+                    <div className="text-slate-400 text-[9px] leading-tight">LATIDOS<br/>TOTALES</div>
+                  </div>
+                  <div>
+                    <div className={`text-lg font-bold ${measurementSummary.arrhythmiaBeats > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                      {measurementSummary.arrhythmiaBeats}
+                    </div>
+                    <div className="text-slate-400 text-[9px] leading-tight">ARRITMIAS<br/>DETECTADAS</div>
+                  </div>
+                  <div>
+                    <div className={`text-lg font-bold ${measurementSummary.normalPercent >= 95 ? 'text-emerald-400' : measurementSummary.normalPercent >= 80 ? 'text-yellow-400' : 'text-red-400'}`}>
+                      {measurementSummary.normalPercent}%
+                    </div>
+                    <div className="text-slate-400 text-[9px] leading-tight">RITMO<br/>NORMAL</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* BOTONES */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
             <div className="w-1/2">
