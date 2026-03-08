@@ -418,9 +418,18 @@ const PPGSignalMeter = ({
       // Escalar valor a amplitud visual controlada
       const scaledValue = signalValue * 2; // Amplificación para visualización
       
-      // Propagar estado de arritmia por latido completo (de pico a pico)
+      // Propagar estado de arritmia por latido individual
+      // Solo marcar como arrítmico cuando el conteo INCREMENTA en ese pico específico
       if (peak) {
-        beatArrhythmiaRef.current = arrStatus?.includes('ARRITMIA') || false;
+        const currentCount = arrStatus ? parseInt(arrStatus.split('|')[1] || '0') : 0;
+        if (currentCount > lastArrhythmiaCountRef.current) {
+          // El conteo subió → este latido específico es arrítmico
+          beatArrhythmiaRef.current = true;
+          lastArrhythmiaCountRef.current = currentCount;
+        } else {
+          // Sin incremento → latido normal
+          beatArrhythmiaRef.current = false;
+        }
       }
       const currentIsArrhythmia = beatArrhythmiaRef.current;
       
