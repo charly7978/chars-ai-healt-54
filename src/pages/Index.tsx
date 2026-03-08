@@ -427,6 +427,13 @@ const Index = () => {
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 300);
+      // Contar latidos para resumen
+      totalBeatsRef.current++;
+      const currentArrCount = vitalSigns.arrhythmiaCount || 0;
+      if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
+        arrhythmiaBeatsRef.current++;
+        lastArrhythmiaCountForBeatsRef.current = currentArrCount;
+      }
     }
     
     if (heartBeatResult.rrData?.intervals) {
