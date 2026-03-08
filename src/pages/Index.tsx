@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { Heart, AlertTriangle, Activity, X } from "lucide-react";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import CameraPreview from "@/components/CameraPreview";
@@ -664,40 +665,95 @@ const Index = () => {
             </div>
           </div>
 
-          {/* RESUMEN ESTADÍSTICO POST-MEDICIÓN - fixed para estar sobre PPGSignalMeter */}
-          {showResults && measurementSummary && (
-            <div className="fixed inset-x-0 top-[35%] z-50 flex justify-center px-4 animate-fade-in">
-              <div className="bg-slate-900/95 border border-emerald-500/30 rounded-xl px-5 py-3 backdrop-blur-sm max-w-xs w-full shadow-lg shadow-emerald-500/10 relative">
-                <button 
-                  onClick={() => setMeasurementSummary(null)}
-                  className="absolute top-1 right-2 text-slate-400 hover:text-white text-lg leading-none"
-                >
-                  ✕
-                </button>
-                <h3 className="text-emerald-400 text-xs font-bold text-center mb-2 tracking-wider">
-                  RESUMEN DE MEDICIÓN
-                </h3>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div>
-                    <div className="text-white text-lg font-bold">{measurementSummary.totalBeats}</div>
-                    <div className="text-slate-400 text-[9px] leading-tight">LATIDOS<br/>TOTALES</div>
+          {/* RESUMEN ESTADÍSTICO POST-MEDICIÓN */}
+          {showResults && measurementSummary && (() => {
+            const { totalBeats, arrhythmiaBeats, normalPercent } = measurementSummary;
+            const normalBeats = totalBeats - arrhythmiaBeats;
+            const arrPercent = totalBeats > 0 ? Math.round((arrhythmiaBeats / totalBeats) * 100) : 0;
+            return (
+              <div className="fixed inset-x-0 top-[28%] z-50 flex justify-center px-3 animate-fade-in">
+                <div className="bg-slate-900/95 border border-emerald-500/30 rounded-2xl p-4 backdrop-blur-sm max-w-sm w-full shadow-xl shadow-emerald-500/10 relative">
+                  {/* Botón cerrar */}
+                  <button 
+                    onClick={() => setMeasurementSummary(null)}
+                    className="absolute top-2 right-2 p-1 rounded-full bg-slate-800/80 hover:bg-slate-700 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5 text-slate-400" />
+                  </button>
+
+                  {/* Header */}
+                  <div className="flex items-center justify-center gap-2 mb-3">
+                    <Activity className="w-4 h-4 text-emerald-400" />
+                    <h3 className="text-emerald-400 text-xs font-bold tracking-widest">
+                      RESUMEN DE MEDICIÓN
+                    </h3>
                   </div>
-                  <div>
-                    <div className={`text-lg font-bold ${measurementSummary.arrhythmiaBeats > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
-                      {measurementSummary.arrhythmiaBeats}
+
+                  {/* Latidos totales */}
+                  <div className="flex items-center gap-3 mb-3 bg-slate-800/50 rounded-lg p-2.5">
+                    <div className="p-1.5 rounded-full bg-emerald-500/20">
+                      <Heart className="w-5 h-5 text-emerald-400" fill="currentColor" />
                     </div>
-                    <div className="text-slate-400 text-[9px] leading-tight">ARRITMIAS<br/>DETECTADAS</div>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-slate-400 text-[10px] font-medium">LATIDOS TOTALES</span>
+                        <span className="text-white text-lg font-bold">{totalBeats}</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-700 rounded-full mt-1 overflow-hidden">
+                        <div className="h-full bg-emerald-500 rounded-full transition-all duration-700" 
+                             style={{ width: `${Math.min(100, (totalBeats / 50) * 100)}%` }} />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <div className={`text-lg font-bold ${measurementSummary.normalPercent >= 95 ? 'text-emerald-400' : measurementSummary.normalPercent >= 80 ? 'text-yellow-400' : 'text-red-400'}`}>
-                      {measurementSummary.normalPercent}%
+
+                  {/* Arritmias */}
+                  <div className="flex items-center gap-3 mb-3 bg-slate-800/50 rounded-lg p-2.5">
+                    <div className={`p-1.5 rounded-full ${arrhythmiaBeats > 0 ? 'bg-red-500/20' : 'bg-emerald-500/20'}`}>
+                      <AlertTriangle className={`w-5 h-5 ${arrhythmiaBeats > 0 ? 'text-red-400' : 'text-emerald-400'}`} />
                     </div>
-                    <div className="text-slate-400 text-[9px] leading-tight">RITMO<br/>NORMAL</div>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-slate-400 text-[10px] font-medium">ARRITMIAS DETECTADAS</span>
+                        <span className={`text-lg font-bold ${arrhythmiaBeats > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                          {arrhythmiaBeats}
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-700 rounded-full mt-1 overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-700 ${arrhythmiaBeats > 0 ? 'bg-red-500' : 'bg-emerald-500'}`}
+                             style={{ width: `${arrPercent}%` }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ritmo normal */}
+                  <div className="flex items-center gap-3 bg-slate-800/50 rounded-lg p-2.5">
+                    <div className={`p-1.5 rounded-full ${normalPercent >= 95 ? 'bg-emerald-500/20' : normalPercent >= 80 ? 'bg-yellow-500/20' : 'bg-red-500/20'}`}>
+                      <Activity className={`w-5 h-5 ${normalPercent >= 95 ? 'text-emerald-400' : normalPercent >= 80 ? 'text-yellow-400' : 'text-red-400'}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-slate-400 text-[10px] font-medium">RITMO NORMAL</span>
+                        <span className={`text-lg font-bold ${normalPercent >= 95 ? 'text-emerald-400' : normalPercent >= 80 ? 'text-yellow-400' : 'text-red-400'}`}>
+                          {normalPercent}%
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-slate-700 rounded-full mt-1 overflow-hidden">
+                        <div className={`h-full rounded-full transition-all duration-700 ${normalPercent >= 95 ? 'bg-emerald-500' : normalPercent >= 80 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                             style={{ width: `${normalPercent}%` }} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="mt-2 text-center">
+                    <span className="text-slate-500 text-[9px]">
+                      {normalBeats} normales · {arrhythmiaBeats} irregulares · 30s medición
+                    </span>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* BOTONES */}
           <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
