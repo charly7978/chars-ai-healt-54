@@ -749,6 +749,48 @@ const PPGSignalMeter = ({
         <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v2</span>
       </div>
 
+      {/* Resumen estadístico al finalizar medición */}
+      {preserveResults && beatHistoryRef.current.length > 0 && (() => {
+        const history = beatHistoryRef.current;
+        const totalBeats = history.length;
+        const arrhythmicBeats = history.filter(b => b.isArrhythmia).length;
+        const normalBeats = totalBeats - arrhythmicBeats;
+        const normalPct = totalBeats > 0 ? Math.round((normalBeats / totalBeats) * 100) : 0;
+        return (
+          <div className="absolute inset-x-4 z-20 flex justify-center" style={{ top: '38%' }}>
+            <div className="bg-slate-900/95 border border-slate-700/60 rounded-xl px-5 py-4 backdrop-blur-sm w-full max-w-xs shadow-2xl">
+              <h3 className="text-emerald-400 font-bold text-sm text-center mb-3 tracking-wider">
+                📊 RESUMEN DE MEDICIÓN
+              </h3>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 text-xs">Total latidos</span>
+                  <span className="text-white font-mono font-bold text-sm">{totalBeats}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 text-xs">Latidos normales</span>
+                  <span className="text-emerald-400 font-mono font-bold text-sm">{normalBeats}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400 text-xs">Arritmias detectadas</span>
+                  <span className={`font-mono font-bold text-sm ${arrhythmicBeats > 0 ? 'text-red-400' : 'text-emerald-400'}`}>
+                    {arrhythmicBeats}
+                  </span>
+                </div>
+                <div className="border-t border-slate-700/50 pt-2 mt-2 flex justify-between items-center">
+                  <span className="text-slate-300 text-xs font-semibold">Ritmo normal</span>
+                  <span className={`font-mono font-bold text-base ${
+                    normalPct >= 95 ? 'text-emerald-400' : normalPct >= 80 ? 'text-yellow-400' : 'text-red-400'
+                  }`}>
+                    {normalPct}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Botones */}
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button 
