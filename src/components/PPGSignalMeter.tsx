@@ -426,12 +426,15 @@ const PPGSignalMeter = ({
       if (peak) {
         const currentCount = arrStatus ? parseInt(arrStatus.split('|')[1] || '0') : 0;
         if (currentCount > lastArrhythmiaCountRef.current) {
-          // El conteo subió → este latido específico es arrítmico
           beatArrhythmiaRef.current = true;
           lastArrhythmiaCountRef.current = currentCount;
         } else {
-          // Sin incremento → latido normal
           beatArrhythmiaRef.current = false;
+        }
+        // Registrar en historial de latidos (últimos 20)
+        beatHistoryRef.current.push({ isArrhythmia: beatArrhythmiaRef.current, time: now });
+        if (beatHistoryRef.current.length > 20) {
+          beatHistoryRef.current = beatHistoryRef.current.slice(-20);
         }
       }
       const currentIsArrhythmia = beatArrhythmiaRef.current;
