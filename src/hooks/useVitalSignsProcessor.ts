@@ -102,6 +102,7 @@ export const useVitalSignsProcessor = () => {
     setRGBData,
     reset,
     fullReset,
+    calibrateBP,
     startCalibration,
     forceCalibrationCompletion,
     lastValidResults,
