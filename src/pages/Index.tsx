@@ -854,7 +854,10 @@ const Index = () => {
       <BPCalibrationWizard
         isOpen={showCalibrationWizard}
         onClose={() => setShowCalibrationWizard(false)}
-        onCalibrate={(sys, dia) => { calibrateBP(sys, dia); setIsCalibrated(true); }}
+        onCalibrate={(sys, dia) => {
+          calibrateBP(sys, dia);
+          setIsCalibrated(true);
+        }}
       />
     </div>
   );
