@@ -13,6 +13,7 @@ import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import BPCalibrationWizard from "@/components/BPCalibrationWizard";
+import { supabase } from "@/integrations/supabase/client";
 
 const Index = () => {
   // ESTADOS PRINCIPALES
