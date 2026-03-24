@@ -7,8 +7,6 @@ import React, { useRef, useEffect } from "react";
 
 interface CameraPreviewProps {
   stream: MediaStream | null;
-  isFingerDetected: boolean;
-  signalQuality: number;
   isVisible: boolean;
 }
 

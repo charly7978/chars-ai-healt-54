@@ -97,20 +97,6 @@ export const useSignalProcessor = () => {
     setFramesProcessed(0);
   }, []);
 
-  // CALIBRACIÓN ÚNICA
-  const calibrate = useCallback(async () => {
-    if (!processorRef.current || initializationState.current !== 'READY') {
-      return false;
-    }
-
-    try {
-      const success = await processorRef.current.calibrate();
-      return success;
-    } catch (error) {
-      return false;
-    }
-  }, []);
-
   // PROCESAMIENTO DE FRAME ÚNICO
   const processFrame = useCallback((imageData: ImageData) => {
     if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
@@ -146,7 +132,6 @@ export const useSignalProcessor = () => {
     framesProcessed,
     startProcessing,
     stopProcessing,
-    calibrate,
     processFrame,
     getRGBStats,
     debugInfo: {
