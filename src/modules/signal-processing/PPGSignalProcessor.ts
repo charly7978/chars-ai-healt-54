@@ -545,10 +545,27 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       greenAC: this.greenAC,
       greenDC: this.greenDC,
       rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0,
-      // Ratio R para SpO2: (AC_red/DC_red) / (AC_green/DC_green)
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0 
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) 
         : 0
+    };
+  }
+
+  /**
+   * MÉTRICAS INTERNAS DEL PIPELINE para panel de depuración
+   */
+  getDetectionMetrics() {
+    return {
+      detectionConfidence: this.detectionConfidence,
+      fingerDetected: this.fingerDetected,
+      signalQuality: this.signalQuality,
+      perfusionIndex: this.calculatePerfusionIndex(),
+      smoothedRed: this.smoothedRed,
+      smoothedGreen: this.smoothedGreen,
+      smoothedBlue: this.smoothedBlue,
+      fingerConfidenceCount: this.fingerConfidenceCount,
+      fingerLostCount: this.fingerLostCount,
+      bufferFill: this.filteredBuffer.length / this.BUFFER_SIZE,
     };
   }
   
