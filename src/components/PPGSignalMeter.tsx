@@ -103,24 +103,24 @@ const PPGSignalMeter = ({
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals });
+  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, pipelineMetrics, vitalSignsFeatureQuality, pressure });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
   
   // Estado de arritmia persistente por latido completo
   const beatArrhythmiaRef = useRef(false);
-  // Rastrear el último conteo de arritmias para detectar incrementos individuales
   const lastArrhythmiaCountRef = useRef(0);
   
-  // Historial de últimos 20 latidos (true = arrítmico, false = normal)
+  // Historial de últimos 20 latidos
   const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
   
   // Estadísticas de amplitud para escala dinámica
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
 
   useEffect(() => {
-    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals };
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals]);
+    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, pipelineMetrics, vitalSignsFeatureQuality, pressure };
+  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, pipelineMetrics, vitalSignsFeatureQuality, pressure]);
 
   // Efecto visual de pulso
   useEffect(() => {
