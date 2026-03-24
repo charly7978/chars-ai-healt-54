@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2, Settings } from "lucide-react";
+import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2 } from "lucide-react";
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
@@ -9,7 +9,6 @@ import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
-import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import BPCalibrationWizard from "@/components/BPCalibrationWizard";
