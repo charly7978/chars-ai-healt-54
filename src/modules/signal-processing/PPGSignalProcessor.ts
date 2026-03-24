@@ -502,10 +502,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const jumpPenalty = Math.max(0, 1 - maxJump / (range * 0.6 + 0.01));
 
     return Math.round(
-      snrScore * 48 +
-      perfusionScore * 24 +
+      snrScore * 38 +
+      perfusionScore * 22 +
       stabilityScore * 18 +
-      continuityScore * 10
+      continuityScore * 12 +
+      jumpPenalty * 10
     );
   }
   
