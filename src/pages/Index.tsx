@@ -12,6 +12,7 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
+import BPCalibrationWizard from "@/components/BPCalibrationWizard";
 
 const Index = () => {
   // ESTADOS PRINCIPALES
