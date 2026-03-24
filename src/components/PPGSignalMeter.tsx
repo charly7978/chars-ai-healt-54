@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Heart, Activity } from 'lucide-react';
+import { Heart, Activity, Shield } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 
 interface PPGSignalMeterProps {
@@ -8,6 +8,9 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
+  onOpenCalibration: () => void;
+  isMonitoring?: boolean;
+  isCalibrated?: boolean;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
     timestamp: number;
