@@ -85,6 +85,7 @@ const Index = () => {
     setRGBData,
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
+    calibrateBP,
     lastValidResults,
     startCalibration,
     forceCalibrationCompletion,
