@@ -71,6 +71,7 @@ const Index = () => {
     processFrame, 
     isProcessing, 
     getRGBStats,
+    getDetectionMetrics,
   } = useSignalProcessor();
   
   const { 
