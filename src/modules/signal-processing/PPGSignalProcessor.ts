@@ -471,28 +471,35 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.filteredBuffer.length < 30) return 0;
     if (!this.fingerDetected) return 0;
     
-    const recent = this.filteredBuffer.slice(-60);
+    const recent = this.filteredBuffer.slice(-90); // Ventana más amplia para mejor estimación
     const max = Math.max(...recent);
     const min = Math.min(...recent);
     const range = max - min;
     
-    if (range < 0.35) return 8;
+    if (range < 0.25) return 5;
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
 
+    // Ruido por movimiento: diferencias consecutivas grandes
     let motionNoise = 0;
+    let maxJump = 0;
     for (let i = 1; i < recent.length; i++) {
-      motionNoise += Math.abs(recent[i] - recent[i - 1]);
+      const diff = Math.abs(recent[i] - recent[i - 1]);
+      motionNoise += diff;
+      if (diff > maxJump) maxJump = diff;
     }
     motionNoise /= Math.max(1, recent.length - 1);
 
+    // SNR robusto
     const snr = range / (stdDev + 0.01);
-    const perfusionScore = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 2.2));
-    const stabilityScore = Math.max(0, Math.min(1, 1 - motionNoise / (range + 0.01)));
-    const snrScore = Math.max(0, Math.min(1, snr / 4.5));
+    const perfusionScore = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 2.0));
+    const stabilityScore = Math.max(0, Math.min(1, 1 - motionNoise / (range * 0.5 + 0.01)));
+    const snrScore = Math.max(0, Math.min(1, snr / 4.0));
     const continuityScore = Math.max(0, Math.min(1, this.detectionConfidence));
+    // Penalizar saltos grandes (micro-movimientos bruscos)
+    const jumpPenalty = Math.max(0, 1 - maxJump / (range * 0.6 + 0.01));
 
     return Math.round(
       snrScore * 48 +
