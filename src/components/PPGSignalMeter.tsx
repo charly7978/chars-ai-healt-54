@@ -92,7 +92,10 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = []
+  rrIntervals = [],
+  pipelineMetrics,
+  vitalSignsFeatureQuality = 0,
+  pressure,
 }: PPGSignalMeterProps) => {
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
