@@ -86,6 +86,7 @@ const Index = () => {
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
     calibrateBP,
+    hasValidPressureEstimate,
     lastValidResults,
     startCalibration,
     forceCalibrationCompletion,
@@ -467,7 +468,7 @@ const Index = () => {
     // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
-      true,
+      lastSignal.fingerDetected,
       lastSignal.timestamp
     );
     
@@ -614,8 +615,8 @@ const Index = () => {
         {/* PREVIEW DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
-          isFingerDetected={true}
-          signalQuality={100}
+          isFingerDetected={lastSignal?.fingerDetected || false}
+          signalQuality={lastSignal?.quality || 0}
           isVisible={isCameraOn}
         />
 
@@ -855,8 +856,12 @@ const Index = () => {
         isOpen={showCalibrationWizard}
         onClose={() => setShowCalibrationWizard(false)}
         onCalibrate={(sys, dia) => {
+          if (!hasValidPressureEstimate() && !(vitalSigns.pressure?.systolic > 0 && vitalSigns.pressure?.diastolic > 0)) {
+            return false;
+          }
           calibrateBP(sys, dia);
           setIsCalibrated(true);
+          return true;
         }}
       />
     </div>

@@ -6,7 +6,7 @@ import { toast } from "@/components/ui/use-toast";
 interface BPCalibrationWizardProps {
   isOpen: boolean;
   onClose: () => void;
-  onCalibrate: (systolic: number, diastolic: number) => void;
+  onCalibrate: (systolic: number, diastolic: number) => boolean | Promise<boolean>;
 }
 
 type Step = "intro" | "instructions" | "input" | "confirm";
@@ -43,6 +43,17 @@ const BPCalibrationWizard: React.FC<BPCalibrationWizardProps> = ({
     try {
       // Save to database
       const { data: { user } } = await supabase.auth.getUser();
+      const calibrationApplied = await onCalibrate(systolicNum, diastolicNum);
+
+      if (!calibrationApplied) {
+        toast({
+          title: "Medición PPG insuficiente",
+          description: "Primero obtén una estimación de presión válida para que la calibración sea complementaria.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       if (user) {
         await supabase.from("calibration_settings").upsert({
           user_id: user.id,
@@ -53,8 +64,6 @@ const BPCalibrationWizard: React.FC<BPCalibrationWizardProps> = ({
           is_active: true,
         }, { onConflict: "user_id" });
       }
-
-      onCalibrate(systolicNum, diastolicNum);
 
       toast({
         title: "✅ Calibración exitosa",
@@ -250,9 +259,9 @@ const BPCalibrationWizard: React.FC<BPCalibrationWizardProps> = ({
               <p className="text-slate-500 text-xs mt-1">mmHg</p>
             </div>
 
-            <p className="text-slate-400 text-xs text-center leading-relaxed">
-              Estos valores se usarán como offset de calibración para mejorar
-              la precisión de las estimaciones futuras.
+              <p className="text-slate-400 text-xs text-center leading-relaxed">
+                Estos valores se usarán como corrección complementaria sobre la
+                estimación PPG actual, no como reemplazo directo.
             </p>
 
             <div className="flex gap-2">
