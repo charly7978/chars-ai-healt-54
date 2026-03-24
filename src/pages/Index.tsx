@@ -634,15 +634,22 @@ const Index = () => {
           <div className="px-4 py-2 flex justify-between items-center bg-black/30">
             <button
               onClick={() => setShowCalibrationWizard(true)}
-              className="p-1.5 rounded-full bg-slate-800/60 hover:bg-slate-700 transition-colors"
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${
+                isCalibrated 
+                  ? 'bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30' 
+                  : 'bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30'
+              }`}
               title="Calibrar presión arterial"
             >
-              <Settings className="w-4 h-4 text-slate-400" />
+              <Settings className={`w-4 h-4 ${isCalibrated ? 'text-emerald-400' : 'text-blue-400'}`} />
+              <span className={`text-[10px] font-semibold ${isCalibrated ? 'text-emerald-400' : 'text-blue-400'}`}>
+                {isCalibrated ? 'CAL ✓' : 'CALIBRAR'}
+              </span>
             </button>
             <div className="text-white text-xl font-bold">
               {isMonitoring ? `${30 - elapsedTime}s` : "LISTO"}
             </div>
-            <div className="w-7" />
+            <div className="w-20" />
           </div>
 
           <div className="flex-1">
