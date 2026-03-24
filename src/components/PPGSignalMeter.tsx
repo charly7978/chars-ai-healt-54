@@ -2,6 +2,19 @@ import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart, Activity, Shield } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 
+interface PipelineMetrics {
+  detectionConfidence: number;
+  fingerDetected: boolean;
+  signalQuality: number;
+  perfusionIndex: number;
+  smoothedRed: number;
+  smoothedGreen: number;
+  smoothedBlue: number;
+  fingerConfidenceCount: number;
+  fingerLostCount: number;
+  bufferFill: number;
+}
+
 interface PPGSignalMeterProps {
   value: number;
   quality: number;
@@ -23,6 +36,10 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
+  // NUEVAS: métricas de pipeline para debug
+  pipelineMetrics?: PipelineMetrics;
+  vitalSignsFeatureQuality?: number;
+  pressure?: { systolic: number; diastolic: number; confidence: string; featureQuality: number };
 }
 
 // Configuración del monitor profesional
