@@ -602,10 +602,18 @@ const Index = () => {
 
         <div className="relative z-10 h-full flex flex-col">
           {/* HEADER - Tiempo restante */}
-          <div className="px-4 py-2 flex justify-center items-center bg-black/30">
+          <div className="px-4 py-2 flex justify-between items-center bg-black/30">
+            <button
+              onClick={() => setShowCalibrationWizard(true)}
+              className="p-1.5 rounded-full bg-slate-800/60 hover:bg-slate-700 transition-colors"
+              title="Calibrar presión arterial"
+            >
+              <Settings className="w-4 h-4 text-slate-400" />
+            </button>
             <div className="text-white text-xl font-bold">
               {isMonitoring ? `${30 - elapsedTime}s` : "LISTO"}
             </div>
+            <div className="w-7" />
           </div>
 
           <div className="flex-1">
