@@ -92,10 +92,6 @@ export const useVitalSignsProcessor = () => {
     setLastValidResults(null);
     processedSignals.current = 0;
   }, []);
-    processorRef.current?.fullReset();
-    setLastValidResults(null);
-    processedSignals.current = 0;
-  }, []);
 
   return {
     processSignal,
