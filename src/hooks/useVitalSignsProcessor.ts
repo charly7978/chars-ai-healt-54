@@ -93,6 +93,10 @@ export const useVitalSignsProcessor = () => {
     processedSignals.current = 0;
   }, []);
 
+  const hasValidPressureEstimate = useCallback(() => {
+    return processorRef.current?.hasValidPressureEstimate() ?? false;
+  }, []);
+
   return {
     processSignal,
     setRGBData,
@@ -101,6 +105,7 @@ export const useVitalSignsProcessor = () => {
     calibrateBP,
     startCalibration,
     forceCalibrationCompletion,
+    hasValidPressureEstimate,
     lastValidResults,
     getCalibrationProgress: useCallback(() => processorRef.current?.getCalibrationProgress() ?? 0, []),
     debugInfo: {

@@ -268,21 +268,20 @@ export class BloodPressureProcessor {
     const baselineSystolic = this.lastRawSBP > 0 ? this.lastRawSBP : this.lastSBP;
     const baselineDiastolic = this.lastRawDBP > 0 ? this.lastRawDBP : this.lastDBP;
 
-    if (baselineSystolic <= 0 || baselineDiastolic <= 0) {
-      return;
-    }
+    const effectiveBaselineSystolic = baselineSystolic > 0 ? baselineSystolic : 0;
+    const effectiveBaselineDiastolic = baselineDiastolic > 0 ? baselineDiastolic : 0;
 
-    const systolicError = systolicRef - baselineSystolic;
-    const diastolicError = diastolicRef - baselineDiastolic;
+    const systolicError = effectiveBaselineSystolic > 0 ? systolicRef - effectiveBaselineSystolic : 0;
+    const diastolicError = effectiveBaselineDiastolic > 0 ? diastolicRef - effectiveBaselineDiastolic : 0;
 
     this.calibration = {
       systolicRef,
       diastolicRef,
       timestamp: Date.now(),
-      baselineSystolic,
-      baselineDiastolic,
-      systolicGain: this.calculateCalibrationGain(systolicError, baselineSystolic),
-      diastolicGain: this.calculateCalibrationGain(diastolicError, baselineDiastolic)
+      baselineSystolic: effectiveBaselineSystolic,
+      baselineDiastolic: effectiveBaselineDiastolic,
+      systolicGain: effectiveBaselineSystolic > 0 ? this.calculateCalibrationGain(systolicError, effectiveBaselineSystolic) : 0.45,
+      diastolicGain: effectiveBaselineDiastolic > 0 ? this.calculateCalibrationGain(diastolicError, effectiveBaselineDiastolic) : 0.45
     };
   }
 
@@ -297,6 +296,16 @@ export class BloodPressureProcessor {
   private applyCalibration(systolic: number, diastolic: number): { systolic: number; diastolic: number } {
     if (!this.calibration) {
       return { systolic, diastolic };
+    }
+
+    if (this.calibration.baselineSystolic <= 0 || this.calibration.baselineDiastolic <= 0) {
+      this.calibration = {
+        ...this.calibration,
+        baselineSystolic: systolic,
+        baselineDiastolic: diastolic,
+        systolicGain: this.calculateCalibrationGain(this.calibration.systolicRef - systolic, systolic),
+        diastolicGain: this.calculateCalibrationGain(this.calibration.diastolicRef - diastolic, diastolic),
+      };
     }
 
     const sysDelta = this.calibration.systolicRef - this.calibration.baselineSystolic;
