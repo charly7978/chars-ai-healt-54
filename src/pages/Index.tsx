@@ -650,6 +650,9 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
+              pipelineMetrics={getDetectionMetrics()}
+              vitalSignsFeatureQuality={vitalSigns.pressure?.featureQuality || 0}
+              pressure={vitalSigns.pressure}
             />
           </div>
 
