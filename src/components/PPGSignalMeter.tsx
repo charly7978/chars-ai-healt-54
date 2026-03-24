@@ -883,7 +883,14 @@ const PPGSignalMeter = ({
           />
         </div>
         <Activity className="w-3.5 h-3.5 text-emerald-400" />
-        <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v2</span>
+        <button 
+          onClick={() => setShowDebug(prev => !prev)}
+          className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors ${
+            showDebug ? 'text-blue-300 bg-blue-500/20' : 'text-emerald-400/80'
+          }`}
+        >
+          {showDebug ? '🔧 DEBUG ON' : 'PPG MONITOR v2'}
+        </button>
       </div>
 
       <button
