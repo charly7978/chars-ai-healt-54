@@ -542,6 +542,11 @@ const PPGSignalMeter = ({
       drawTimeScale(ctx);
       drawVitalInfo(ctx, now);
       
+      // Panel de debug (si está activo)
+      if (showDebugRef.current) {
+        drawDebugPanel(ctx);
+      }
+      
       if (preserve && !detected) {
         animationRef.current = requestAnimationFrame(render);
         return;
