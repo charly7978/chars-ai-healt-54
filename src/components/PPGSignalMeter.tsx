@@ -852,7 +852,7 @@ const PPGSignalMeter = ({
       isRunningRef.current = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, getPlotArea]);
+  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, drawDebugPanel, getPlotArea]);
 
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
