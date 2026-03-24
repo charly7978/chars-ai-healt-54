@@ -848,23 +848,6 @@ const Index = () => {
             );
           })()}
 
-          {/* BOTONES */}
-          <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
-            <div className="w-1/2">
-              <MonitorButton 
-                isMonitoring={isMonitoring} 
-                onToggle={handleToggleMonitoring} 
-                variant="monitor"
-              />
-            </div>
-            <div className="w-1/2">
-              <MonitorButton 
-                isMonitoring={isMonitoring} 
-                onToggle={handleReset} 
-                variant="reset"
-              />
-            </div>
-          </div>
         </div>
       </div>
       {/* WIZARD DE CALIBRACIÓN BP */}
