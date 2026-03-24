@@ -399,6 +399,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastLogTime = 0;
     this.fingerDetected = false;
     this.signalQuality = 0;
+    this.fingerConfidenceCount = 0;
+    this.fingerLostCount = 0;
+    this.smoothedRed = 0;
+    this.smoothedGreen = 0;
+    this.smoothedBlue = 0;
     this.redDC = 0;
     this.redAC = 0;
     this.greenDC = 0;
