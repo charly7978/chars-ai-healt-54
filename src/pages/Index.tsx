@@ -70,7 +70,6 @@ const Index = () => {
     lastSignal, 
     processFrame, 
     isProcessing, 
-    framesProcessed,
     getRGBStats,
   } = useSignalProcessor();
   
@@ -465,10 +464,14 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
+    if (!lastSignal.fingerDetected) {
+      setHeartbeatSignal(signalValue);
+      return;
+    }
+
     // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
-      lastSignal.fingerDetected,
       lastSignal.timestamp
     );
     
@@ -615,8 +618,6 @@ const Index = () => {
         {/* PREVIEW DE CÁMARA */}
         <CameraPreview 
           stream={cameraStream}
-          isFingerDetected={lastSignal?.fingerDetected || false}
-          signalQuality={lastSignal?.quality || 0}
           isVisible={isCameraOn}
         />
 

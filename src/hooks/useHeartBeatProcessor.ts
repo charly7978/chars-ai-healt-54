@@ -51,7 +51,7 @@ export const useHeartBeatProcessor = () => {
 
   // ELIMINADO: setGreenValue - la calidad de señal determina validez
 
-  const processSignal = useCallback((value: number, _fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
+  const processSignal = useCallback((value: number, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
         bpm: currentBPM,
@@ -82,7 +82,7 @@ export const useHeartBeatProcessor = () => {
     lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
-    // Procesar señal directamente - la validación de dedo está en HeartBeatProcessor
+    // Procesar señal directamente - la validación de dedo ocurre aguas arriba en el pipeline PPG
     const result = processorRef.current.processSignal(value, timestamp);
     const rrIntervals = processorRef.current.getRRIntervals();
     const lastPeakTime = processorRef.current.getLastPeakTime();
@@ -99,6 +99,7 @@ export const useHeartBeatProcessor = () => {
       setCurrentBPM(Math.round(newBPM));
       setConfidence(result.confidence);
     }
+    setSignalQuality(result.sqi);
 
     // Retornar BPM redondeado a entero
     return {
@@ -107,10 +108,10 @@ export const useHeartBeatProcessor = () => {
       isPeak: result.isPeak,
       filteredValue: result.filteredValue,
       arrhythmiaCount: result.arrhythmiaCount,
-      signalQuality: signalQuality,
+      signalQuality: result.sqi,
       rrData
     };
-  }, [currentBPM, confidence, signalQuality]);
+  }, [currentBPM, confidence]);
 
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;

@@ -43,11 +43,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
   private readonly FINGER_CONFIRM_FRAMES = 4;   // Confirmación un poco más rápida para comodidad
-  private readonly FINGER_LOST_FRAMES = 24;     // Mayor tolerancia a temblores/microajustes
+  private readonly FINGER_LOST_FRAMES = 36;     // Mayor tolerancia a temblores/microajustes
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
   private readonly RGB_SMOOTH_ALPHA = 0.22;     // Más estabilidad ante pequeños movimientos
+  private detectionConfidence: number = 0;
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -88,7 +89,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const timestamp = Date.now();
     
     // 1. EXTRAER RGB DE ROI CENTRAL (85% del área)
-    const { rawRed, rawGreen, rawBlue } = this.extractROI(imageData);
+    const { rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore } = this.extractROI(imageData);
     
     // 2. GUARDAR EN BUFFERS
     this.redBuffer.push(rawRed);
@@ -99,7 +100,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
     
     // 3. DETECCIÓN DE DEDO
-    this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue);
+    this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore);
     
     // 4. CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS
     if (this.redBuffer.length >= 60) {
@@ -157,7 +158,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rawRed,
       rawGreen,
       diagnostics: {
-        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}`,
+         message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)} FD:${this.fingerDetected ? '1' : '0'}`,
         hasPulsatility: perfusionIndex > 0.1,
         pulsatilityValue: perfusionIndex
       }
@@ -169,7 +170,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   /**
    * EXTRAER RGB DE REGIÓN AMPLIA (85%)
    */
-  private extractROI(imageData: ImageData): { rawRed: number; rawGreen: number; rawBlue: number } {
+  private extractROI(imageData: ImageData): {
+    rawRed: number;
+    rawGreen: number;
+    rawBlue: number;
+    coverageScore: number;
+    spatialStability: number;
+    tilePulseScore: number;
+  } {
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
@@ -207,10 +215,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
     }
 
+    const validTiles = tiles
+      .filter(tile => tile.count > 0)
+      .map(tile => ({
+        red: tile.red / tile.count,
+        green: tile.green / tile.count,
+        blue: tile.blue / tile.count,
+      }));
+
     const robustAverage = (channel: 'red' | 'green' | 'blue') => {
-      const values = tiles
-        .filter(tile => tile.count > 0)
-        .map(tile => tile[channel] / tile.count)
+      const values = validTiles
+        .map(tile => tile[channel])
         .sort((a, b) => a - b);
 
       if (values.length === 0) return 0;
@@ -221,11 +236,46 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const trimmed = values.slice(1, -1);
       return trimmed.reduce((sum, value) => sum + value, 0) / trimmed.length;
     };
+
+    const normalizedSpread = (channel: 'red' | 'green' | 'blue') => {
+      const values = validTiles
+        .map(tile => tile[channel])
+        .sort((a, b) => a - b);
+
+      if (values.length < 2) return 0;
+
+      const q1 = values[Math.floor((values.length - 1) * 0.25)];
+      const q3 = values[Math.floor((values.length - 1) * 0.75)];
+      const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+
+      return (q3 - q1) / (mean + 1);
+    };
+
+    const candidateTiles = validTiles.filter(tile => {
+      const total = tile.red + tile.green + tile.blue;
+      return total > 75 && tile.red > 28 && tile.red > tile.blue * 1.02;
+    });
+
+    const coverageScore = validTiles.length > 0 ? candidateTiles.length / validTiles.length : 0;
+    const redSpread = normalizedSpread('red');
+    const greenSpread = normalizedSpread('green');
+    const blueSpread = normalizedSpread('blue');
+    const spatialNoise = redSpread * 1.25 + greenSpread + blueSpread * 0.75;
+    const spatialStability = Math.max(0, Math.min(1, 1 - spatialNoise / 1.6));
+    const tilePulseScore = candidateTiles.length > 0
+      ? candidateTiles.reduce((sum, tile) => {
+          const total = tile.red + tile.green + tile.blue;
+          return sum + (total > 0 ? (tile.red - ((tile.green + tile.blue) / 2)) / total : 0);
+        }, 0) / candidateTiles.length
+      : 0;
     
     return {
       rawRed: robustAverage('red'),
       rawGreen: robustAverage('green'),
-      rawBlue: robustAverage('blue')
+      rawBlue: robustAverage('blue'),
+      coverageScore,
+      spatialStability,
+      tilePulseScore,
     };
   }
   
@@ -236,7 +286,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
    * - Usa histéresis: requiere varios frames consecutivos para cambiar estado
    * - Umbrales más permisivos para comodidad del usuario
    */
-  private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
+  private detectFinger(
+    rawRed: number,
+    rawGreen: number,
+    rawBlue: number,
+    coverageScore: number,
+    spatialStability: number,
+    tilePulseScore: number,
+  ): boolean {
     // Suavizar RGB para absorber temblores y micromovimientos
     if (this.smoothedRed === 0) {
       this.smoothedRed = rawRed;
@@ -257,16 +314,37 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const totalIntensity = r + g + b;
     const colorDominance = totalIntensity > 0 ? (r - ((g + b) / 2)) / totalIntensity : 0;
     const notBlownOut = !(r > 254.8 && g > 254.8 && b > 254.8);
+    const ratioScore = rgRatio > 0 ? Math.max(0, 1 - Math.abs(rgRatio - 1.45) / 2.9) : 0;
+    const intensityScore = Math.max(0, Math.min(1, (totalIntensity - 70) / 220));
+    const dominanceScore = Math.max(0, Math.min(1, (colorDominance - 0.05) / 0.22));
 
     let detectionScore = 0;
-    if (r > 34) detectionScore += 1;
-    if (rgRatio > 0.72 && rgRatio < 4.2) detectionScore += 1;
-    if (rbRatio > 1.12) detectionScore += 1;
+    if (r > 30) detectionScore += 1;
+    if (rgRatio > 0.66 && rgRatio < 4.6) detectionScore += 1;
+    if (rbRatio > 1.04) detectionScore += 1;
     if (totalIntensity > 75 && totalIntensity < 720) detectionScore += 1;
-    if (colorDominance > 0.1) detectionScore += 1;
+    if (colorDominance > 0.07) detectionScore += 1;
+    if (coverageScore > (this.fingerDetected ? 0.28 : 0.42)) detectionScore += 1;
+    if (spatialStability > 0.32) detectionScore += 1;
+    if (tilePulseScore > 0.04) detectionScore += 1;
 
-    const requiredScore = this.fingerDetected ? 2 : 3;
-    const instantDetected = notBlownOut && detectionScore >= requiredScore;
+    const targetConfidence = notBlownOut
+      ? Math.max(0, Math.min(1,
+          detectionScore / 8 * 0.42 +
+          coverageScore * 0.18 +
+          spatialStability * 0.16 +
+          ratioScore * 0.12 +
+          intensityScore * 0.06 +
+          dominanceScore * 0.06
+        ))
+      : 0;
+
+    const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.24 : 0.1;
+    this.detectionConfidence = this.detectionConfidence * (1 - confidenceAlpha) + targetConfidence * confidenceAlpha;
+
+    const instantDetected = this.fingerDetected
+      ? this.detectionConfidence >= 0.34
+      : this.detectionConfidence >= 0.56;
     
     // HISTÉRESIS: evitar parpadeo del estado
     if (instantDetected) {
@@ -398,16 +476,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const min = Math.min(...recent);
     const range = max - min;
     
-    if (range < 0.5) return 10;
+    if (range < 0.35) return 8;
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
-    
+
+    let motionNoise = 0;
+    for (let i = 1; i < recent.length; i++) {
+      motionNoise += Math.abs(recent[i] - recent[i - 1]);
+    }
+    motionNoise /= Math.max(1, recent.length - 1);
+
     const snr = range / (stdDev + 0.01);
-    const quality = Math.min(100, Math.max(0, snr * 15));
-    
-    return quality;
+    const perfusionScore = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 2.2));
+    const stabilityScore = Math.max(0, Math.min(1, 1 - motionNoise / (range + 0.01)));
+    const snrScore = Math.max(0, Math.min(1, snr / 4.5));
+    const continuityScore = Math.max(0, Math.min(1, this.detectionConfidence));
+
+    return Math.round(
+      snrScore * 48 +
+      perfusionScore * 24 +
+      stabilityScore * 18 +
+      continuityScore * 10
+    );
   }
   
   /**
@@ -434,6 +526,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.smoothedRed = 0;
     this.smoothedGreen = 0;
     this.smoothedBlue = 0;
+    this.detectionConfidence = 0;
     this.redDC = 0;
     this.redAC = 0;
     this.greenDC = 0;
