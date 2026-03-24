@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2, Settings } from "lucide-react";
+import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2 } from "lucide-react";
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
@@ -9,7 +9,6 @@ import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
-import MonitorButton from "@/components/MonitorButton";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import BPCalibrationWizard from "@/components/BPCalibrationWizard";
@@ -629,36 +628,17 @@ const Index = () => {
           />
         </div>
 
-        <div className="relative z-10 h-full flex flex-col">
-          {/* HEADER - Tiempo restante */}
-          <div className="px-4 py-2 flex justify-between items-center bg-black/30">
-            <button
-              onClick={() => setShowCalibrationWizard(true)}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg transition-colors ${
-                isCalibrated 
-                  ? 'bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30' 
-                  : 'bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30'
-              }`}
-              title="Calibrar presión arterial"
-            >
-              <Settings className={`w-4 h-4 ${isCalibrated ? 'text-emerald-400' : 'text-blue-400'}`} />
-              <span className={`text-[10px] font-semibold ${isCalibrated ? 'text-emerald-400' : 'text-blue-400'}`}>
-                {isCalibrated ? 'CAL ✓' : 'CALIBRAR'}
-              </span>
-            </button>
-            <div className="text-white text-xl font-bold">
-              {isMonitoring ? `${30 - elapsedTime}s` : "LISTO"}
-            </div>
-            <div className="w-20" />
-          </div>
-
-          <div className="flex-1">
+        <div className="relative z-10 h-full">
+          <div className="flex-1 h-full">
             <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
               isFingerDetected={lastSignal?.fingerDetected || false}
-              onStartMeasurement={startMonitoring}
+              onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
+              onOpenCalibration={() => setShowCalibrationWizard(true)}
+              isMonitoring={isMonitoring}
+              isCalibrated={isCalibrated}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
@@ -868,30 +848,16 @@ const Index = () => {
             );
           })()}
 
-          {/* BOTONES */}
-          <div className="absolute inset-x-0 bottom-4 flex gap-4 px-4">
-            <div className="w-1/2">
-              <MonitorButton 
-                isMonitoring={isMonitoring} 
-                onToggle={handleToggleMonitoring} 
-                variant="monitor"
-              />
-            </div>
-            <div className="w-1/2">
-              <MonitorButton 
-                isMonitoring={isMonitoring} 
-                onToggle={handleReset} 
-                variant="reset"
-              />
-            </div>
-          </div>
         </div>
       </div>
       {/* WIZARD DE CALIBRACIÓN BP */}
       <BPCalibrationWizard
         isOpen={showCalibrationWizard}
         onClose={() => setShowCalibrationWizard(false)}
-        onCalibrate={(sys, dia) => { calibrateBP(sys, dia); setIsCalibrated(true); }}
+        onCalibrate={(sys, dia) => {
+          calibrateBP(sys, dia);
+          setIsCalibrated(true);
+        }}
       />
     </div>
   );

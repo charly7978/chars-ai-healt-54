@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Heart, Activity } from 'lucide-react';
+import { Heart, Activity, Shield } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 
 interface PPGSignalMeterProps {
@@ -8,6 +8,9 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
+  onOpenCalibration: () => void;
+  isMonitoring?: boolean;
+  isCalibrated?: boolean;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
     timestamp: number;
@@ -62,6 +65,9 @@ const PPGSignalMeter = ({
   isFingerDetected,
   onStartMeasurement,
   onReset,
+  onOpenCalibration,
+  isMonitoring = false,
+  isCalibrated = false,
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false,
@@ -733,7 +739,6 @@ const PPGSignalMeter = ({
         className="w-full h-full absolute inset-0"
       />
 
-      {/* Header con icono de pulso */}
       <div className="absolute top-0 left-0 p-2 z-10 flex items-center gap-2" style={{ top: '6px', left: '140px' }}>
         <div className={`p-1.5 rounded-full transition-all duration-100 ${
           showPulse ? 'bg-red-500/30 scale-110' : 'bg-emerald-500/20'
@@ -749,19 +754,42 @@ const PPGSignalMeter = ({
         <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v2</span>
       </div>
 
-      {/* Botones */}
-      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
+      <button
+        onClick={onOpenCalibration}
+        className={`absolute top-2 right-2 z-10 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold backdrop-blur-sm transition-colors ${
+          isCalibrated
+            ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-300'
+            : 'border-sky-500/40 bg-sky-500/20 text-sky-200'
+        }`}
+      >
+        <Shield className="h-3.5 w-3.5" />
+        {isCalibrated ? 'CALIBRADA' : 'CALIBRAR PA'}
+      </button>
+
+      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-3 z-10">
         <button 
           onClick={onStartMeasurement}
-          className="bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 
-                     text-emerald-400 font-semibold text-sm transition-colors border-t border-r border-slate-700/50"
+          className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${
+            isMonitoring
+              ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r'
+              : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'
+          }`}
         >
-          INICIAR
+          {isMonitoring ? 'DETENER' : 'INICIAR'}
+        </button>
+        <button 
+          onClick={onOpenCalibration}
+          className={`border-t border-r border-slate-700/50 font-semibold text-sm transition-colors ${
+            isCalibrated
+              ? 'bg-emerald-500/15 hover:bg-emerald-500/25 active:bg-emerald-500/30 text-emerald-300'
+              : 'bg-sky-500/15 hover:bg-sky-500/25 active:bg-sky-500/30 text-sky-200'
+          }`}
+        >
+          {isCalibrated ? 'RECALIBRAR' : 'CALIBRAR'}
         </button>
         <button 
           onClick={handleReset}
-          className="bg-slate-700/20 hover:bg-slate-700/30 active:bg-slate-700/40 
-                     text-slate-300 font-semibold text-sm transition-colors border-t border-slate-700/50"
+          className="bg-slate-700/20 hover:bg-slate-700/30 active:bg-slate-700/40 text-slate-300 font-semibold text-sm transition-colors border-t border-slate-700/50"
         >
           RESET
         </button>
