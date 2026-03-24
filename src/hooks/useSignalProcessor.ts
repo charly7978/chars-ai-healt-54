@@ -114,15 +114,24 @@ export const useSignalProcessor = () => {
   const getRGBStats = useCallback(() => {
     if (!processorRef.current) {
       return {
-        redAC: 0,
-        redDC: 0,
-        greenAC: 0,
-        greenDC: 0,
-        rgRatio: 0,
-        ratioOfRatios: 0
+        redAC: 0, redDC: 0, greenAC: 0, greenDC: 0,
+        rgRatio: 0, ratioOfRatios: 0
       };
     }
     return processorRef.current.getRGBStats();
+  }, []);
+
+  // MÉTRICAS INTERNAS DEL PIPELINE PARA DEBUG
+  const getDetectionMetrics = useCallback(() => {
+    if (!processorRef.current) {
+      return {
+        detectionConfidence: 0, fingerDetected: false,
+        signalQuality: 0, perfusionIndex: 0,
+        smoothedRed: 0, smoothedGreen: 0, smoothedBlue: 0,
+        fingerConfidenceCount: 0, fingerLostCount: 0, bufferFill: 0,
+      };
+    }
+    return processorRef.current.getDetectionMetrics();
   }, []);
 
   return {
@@ -134,6 +143,7 @@ export const useSignalProcessor = () => {
     stopProcessing,
     processFrame,
     getRGBStats,
+    getDetectionMetrics,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,
