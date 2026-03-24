@@ -42,12 +42,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 5;   // Frames para confirmar detección
-  private readonly FINGER_LOST_FRAMES = 15;     // Frames tolerados sin dedo (0.5s @ 30fps)
+  private readonly FINGER_CONFIRM_FRAMES = 4;   // Confirmación un poco más rápida para comodidad
+  private readonly FINGER_LOST_FRAMES = 24;     // Mayor tolerancia a temblores/microajustes
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.3;      // Suavizado exponencial RGB
+  private readonly RGB_SMOOTH_ALPHA = 0.22;     // Más estabilidad ante pequeños movimientos
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -181,26 +181,51 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const endX = startX + Math.floor(roiSize);
     const endY = startY + Math.floor(roiSize);
     
-    let redSum = 0;
-    let greenSum = 0;
-    let blueSum = 0;
-    let count = 0;
+    const tileColumns = 3;
+    const tileRows = 3;
+    const tiles = Array.from({ length: tileColumns * tileRows }, () => ({
+      red: 0,
+      green: 0,
+      blue: 0,
+      count: 0,
+    }));
+    const roiWidth = Math.max(1, endX - startX);
+    const roiHeight = Math.max(1, endY - startY);
     
-    // Muestrear cada 4 píxeles
+    // Muestrear cada 4 píxeles y usar medias robustas por subregión
     for (let y = startY; y < endY; y += 4) {
       for (let x = startX; x < endX; x += 4) {
         const i = (y * width + x) * 4;
-        redSum += data[i];
-        greenSum += data[i + 1];
-        blueSum += data[i + 2];
-        count++;
+        const tileX = Math.min(tileColumns - 1, Math.floor(((x - startX) / roiWidth) * tileColumns));
+        const tileY = Math.min(tileRows - 1, Math.floor(((y - startY) / roiHeight) * tileRows));
+        const tile = tiles[tileY * tileColumns + tileX];
+
+        tile.red += data[i];
+        tile.green += data[i + 1];
+        tile.blue += data[i + 2];
+        tile.count++;
       }
     }
+
+    const robustAverage = (channel: 'red' | 'green' | 'blue') => {
+      const values = tiles
+        .filter(tile => tile.count > 0)
+        .map(tile => tile[channel] / tile.count)
+        .sort((a, b) => a - b);
+
+      if (values.length === 0) return 0;
+      if (values.length <= 3) {
+        return values.reduce((sum, value) => sum + value, 0) / values.length;
+      }
+
+      const trimmed = values.slice(1, -1);
+      return trimmed.reduce((sum, value) => sum + value, 0) / trimmed.length;
+    };
     
     return {
-      rawRed: count > 0 ? redSum / count : 0,
-      rawGreen: count > 0 ? greenSum / count : 0,
-      rawBlue: count > 0 ? blueSum / count : 0
+      rawRed: robustAverage('red'),
+      rawGreen: robustAverage('green'),
+      rawBlue: robustAverage('blue')
     };
   }
   
@@ -225,18 +250,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     
     const r = this.smoothedRed;
     const g = this.smoothedGreen;
-    
-    // Umbrales permisivos para mayor comodidad
-    const redMinThreshold = 30;     // Más bajo para aceptar posiciones parciales
-    const redMaxThreshold = 255;
+    const b = this.smoothedBlue;
+
     const rgRatio = g > 0 ? r / g : 0;
-    
-    const validRatio = rgRatio > 0.8 && rgRatio < 3.5;   // Rango más amplio
-    const validRed = r > redMinThreshold && r < redMaxThreshold;
-    const notFullySaturated = r < 254.5 || g < 254.5;
-    const hasEnoughLight = r > 20 && g > 15;              // Más permisivo
-    
-    const instantDetected = (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
+    const rbRatio = b > 0 ? r / b : 0;
+    const totalIntensity = r + g + b;
+    const colorDominance = totalIntensity > 0 ? (r - ((g + b) / 2)) / totalIntensity : 0;
+    const notBlownOut = !(r > 254.8 && g > 254.8 && b > 254.8);
+
+    let detectionScore = 0;
+    if (r > 34) detectionScore += 1;
+    if (rgRatio > 0.72 && rgRatio < 4.2) detectionScore += 1;
+    if (rbRatio > 1.12) detectionScore += 1;
+    if (totalIntensity > 75 && totalIntensity < 720) detectionScore += 1;
+    if (colorDominance > 0.1) detectionScore += 1;
+
+    const requiredScore = this.fingerDetected ? 2 : 3;
+    const instantDetected = notBlownOut && detectionScore >= requiredScore;
     
     // HISTÉRESIS: evitar parpadeo del estado
     if (instantDetected) {
