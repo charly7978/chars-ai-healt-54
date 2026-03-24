@@ -27,8 +27,10 @@ interface CalibrationData {
   systolicRef: number;
   diastolicRef: number;
   timestamp: number;
-  systolicOffset: number;
-  diastolicOffset: number;
+  baselineSystolic: number;
+  baselineDiastolic: number;
+  systolicGain: number;
+  diastolicGain: number;
 }
 
 /**
@@ -70,6 +72,8 @@ export class BloodPressureProcessor {
   private readonly MIN_CYCLES = 5;
   private readonly MAX_CYCLES = 15;
   private calibration: CalibrationData | null = null;
+  private lastRawSBP: number = 0;
+  private lastRawDBP: number = 0;
   
   // EMA para estabilización
   private lastSBP: number = 0;
@@ -152,10 +156,14 @@ export class BloodPressureProcessor {
 
     const map = dbp + pulsePressure / 3;
 
-    // 8. Apply calibration offset if available
+    this.lastRawSBP = sbp;
+    this.lastRawDBP = dbp;
+
+    // 8. Apply calibration as complementary correction, not blind duplication
     if (this.calibration) {
-      sbp += this.calibration.systolicOffset;
-      dbp += this.calibration.diastolicOffset;
+      const calibrated = this.applyCalibration(sbp, dbp);
+      sbp = calibrated.systolic;
+      dbp = calibrated.diastolic;
     }
 
     // 9. EMA smoothing
@@ -257,13 +265,49 @@ export class BloodPressureProcessor {
    * Calibrate with a reference cuff measurement
    */
   calibrate(systolicRef: number, diastolicRef: number): void {
-    // Calculate current uncalibrated estimate offset
+    const baselineSystolic = this.lastRawSBP > 0 ? this.lastRawSBP : this.lastSBP;
+    const baselineDiastolic = this.lastRawDBP > 0 ? this.lastRawDBP : this.lastDBP;
+
+    if (baselineSystolic <= 0 || baselineDiastolic <= 0) {
+      return;
+    }
+
+    const systolicError = systolicRef - baselineSystolic;
+    const diastolicError = diastolicRef - baselineDiastolic;
+
     this.calibration = {
       systolicRef,
       diastolicRef,
       timestamp: Date.now(),
-      systolicOffset: systolicRef - this.lastSBP,
-      diastolicOffset: diastolicRef - this.lastDBP
+      baselineSystolic,
+      baselineDiastolic,
+      systolicGain: this.calculateCalibrationGain(systolicError, baselineSystolic),
+      diastolicGain: this.calculateCalibrationGain(diastolicError, baselineDiastolic)
+    };
+  }
+
+  private calculateCalibrationGain(error: number, baseline: number): number {
+    const relativeError = baseline > 0 ? Math.abs(error) / baseline : 0;
+    if (relativeError <= 0.04) return 0.25;
+    if (relativeError <= 0.1) return 0.4;
+    if (relativeError <= 0.18) return 0.55;
+    return 0.65;
+  }
+
+  private applyCalibration(systolic: number, diastolic: number): { systolic: number; diastolic: number } {
+    if (!this.calibration) {
+      return { systolic, diastolic };
+    }
+
+    const sysDelta = this.calibration.systolicRef - this.calibration.baselineSystolic;
+    const diaDelta = this.calibration.diastolicRef - this.calibration.baselineDiastolic;
+
+    const calibratedSystolic = systolic + sysDelta * this.calibration.systolicGain;
+    const calibratedDiastolic = diastolic + diaDelta * this.calibration.diastolicGain;
+
+    return {
+      systolic: calibratedSystolic,
+      diastolic: calibratedDiastolic,
     };
   }
 
@@ -329,6 +373,8 @@ export class BloodPressureProcessor {
     this.cycleBuffer = [];
     this.lastSBP = 0;
     this.lastDBP = 0;
+    this.lastRawSBP = 0;
+    this.lastRawDBP = 0;
     // Keep calibration across resets
   }
 
