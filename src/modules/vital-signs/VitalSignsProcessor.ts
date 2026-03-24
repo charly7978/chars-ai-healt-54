@@ -613,6 +613,13 @@ export class VitalSignsProcessor {
     return result.spo2 !== 0 ? result : null;
   }
 
+  /**
+   * Calibrate BP with cuff reference values
+   */
+  calibrateBP(systolicRef: number, diastolicRef: number): void {
+    this.bloodPressureProcessor.calibrate(systolicRef, diastolicRef);
+  }
+
   fullReset(): void {
     this.signalHistory = [];
     this.validPulseCount = 0;

@@ -83,6 +83,10 @@ export const useVitalSignsProcessor = () => {
     return savedResults;
   }, []);
   
+  const calibrateBP = useCallback((systolic: number, diastolic: number) => {
+    processorRef.current?.calibrateBP(systolic, diastolic);
+  }, []);
+
   const fullReset = useCallback(() => {
     processorRef.current?.fullReset();
     setLastValidResults(null);
@@ -94,6 +98,7 @@ export const useVitalSignsProcessor = () => {
     setRGBData,
     reset,
     fullReset,
+    calibrateBP,
     startCalibration,
     forceCalibrationCompletion,
     lastValidResults,
