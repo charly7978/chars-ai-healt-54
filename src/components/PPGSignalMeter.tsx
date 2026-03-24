@@ -396,6 +396,110 @@ const PPGSignalMeter = ({
     }
   }, []);
 
+  // === PANEL DE DEBUG Y ESTABILIDAD DE DEDO ===
+  const drawDebugPanel = useCallback((ctx: CanvasRenderingContext2D) => {
+    const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
+    const metrics = propsRef.current.pipelineMetrics;
+    const fq = propsRef.current.vitalSignsFeatureQuality || 0;
+    const bp = propsRef.current.pressure;
+    
+    if (!metrics) return;
+    
+    const panelX = 5;
+    const panelY = 130;
+    const panelW = W - 10;
+    const panelH = 115;
+    
+    // Fondo semitransparente
+    ctx.fillStyle = 'rgba(5, 10, 25, 0.92)';
+    ctx.fillRect(panelX, panelY, panelW, panelH);
+    ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(panelX, panelY, panelW, panelH);
+    
+    // Título
+    ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#60a5fa';
+    ctx.textAlign = 'left';
+    ctx.fillText('🔧 PIPELINE DEBUG', panelX + 8, panelY + 14);
+    
+    const col1 = panelX + 8;
+    const col2 = panelX + panelW * 0.38;
+    const col3 = panelX + panelW * 0.72;
+    let y = panelY + 30;
+    const lineH = 16;
+    
+    const drawMetric = (x: number, y: number, label: string, value: string, color: string) => {
+      ctx.font = '8px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = COLORS.TEXT_SECONDARY;
+      ctx.textAlign = 'left';
+      ctx.fillText(label, x, y);
+      ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = color;
+      ctx.fillText(value, x, y + 12);
+    };
+
+    const drawBar = (x: number, y: number, w: number, value: number, max: number, color: string) => {
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(x, y, w, 5);
+      const fill = Math.max(0, Math.min(1, value / max));
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w * fill, 5);
+    };
+
+    // --- Fila 1: Confianza detección | SQI | Perfusión ---
+    const confColor = metrics.detectionConfidence > 0.7 ? '#22c55e' : metrics.detectionConfidence > 0.4 ? '#f59e0b' : '#ef4444';
+    drawMetric(col1, y, 'CONFIANZA DEDO', `${(metrics.detectionConfidence * 100).toFixed(0)}%`, confColor);
+    drawBar(col1, y + 16, 100, metrics.detectionConfidence, 1, confColor);
+    
+    const sqiColor = metrics.signalQuality > 60 ? '#22c55e' : metrics.signalQuality > 30 ? '#f59e0b' : '#ef4444';
+    drawMetric(col2, y, 'SQI (CALIDAD)', `${metrics.signalQuality.toFixed(0)}%`, sqiColor);
+    drawBar(col2, y + 16, 100, metrics.signalQuality, 100, sqiColor);
+    
+    const piColor = metrics.perfusionIndex > 1.0 ? '#22c55e' : metrics.perfusionIndex > 0.3 ? '#f59e0b' : '#ef4444';
+    drawMetric(col3, y, 'PERFUSIÓN (PI)', `${metrics.perfusionIndex.toFixed(2)}%`, piColor);
+    drawBar(col3, y + 16, 100, metrics.perfusionIndex, 5, piColor);
+    
+    y += lineH + 22;
+    
+    // --- Fila 2: Feature Quality | Buffer | Estabilidad ---
+    const fqColor = fq > 60 ? '#22c55e' : fq > 30 ? '#f59e0b' : '#ef4444';
+    drawMetric(col1, y, 'FEAT. QUALITY', `${fq.toFixed(0)}`, fqColor);
+    drawBar(col1, y + 16, 100, fq, 100, fqColor);
+    
+    const bufColor = metrics.bufferFill > 0.7 ? '#22c55e' : metrics.bufferFill > 0.3 ? '#f59e0b' : '#94a3b8';
+    drawMetric(col2, y, 'BUFFER', `${(metrics.bufferFill * 100).toFixed(0)}%`, bufColor);
+    drawBar(col2, y + 16, 100, metrics.bufferFill, 1, bufColor);
+    
+    // Estabilidad de dedo: ratio confirmados vs perdidos
+    const stability = metrics.fingerConfidenceCount / (metrics.fingerConfidenceCount + metrics.fingerLostCount + 1);
+    const stabColor = stability > 0.7 ? '#22c55e' : stability > 0.35 ? '#f59e0b' : '#ef4444';
+    drawMetric(col3, y, 'ESTAB. DEDO', `${(stability * 100).toFixed(0)}%`, stabColor);
+    drawBar(col3, y + 16, 100, stability, 1, stabColor);
+    
+    y += lineH + 22;
+    
+    // --- Fila 3: RGB suavizado + PA confianza ---
+    ctx.font = '8px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(`RGB: R=${metrics.smoothedRed.toFixed(0)} G=${metrics.smoothedGreen.toFixed(0)} B=${metrics.smoothedBlue.toFixed(0)}`, col1, y + 4);
+    
+    if (bp && bp.systolic > 0) {
+      const bpConfColor = bp.confidence === 'HIGH' ? '#22c55e' : bp.confidence === 'MEDIUM' ? '#f59e0b' : bp.confidence === 'LOW' ? '#ef4444' : '#64748b';
+      ctx.fillStyle = bpConfColor;
+      ctx.font = 'bold 9px "SF Mono", Consolas, monospace';
+      ctx.fillText(`PA: ${bp.systolic}/${bp.diastolic} [${bp.confidence}] FQ:${bp.featureQuality}`, col2, y + 4);
+    }
+    
+    // Estado de dedo visual
+    const fingerIcon = metrics.fingerDetected ? '🟢' : '🔴';
+    ctx.font = '9px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = metrics.fingerDetected ? '#22c55e' : '#ef4444';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${fingerIcon} DEDO: ${metrics.fingerDetected ? 'OK' : 'NO'}  Lost:${metrics.fingerLostCount}`, panelX + panelW - 8, panelY + 14);
+    ctx.textAlign = 'left';
+  }, []);
+
   // Loop de renderizado principal
   useEffect(() => {
     if (isRunningRef.current) return;
