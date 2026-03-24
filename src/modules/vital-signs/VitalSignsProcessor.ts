@@ -620,6 +620,10 @@ export class VitalSignsProcessor {
     this.bloodPressureProcessor.calibrate(systolicRef, diastolicRef);
   }
 
+  hasValidPressureEstimate(): boolean {
+    return this.measurements.systolicPressure > 0 && this.measurements.diastolicPressure > 0;
+  }
+
   fullReset(): void {
     this.signalHistory = [];
     this.validPulseCount = 0;
