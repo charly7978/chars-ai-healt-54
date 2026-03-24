@@ -107,6 +107,9 @@ const PPGSignalMeter = ({
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const showDebugRef = useRef(false);
+  
+  useEffect(() => { showDebugRef.current = showDebug; }, [showDebug]);
   
   // Estado de arritmia persistente por latido completo
   const beatArrhythmiaRef = useRef(false);
