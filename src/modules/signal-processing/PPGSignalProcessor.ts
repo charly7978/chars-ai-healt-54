@@ -37,9 +37,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount: number = 0;
   private lastLogTime: number = 0;
   
-  // Detección de dedo
+  // Detección de dedo con histéresis
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
+  private fingerConfidenceCount: number = 0;
+  private fingerLostCount: number = 0;
+  private readonly FINGER_CONFIRM_FRAMES = 5;   // Frames para confirmar detección
+  private readonly FINGER_LOST_FRAMES = 15;     // Frames tolerados sin dedo (0.5s @ 30fps)
+  private smoothedRed: number = 0;
+  private smoothedGreen: number = 0;
+  private smoothedBlue: number = 0;
+  private readonly RGB_SMOOTH_ALPHA = 0.3;      // Suavizado exponencial RGB
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
