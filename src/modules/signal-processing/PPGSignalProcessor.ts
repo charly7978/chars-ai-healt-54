@@ -37,9 +37,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount: number = 0;
   private lastLogTime: number = 0;
   
-  // Detección de dedo
+  // Detección de dedo con histéresis
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
+  private fingerConfidenceCount: number = 0;
+  private fingerLostCount: number = 0;
+  private readonly FINGER_CONFIRM_FRAMES = 5;   // Frames para confirmar detección
+  private readonly FINGER_LOST_FRAMES = 15;     // Frames tolerados sin dedo (0.5s @ 30fps)
+  private smoothedRed: number = 0;
+  private smoothedGreen: number = 0;
+  private smoothedBlue: number = 0;
+  private readonly RGB_SMOOTH_ALPHA = 0.3;      // Suavizado exponencial RGB
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -197,19 +205,60 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO PERMISIVA
+   * DETECCIÓN DE DEDO CON HISTÉRESIS Y SUAVIZADO
+   * 
+   * - Suaviza valores RGB para tolerar temblores/micromovimientos
+   * - Usa histéresis: requiere varios frames consecutivos para cambiar estado
+   * - Umbrales más permisivos para comodidad del usuario
    */
   private detectFinger(rawRed: number, rawGreen: number, rawBlue: number): boolean {
-    const redMinThreshold = 40;
+    // Suavizar RGB para absorber temblores y micromovimientos
+    if (this.smoothedRed === 0) {
+      this.smoothedRed = rawRed;
+      this.smoothedGreen = rawGreen;
+      this.smoothedBlue = rawBlue;
+    } else {
+      this.smoothedRed = this.smoothedRed * (1 - this.RGB_SMOOTH_ALPHA) + rawRed * this.RGB_SMOOTH_ALPHA;
+      this.smoothedGreen = this.smoothedGreen * (1 - this.RGB_SMOOTH_ALPHA) + rawGreen * this.RGB_SMOOTH_ALPHA;
+      this.smoothedBlue = this.smoothedBlue * (1 - this.RGB_SMOOTH_ALPHA) + rawBlue * this.RGB_SMOOTH_ALPHA;
+    }
+    
+    const r = this.smoothedRed;
+    const g = this.smoothedGreen;
+    
+    // Umbrales permisivos para mayor comodidad
+    const redMinThreshold = 30;     // Más bajo para aceptar posiciones parciales
     const redMaxThreshold = 255;
-    const rgRatio = rawGreen > 0 ? rawRed / rawGreen : 0;
+    const rgRatio = g > 0 ? r / g : 0;
     
-    const validRatio = rgRatio > 0.9 && rgRatio < 3.0;
-    const validRed = rawRed > redMinThreshold && rawRed < redMaxThreshold;
-    const notFullySaturated = rawRed < 254 || rawGreen < 254;
-    const hasEnoughLight = rawRed > 30 && rawGreen > 20;
+    const validRatio = rgRatio > 0.8 && rgRatio < 3.5;   // Rango más amplio
+    const validRed = r > redMinThreshold && r < redMaxThreshold;
+    const notFullySaturated = r < 254.5 || g < 254.5;
+    const hasEnoughLight = r > 20 && g > 15;              // Más permisivo
     
-    return (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
+    const instantDetected = (validRatio && validRed && notFullySaturated) || (hasEnoughLight && validRed);
+    
+    // HISTÉRESIS: evitar parpadeo del estado
+    if (instantDetected) {
+      this.fingerLostCount = 0;
+      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, this.FINGER_CONFIRM_FRAMES + 5);
+      
+      // Si ya estaba detectado, mantener. Si no, esperar confirmación
+      if (this.fingerDetected) {
+        return true;
+      } else {
+        return this.fingerConfidenceCount >= this.FINGER_CONFIRM_FRAMES;
+      }
+    } else {
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
+      this.fingerLostCount++;
+      
+      // Si estaba detectado, tolerar pérdidas breves (temblor/reposición)
+      if (this.fingerDetected) {
+        return this.fingerLostCount < this.FINGER_LOST_FRAMES;
+      }
+      return false;
+    }
   }
   
   /**
@@ -350,6 +399,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastLogTime = 0;
     this.fingerDetected = false;
     this.signalQuality = 0;
+    this.fingerConfidenceCount = 0;
+    this.fingerLostCount = 0;
+    this.smoothedRed = 0;
+    this.smoothedGreen = 0;
+    this.smoothedBlue = 0;
     this.redDC = 0;
     this.redAC = 0;
     this.greenDC = 0;

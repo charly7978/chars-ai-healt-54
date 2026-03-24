@@ -548,9 +548,9 @@ const Index = () => {
     }
   }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, getRGBStats]);
 
-  // AUTO-FINALIZAR a los 30 segundos
+  // AUTO-FINALIZAR a los 60 segundos (1 minuto)
   useEffect(() => {
-    if (isMonitoring && elapsedTime >= 30) {
+    if (isMonitoring && elapsedTime >= 60) {
       finalizeMeasurement();
     }
   }, [elapsedTime, isMonitoring, finalizeMeasurement]);
