@@ -37,18 +37,24 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount: number = 0;
   private lastLogTime: number = 0;
   
-  // Detección de dedo con histéresis
+  // Detección de dedo con histéresis ultra-tolerante
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 4;   // Confirmación un poco más rápida para comodidad
-  private readonly FINGER_LOST_FRAMES = 36;     // Mayor tolerancia a temblores/microajustes
+  private readonly FINGER_CONFIRM_FRAMES = 3;   // Confirmación rápida
+  private readonly FINGER_LOST_FRAMES = 50;     // Ultra tolerante a temblores/reposiciones
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.22;     // Más estabilidad ante pequeños movimientos
+  private readonly RGB_SMOOTH_ALPHA = 0.12;     // Mucho más suavizado = ignora micro-movimientos
   private detectionConfidence: number = 0;
+  
+  // Métricas de estabilidad expuestas
+  private lastCoverageScore: number = 0;
+  private lastSpatialStability: number = 0;
+  private lastTilePulseScore: number = 0;
+  private motionLevel: number = 0; // 0-1, basado en variación de señal reciente
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -99,7 +105,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.greenBuffer.shift();
     }
     
-    // 3. DETECCIÓN DE DEDO
+    // 3. GUARDAR MÉTRICAS DE ESTABILIDAD
+    this.lastCoverageScore = coverageScore;
+    this.lastSpatialStability = spatialStability;
+    this.lastTilePulseScore = tilePulseScore;
+    
+    // 4. DETECCIÓN DE DEDO
     this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore);
     
     // 4. CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS
@@ -131,8 +142,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // 9. CALCULAR DERIVADAS
     this.calculateDerivatives();
     
-    // 10. CALCULAR CALIDAD DE SEÑAL
+    // 10. CALCULAR CALIDAD DE SEÑAL + NIVEL DE MOVIMIENTO
     this.signalQuality = this.calculateSignalQuality();
+    this.updateMotionLevel();
     
     // 11. LOG CADA SEGUNDO
     const now = Date.now();
@@ -511,8 +523,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * ÍNDICE DE PERFUSIÓN: AC/DC * 100
+   * NIVEL DE MOVIMIENTO basado en variación de señal filtrada
    */
+  private updateMotionLevel(): void {
+    if (this.filteredBuffer.length < 10) { this.motionLevel = 0; return; }
+    const recent = this.filteredBuffer.slice(-30);
+    let totalDiff = 0;
+    for (let i = 1; i < recent.length; i++) totalDiff += Math.abs(recent[i] - recent[i - 1]);
+    this.motionLevel = Math.min(1, (totalDiff / (recent.length - 1)) / 5);
+  }
+
   private calculatePerfusionIndex(): number {
     if (this.greenDC === 0) return 0;
     return (this.greenAC / this.greenDC) * 100;
@@ -539,13 +559,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.redAC = 0;
     this.greenDC = 0;
     this.greenAC = 0;
+    this.lastCoverageScore = 0;
+    this.lastSpatialStability = 0;
+    this.lastTilePulseScore = 0;
+    this.motionLevel = 0;
     this.bandpassFilter.reset();
   }
 
-  /**
-   * OBTENER ESTADÍSTICAS RGB PRECISAS
-   * Para uso en cálculo de SpO2
-   */
   getRGBStats() {
     return {
       redAC: this.redAC,
@@ -559,9 +579,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     };
   }
 
-  /**
-   * MÉTRICAS INTERNAS DEL PIPELINE para panel de depuración
-   */
   getDetectionMetrics() {
     return {
       detectionConfidence: this.detectionConfidence,
@@ -574,6 +591,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       fingerConfidenceCount: this.fingerConfidenceCount,
       fingerLostCount: this.fingerLostCount,
       bufferFill: this.filteredBuffer.length / this.BUFFER_SIZE,
+      coverageScore: this.lastCoverageScore,
+      spatialStability: this.lastSpatialStability,
+      tilePulseScore: this.lastTilePulseScore,
+      motionLevel: this.motionLevel,
     };
   }
   
