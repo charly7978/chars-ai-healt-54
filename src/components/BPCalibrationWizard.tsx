@@ -17,11 +17,15 @@ const BPCalibrationWizard: React.FC<BPCalibrationWizardProps> = ({
   isOpen,
   onClose,
   onCalibrate,
+  signalQuality = 0,
+  featureQuality = 0,
 }) => {
   const [step, setStep] = useState<Step>("intro");
   const [systolic, setSystolic] = useState("");
   const [diastolic, setDiastolic] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const signalSufficient = signalQuality >= 50 && featureQuality >= 30;
 
   if (!isOpen) return null;
 
