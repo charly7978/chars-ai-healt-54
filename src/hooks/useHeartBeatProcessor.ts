@@ -138,6 +138,12 @@ export const useHeartBeatProcessor = () => {
     }
   }, []);
 
+  const setMotionRejected = useCallback((rejected: boolean) => {
+    if (processorRef.current && processingStateRef.current === 'ACTIVE') {
+      processorRef.current.setMotionRejected(rejected);
+    }
+  }, []);
+
   return {
     currentBPM,
     confidence,
