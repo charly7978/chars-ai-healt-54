@@ -926,6 +926,29 @@ const PPGSignalMeter = ({
         {isCalibrated ? 'CALIBRADA' : 'CALIBRAR PA'}
       </button>
 
+      {/* BARRA DE PROGRESO Y TIEMPO */}
+      {isMonitoring && (
+        <div className="fixed bottom-12 left-0 right-0 z-10">
+          <div className="h-1 w-full bg-slate-800">
+            <div 
+              className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-1000 ease-linear"
+              style={{ width: `${Math.min(100, (elapsedTime / maxMeasurementTime) * 100)}%` }}
+            />
+          </div>
+          <div className="flex items-center justify-between px-3 py-1 bg-slate-900/90">
+            <span className="text-[10px] font-mono text-slate-400">
+              {String(Math.floor(elapsedTime / 60)).padStart(1, '0')}:{String(elapsedTime % 60).padStart(2, '0')}
+            </span>
+            <span className="text-[10px] font-mono text-emerald-400/70">
+              {maxMeasurementTime - elapsedTime}s restantes
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">
+              {Math.round((elapsedTime / maxMeasurementTime) * 100)}%
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-3 z-10">
         <button 
           onClick={onStartMeasurement}
