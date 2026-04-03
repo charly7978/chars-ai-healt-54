@@ -474,6 +474,10 @@ const Index = () => {
       return;
     }
 
+    // Inyectar estado de movimiento desde IMU
+    const motionState = getMotionState();
+    setMotionRejected(motionState.hasMotionArtifact);
+
     // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
