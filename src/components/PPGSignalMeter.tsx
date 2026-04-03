@@ -13,6 +13,10 @@ interface PipelineMetrics {
   fingerConfidenceCount: number;
   fingerLostCount: number;
   bufferFill: number;
+  coverageScore: number;
+  spatialStability: number;
+  tilePulseScore: number;
+  motionLevel: number;
 }
 
 interface PPGSignalMeterProps {
