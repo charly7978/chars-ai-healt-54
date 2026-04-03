@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart, Activity, Shield } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
+import { HRVAnalyzer, HRVMetrics, PoincarePoint } from '../modules/vital-signs/HRVAnalyzer';
 
 interface PipelineMetrics {
   detectionConfidence: number;
