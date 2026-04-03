@@ -767,6 +767,7 @@ const PPGSignalMeter = ({
       ctx.fillStyle = autoColor;
       ctx.fillText(autoInterp, panelX + 10, barY + 20);
     }
+  }, []);
 
   // Loop de renderizado principal
   useEffect(() => {
