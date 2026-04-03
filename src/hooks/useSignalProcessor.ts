@@ -129,6 +129,7 @@ export const useSignalProcessor = () => {
         signalQuality: 0, perfusionIndex: 0,
         smoothedRed: 0, smoothedGreen: 0, smoothedBlue: 0,
         fingerConfidenceCount: 0, fingerLostCount: 0, bufferFill: 0,
+        coverageScore: 0, spatialStability: 0, tilePulseScore: 0, motionLevel: 0,
       };
     }
     return processorRef.current.getDetectionMetrics();
