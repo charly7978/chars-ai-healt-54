@@ -37,18 +37,24 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount: number = 0;
   private lastLogTime: number = 0;
   
-  // Detección de dedo con histéresis
+  // Detección de dedo con histéresis ultra-tolerante
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 4;   // Confirmación un poco más rápida para comodidad
-  private readonly FINGER_LOST_FRAMES = 36;     // Mayor tolerancia a temblores/microajustes
+  private readonly FINGER_CONFIRM_FRAMES = 3;   // Confirmación rápida
+  private readonly FINGER_LOST_FRAMES = 50;     // Ultra tolerante a temblores/reposiciones
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.22;     // Más estabilidad ante pequeños movimientos
+  private readonly RGB_SMOOTH_ALPHA = 0.12;     // Mucho más suavizado = ignora micro-movimientos
   private detectionConfidence: number = 0;
+  
+  // Métricas de estabilidad expuestas
+  private lastCoverageScore: number = 0;
+  private lastSpatialStability: number = 0;
+  private lastTilePulseScore: number = 0;
+  private motionLevel: number = 0; // 0-1, basado en variación de señal reciente
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
