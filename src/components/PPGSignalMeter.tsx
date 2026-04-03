@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart, Activity, Shield } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
-import { HRVAnalyzer, HRVMetrics, PoincarePoint } from '../modules/vital-signs/HRVAnalyzer';
+import { HRVAnalyzer, HRVMetrics, PoincarePoint, FrequencyDomainMetrics } from '../modules/vital-signs/HRVAnalyzer';
 
 interface PipelineMetrics {
   detectionConfidence: number;
@@ -547,7 +547,7 @@ const PPGSignalMeter = ({
     const panelX = 5;
     const panelY = debugActive ? 300 : 130;
     const panelW = W - 10;
-    const panelH = hrv.freqDomainValid ? 260 : 195;
+    const panelH = 270;
 
     // Fondo
     ctx.fillStyle = 'rgba(5, 8, 20, 0.93)';
@@ -697,76 +697,70 @@ const PPGSignalMeter = ({
     ctx.fillStyle = interpColor;
     ctx.fillText(interpretation, col1, y + plotSize + 20);
 
-    // === DOMINIO FRECUENCIA ===
-    if (hrv.freqDomainValid) {
-      const freqY = y + plotSize + 35;
+    // === DOMINIO FRECUENCIA (LF / HF / LF:HF) ===
+    const freq = hrv.frequency;
+    const freqY = y + plotSize + 32;
 
-      // Separador
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.2)';
-      ctx.lineWidth = 0.5;
-      ctx.beginPath();
-      ctx.moveTo(panelX + 8, freqY - 3);
-      ctx.lineTo(panelX + panelW - 8, freqY - 3);
-      ctx.stroke();
+    // Separador
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(panelX + 8, freqY);
+    ctx.lineTo(panelX + panelW - 8, freqY);
+    ctx.stroke();
 
-      ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = '#c084fc';
-      ctx.textAlign = 'left';
-      ctx.fillText('DOMINIO FRECUENCIA', panelX + 8, freqY + 8);
+    ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#38bdf8';
+    ctx.textAlign = 'left';
+    ctx.fillText('⚡ DOMINIO FRECUENCIA', panelX + 8, freqY + 12);
 
-      // Fila: LF | HF | LF/HF
+    if (!freq.isValid) {
+      ctx.font = '7px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(`Esperando ≥16 intervalos... (${hrv.totalIntervals})`, panelX + 8, freqY + 24);
+    } else {
       const fy = freqY + 18;
-      const lfColor = '#f59e0b';  // Amarillo (simpático+parasimpático)
-      const hfColor = '#22c55e';  // Verde (parasimpático)
 
-      drawM(col1, fy, 'LF', hrv.lfPower.toFixed(1), 'ms²', lfColor);
-      drawM(col2, fy, 'HF', hrv.hfPower.toFixed(1), 'ms²', hfColor);
-
-      const ratioColor = hrv.lfHfRatio > 2.5 ? '#ef4444' : hrv.lfHfRatio > 1.5 ? '#f59e0b' : '#22c55e';
-      drawM(col3, fy, 'LF/HF', hrv.lfHfRatio.toFixed(2), '', ratioColor);
+      // LF | HF | LF/HF
+      drawM(col1, fy, 'LF', freq.lfPower.toFixed(1), 'ms²', '#f59e0b');
+      drawM(col2, fy, 'HF', freq.hfPower.toFixed(1), 'ms²', '#22c55e');
+      drawM(col3, fy, 'LF/HF', freq.lfHfRatio.toFixed(2), '', '#38bdf8');
 
       // Barra proporcional LF vs HF
-      const barY = fy + 20;
+      const barY = fy + 18;
       const barW = panelW - 20;
-      const barH = 8;
-      const barX2 = panelX + 10;
-      const lfHfTotal = hrv.lfPower + hrv.hfPower;
+      const barH = 6;
+      const lfFrac = freq.lfNorm / 100;
 
-      if (lfHfTotal > 0) {
-        const lfWidth = (hrv.lfPower / lfHfTotal) * barW;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(col1, barY, barW, barH);
 
-        // Fondo
-        ctx.fillStyle = 'rgba(255,255,255,0.08)';
-        ctx.fillRect(barX2, barY, barW, barH);
+      // LF portion (amber)
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(col1, barY, barW * lfFrac, barH);
+      // HF portion (green)
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(col1 + barW * lfFrac, barY, barW * (1 - lfFrac), barH);
 
-        // LF (izquierda)
-        ctx.fillStyle = 'rgba(245, 158, 11, 0.7)';
-        ctx.fillRect(barX2, barY, lfWidth, barH);
-
-        // HF (derecha)
-        ctx.fillStyle = 'rgba(34, 197, 94, 0.7)';
-        ctx.fillRect(barX2 + lfWidth, barY, barW - lfWidth, barH);
-
-        // Labels
-        ctx.font = '6px "SF Mono", Consolas, monospace';
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#fbbf24';
-        ctx.fillText(`LF ${hrv.lfNorm.toFixed(0)}%`, barX2 + 2, barY + 7);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#4ade80';
-        ctx.fillText(`HF ${hrv.hfNorm.toFixed(0)}%`, barX2 + barW - 2, barY + 7);
-      }
+      // Labels
+      ctx.font = '6px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#f59e0b';
+      ctx.textAlign = 'left';
+      ctx.fillText(`LF ${freq.lfNorm.toFixed(0)}%`, col1, barY + barH + 8);
+      ctx.fillStyle = '#22c55e';
+      ctx.textAlign = 'right';
+      ctx.fillText(`HF ${freq.hfNorm.toFixed(0)}%`, col1 + barW, barY + barH + 8);
 
       // Interpretación autonómica
-      ctx.font = '7px "SF Mono", Consolas, monospace';
       ctx.textAlign = 'left';
-      const autoInterp = hrv.lfHfRatio > 2.5 ? 'PREDOMINIO SIMPÁTICO' :
-                          hrv.lfHfRatio < 0.5 ? 'PREDOMINIO PARASIMPÁTICO' : 'BALANCE AUTONÓMICO';
-      const autoColor = hrv.lfHfRatio > 2.5 ? '#ef4444' :
-                         hrv.lfHfRatio < 0.5 ? '#38bdf8' : '#22c55e';
+      const autoInterp = freq.lfHfRatio > 2 ? 'PREDOMINIO SIMPÁTICO' :
+                          freq.lfHfRatio < 0.5 ? 'PREDOMINIO PARASIMPÁTICO' : 'BALANCE AUTONÓMICO';
+      const autoColor = freq.lfHfRatio > 2 ? '#ef4444' : freq.lfHfRatio < 0.5 ? '#22c55e' : '#38bdf8';
+      ctx.font = '7px "SF Mono", Consolas, monospace';
       ctx.fillStyle = autoColor;
-      ctx.fillText(autoInterp, panelX + 10, barY + 20);
+      ctx.fillText(autoInterp, col1, barY + barH + 18);
     }
+    ctx.textAlign = 'left';
   }, []);
 
   // Loop de renderizado principal

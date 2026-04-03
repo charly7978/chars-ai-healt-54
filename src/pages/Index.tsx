@@ -13,7 +13,6 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import BPCalibrationWizard from "@/components/BPCalibrationWizard";
 import { supabase } from "@/integrations/supabase/client";
-import { useMotionDetector } from "@/hooks/useMotionDetector";
 
 const Index = () => {
   // ESTADOS PRINCIPALES
@@ -78,11 +77,8 @@ const Index = () => {
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState,
-    setMotionRejected,
     reset: resetHeartBeat,
   } = useHeartBeatProcessor();
-  
-  const { getMotionState } = useMotionDetector();
   
   const { 
     processSignal: processVitalSigns, 
@@ -474,10 +470,6 @@ const Index = () => {
       return;
     }
 
-    // Inyectar estado de movimiento desde IMU
-    const motionState = getMotionState();
-    setMotionRejected(motionState.hasMotionArtifact);
-
     // Procesar latidos
     const heartBeatResult = processHeartBeat(
       signalValue,
@@ -559,7 +551,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, getRGBStats, getMotionState, setMotionRejected]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, getRGBStats]);
 
   // AUTO-FINALIZAR a los 60 segundos (1 minuto)
   useEffect(() => {
