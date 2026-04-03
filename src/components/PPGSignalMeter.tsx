@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart, Activity, Shield } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
+import { HRVAnalyzer, HRVMetrics, PoincarePoint } from '../modules/vital-signs/HRVAnalyzer';
 
 interface PipelineMetrics {
   detectionConfidence: number;
@@ -524,6 +525,179 @@ const PPGSignalMeter = ({
     ctx.textAlign = 'left';
   }, []);
 
+  // === PANEL HRV + POINCARÉ ===
+  const hrvRef = useRef<HRVMetrics | null>(null);
+  const lastHRVCalcRef = useRef<number>(0);
+
+  const drawHRVPanel = useCallback((ctx: CanvasRenderingContext2D, now: number) => {
+    const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
+    const intervals = propsRef.current.rrIntervals;
+    if (!intervals || intervals.length < 6) return;
+
+    // Recalcular HRV cada 500ms para eficiencia
+    if (now - lastHRVCalcRef.current > 500) {
+      hrvRef.current = HRVAnalyzer.compute(intervals);
+      lastHRVCalcRef.current = now;
+    }
+    const hrv = hrvRef.current;
+    if (!hrv || !hrv.isValid) return;
+
+    // Posición del panel: debajo del debug si está activo, sino debajo de los paneles vitales
+    const debugActive = showDebugRef.current;
+    const panelX = 5;
+    const panelY = debugActive ? 300 : 130;
+    const panelW = W - 10;
+    const panelH = 195;
+
+    // Fondo
+    ctx.fillStyle = 'rgba(5, 8, 20, 0.93)';
+    ctx.fillRect(panelX, panelY, panelW, panelH);
+    ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+    // Título
+    ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#a855f7';
+    ctx.textAlign = 'left';
+    ctx.fillText('📊 HRV ANALYSIS', panelX + 8, panelY + 14);
+
+    ctx.font = '7px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#94a3b8';
+    ctx.textAlign = 'right';
+    ctx.fillText(`N=${hrv.totalIntervals}`, panelX + panelW - 8, panelY + 14);
+
+    // --- Métricas en columnas ---
+    const col1 = panelX + 8;
+    const col2 = panelX + panelW * 0.36;
+    const col3 = panelX + panelW * 0.68;
+    let y = panelY + 28;
+
+    const drawM = (x: number, y: number, label: string, value: string, unit: string, color: string) => {
+      ctx.font = '7px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#94a3b8';
+      ctx.textAlign = 'left';
+      ctx.fillText(label, x, y);
+      ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = color;
+      ctx.fillText(value, x, y + 13);
+      ctx.font = '7px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(unit, x + ctx.measureText(value).width + 3, y + 13);
+    };
+
+    // Fila 1: SDNN | RMSSD | pNN50
+    const sdnnColor = hrv.sdnn > 100 ? '#22c55e' : hrv.sdnn > 50 ? '#f59e0b' : '#ef4444';
+    drawM(col1, y, 'SDNN', hrv.sdnn.toFixed(1), 'ms', sdnnColor);
+
+    const rmssdColor = hrv.rmssd > 40 ? '#22c55e' : hrv.rmssd > 20 ? '#f59e0b' : '#ef4444';
+    drawM(col2, y, 'RMSSD', hrv.rmssd.toFixed(1), 'ms', rmssdColor);
+
+    const pnnColor = hrv.pnn50 > 20 ? '#22c55e' : hrv.pnn50 > 5 ? '#f59e0b' : '#ef4444';
+    drawM(col3, y, 'pNN50', hrv.pnn50.toFixed(1), '%', pnnColor);
+
+    y += 30;
+
+    // Fila 2: MeanRR | MeanHR | SD1/SD2
+    drawM(col1, y, 'MEAN RR', hrv.meanRR.toString(), 'ms', '#38bdf8');
+    drawM(col2, y, 'MEAN HR', hrv.meanHR.toFixed(1), 'bpm', '#38bdf8');
+    drawM(col3, y, 'SD1/SD2', hrv.sd1sd2Ratio.toFixed(2), '', '#c084fc');
+
+    y += 30;
+
+    // --- Poincaré Plot (miniatura) ---
+    const plotSize = 90;
+    const plotX = panelX + panelW - plotSize - 12;
+    const plotY2 = y + 2;
+
+    // Fondo del scatter
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(plotX, plotY2, plotSize, plotSize);
+    ctx.strokeStyle = 'rgba(168, 85, 247, 0.3)';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(plotX, plotY2, plotSize, plotSize);
+
+    // Línea de identidad (diagonal)
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(plotX, plotY2 + plotSize);
+    ctx.lineTo(plotX + plotSize, plotY2);
+    ctx.stroke();
+
+    // Ejes label
+    ctx.font = '6px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'center';
+    ctx.fillText('RR(n) ms', plotX + plotSize / 2, plotY2 + plotSize + 10);
+    ctx.save();
+    ctx.translate(plotX - 6, plotY2 + plotSize / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText('RR(n+1)', 0, 0);
+    ctx.restore();
+
+    // Plot points
+    const points = HRVAnalyzer.getPoincarePoints(intervals);
+    if (points.length > 0) {
+      // Auto-scale
+      const allRR = intervals.filter(rr => rr >= 300 && rr <= 2000);
+      const minRR = Math.min(...allRR) - 30;
+      const maxRR = Math.max(...allRR) + 30;
+      const rangeRR = maxRR - minRR || 1;
+
+      // Draw SD1/SD2 ellipse
+      const centerPx = plotSize / 2;
+      const sd1Px = (hrv.sd1 / rangeRR) * plotSize;
+      const sd2Px = (hrv.sd2 / rangeRR) * plotSize;
+      ctx.save();
+      ctx.translate(plotX + centerPx, plotY2 + centerPx);
+      ctx.rotate(-Math.PI / 4);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, Math.max(2, sd2Px), Math.max(2, sd1Px), 0, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(168, 85, 247, 0.08)';
+      ctx.fill();
+      ctx.restore();
+
+      // Draw scatter points
+      points.forEach((pt, i) => {
+        const px = plotX + ((pt.rrN - minRR) / rangeRR) * plotSize;
+        const py = plotY2 + plotSize - ((pt.rrN1 - minRR) / rangeRR) * plotSize;
+
+        if (px >= plotX && px <= plotX + plotSize && py >= plotY2 && py <= plotY2 + plotSize) {
+          const alpha = 0.4 + (i / points.length) * 0.6; // más recientes más brillantes
+          ctx.beginPath();
+          ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(168, 85, 247, ${alpha})`;
+          ctx.fill();
+        }
+      });
+    }
+
+    // Título del plot
+    ctx.font = 'bold 7px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#c084fc';
+    ctx.textAlign = 'center';
+    ctx.fillText('POINCARÉ', plotX + plotSize / 2, plotY2 - 3);
+
+    // SD1 / SD2 valores debajo del scatter
+    ctx.font = '7px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#a855f7';
+    ctx.textAlign = 'left';
+    ctx.fillText(`SD1: ${hrv.sd1.toFixed(1)}ms`, col1, y + plotSize - 5);
+    ctx.fillText(`SD2: ${hrv.sd2.toFixed(1)}ms`, col1, y + plotSize + 7);
+
+    // Interpretación
+    ctx.font = '7px "SF Mono", Consolas, monospace';
+    const interpretation = hrv.rmssd > 40 ? 'TONO VAGAL ALTO' :
+                           hrv.rmssd > 20 ? 'VARIABILIDAD NORMAL' : 'VARIABILIDAD REDUCIDA';
+    const interpColor = hrv.rmssd > 40 ? '#22c55e' : hrv.rmssd > 20 ? '#f59e0b' : '#ef4444';
+    ctx.fillStyle = interpColor;
+    ctx.fillText(interpretation, col1, y + plotSize + 20);
+  }, []);
+
   // Loop de renderizado principal
   useEffect(() => {
     if (isRunningRef.current) return;
@@ -570,6 +744,9 @@ const PPGSignalMeter = ({
       if (showDebugRef.current) {
         drawDebugPanel(ctx);
       }
+      
+      // Panel HRV siempre visible durante monitoreo
+      drawHRVPanel(ctx, now);
       
       if (preserve && !detected) {
         animationRef.current = requestAnimationFrame(render);
@@ -873,7 +1050,7 @@ const PPGSignalMeter = ({
       isRunningRef.current = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, drawDebugPanel, getPlotArea]);
+  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, drawDebugPanel, drawHRVPanel, getPlotArea]);
 
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
