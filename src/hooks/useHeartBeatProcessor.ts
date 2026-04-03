@@ -151,6 +151,7 @@ export const useHeartBeatProcessor = () => {
     processSignal,
     reset,
     setArrhythmiaState,
+    setMotionRejected,
     debugInfo: {
       sessionId: sessionIdRef.current,
       processingState: processingStateRef.current,
