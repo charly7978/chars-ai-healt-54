@@ -1,37 +1,43 @@
 /**
- * PROCESADOR DE LATIDOS - VERSIÓN SIN CLAMPS
+ * PROCESADOR DE LATIDOS - FUSIÓN TIEMPO-FRECUENCIA
  * 
  * CAMBIOS PRINCIPALES:
  * 1. SIN límites MIN_BPM / MAX_BPM - BPM calculado directo
  * 2. Detección de picos con análisis de primera derivada (VPG)
  * 3. Zero-crossing detection para picos sistólicos
- * 4. BPM crudo desde intervalos RR reales
- * 5. Indicador de calidad (SQI) en lugar de clamps
+ * 4. FFT para estimación BPM en dominio frecuencia
+ * 5. Fusión automática picos+FFT según SQI
+ * 6. Rechazo de ventanas con artefactos de movimiento
  * 
  * Referencia: De Haan & Jeanne 2013, MIT/ETH 2024
  */
 export class HeartBeatProcessor {
-  // SIN LÍMITES FISIOLÓGICOS - Cálculo directo
-  // Solo intervalos mínimos para evitar ruido de alta frecuencia
-  private readonly MIN_PEAK_INTERVAL_MS = 250;  // Evitar detectar mismo pico
-  private readonly MAX_PEAK_INTERVAL_MS = 3000; // 20 BPM mínimo técnico
+  private readonly MIN_PEAK_INTERVAL_MS = 250;
+  private readonly MAX_PEAK_INTERVAL_MS = 3000;
   
   // Buffers para análisis
   private signalBuffer: number[] = [];
-  private derivativeBuffer: number[] = []; // Primera derivada (VPG)
+  private derivativeBuffer: number[] = [];
   private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
+  
+  // FFT buffer (potencia de 2)
+  private readonly FFT_SIZE = 256;
+  private fftBuffer: number[] = [];
+  private fftBPM: number = 0;
+  private fftConfidence: number = 0;
+  private readonly FFT_SAMPLE_RATE = 30; // fps asumido
   
   // Detección de picos
   private lastPeakTime: number = 0;
   private peakThreshold: number = 8;
   private adaptiveBaseline: number = 0;
   
-  // RR Intervals y BPM - optimizado para estabilidad
+  // RR Intervals y BPM
   private rrIntervals: number[] = [];
-  private readonly MAX_RR_INTERVALS = 20; // Más intervalos para mejor promedio
+  private readonly MAX_RR_INTERVALS = 20;
   private smoothBPM: number = 0;
-  private readonly BPM_SMOOTHING = 0.75; // Mayor suavizado para estabilidad
-  private readonly BPM_SMOOTHING_INITIAL = 0.5; // Menos suavizado al inicio
+  private readonly BPM_SMOOTHING = 0.75;
+  private peakBasedBPM: number = 0;
   
   // Audio feedback
   private audioContext: AudioContext | null = null;
@@ -42,7 +48,10 @@ export class HeartBeatProcessor {
   private frameCount: number = 0;
   private consecutivePeaks: number = 0;
   private lastPeakValue: number = 0;
-  private signalQualityIndex: number = 0; // SQI 0-100
+  private signalQualityIndex: number = 0;
+  
+  // Movimiento
+  private motionRejected: boolean = false;
 
   constructor() {
     this.setupAudio();
@@ -66,8 +75,14 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * PROCESAR SEÑAL FILTRADA - SIN CLAMPS
-   * Retorna BPM crudo directamente calculado
+   * Establecer estado de movimiento desde IMU externo
+   */
+  setMotionRejected(rejected: boolean): void {
+    this.motionRejected = rejected;
+  }
+
+  /**
+   * PROCESAR SEÑAL - FUSIÓN TIEMPO-FRECUENCIA
    */
   processSignal(filteredValue: number, timestamp?: number): {
     bpm: number;
@@ -75,106 +90,98 @@ export class HeartBeatProcessor {
     isPeak: boolean;
     filteredValue: number;
     arrhythmiaCount: number;
-    sqi: number; // Signal Quality Index
+    sqi: number;
+    fftBPM: number;
+    peakBPM: number;
+    fusionMethod: 'PEAK' | 'FFT' | 'FUSED' | 'NONE';
   } {
     this.frameCount++;
     const now = timestamp || Date.now();
     
-    // 1. GUARDAR EN BUFFER
+    // 1. BUFFER DE SEÑAL
     this.signalBuffer.push(filteredValue);
     if (this.signalBuffer.length > this.BUFFER_SIZE) {
       this.signalBuffer.shift();
     }
     
-    // 2. CALCULAR PRIMERA DERIVADA (VPG - Velocidad)
+    // 1b. FFT BUFFER
+    this.fftBuffer.push(filteredValue);
+    if (this.fftBuffer.length > this.FFT_SIZE) {
+      this.fftBuffer.shift();
+    }
+    
+    // 2. PRIMERA DERIVADA (VPG)
     const derivative = this.calculateDerivative();
     this.derivativeBuffer.push(derivative);
     if (this.derivativeBuffer.length > this.BUFFER_SIZE) {
       this.derivativeBuffer.shift();
     }
     
-    // Necesitamos suficientes muestras
     if (this.signalBuffer.length < 30) {
       return {
-        bpm: 0,
-        confidence: 0,
-        isPeak: false,
-        filteredValue: 0,
-        arrhythmiaCount: 0,
-        sqi: 0
+        bpm: 0, confidence: 0, isPeak: false, filteredValue: 0,
+        arrhythmiaCount: 0, sqi: 0, fftBPM: 0, peakBPM: 0, fusionMethod: 'NONE'
       };
     }
     
-    // 3. NORMALIZACIÓN ADAPTATIVA
+    // 3. NORMALIZACIÓN
     const { normalizedValue, range } = this.normalizeSignal(filteredValue);
     
-    // 4. ACTUALIZAR UMBRAL DINÁMICO
+    // 4. UMBRAL DINÁMICO
     this.updateThreshold(range);
     
-    // 5. CALCULAR SQI (Signal Quality Index)
+    // 5. SQI
     this.signalQualityIndex = this.calculateSQI();
     
-    // 6. DETECCIÓN DE PICO CON ANÁLISIS DE DERIVADA
+    // 6. FFT cada ~1 segundo (30 frames)
+    if (this.frameCount % 30 === 0 && this.fftBuffer.length >= 128) {
+      this.computeFFTBPM();
+    }
+    
+    // 7. DETECCIÓN DE PICO
     const timeSinceLastPeak = now - this.lastPeakTime;
     let isPeak = false;
     
-    if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
+    // Si hay artefacto de movimiento, NO detectar picos
+    if (this.motionRejected) {
+      // No detectar picos durante movimiento - mantener último BPM conocido
+    } else if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
       isPeak = this.detectPeakWithDerivative(normalizedValue, timeSinceLastPeak);
       
       if (isPeak) {
-        // Registrar intervalo RR
         if (this.lastPeakTime > 0 && timeSinceLastPeak <= this.MAX_PEAK_INTERVAL_MS) {
           this.rrIntervals.push(timeSinceLastPeak);
           if (this.rrIntervals.length > this.MAX_RR_INTERVALS) {
             this.rrIntervals.shift();
           }
           
-          // Calcular BPM instantáneo
           const instantBPM = 60000 / timeSinceLastPeak;
+          this.peakBasedBPM = instantBPM;
           
-          // === SUAVIZADO ADAPTATIVO MEJORADO ===
-          // Basado en la cantidad de datos y la estabilidad
+          // Suavizado adaptativo
           if (this.smoothBPM === 0) {
-            // Primera medición - usar directamente
             this.smoothBPM = instantBPM;
           } else {
-            // Calcular diferencia relativa
             const bpmDiff = Math.abs(instantBPM - this.smoothBPM);
             const relativeDiff = bpmDiff / this.smoothBPM;
             
-            // Seleccionar factor de suavizado basado en:
-            // 1. Cuántos picos consecutivos tenemos (más = más confianza)
-            // 2. Cuán diferente es el nuevo valor (muy diferente = más suavizado)
-            let smoothingFactor: number;
+            let sf: number;
+            if (relativeDiff > 0.4) sf = 0.92;
+            else if (relativeDiff > 0.25) sf = 0.85;
+            else if (relativeDiff > 0.15) sf = 0.75;
+            else sf = 0.6;
             
-            if (relativeDiff > 0.4) {
-              // Cambio muy grande (>40%) - probablemente ruido, suavizar mucho
-              smoothingFactor = 0.92;
-            } else if (relativeDiff > 0.25) {
-              // Cambio grande - suavizar bastante
-              smoothingFactor = 0.85;
-            } else if (relativeDiff > 0.15) {
-              // Cambio moderado - suavizado normal
-              smoothingFactor = 0.75;
-            } else {
-              // Cambio pequeño - responder más rápido
-              smoothingFactor = 0.6;
-            }
-            
-            // Si tenemos pocos picos, ser más conservador
             if (this.consecutivePeaks < 5) {
-              smoothingFactor = Math.min(0.9, smoothingFactor + 0.1);
+              sf = Math.min(0.9, sf + 0.1);
             }
             
-            this.smoothBPM = this.smoothBPM * smoothingFactor + instantBPM * (1 - smoothingFactor);
+            this.smoothBPM = this.smoothBPM * sf + instantBPM * (1 - sf);
           }
           
           this.consecutivePeaks++;
         }
         
         this.lastPeakTime = now;
-        
-        // Feedback
         this.vibrate();
         this.playBeep();
         
@@ -184,45 +191,150 @@ export class HeartBeatProcessor {
       }
     }
     
-    // 7. CALCULAR CONFIANZA
+    // 8. FUSIÓN TIEMPO-FRECUENCIA
+    const { fusedBPM, method } = this.fuseBPM();
+    
+    // 9. CONFIANZA
     const confidence = this.calculateConfidence();
     
-    // Log periódico
     if (this.frameCount % 60 === 0) {
-      console.log(`📊 BPM=${this.smoothBPM.toFixed(1)} Conf=${(confidence * 100).toFixed(0)}% SQI=${this.signalQualityIndex.toFixed(0)}% Picos=${this.consecutivePeaks}`);
+      console.log(`📊 Fusión: ${method} BPM=${fusedBPM.toFixed(1)} Peak=${this.peakBasedBPM.toFixed(1)} FFT=${this.fftBPM.toFixed(1)} SQI=${this.signalQualityIndex.toFixed(0)}% Motion=${this.motionRejected ? 'REJECT' : 'OK'}`);
     }
     
     return {
-      bpm: this.smoothBPM, // BPM crudo, puede ser decimal
+      bpm: fusedBPM,
       confidence,
       isPeak,
       filteredValue: normalizedValue,
       arrhythmiaCount: 0,
-      sqi: this.signalQualityIndex
+      sqi: this.signalQualityIndex,
+      fftBPM: this.fftBPM,
+      peakBPM: this.peakBasedBPM,
+      fusionMethod: method
     };
   }
-  
+
   /**
-   * CALCULAR PRIMERA DERIVADA (VPG)
-   * Detecta cambios de pendiente para zero-crossing
+   * FUSIÓN TIEMPO-FRECUENCIA
+   * Selección automática según calidad de señal
    */
+  private fuseBPM(): { fusedBPM: number; method: 'PEAK' | 'FFT' | 'FUSED' | 'NONE' } {
+    const hasPeak = this.smoothBPM > 0 && this.consecutivePeaks >= 3;
+    const hasFFT = this.fftBPM > 0 && this.fftConfidence > 0.3;
+    
+    if (!hasPeak && !hasFFT) {
+      return { fusedBPM: this.smoothBPM, method: 'NONE' };
+    }
+    
+    // Si hay artefacto de movimiento, preferir FFT (más robusto al ruido)
+    if (this.motionRejected) {
+      if (hasFFT) return { fusedBPM: this.fftBPM, method: 'FFT' };
+      return { fusedBPM: this.smoothBPM, method: 'PEAK' };
+    }
+    
+    // Señal de alta calidad → preferir picos (más preciso latido a latido)
+    if (this.signalQualityIndex > 65 && hasPeak) {
+      if (hasFFT) {
+        // Verificar concordancia: si FFT y picos coinciden, usar picos
+        const diff = Math.abs(this.smoothBPM - this.fftBPM);
+        if (diff < 10) {
+          return { fusedBPM: this.smoothBPM, method: 'PEAK' };
+        }
+        // Discrepancia → fusionar con peso según SQI
+        const peakWeight = this.signalQualityIndex / 100;
+        const fused = this.smoothBPM * peakWeight + this.fftBPM * (1 - peakWeight);
+        return { fusedBPM: fused, method: 'FUSED' };
+      }
+      return { fusedBPM: this.smoothBPM, method: 'PEAK' };
+    }
+    
+    // Señal de baja calidad → preferir FFT
+    if (this.signalQualityIndex <= 65 && hasFFT) {
+      if (hasPeak) {
+        const fftWeight = Math.max(0.5, 1 - this.signalQualityIndex / 100);
+        const fused = this.smoothBPM * (1 - fftWeight) + this.fftBPM * fftWeight;
+        return { fusedBPM: fused, method: 'FUSED' };
+      }
+      return { fusedBPM: this.fftBPM, method: 'FFT' };
+    }
+    
+    return { fusedBPM: this.smoothBPM, method: hasPeak ? 'PEAK' : 'NONE' };
+  }
+
+  /**
+   * FFT BPM - Estimación por dominio frecuencia
+   * Usa una FFT simplificada (DFT en banda cardíaca)
+   */
+  private computeFFTBPM(): void {
+    const N = this.fftBuffer.length;
+    if (N < 128) return;
+
+    // Usar últimos datos, aplicar ventana Hanning
+    const data = this.fftBuffer.slice(-N);
+    const mean = data.reduce((a, b) => a + b, 0) / N;
+    const windowed = data.map((v, i) => {
+      const hann = 0.5 * (1 - Math.cos(2 * Math.PI * i / (N - 1)));
+      return (v - mean) * hann;
+    });
+
+    // DFT solo en banda cardíaca (0.7-3.5 Hz = 42-210 BPM)
+    const minFreq = 0.7;
+    const maxFreq = 3.5;
+    const freqResolution = this.FFT_SAMPLE_RATE / N;
+    const minBin = Math.floor(minFreq / freqResolution);
+    const maxBin = Math.ceil(maxFreq / freqResolution);
+
+    let maxPower = 0;
+    let peakBin = 0;
+    let totalPower = 0;
+    const powers: number[] = [];
+
+    for (let k = minBin; k <= maxBin && k < N / 2; k++) {
+      let re = 0, im = 0;
+      for (let n = 0; n < N; n++) {
+        const angle = -2 * Math.PI * k * n / N;
+        re += windowed[n] * Math.cos(angle);
+        im += windowed[n] * Math.sin(angle);
+      }
+      const power = re * re + im * im;
+      powers.push(power);
+      totalPower += power;
+
+      if (power > maxPower) {
+        maxPower = power;
+        peakBin = k;
+      }
+    }
+
+    if (peakBin === 0 || totalPower === 0) return;
+
+    // Interpolación parabólica para precisión sub-bin
+    const peakIdx = peakBin - minBin;
+    let refinedBin = peakBin;
+    if (peakIdx > 0 && peakIdx < powers.length - 1) {
+      const alpha = powers[peakIdx - 1];
+      const beta = powers[peakIdx];
+      const gamma = powers[peakIdx + 1];
+      const denom = alpha - 2 * beta + gamma;
+      if (Math.abs(denom) > 1e-10) {
+        const p = 0.5 * (alpha - gamma) / denom;
+        refinedBin = peakBin + p;
+      }
+    }
+
+    const peakFreq = refinedBin * freqResolution;
+    this.fftBPM = peakFreq * 60;
+
+    // Confianza FFT: ratio pico/total (spectral purity)
+    this.fftConfidence = maxPower / totalPower;
+  }
+  
   private calculateDerivative(): number {
     const n = this.signalBuffer.length;
     if (n < 3) return 0;
-    
-    // Derivada central: (f(x+h) - f(x-h)) / 2h
-    const current = this.signalBuffer[n - 1];
-    const previous = this.signalBuffer[n - 2];
-    const older = this.signalBuffer[n - 3];
-    
-    // Derivada suavizada
-    return (current - older) / 2;
+    return (this.signalBuffer[n - 1] - this.signalBuffer[n - 3]) / 2;
   }
   
-  /**
-   * CALCULAR SIGNAL QUALITY INDEX (SQI)
-   * Reemplaza los clamps fisiológicos
-   */
   private calculateSQI(): number {
     if (this.signalBuffer.length < 60) return 0;
     
@@ -231,30 +343,26 @@ export class HeartBeatProcessor {
     const min = Math.min(...recent);
     const range = max - min;
     
-    // Factor 1: Rango de señal (debe ser suficiente para detectar pulsos)
     const rangeFactor = Math.min(1, range / 20) * 40;
     
-    // Factor 2: Consistencia de RR intervals
     let rrFactor = 0;
     if (this.rrIntervals.length >= 3) {
       const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
       const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
       const cv = Math.sqrt(variance) / mean;
-      // CV bajo = ritmo regular = mayor calidad
       rrFactor = Math.max(0, (1 - cv * 2)) * 30;
     }
     
-    // Factor 3: Número de picos detectados
     const peakFactor = Math.min(1, this.consecutivePeaks / 5) * 30;
     
-    return Math.min(100, rangeFactor + rrFactor + peakFactor);
+    // Penalizar si hay movimiento
+    const motionPenalty = this.motionRejected ? 20 : 0;
+    
+    return Math.min(100, Math.max(0, rangeFactor + rrFactor + peakFactor - motionPenalty));
   }
   
-  /**
-   * NORMALIZACIÓN ADAPTATIVA
-   */
   private normalizeSignal(value: number): { normalizedValue: number; range: number } {
-    const recent = this.signalBuffer.slice(-120); // 4 segundos
+    const recent = this.signalBuffer.slice(-120);
     const min = Math.min(...recent);
     const max = Math.max(...recent);
     const range = max - min;
@@ -263,38 +371,23 @@ export class HeartBeatProcessor {
       return { normalizedValue: 0, range: 0 };
     }
     
-    // Normalizar a -50 a +50
     const normalizedValue = ((value - min) / range - 0.5) * 100;
-    
     return { normalizedValue, range };
   }
   
-  /**
-   * UMBRAL DINÁMICO
-   */
   private updateThreshold(range: number): void {
-    // Umbral proporcional a la amplitud pero adaptativo
     const newThreshold = Math.max(5, range * 0.2);
-    
-    // Suavizar cambios
     this.peakThreshold = this.peakThreshold * 0.9 + newThreshold * 0.1;
   }
   
-  /**
-   * DETECCIÓN DE PICO CON ANÁLISIS DE DERIVADA
-   * Usa zero-crossing del VPG y análisis morfológico
-   */
   private detectPeakWithDerivative(normalizedValue: number, timeSinceLastPeak: number): boolean {
     const n = this.signalBuffer.length;
     const dn = this.derivativeBuffer.length;
     if (n < 7 || dn < 5) return false;
     
-    // 1. ANÁLISIS DE DERIVADA (VPG)
-    // Pico sistólico = zero-crossing descendente del VPG
     const deriv = this.derivativeBuffer.slice(-5);
-    const zeroCrossing = deriv[3] >= 0 && deriv[4] < 0; // Cruzando de + a -
+    const zeroCrossing = deriv[3] >= 0 && deriv[4] < 0;
     
-    // 2. MÁXIMO LOCAL EN SEÑAL ORIGINAL
     const recent = this.signalBuffer.slice(-7);
     const recentNormalized = recent.map(v => {
       const slice = this.signalBuffer.slice(-120);
@@ -307,35 +400,21 @@ export class HeartBeatProcessor {
     
     const [v0, v1, v2, v3, v4, v5, v6] = recentNormalized;
     
-    // Verificar máximo local
     const isLocalMax = v3 > v2 && v3 > v4 && v3 >= v1 && v3 >= v5;
-    
-    // 3. UMBRAL DE AMPLITUD
     const aboveThreshold = v3 > this.peakThreshold;
-    
-    // 4. PENDIENTES ADECUADAS
     const risingSlope = (v3 - v0) > 2;
     const fallingSlope = (v3 - v6) > 2;
-    
-    // 5. INTERVALO MÍNIMO
     const notTooSoon = timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS;
     
-    // 6. VALIDACIÓN DE AMPLITUD RELATIVA
     let amplitudeValid = true;
     if (this.lastPeakValue > 0) {
       const ratio = v3 / this.lastPeakValue;
-      amplitudeValid = ratio > 0.2 && ratio < 5.0; // Más permisivo
+      amplitudeValid = ratio > 0.2 && ratio < 5.0;
     }
     
-    // Combinar criterios:
-    // - Zero-crossing O máximo local (flexibilidad)
-    // - Más: umbral, pendientes, timing, amplitud
     const isPeak = (zeroCrossing || isLocalMax) && 
-                   aboveThreshold && 
-                   risingSlope && 
-                   fallingSlope && 
-                   notTooSoon && 
-                   amplitudeValid;
+                   aboveThreshold && risingSlope && fallingSlope && 
+                   notTooSoon && amplitudeValid;
     
     if (isPeak) {
       this.lastPeakValue = v3;
@@ -344,22 +423,14 @@ export class HeartBeatProcessor {
     return isPeak;
   }
   
-  /**
-   * CALCULAR CONFIANZA
-   * Basado en la consistencia de intervalos RR
-   */
   private calculateConfidence(): number {
     if (this.rrIntervals.length < 3) return 0;
     
-    // Calcular variabilidad de intervalos RR
     const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
     const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
-    const cv = Math.sqrt(variance) / mean; // Coeficiente de variación
+    const cv = Math.sqrt(variance) / mean;
     
-    // Menor variabilidad = mayor confianza
-    const confidence = Math.max(0, Math.min(1, 1 - cv * 1.5));
-    
-    return confidence;
+    return Math.max(0, Math.min(1, 1 - cv * 1.5));
   }
 
   private vibrate(): void {
@@ -384,7 +455,6 @@ export class HeartBeatProcessor {
       const osc = this.audioContext.createOscillator();
       const gain = this.audioContext.createGain();
       
-      // Tono descendente
       osc.frequency.setValueAtTime(880, t);
       osc.frequency.exponentialRampToValueAtTime(440, t + 0.08);
       gain.gain.setValueAtTime(0.15, t);
@@ -411,6 +481,14 @@ export class HeartBeatProcessor {
     return this.signalQualityIndex;
   }
   
+  getFFTBPM(): number {
+    return this.fftBPM;
+  }
+
+  getFFTConfidence(): number {
+    return this.fftConfidence;
+  }
+  
   getDerivativeBuffer(): number[] {
     return [...this.derivativeBuffer];
   }
@@ -421,13 +499,18 @@ export class HeartBeatProcessor {
   reset(): void {
     this.signalBuffer = [];
     this.derivativeBuffer = [];
+    this.fftBuffer = [];
     this.rrIntervals = [];
     this.smoothBPM = 0;
+    this.peakBasedBPM = 0;
+    this.fftBPM = 0;
+    this.fftConfidence = 0;
     this.lastPeakTime = 0;
     this.peakThreshold = 10;
     this.frameCount = 0;
     this.consecutivePeaks = 0;
     this.signalQualityIndex = 0;
+    this.motionRejected = false;
   }
   
   dispose(): void {
@@ -436,3 +519,4 @@ export class HeartBeatProcessor {
     }
   }
 }
+
