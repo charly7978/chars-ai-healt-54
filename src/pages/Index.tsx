@@ -860,6 +860,8 @@ const Index = () => {
       <BPCalibrationWizard
         isOpen={showCalibrationWizard}
         onClose={() => setShowCalibrationWizard(false)}
+        signalQuality={lastSignal?.quality || 0}
+        featureQuality={vitalSigns.pressure?.featureQuality || 0}
         onCalibrate={(sys, dia) => {
           if (!hasValidPressureEstimate() && !(vitalSigns.pressure?.systolic > 0 && vitalSigns.pressure?.diastolic > 0)) {
             return false;
