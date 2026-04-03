@@ -7,6 +7,8 @@ interface BPCalibrationWizardProps {
   isOpen: boolean;
   onClose: () => void;
   onCalibrate: (systolic: number, diastolic: number) => boolean | Promise<boolean>;
+  signalQuality?: number;
+  featureQuality?: number;
 }
 
 type Step = "intro" | "instructions" | "input" | "confirm";
