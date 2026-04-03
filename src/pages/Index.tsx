@@ -653,6 +653,8 @@ const Index = () => {
               pipelineMetrics={getDetectionMetrics()}
               vitalSignsFeatureQuality={vitalSigns.pressure?.featureQuality || 0}
               pressure={vitalSigns.pressure}
+              elapsedTime={elapsedTime}
+              maxMeasurementTime={60}
             />
           </div>
 

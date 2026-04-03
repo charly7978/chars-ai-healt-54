@@ -102,6 +102,8 @@ const PPGSignalMeter = ({
   pipelineMetrics,
   vitalSignsFeatureQuality = 0,
   pressure,
+  elapsedTime = 0,
+  maxMeasurementTime = 60,
 }: PPGSignalMeterProps) => {
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
