@@ -13,6 +13,7 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import BPCalibrationWizard from "@/components/BPCalibrationWizard";
 import { supabase } from "@/integrations/supabase/client";
+import { useMotionDetector } from "@/hooks/useMotionDetector";
 
 const Index = () => {
   // ESTADOS PRINCIPALES
