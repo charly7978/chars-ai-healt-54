@@ -21,8 +21,17 @@ export interface HRVMetrics {
   sd1: number;        // ms - eje menor Poincaré (corto plazo)
   sd2: number;        // ms - eje mayor Poincaré (largo plazo)
   sd1sd2Ratio: number; // ratio SD1/SD2
+  // Dominio frecuencia
+  lfPower: number;    // ms² - potencia baja frecuencia (0.04-0.15 Hz) simpático+parasimpático
+  hfPower: number;    // ms² - potencia alta frecuencia (0.15-0.40 Hz) parasimpático
+  lfHfRatio: number;  // ratio LF/HF - balance autonómico
+  vlfPower: number;   // ms² - muy baja frecuencia (0.003-0.04 Hz)
+  totalPower: number; // ms² - potencia total
+  lfNorm: number;     // % - LF normalizado = LF/(LF+HF)*100
+  hfNorm: number;     // % - HF normalizado = HF/(LF+HF)*100
+  freqDomainValid: boolean;
   totalIntervals: number;
-  isValid: boolean;   // si hay suficientes datos para cálculo fiable
+  isValid: boolean;
 }
 
 export interface PoincarePoint {
