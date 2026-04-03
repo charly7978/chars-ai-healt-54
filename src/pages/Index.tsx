@@ -492,7 +492,7 @@ const Index = () => {
     }
     
     if (heartBeatResult.rrData?.intervals) {
-      setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
+      setRRIntervals(heartBeatResult.rrData.intervals.slice(-60));
     }
     
     // Throttle signos vitales
