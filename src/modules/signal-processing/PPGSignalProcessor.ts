@@ -142,8 +142,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // 9. CALCULAR DERIVADAS
     this.calculateDerivatives();
     
-    // 10. CALCULAR CALIDAD DE SEÑAL
+    // 10. CALCULAR CALIDAD DE SEÑAL + NIVEL DE MOVIMIENTO
     this.signalQuality = this.calculateSignalQuality();
+    this.updateMotionLevel();
     
     // 11. LOG CADA SEGUNDO
     const now = Date.now();
