@@ -78,8 +78,11 @@ const Index = () => {
   const { 
     processSignal: processHeartBeat, 
     setArrhythmiaState,
+    setMotionRejected,
     reset: resetHeartBeat,
   } = useHeartBeatProcessor();
+  
+  const { getMotionState } = useMotionDetector();
   
   const { 
     processSignal: processVitalSigns, 
