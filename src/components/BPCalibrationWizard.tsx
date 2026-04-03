@@ -270,6 +270,19 @@ const BPCalibrationWizard: React.FC<BPCalibrationWizardProps> = ({
                 estimación PPG actual, no como reemplazo directo.
             </p>
 
+            {!signalSufficient && (
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-red-300 text-xs font-semibold">Señal insuficiente</p>
+                  <p className="text-red-400/70 text-[10px] mt-0.5">
+                    SQI: {signalQuality.toFixed(0)}% (mín. 50%) · FQ: {featureQuality.toFixed(0)} (mín. 30).
+                    Mejore la colocación del dedo y espere estabilización.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button
                 onClick={() => setStep("input")}
@@ -279,10 +292,10 @@ const BPCalibrationWizard: React.FC<BPCalibrationWizardProps> = ({
               </button>
               <button
                 onClick={handleConfirm}
-                disabled={saving}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-1 transition-colors"
+                disabled={saving || !signalSufficient}
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:bg-slate-700 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-1 transition-colors"
               >
-                {saving ? "Guardando..." : "Confirmar"}
+                {saving ? "Guardando..." : !signalSufficient ? "⚠ Señal baja" : "Confirmar"}
               </button>
             </div>
           </div>
