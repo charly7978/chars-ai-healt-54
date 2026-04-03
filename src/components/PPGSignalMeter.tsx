@@ -745,6 +745,9 @@ const PPGSignalMeter = ({
         drawDebugPanel(ctx);
       }
       
+      // Panel HRV siempre visible durante monitoreo
+      drawHRVPanel(ctx, now);
+      
       if (preserve && !detected) {
         animationRef.current = requestAnimationFrame(render);
         return;
