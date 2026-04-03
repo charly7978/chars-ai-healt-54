@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  This file is merged into the Android manifest by Capacitor.
+  Place it at: android/app/src/main/AndroidManifest.xml
+  after running `npx cap add android`.
+
+  If you haven't added Android yet, keep this file as reference —
+  Capacitor will generate the base manifest and you can paste
+  the <uses-permission> and <uses-feature> lines into it.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Camera (required for PPG finger measurement) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
+
+    <!-- Flashlight / Torch (used during PPG capture) -->
+    <uses-permission android:name="android.permission.FLASHLIGHT" />
+
+    <!-- Vibration (haptic feedback on each heartbeat) -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Keep screen on during measurement sessions -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Sensors: accelerometer & gyroscope for motion artifact rejection -->
+    <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
+
+</manifest>
