@@ -547,7 +547,7 @@ const PPGSignalMeter = ({
     const panelX = 5;
     const panelY = debugActive ? 300 : 130;
     const panelW = W - 10;
-    const panelH = 195;
+    const panelH = 270;
 
     // Fondo
     ctx.fillStyle = 'rgba(5, 8, 20, 0.93)';
