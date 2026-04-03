@@ -761,6 +761,7 @@ const PPGSignalMeter = ({
       ctx.fillText(autoInterp, col1, barY + barH + 18);
     }
     ctx.textAlign = 'left';
+  }, []);
 
   // Loop de renderizado principal
   useEffect(() => {
