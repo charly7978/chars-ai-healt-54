@@ -689,14 +689,78 @@ const PPGSignalMeter = ({
     ctx.fillText(`SD1: ${hrv.sd1.toFixed(1)}ms`, col1, y + plotSize - 5);
     ctx.fillText(`SD2: ${hrv.sd2.toFixed(1)}ms`, col1, y + plotSize + 7);
 
-    // Interpretación
+    // Interpretación tiempo
     ctx.font = '7px "SF Mono", Consolas, monospace';
     const interpretation = hrv.rmssd > 40 ? 'TONO VAGAL ALTO' :
                            hrv.rmssd > 20 ? 'VARIABILIDAD NORMAL' : 'VARIABILIDAD REDUCIDA';
     const interpColor = hrv.rmssd > 40 ? '#22c55e' : hrv.rmssd > 20 ? '#f59e0b' : '#ef4444';
     ctx.fillStyle = interpColor;
     ctx.fillText(interpretation, col1, y + plotSize + 20);
-  }, []);
+
+    // === DOMINIO FRECUENCIA (LF / HF / LF:HF) ===
+    const freq = hrv.frequency;
+    const freqY = y + plotSize + 32;
+
+    // Separador
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(panelX + 8, freqY);
+    ctx.lineTo(panelX + panelW - 8, freqY);
+    ctx.stroke();
+
+    ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = '#38bdf8';
+    ctx.textAlign = 'left';
+    ctx.fillText('⚡ DOMINIO FRECUENCIA', panelX + 8, freqY + 12);
+
+    if (!freq.isValid) {
+      ctx.font = '7px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(`Esperando ≥16 intervalos... (${hrv.totalIntervals})`, panelX + 8, freqY + 24);
+    } else {
+      const fy = freqY + 18;
+
+      // LF | HF | LF/HF
+      drawM(col1, fy, 'LF', freq.lfPower.toFixed(1), 'ms²', '#f59e0b');
+      drawM(col2, fy, 'HF', freq.hfPower.toFixed(1), 'ms²', '#22c55e');
+      drawM(col3, fy, 'LF/HF', freq.lfHfRatio.toFixed(2), '', '#38bdf8');
+
+      // Barra proporcional LF vs HF
+      const barY = fy + 18;
+      const barW = panelW - 20;
+      const barH = 6;
+      const lfFrac = freq.lfNorm / 100;
+
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(col1, barY, barW, barH);
+
+      // LF portion (amber)
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(col1, barY, barW * lfFrac, barH);
+      // HF portion (green)
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(col1 + barW * lfFrac, barY, barW * (1 - lfFrac), barH);
+
+      // Labels
+      ctx.font = '6px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#f59e0b';
+      ctx.textAlign = 'left';
+      ctx.fillText(`LF ${freq.lfNorm.toFixed(0)}%`, col1, barY + barH + 8);
+      ctx.fillStyle = '#22c55e';
+      ctx.textAlign = 'right';
+      ctx.fillText(`HF ${freq.hfNorm.toFixed(0)}%`, col1 + barW, barY + barH + 8);
+
+      // Interpretación autonómica
+      ctx.textAlign = 'left';
+      const autoInterp = freq.lfHfRatio > 2 ? 'PREDOMINIO SIMPÁTICO' :
+                          freq.lfHfRatio < 0.5 ? 'PREDOMINIO PARASIMPÁTICO' : 'BALANCE AUTONÓMICO';
+      const autoColor = freq.lfHfRatio > 2 ? '#ef4444' : freq.lfHfRatio < 0.5 ? '#22c55e' : '#38bdf8';
+      ctx.font = '7px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = autoColor;
+      ctx.fillText(autoInterp, col1, barY + barH + 18);
+    }
+    ctx.textAlign = 'left';
 
   // Loop de renderizado principal
   useEffect(() => {
