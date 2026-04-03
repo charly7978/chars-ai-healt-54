@@ -44,6 +44,8 @@ interface PPGSignalMeterProps {
   pipelineMetrics?: PipelineMetrics;
   vitalSignsFeatureQuality?: number;
   pressure?: { systolic: number; diastolic: number; confidence: string; featureQuality: number };
+  elapsedTime?: number;
+  maxMeasurementTime?: number;
 }
 
 // Configuración del monitor profesional
