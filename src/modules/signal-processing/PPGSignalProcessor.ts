@@ -105,7 +105,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.greenBuffer.shift();
     }
     
-    // 3. DETECCIÓN DE DEDO
+    // 3. GUARDAR MÉTRICAS DE ESTABILIDAD
+    this.lastCoverageScore = coverageScore;
+    this.lastSpatialStability = spatialStability;
+    this.lastTilePulseScore = tilePulseScore;
+    
+    // 4. DETECCIÓN DE DEDO
     this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore);
     
     // 4. CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS
