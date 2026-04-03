@@ -523,8 +523,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * ÍNDICE DE PERFUSIÓN: AC/DC * 100
+   * NIVEL DE MOVIMIENTO basado en variación de señal filtrada
    */
+  private updateMotionLevel(): void {
+    if (this.filteredBuffer.length < 10) { this.motionLevel = 0; return; }
+    const recent = this.filteredBuffer.slice(-30);
+    let totalDiff = 0;
+    for (let i = 1; i < recent.length; i++) totalDiff += Math.abs(recent[i] - recent[i - 1]);
+    this.motionLevel = Math.min(1, (totalDiff / (recent.length - 1)) / 5);
+  }
+
   private calculatePerfusionIndex(): number {
     if (this.greenDC === 0) return 0;
     return (this.greenAC / this.greenDC) * 100;
@@ -551,13 +559,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.redAC = 0;
     this.greenDC = 0;
     this.greenAC = 0;
+    this.lastCoverageScore = 0;
+    this.lastSpatialStability = 0;
+    this.lastTilePulseScore = 0;
+    this.motionLevel = 0;
     this.bandpassFilter.reset();
   }
 
-  /**
-   * OBTENER ESTADÍSTICAS RGB PRECISAS
-   * Para uso en cálculo de SpO2
-   */
   getRGBStats() {
     return {
       redAC: this.redAC,
@@ -571,9 +579,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     };
   }
 
-  /**
-   * MÉTRICAS INTERNAS DEL PIPELINE para panel de depuración
-   */
   getDetectionMetrics() {
     return {
       detectionConfidence: this.detectionConfidence,
@@ -586,6 +591,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       fingerConfidenceCount: this.fingerConfidenceCount,
       fingerLostCount: this.fingerLostCount,
       bufferFill: this.filteredBuffer.length / this.BUFFER_SIZE,
+      coverageScore: this.lastCoverageScore,
+      spatialStability: this.lastSpatialStability,
+      tilePulseScore: this.lastTilePulseScore,
+      motionLevel: this.motionLevel,
     };
   }
   
