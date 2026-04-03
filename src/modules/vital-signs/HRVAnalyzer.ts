@@ -12,17 +12,29 @@
  * Basado en Task Force of ESC/NASPE 1996 y Shaffer & Ginsberg 2017
  */
 
+export interface FrequencyDomainMetrics {
+  vlfPower: number;   // ms² - Very Low Frequency (0.003-0.04 Hz)
+  lfPower: number;    // ms² - Low Frequency (0.04-0.15 Hz) - simpático+parasimpático
+  hfPower: number;    // ms² - High Frequency (0.15-0.40 Hz) - parasimpático
+  lfHfRatio: number;  // ratio LF/HF - balance autonómico
+  lfNorm: number;     // % - LF normalizado
+  hfNorm: number;     // % - HF normalizado
+  totalPower: number; // ms² - potencia total
+  isValid: boolean;
+}
+
 export interface HRVMetrics {
-  sdnn: number;       // ms - variabilidad global
-  rmssd: number;      // ms - variabilidad corto plazo (parasimpática)
-  pnn50: number;      // % - porcentaje de intervalos >50ms diferencia
-  meanRR: number;     // ms - intervalo RR medio
-  meanHR: number;     // BPM - frecuencia media
-  sd1: number;        // ms - eje menor Poincaré (corto plazo)
-  sd2: number;        // ms - eje mayor Poincaré (largo plazo)
-  sd1sd2Ratio: number; // ratio SD1/SD2
+  sdnn: number;
+  rmssd: number;
+  pnn50: number;
+  meanRR: number;
+  meanHR: number;
+  sd1: number;
+  sd2: number;
+  sd1sd2Ratio: number;
   totalIntervals: number;
-  isValid: boolean;   // si hay suficientes datos para cálculo fiable
+  isValid: boolean;
+  frequency: FrequencyDomainMetrics;
 }
 
 export interface PoincarePoint {
