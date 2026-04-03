@@ -547,7 +547,7 @@ const PPGSignalMeter = ({
     const panelX = 5;
     const panelY = debugActive ? 300 : 130;
     const panelW = W - 10;
-    const panelH = 195;
+    const panelH = hrv.freqDomainValid ? 260 : 195;
 
     // Fondo
     ctx.fillStyle = 'rgba(5, 8, 20, 0.93)';
@@ -689,13 +689,84 @@ const PPGSignalMeter = ({
     ctx.fillText(`SD1: ${hrv.sd1.toFixed(1)}ms`, col1, y + plotSize - 5);
     ctx.fillText(`SD2: ${hrv.sd2.toFixed(1)}ms`, col1, y + plotSize + 7);
 
-    // Interpretación
+    // Interpretación tiempo
     ctx.font = '7px "SF Mono", Consolas, monospace';
     const interpretation = hrv.rmssd > 40 ? 'TONO VAGAL ALTO' :
                            hrv.rmssd > 20 ? 'VARIABILIDAD NORMAL' : 'VARIABILIDAD REDUCIDA';
     const interpColor = hrv.rmssd > 40 ? '#22c55e' : hrv.rmssd > 20 ? '#f59e0b' : '#ef4444';
     ctx.fillStyle = interpColor;
     ctx.fillText(interpretation, col1, y + plotSize + 20);
+
+    // === DOMINIO FRECUENCIA ===
+    if (hrv.freqDomainValid) {
+      const freqY = y + plotSize + 35;
+
+      // Separador
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.2)';
+      ctx.lineWidth = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(panelX + 8, freqY - 3);
+      ctx.lineTo(panelX + panelW - 8, freqY - 3);
+      ctx.stroke();
+
+      ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#c084fc';
+      ctx.textAlign = 'left';
+      ctx.fillText('DOMINIO FRECUENCIA', panelX + 8, freqY + 8);
+
+      // Fila: LF | HF | LF/HF
+      const fy = freqY + 18;
+      const lfColor = '#f59e0b';  // Amarillo (simpático+parasimpático)
+      const hfColor = '#22c55e';  // Verde (parasimpático)
+
+      drawM(col1, fy, 'LF', hrv.lfPower.toFixed(1), 'ms²', lfColor);
+      drawM(col2, fy, 'HF', hrv.hfPower.toFixed(1), 'ms²', hfColor);
+
+      const ratioColor = hrv.lfHfRatio > 2.5 ? '#ef4444' : hrv.lfHfRatio > 1.5 ? '#f59e0b' : '#22c55e';
+      drawM(col3, fy, 'LF/HF', hrv.lfHfRatio.toFixed(2), '', ratioColor);
+
+      // Barra proporcional LF vs HF
+      const barY = fy + 20;
+      const barW = panelW - 20;
+      const barH = 8;
+      const barX2 = panelX + 10;
+      const lfHfTotal = hrv.lfPower + hrv.hfPower;
+
+      if (lfHfTotal > 0) {
+        const lfWidth = (hrv.lfPower / lfHfTotal) * barW;
+
+        // Fondo
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fillRect(barX2, barY, barW, barH);
+
+        // LF (izquierda)
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.7)';
+        ctx.fillRect(barX2, barY, lfWidth, barH);
+
+        // HF (derecha)
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.7)';
+        ctx.fillRect(barX2 + lfWidth, barY, barW - lfWidth, barH);
+
+        // Labels
+        ctx.font = '6px "SF Mono", Consolas, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(`LF ${hrv.lfNorm.toFixed(0)}%`, barX2 + 2, barY + 7);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#4ade80';
+        ctx.fillText(`HF ${hrv.hfNorm.toFixed(0)}%`, barX2 + barW - 2, barY + 7);
+      }
+
+      // Interpretación autonómica
+      ctx.font = '7px "SF Mono", Consolas, monospace';
+      ctx.textAlign = 'left';
+      const autoInterp = hrv.lfHfRatio > 2.5 ? 'PREDOMINIO SIMPÁTICO' :
+                          hrv.lfHfRatio < 0.5 ? 'PREDOMINIO PARASIMPÁTICO' : 'BALANCE AUTONÓMICO';
+      const autoColor = hrv.lfHfRatio > 2.5 ? '#ef4444' :
+                         hrv.lfHfRatio < 0.5 ? '#38bdf8' : '#22c55e';
+      ctx.fillStyle = autoColor;
+      ctx.fillText(autoInterp, panelX + 10, barY + 20);
+    }
   }, []);
 
   // Loop de renderizado principal
