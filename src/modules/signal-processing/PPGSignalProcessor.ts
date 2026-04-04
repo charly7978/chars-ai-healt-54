@@ -1,5 +1,6 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
+import { WinnerTakesAllSelector, WTAResult } from './WinnerTakesAll';
 
 /**
  * PROCESADOR PPG OPTIMIZADO - CON DERIVADAS VPG/APG
@@ -16,6 +17,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   
   private bandpassFilter: BandpassFilter;
+  private wtaSelector: WinnerTakesAllSelector;
   
   // Buffers ampliados
   private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
@@ -24,8 +26,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private filteredBuffer: number[] = [];
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
+  private blueBuffer: number[] = [];
   private vpgBuffer: number[] = []; // Primera derivada
   private apgBuffer: number[] = []; // Segunda derivada
+  
+  // WTA state
+  private lastWTAResult: WTAResult | null = null;
   
   // Estadísticas para SpO2 - calculadas con ventana más larga
   private redDC: number = 0;
@@ -62,6 +68,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   ) {
     // Filtro pasabanda: 0.5-4Hz (30-240 BPM)
     this.bandpassFilter = new BandpassFilter(30);
+    this.wtaSelector = new WinnerTakesAllSelector();
   }
 
   async initialize(): Promise<void> {
@@ -100,9 +107,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // 2. GUARDAR EN BUFFERS
     this.redBuffer.push(rawRed);
     this.greenBuffer.push(rawGreen);
+    this.blueBuffer.push(rawBlue);
     if (this.redBuffer.length > this.BUFFER_SIZE) {
       this.redBuffer.shift();
       this.greenBuffer.shift();
+      this.blueBuffer.shift();
     }
     
     // 3. GUARDAR MÉTRICAS DE ESTABILIDAD
@@ -113,28 +122,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // 4. DETECCIÓN DE DEDO
     this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore);
     
-    // 4. CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS
+    // 4b. CALCULAR AC/DC CON VENTANA DE 4 SEGUNDOS
     if (this.redBuffer.length >= 60) {
       this.calculateACDCPrecise();
     }
     
-    // 5. SELECCIONAR CANAL VERDE
-    const greenSaturated = rawGreen > 250;
-    const signalSource = greenSaturated ? rawRed : rawGreen;
+    // 5. WINNER-TAKES-ALL: evaluar R, G, B, R-G, G-B, CHROM en paralelo
+    const wtaResult = this.wtaSelector.process(rawRed, rawGreen, rawBlue);
+    this.lastWTAResult = wtaResult;
     
-    // 6. INVERTIR SEÑAL
-    const inverted = 255 - signalSource;
+    // Use WTA winner as the main signal
+    const inverted = wtaResult.rawValue;
+    const filtered = wtaResult.filteredValue;
     
-    // 7. GUARDAR EN BUFFER RAW
+    // 6. GUARDAR EN BUFFER RAW (del canal ganador)
     this.rawBuffer.push(inverted);
     if (this.rawBuffer.length > this.BUFFER_SIZE) {
       this.rawBuffer.shift();
     }
     
-    // 8. FILTRO PASABANDA
-    const filtered = this.bandpassFilter.filter(inverted);
-    
-    this.filteredBuffer.push(filtered);
+    // Also maintain filtered buffer from bandpass (for derivatives/quality using main filter)
+    const mainFiltered = this.bandpassFilter.filter(inverted);
+    this.filteredBuffer.push(mainFiltered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
       this.filteredBuffer.shift();
     }
@@ -150,9 +159,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const now = Date.now();
     if (now - this.lastLogTime >= 1000) {
       this.lastLogTime = now;
-      const src = greenSaturated ? 'R' : 'G';
+      const wta = wtaResult;
       const fingerStatus = this.fingerDetected ? '✅' : '❌';
-      console.log(`📷 PPG [${src}]: Raw=${signalSource.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus}`);
+      console.log(`📷 PPG [${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus}`);
     }
     
     // 12. CALCULAR ÍNDICE DE PERFUSIÓN
@@ -162,7 +171,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: inverted,
-      filteredValue: filtered,
+      filteredValue: mainFiltered,
       quality: this.signalQuality,
       fingerDetected: this.fingerDetected,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
@@ -170,7 +179,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rawRed,
       rawGreen,
       diagnostics: {
-         message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)} FD:${this.fingerDetected ? '1' : '0'}`,
+        message: `WTA:${wtaResult.winnerId}(${wtaResult.winnerScore.toFixed(0)}) PI:${perfusionIndex.toFixed(2)} FD:${this.fingerDetected ? '1' : '0'}`,
         hasPulsatility: perfusionIndex > 0.1,
         pulsatilityValue: perfusionIndex
       }
@@ -543,6 +552,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.filteredBuffer = [];
     this.redBuffer = [];
     this.greenBuffer = [];
+    this.blueBuffer = [];
     this.vpgBuffer = [];
     this.apgBuffer = [];
     this.frameCount = 0;
@@ -563,7 +573,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastSpatialStability = 0;
     this.lastTilePulseScore = 0;
     this.motionLevel = 0;
+    this.lastWTAResult = null;
     this.bandpassFilter.reset();
+    this.wtaSelector.reset();
   }
 
   getRGBStats() {
@@ -580,6 +592,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   getDetectionMetrics() {
+    const wtaInfo = this.wtaSelector.getWinnerInfo();
     return {
       detectionConfidence: this.detectionConfidence,
       fingerDetected: this.fingerDetected,
@@ -595,6 +608,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       spatialStability: this.lastSpatialStability,
       tilePulseScore: this.lastTilePulseScore,
       motionLevel: this.motionLevel,
+      // WTA metrics
+      wtaWinnerId: wtaInfo.winnerId,
+      wtaWinnerLabel: wtaInfo.winnerLabel,
+      wtaWinnerScore: wtaInfo.winnerScore,
+      wtaAllScores: wtaInfo.allScores,
     };
   }
   

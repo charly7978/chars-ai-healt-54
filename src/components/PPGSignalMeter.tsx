@@ -18,6 +18,11 @@ interface PipelineMetrics {
   spatialStability: number;
   tilePulseScore: number;
   motionLevel: number;
+  // WTA metrics
+  wtaWinnerId?: string;
+  wtaWinnerLabel?: string;
+  wtaWinnerScore?: number;
+  wtaAllScores?: Record<string, number>;
 }
 
 interface PPGSignalMeterProps {
@@ -523,6 +528,28 @@ const PPGSignalMeter = ({
     ctx.textAlign = 'right';
     ctx.fillText(`${fingerIcon} DEDO: ${metrics.fingerDetected ? 'OK' : 'NO'}  Lost:${metrics.fingerLostCount}`, panelX + panelW - 8, panelY + 14);
     ctx.textAlign = 'left';
+    
+    // --- Fila 5: WTA Winner-Takes-All ---
+    if (metrics.wtaWinnerId) {
+      y += 14;
+      const winColor = (metrics.wtaWinnerScore || 0) >= 60 ? '#22c55e' : (metrics.wtaWinnerScore || 0) >= 35 ? '#f59e0b' : '#ef4444';
+      ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = winColor;
+      ctx.fillText(`🏆 WTA: ${metrics.wtaWinnerId} (${metrics.wtaWinnerScore || 0})`, col1, y + 4);
+      
+      // Show all channel scores as compact bar
+      if (metrics.wtaAllScores) {
+        ctx.font = '6.5px "SF Mono", Consolas, monospace';
+        const entries = Object.entries(metrics.wtaAllScores).sort((a, b) => b[1] - a[1]);
+        let xOff = col2;
+        for (const [ch, score] of entries) {
+          const isWinner = ch === metrics.wtaWinnerId;
+          ctx.fillStyle = isWinner ? winColor : '#64748b';
+          ctx.fillText(`${ch}:${score}`, xOff, y + 4);
+          xOff += 38;
+        }
+      }
+    }
   }, []);
 
   // === PANEL HRV + POINCARÉ ===
