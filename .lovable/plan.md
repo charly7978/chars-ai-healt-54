@@ -1,75 +1,48 @@
 
+# Plan de Evolución Técnica — App PPG Profesional
 
-## Plan: Visualizacion Completa de Latidos Normales y Arritmicos
+## Fase 1: Infraestructura de Calidad y Trazabilidad
+**Criterio de aceptación**: Cada medición guardada incluye metadata de calidad, versión de algoritmo y ventana temporal.
 
-### Problema Actual
-El monitor solo marca como "arritmia" el punto exacto del pico (`isPeak && arrStatus.includes('ARRITMIA')`), lo que produce un unico segmento rojo en vez de colorear el latido completo. El resultado visual es confuso: la mayoria de la onda queda verde aunque haya arritmia activa.
+1. **Extender esquema DB** — Agregar columnas a `measurements`: `glucose`, `hemoglobin`, `total_cholesterol`, `triglycerides`, `sdnn`, `rmssd`, `pnn50`, `lf_power`, `hf_power`, `lf_hf_ratio`, `signal_quality_index`, `algorithm_version`, `measurement_window_seconds`, `measurement_confidence`, `calibration_id` (FK a calibration_settings).
+2. **Resultado tipado con metadata** — Crear interfaz `MeasurementResult` con: valor, incertidumbre (±), signalQuality, measurementConfidence, windowDuration, algorithmVersion, timestamp.
+3. **Guardar todas las métricas** — Actualizar `useSaveMeasurement` para persistir HRV, glucosa, hemoglobina, lípidos y metadata de confianza.
 
-### Solucion
+## Fase 2: Pipeline de Señal en Web Worker
+**Criterio de aceptación**: El procesamiento PPG no bloquea el hilo UI; latencia de render < 16ms.
 
-Cambiar la logica para que el estado de arritmia se propague a **todo el ciclo del latido** (de valle a valle), no solo al instante del pico.
+4. **Mover PPGSignalProcessor a Web Worker** — Offload extracción de señal, filtros y QA al worker; comunicar vía postMessage con transferables (ArrayBuffer).
+5. **SQI multi-métrico unificado** — Consolidar los 8+ SQIs existentes en un score compuesto documentado con pesos configurables.
 
-### Cambios en `src/components/PPGSignalMeter.tsx`
+## Fase 3: Mejora Algorítmica por Dominio
+**Criterio de aceptación**: Cada estimador documenta ecuación, referencia bibliográfica y rango de incertidumbre.
 
-**1. Propagar estado de arritmia por latido completo**
+6. **SpO₂** — Agregar calibración por sesión basada en PI mínimo, documentar proxy RGB vs LED rojo/IR, rechazar cuando PI < umbral configurable.
+7. **Presión Arterial** — Agregar ventana temporal de validez de calibración (expiración configurable), drift detection, y presentar intervalo de confianza (±mmHg).
+8. **Glucosa** — Implementar flujo de calibración periódica (glucómetro de referencia), modelo de regresión con features PPG morfológicas, mostrar en rejilla de error tipo Clarke/Parkes como QA interno.
+9. **Hemoglobina** — Fusión temporal multi-ventana con cuantificación de incertidumbre, calibración individual opcional.
+10. **Lípidos** — Documentar limitaciones, agregar intervalo de confianza amplio, flag de "estimación experimental".
 
-En el bloque de insercion al buffer (linea ~417-424), reemplazar la logica puntual por un estado persistente que se activa cuando se detecta arritmia y se mantiene hasta el siguiente pico normal:
+## Fase 4: Fusión IMU Avanzada
+**Criterio de aceptación**: Artefactos de movimiento reducen confidence pero no crashean; estrategia de cancelación adaptativa activa.
 
-- Agregar una ref `currentBeatIsArrhythmia` que rastrea si el latido actual (en curso) es arritmico.
-- Cuando llega un pico (`isPeak`):
-  - Si `arrStatus` incluye "ARRITMIA": marcar `currentBeatIsArrhythmia = true`
-  - Si no: marcar `currentBeatIsArrhythmia = false`
-- Todos los puntos entre picos heredan el estado del latido actual.
+11. **Sincronización IMU-PPG por timestamp** — Buffer circular sincronizado acelerómetro/giroscopio con frames de video.
+12. **Cancelación adaptativa** — Filtro adaptativo (LMS/NLMS) usando señal IMU como referencia de ruido para limpiar PPG.
 
-```
-// Logica actual (solo marca el instante del pico):
-const currentIsArrhythmia = peak && arrStatus?.includes('ARRITMIA');
+## Fase 5: Preparación ML On-Device
+**Criterio de aceptación**: Interfaz de inferencia lista para TFLite/ONNX con fallback determinista.
 
-// Logica nueva (marca todo el latido):
-if (peak) {
-  beatArrhythmiaRef.current = arrStatus?.includes('ARRITMIA') || false;
-}
-const currentIsArrhythmia = beatArrhythmiaRef.current;
-```
+13. **Abstracción de modelo** — Interfaz `VitalModel` con `predict(features) → {value, confidence}` + loader para TFLite/ONNX.
+14. **Pipeline A/B** — Ejecutar heurística y modelo en paralelo, comparar, usar modelo solo si confidence > umbral.
 
-**2. Mejorar marcadores de pico**
+## Fase 6: UI Clínica Responsable
+**Criterio de aceptación**: Cada métrica muestra nivel de confianza e intervalo; disclaimers visibles.
 
-- Picos normales (verdes): circulo verde con etiqueta "N" (Normal) y valor de amplitud
-- Picos arritmicos (rojos): circulo rojo mas grande con etiqueta "A" (Arritmia), halo pulsante, y linea vertical de referencia
+15. **Intervalos de confianza en UI** — Mostrar ± en cada signo vital, color-coded por confidence.
+16. **Estado de calibración visible** — Badges de "calibrado", "requiere recalibración", "experimental".
+17. **Textos legales** — Disclaimers de "referencia profesional, no sustituye dispositivo certificado" sin eliminar funcionalidad.
 
-**3. Agregar lineas verticales de referencia en picos**
-
-Dibujar lineas verticales punteadas en cada pico detectado:
-- Verde para picos normales
-- Rojo para picos arritmicos
-
-Esto facilita la lectura visual de cada latido individual.
-
-**4. Mejorar leyenda**
-
-Actualizar la leyenda inferior para reflejar:
-- Linea verde + "Normal (N)"
-- Linea roja + "Arritmia (A)"
-- Circulo + "Pico"
-- Triangulo + "Valle"
-
-### Secuencia de Cambios
-
-1. Agregar `beatArrhythmiaRef` como nueva ref en el componente
-2. Modificar logica de asignacion de `isArrhythmia` en el buffer push
-3. Actualizar renderizado de picos con marcadores mas descriptivos
-4. Agregar lineas verticales de referencia por pico
-5. Actualizar leyenda
-
-### Archivos Modificados
-
-| Archivo | Cambio |
-|---------|--------|
-| `src/components/PPGSignalMeter.tsx` | Logica de propagacion de arritmia por latido + marcadores mejorados |
-
-### Impacto
-
-- Estetica: mejorada (latidos completos coloreados, marcadores claros)
-- Funcionalidad: mejorada (visualizacion profesional de arritmias)
-- Rendimiento: sin impacto (misma cantidad de operaciones canvas)
-
+## Fase 7: Documentación y QA
+18. **Documentación técnica** — Diagrama de pipeline, ecuaciones con DOI, tabla de rangos fisiológicos.
+19. **Tests unitarios** — Filtros, peak detection, SQI, cada estimador con datos sintéticos conocidos.
+20. **Registro de sesión** — Hash de algoritmo + parámetros + duración + calidad media por sesión.
