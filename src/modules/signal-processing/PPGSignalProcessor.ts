@@ -552,6 +552,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.filteredBuffer = [];
     this.redBuffer = [];
     this.greenBuffer = [];
+    this.blueBuffer = [];
     this.vpgBuffer = [];
     this.apgBuffer = [];
     this.frameCount = 0;
@@ -572,7 +573,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastSpatialStability = 0;
     this.lastTilePulseScore = 0;
     this.motionLevel = 0;
+    this.lastWTAResult = null;
     this.bandpassFilter.reset();
+    this.wtaSelector.reset();
   }
 
   getRGBStats() {
@@ -589,6 +592,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   getDetectionMetrics() {
+    const wtaInfo = this.wtaSelector.getWinnerInfo();
     return {
       detectionConfidence: this.detectionConfidence,
       fingerDetected: this.fingerDetected,
@@ -604,6 +608,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       spatialStability: this.lastSpatialStability,
       tilePulseScore: this.lastTilePulseScore,
       motionLevel: this.motionLevel,
+      // WTA metrics
+      wtaWinnerId: wtaInfo.winnerId,
+      wtaWinnerLabel: wtaInfo.winnerLabel,
+      wtaWinnerScore: wtaInfo.winnerScore,
+      wtaAllScores: wtaInfo.allScores,
     };
   }
   
