@@ -18,6 +18,11 @@ interface PipelineMetrics {
   spatialStability: number;
   tilePulseScore: number;
   motionLevel: number;
+  // WTA metrics
+  wtaWinnerId?: string;
+  wtaWinnerLabel?: string;
+  wtaWinnerScore?: number;
+  wtaAllScores?: Record<string, number>;
 }
 
 interface PPGSignalMeterProps {
