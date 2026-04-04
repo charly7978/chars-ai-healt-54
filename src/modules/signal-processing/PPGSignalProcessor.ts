@@ -1,5 +1,6 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
+import { WinnerTakesAllSelector, WTAResult } from './WinnerTakesAll';
 
 /**
  * PROCESADOR PPG OPTIMIZADO - CON DERIVADAS VPG/APG
