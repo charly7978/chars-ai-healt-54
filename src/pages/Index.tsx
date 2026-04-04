@@ -359,13 +359,15 @@ const Index = () => {
     
     const savedResults = resetVitalSigns();
     
-    // Guardar medición en la base de datos automáticamente
+    // Guardar medición con trazabilidad completa
     if (savedResults || vitalSigns.spo2 > 0) {
       const dataToSave = savedResults || vitalSigns;
       await saveMeasurement({
         heartRate,
         vitalSigns: dataToSave,
-        signalQuality: lastSignal?.quality || 0
+        signalQuality: lastSignal?.quality || 0,
+        rrIntervals: rrIntervals.length > 0 ? rrIntervals : undefined,
+        windowSeconds: elapsedTime > 0 ? elapsedTime : 60,
       });
     }
     
