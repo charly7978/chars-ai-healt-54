@@ -17,6 +17,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   
   private bandpassFilter: BandpassFilter;
+  private wtaSelector: WinnerTakesAllSelector;
   
   // Buffers ampliados
   private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
@@ -25,8 +26,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private filteredBuffer: number[] = [];
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
+  private blueBuffer: number[] = [];
   private vpgBuffer: number[] = []; // Primera derivada
   private apgBuffer: number[] = []; // Segunda derivada
+  
+  // WTA state
+  private lastWTAResult: WTAResult | null = null;
   
   // Estadísticas para SpO2 - calculadas con ventana más larga
   private redDC: number = 0;
