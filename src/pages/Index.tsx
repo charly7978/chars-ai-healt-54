@@ -670,12 +670,16 @@ const Index = () => {
                 value={heartRate > 0 ? Math.round(heartRate) : "--"}
                 unit="BPM"
                 highlighted={showResults}
+                metricKey="heartRate"
+                confidenceLevel={vitalSigns.measurementConfidence}
               />
               <VitalSign 
                 label="SPO2"
                 value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"}
                 unit="%"
                 highlighted={showResults}
+                metricKey="spo2"
+                confidenceLevel={vitalSigns.measurementConfidence}
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
@@ -686,18 +690,25 @@ const Index = () => {
                 highlighted={showResults}
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
+                isCalibrated={isCalibrated}
               />
               <VitalSign 
                 label="HEMOGLOBINA"
                 value={vitalSigns.hemoglobin > 0 ? vitalSigns.hemoglobin : "--"}
                 unit="g/dL"
                 highlighted={showResults}
+                metricKey="hemoglobin"
+                confidenceLevel={vitalSigns.measurementConfidence}
+                experimental
               />
               <VitalSign 
                 label="GLUCOSA"
                 value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
                 unit="mg/dL"
                 highlighted={showResults}
+                metricKey="glucose"
+                confidenceLevel={vitalSigns.measurementConfidence}
+                experimental
               />
               <VitalSign 
                 label="COLESTEROL/TRIGL."
@@ -708,6 +719,7 @@ const Index = () => {
                 }
                 unit="mg/dL"
                 highlighted={showResults}
+                experimental
               />
             </div>
           </div>
