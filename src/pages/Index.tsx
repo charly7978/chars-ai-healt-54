@@ -400,7 +400,7 @@ const Index = () => {
     setCalibrationProgress(0);
     
     console.log('✅ Medición finalizada y guardada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
+  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal, rrIntervals, elapsedTime]);
 
   // === RESET COMPLETO ===
   const handleReset = useCallback(() => {
