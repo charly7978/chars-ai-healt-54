@@ -359,13 +359,15 @@ const Index = () => {
     
     const savedResults = resetVitalSigns();
     
-    // Guardar medición en la base de datos automáticamente
+    // Guardar medición con trazabilidad completa
     if (savedResults || vitalSigns.spo2 > 0) {
       const dataToSave = savedResults || vitalSigns;
       await saveMeasurement({
         heartRate,
         vitalSigns: dataToSave,
-        signalQuality: lastSignal?.quality || 0
+        signalQuality: lastSignal?.quality || 0,
+        rrIntervals: rrIntervals.length > 0 ? rrIntervals : undefined,
+        windowSeconds: elapsedTime > 0 ? elapsedTime : 60,
       });
     }
     
@@ -398,7 +400,7 @@ const Index = () => {
     setCalibrationProgress(0);
     
     console.log('✅ Medición finalizada y guardada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
+  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal, rrIntervals, elapsedTime]);
 
   // === RESET COMPLETO ===
   const handleReset = useCallback(() => {
@@ -668,12 +670,16 @@ const Index = () => {
                 value={heartRate > 0 ? Math.round(heartRate) : "--"}
                 unit="BPM"
                 highlighted={showResults}
+                metricKey="heartRate"
+                confidenceLevel={vitalSigns.measurementConfidence}
               />
               <VitalSign 
                 label="SPO2"
                 value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"}
                 unit="%"
                 highlighted={showResults}
+                metricKey="spo2"
+                confidenceLevel={vitalSigns.measurementConfidence}
               />
               <VitalSign 
                 label="PRESIÓN ARTERIAL"
@@ -684,18 +690,25 @@ const Index = () => {
                 highlighted={showResults}
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
+                isCalibrated={isCalibrated}
               />
               <VitalSign 
                 label="HEMOGLOBINA"
                 value={vitalSigns.hemoglobin > 0 ? vitalSigns.hemoglobin : "--"}
                 unit="g/dL"
                 highlighted={showResults}
+                metricKey="hemoglobin"
+                confidenceLevel={vitalSigns.measurementConfidence}
+                experimental
               />
               <VitalSign 
                 label="GLUCOSA"
                 value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
                 unit="mg/dL"
                 highlighted={showResults}
+                metricKey="glucose"
+                confidenceLevel={vitalSigns.measurementConfidence}
+                experimental
               />
               <VitalSign 
                 label="COLESTEROL/TRIGL."
@@ -706,6 +719,7 @@ const Index = () => {
                 }
                 unit="mg/dL"
                 highlighted={showResults}
+                experimental
               />
             </div>
           </div>
