@@ -156,11 +156,13 @@ const Index = () => {
       canvasRef.current = document.createElement('canvas');
       canvasRef.current.width = 640;
       canvasRef.current.height = 480;
-      ctxRef.current = canvasRef.current.getContext('2d', { 
+      const opts: CanvasRenderingContext2DSettings = {
         willReadFrequently: true,
         alpha: false,
-        colorSpace: 'srgb',
-      } as CanvasRenderingContext2DSettings);
+      };
+      ctxRef.current =
+        canvasRef.current.getContext('2d', opts) ||
+        canvasRef.current.getContext('2d');
     }
   }, []);
 
@@ -238,41 +240,49 @@ const Index = () => {
   // === LOOP DE CAPTURA DE FRAMES ===
   const startFrameLoop = useCallback(() => {
     if (frameLoopActiveRef.current) return;
-    frameLoopActiveRef.current = true;
-    
-    const canvas = canvasRef.current;
-    const ctx = ctxRef.current;
-    if (!canvas || !ctx) {
-      frameLoopActiveRef.current = false;
+    if (!canvasRef.current) {
+      console.warn('[PPG] Canvas aún no creado; reintenta al siguiente stream.');
       return;
     }
-    
+    frameLoopActiveRef.current = true;
+
     let lastFrameTime = 0;
     const TARGET_FPS = 30;
     const FRAME_INTERVAL = 1000 / TARGET_FPS;
     
     const captureFrame = () => {
       if (!frameLoopActiveRef.current) return;
-      
+
+      const canvasEl = canvasRef.current;
+      let ctxLive = ctxRef.current;
+      if ((!ctxLive || !canvasEl) && canvasRef.current) {
+        ctxLive = canvasRef.current.getContext('2d', { willReadFrequently: true, alpha: false });
+        ctxRef.current = ctxLive;
+      }
+      if (!canvasEl || !ctxLive) {
+        frameLoopRef.current = requestAnimationFrame(captureFrame);
+        return;
+      }
+
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
         frameLoopRef.current = requestAnimationFrame(captureFrame);
         return;
       }
-      
+
       const now = performance.now();
       if (now - lastFrameTime >= FRAME_INTERVAL) {
         try {
           fitCanvasToVideo(video);
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          ctxLive.drawImage(video, 0, 0, canvasEl.width, canvasEl.height);
+          const imageData = ctxLive.getImageData(0, 0, canvasEl.width, canvasEl.height);
           processFrame(imageData);
           lastFrameTime = now;
         } catch (e) {
           console.error('Error capturando frame:', e);
         }
       }
-      
+
       frameLoopRef.current = requestAnimationFrame(captureFrame);
     };
     
@@ -308,8 +318,8 @@ const Index = () => {
     lastArrhythmiaCountForBeatsRef.current = 0;
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // Iniciar procesamiento
-    startProcessing();
+    // PPG: startProcessing va en handleStreamReady (cuando exista MediaStream) para no
+    // procesar “en vacío” y alinearse con el único <video> que lleva el stream.
     setIsCameraOn(true);
     setIsMonitoring(true);
     
@@ -327,13 +337,16 @@ const Index = () => {
     startCalibration();
     setTimeout(() => setIsCalibrating(false), 3000);
     
-  }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
+  }, [isMonitoring, startCalibration, enterFullScreen]);
 
-  // === STREAM LISTO (el loop de captura lo arranca el efecto: cámara + worker listos) ===
-  const handleStreamReady = useCallback((stream: MediaStream) => {
-    console.log('📹 Stream recibido');
-    setCameraStream(stream);
-  }, []);
+  const handleStreamReady = useCallback(
+    (stream: MediaStream) => {
+      console.log('📹 Stream recibido, arrancando PPG');
+      setCameraStream(stream);
+      startProcessing();
+    },
+    [startProcessing]
+  );
 
   /**
    * Arranca el loop con stream + monitoreo. NO exigir `isProcessing` del estado React:
@@ -507,10 +520,13 @@ const Index = () => {
       ppgQuality: lastSignal.quality,
     });
 
+    const q = lastSignal.quality ?? 0;
+    // FC estable: siempre exigir SQI razonable; proxyContact solo abre el pipeline, no sustituye calidad.
     const hrStable =
       heartBeatResult.bpm > 0 &&
-      heartBeatResult.confidence >= (proxyContact ? 0.26 : 0.3) &&
-      ((lastSignal.quality ?? 0) >= 16 || proxyContact);
+      q >= 20 &&
+      heartBeatResult.confidence >=
+        (lastSignal.fingerDetected ? 0.32 : 0.38);
 
     if (hrStable) {
       setHeartRate(heartBeatResult.bpm);
