@@ -76,16 +76,16 @@ export const useHeartBeatProcessor = () => {
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };
 
-    const ppgOk = opts?.ppgQuality === undefined || opts.ppgQuality >= 32;
-    if (result.confidence >= 0.42 && result.bpm > 0 && ppgOk) {
-      const smoothingFactor = Math.min(0.38, result.confidence * 0.55);
+    const ppgOk = opts?.ppgQuality === undefined || opts.ppgQuality >= 16;
+    if (result.confidence >= 0.3 && result.bpm > 0 && ppgOk) {
+      const smoothingFactor = Math.min(0.42, result.confidence * 0.58);
       setCurrentBPM((prev) => {
         const next =
           prev > 0 ? prev * (1 - smoothingFactor) + result.bpm * smoothingFactor : result.bpm;
         return Math.round(next);
       });
       setConfidence(result.confidence);
-    } else if (opts?.ppgQuality !== undefined && opts.ppgQuality < 18 && result.confidence < 0.2) {
+    } else if (opts?.ppgQuality !== undefined && opts.ppgQuality < 12 && result.confidence < 0.15) {
       setCurrentBPM(0);
       setConfidence(0);
     }

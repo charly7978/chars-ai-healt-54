@@ -70,7 +70,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private outputEma: number = 0;
   private outputEmaReady = false;
-  private readonly OUTPUT_EMA_ALPHA = 0.38;
+  private readonly OUTPUT_EMA_ALPHA = 0.26;
+  /** Mezcla con salida directa del pasabanda para no aplastar amplitud (SQI / latidos) */
+  private readonly OUTPUT_DIRECT_BLEND = 0.42;
   /** Calidad del frame anterior (EMA adaptativo antes de recalcular SQI) */
   private lastQualityForEma = 45;
 
@@ -177,11 +179,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const q01 = Math.min(1, this.lastQualityForEma / 100);
     const weakBoost =
-      this.fingerDetected && q01 < 0.55 ? (0.55 - q01) * 0.14 : 0;
+      this.fingerDetected && q01 < 0.55 ? (0.55 - q01) * 0.1 : 0;
     const boosted = mainFiltered * (1 + weakBoost);
     const emaAlpha =
       this.fingerDetected && q01 < 0.45
-        ? Math.min(0.52, this.OUTPUT_EMA_ALPHA + 0.16)
+        ? Math.min(0.44, this.OUTPUT_EMA_ALPHA + 0.12)
         : this.OUTPUT_EMA_ALPHA;
 
     if (!this.outputEmaReady) {
@@ -190,7 +192,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     } else {
       this.outputEma = emaAlpha * boosted + (1 - emaAlpha) * this.outputEma;
     }
-    const smoothedFiltered = this.outputEma;
+    const smoothedFiltered =
+      this.outputEma * (1 - this.OUTPUT_DIRECT_BLEND) +
+      mainFiltered * this.OUTPUT_DIRECT_BLEND;
     
     // 6. GUARDAR EN BUFFER RAW (del canal ganador)
     this.rawBuffer.push(inverted);
@@ -474,8 +478,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.32 : 0.14;
     this.detectionConfidence = this.detectionConfidence * (1 - confidenceAlpha) + targetConfidence * confidenceAlpha;
 
-    const enterThreshold = Math.max(0.22, 0.42 / Math.sqrt(relax));
-    const holdThreshold = Math.max(0.16, 0.28 / Math.sqrt(relax));
+    const enterThreshold = Math.max(0.18, 0.36 / Math.sqrt(relax));
+    const holdThreshold = Math.max(0.14, 0.24 / Math.sqrt(relax));
 
     const instantDetected = this.fingerDetected
       ? this.detectionConfidence >= holdThreshold
@@ -611,8 +615,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const min = Math.min(...recent);
     const range = max - min;
 
+    if (range < 0.05) {
+      return 6;
+    }
     if (range < 0.12) {
-      return 4;
+      return Math.max(14, Math.min(38, Math.round(14 + (range - 0.05) / 0.07 * 24)));
     }
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
@@ -633,7 +640,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const snr = range / (stdDev + 0.01);
     const perfusionScore = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 2.0));
     const stabilityScore = Math.max(0, Math.min(1, 1 - motionNoise / (range * 0.5 + 0.01)));
-    const snrScore = Math.max(0, Math.min(1, snr / 4.0));
+    const snrScore = Math.max(0, Math.min(1, snr / 3.2));
     const continuityScore = Math.max(0, Math.min(1, this.detectionConfidence));
     // Penalizar saltos grandes (micro-movimientos bruscos)
     const jumpPenalty = Math.max(0, 1 - maxJump / (range * 0.6 + 0.01));

@@ -9,12 +9,12 @@
  */
 
 export class HeartBeatProcessor {
-  private readonly MIN_PEAK_INTERVAL_MS = 300;
+  private readonly MIN_PEAK_INTERVAL_MS = 270;
   private readonly MAX_PEAK_INTERVAL_MS = 2000;
 
   /** RR válidos ~40–188 BPM @ 30fps equivalente temporal */
-  private readonly MIN_RR_MS = 320;
-  private readonly MAX_RR_MS = 1500;
+  private readonly MIN_RR_MS = 300;
+  private readonly MAX_RR_MS = 1650;
 
   private signalBuffer: number[] = [];
   private derivativeBuffer: number[] = [];
@@ -29,7 +29,7 @@ export class HeartBeatProcessor {
 
   private inputEma: number = 0;
   private inputEmaReady = false;
-  private readonly INPUT_EMA_ALPHA = 0.22;
+  private readonly INPUT_EMA_ALPHA = 0.32;
 
   private audioContext: AudioContext | null = null;
   private audioUnlocked: boolean = false;
@@ -220,7 +220,7 @@ export class HeartBeatProcessor {
     const max = Math.max(...recent);
     const range = max - min;
 
-    if (range < 0.05) {
+    if (range < 0.035) {
       return { normalizedValue: 0, range: 0 };
     }
 
@@ -246,7 +246,7 @@ export class HeartBeatProcessor {
     const min = Math.min(...slice);
     const max = Math.max(...slice);
     const range = max - min;
-    if (range < 0.05) return false;
+    if (range < 0.035) return false;
 
     const norm = (v: number) => ((v - min) / range - 0.5) * 100;
     const tail = this.signalBuffer.slice(-7);
@@ -257,7 +257,7 @@ export class HeartBeatProcessor {
       vPeak >= nv[3] &&
       vPeak >= nv[5] &&
       vPeak >= nv[2] &&
-      vPeak >= nv[1] * 0.92;
+      vPeak >= nv[1] * 0.86;
 
     const aboveThreshold = vPeak > this.peakThreshold;
 
@@ -267,8 +267,8 @@ export class HeartBeatProcessor {
       amplitudeValid = ratio > 0.25 && ratio < 4.0;
     }
 
-    const risingBefore = vPeak - nv[1] > 0.8;
-    const fallingAfter = vPeak - nv[6] > 0.35;
+    const risingBefore = vPeak - nv[1] > 0.4;
+    const fallingAfter = vPeak - nv[6] > 0.18;
 
     const strictPeak =
       zeroCrossingDown &&
@@ -290,7 +290,7 @@ export class HeartBeatProcessor {
     const valid = this.rrIntervals.filter(
       (rr) => rr >= this.MIN_RR_MS && rr <= this.MAX_RR_MS
     );
-    if (valid.length < 4) return 0;
+    if (valid.length < 3) return 0;
 
     const sorted = [...valid].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);

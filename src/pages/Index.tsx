@@ -491,13 +491,13 @@ const Index = () => {
     });
 
     const hrStable =
-      heartBeatResult.confidence >= 0.48 &&
-      (lastSignal.quality ?? 0) >= 40 &&
+      heartBeatResult.confidence >= 0.32 &&
+      (lastSignal.quality ?? 0) >= 20 &&
       heartBeatResult.bpm > 0;
 
     if (hrStable) {
       setHeartRate(heartBeatResult.bpm);
-    } else if ((lastSignal.quality ?? 0) < 22 && heartBeatResult.confidence < 0.18) {
+    } else if ((lastSignal.quality ?? 0) < 14 && heartBeatResult.confidence < 0.12) {
       setHeartRate(0);
     }
     setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
