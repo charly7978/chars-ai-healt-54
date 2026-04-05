@@ -164,23 +164,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.signalQuality = this.calculateSignalQuality();
     this.updateMotionLevel();
     
+    // 10b. RESCUE ENGINE: evaluar y adaptar
+    this.lastRescueState = this.rescueEngine.evaluate(this.signalQuality, this.fingerDetected);
+    
     // 11. LOG CADA SEGUNDO
     const now = Date.now();
     if (now - this.lastLogTime >= 1000) {
       this.lastLogTime = now;
       const wta = wtaResult;
       const fingerStatus = this.fingerDetected ? '✅' : '❌';
-      console.log(`📷 PPG [${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus}`);
+      const rescueLabel = this.rescueEngine.getLevelLabel();
+      console.log(`📷 PPG [${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus} R:${rescueLabel}`);
     }
     
     // 12. CALCULAR ÍNDICE DE PERFUSIÓN
     const perfusionIndex = this.calculatePerfusionIndex();
     
-    // 13. EMITIR SEÑAL PROCESADA
+    // 13. EMITIR SEÑAL PROCESADA con AGC de rescate
+    const rescuedFilteredValue = mainFiltered * agcGain;
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: inverted,
-      filteredValue: mainFiltered,
+      filteredValue: rescuedFilteredValue,
       quality: this.signalQuality,
       fingerDetected: this.fingerDetected,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
@@ -213,7 +218,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const height = imageData.height;
     
     // ROI amplia - 85% del área
-    const roiSize = Math.min(width, height) * 0.85;
+    const roiSize = Math.min(width, height) * roiFraction;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
