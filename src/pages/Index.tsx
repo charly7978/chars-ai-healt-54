@@ -508,9 +508,9 @@ const Index = () => {
     });
 
     const hrStable =
-      heartBeatResult.confidence >= 0.32 &&
-      (lastSignal.quality ?? 0) >= 20 &&
-      heartBeatResult.bpm > 0;
+      heartBeatResult.bpm > 0 &&
+      heartBeatResult.confidence >= (proxyContact ? 0.26 : 0.3) &&
+      ((lastSignal.quality ?? 0) >= 16 || proxyContact);
 
     if (hrStable) {
       setHeartRate(heartBeatResult.bpm);
