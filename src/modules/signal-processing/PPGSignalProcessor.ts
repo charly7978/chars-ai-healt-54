@@ -588,8 +588,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastTilePulseScore = 0;
     this.motionLevel = 0;
     this.lastWTAResult = null;
+    this.lastRescueState = null;
     this.bandpassFilter.reset();
     this.wtaSelector.reset();
+    this.rescueEngine.reset();
   }
 
   getRGBStats() {
@@ -607,6 +609,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   getDetectionMetrics() {
     const wtaInfo = this.wtaSelector.getWinnerInfo();
+    const rescue = this.lastRescueState;
     return {
       detectionConfidence: this.detectionConfidence,
       fingerDetected: this.fingerDetected,
@@ -627,6 +630,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       wtaWinnerLabel: wtaInfo.winnerLabel,
       wtaWinnerScore: wtaInfo.winnerScore,
       wtaAllScores: wtaInfo.allScores,
+      // Rescue metrics
+      rescueLevel: rescue?.level ?? 0,
+      rescueLevelLabel: this.rescueEngine.getLevelLabel(),
+      rescueActive: rescue?.isRescueActive ?? false,
+      rescueRoiFraction: rescue?.roiFraction ?? 0.85,
+      rescueAgcGain: rescue?.agcGain ?? 1.0,
     };
   }
   
