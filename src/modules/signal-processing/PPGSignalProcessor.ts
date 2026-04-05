@@ -200,7 +200,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   /**
    * EXTRAER RGB DE REGIÓN AMPLIA (85%)
    */
-  private extractROI(imageData: ImageData): {
+  private extractROI(imageData: ImageData, roiFraction: number = 0.85): {
     rawRed: number;
     rawGreen: number;
     rawBlue: number;
