@@ -72,6 +72,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // Filtro pasabanda: 0.5-4Hz (30-240 BPM)
     this.bandpassFilter = new BandpassFilter(30);
     this.wtaSelector = new WinnerTakesAllSelector();
+    this.rescueEngine = new AutoRescueEngine();
   }
 
   async initialize(): Promise<void> {
