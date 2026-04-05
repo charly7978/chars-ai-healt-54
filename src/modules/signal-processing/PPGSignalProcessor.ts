@@ -105,8 +105,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount++;
     const timestamp = Date.now();
     
-    // 1. EXTRAER RGB DE ROI CENTRAL (85% del área)
-    const { rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore } = this.extractROI(imageData);
+    // 1. GET RESCUE STATE for adaptive parameters
+    const rescueState = this.lastRescueState;
+    const roiFraction = rescueState?.roiFraction ?? 0.85;
+    const agcGain = rescueState?.agcGain ?? 1.0;
+    
+    // 2. EXTRAER RGB DE ROI ADAPTATIVA
+    const { rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore } = this.extractROI(imageData, roiFraction);
     
     // 2. GUARDAR EN BUFFERS
     this.redBuffer.push(rawRed);
