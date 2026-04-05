@@ -273,7 +273,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const width = imageData.width;
     const height = imageData.height;
 
-    const wideFrac = Math.max(0.52, Math.min(0.92, roiFraction));
+    // Respetar rescue (p. ej. AGGRESSIVE 0.40); solo acotar a un rango seguro
+    const wideFrac = Math.min(0.92, Math.max(0.32, roiFraction));
     const roiSize = Math.min(width, height) * wideFrac;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
@@ -578,6 +579,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
    */
   private calculateSignalQuality(): number {
     if (this.filteredBuffer.length < 30) return 0;
+    // Invariante: sin contacto dedo → calidad 0 (no medir FC por amplitud sola)
+    if (!this.fingerDetected) return 0;
 
     const recent = this.filteredBuffer.slice(-90);
     const max = Math.max(...recent);
@@ -585,7 +588,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const range = max - min;
 
     if (range < 0.12) {
-      return this.fingerDetected ? 4 : 0;
+      return 4;
     }
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
@@ -611,18 +614,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // Penalizar saltos grandes (micro-movimientos bruscos)
     const jumpPenalty = Math.max(0, 1 - maxJump / (range * 0.6 + 0.01));
 
-    const q = Math.round(
+    return Math.round(
       snrScore * 38 +
       perfusionScore * 22 +
       stabilityScore * 18 +
       continuityScore * 12 +
       jumpPenalty * 10
     );
-
-    if (!this.fingerDetected) {
-      return Math.min(85, Math.round(q * 0.62));
-    }
-    return q;
   }
   
   /**

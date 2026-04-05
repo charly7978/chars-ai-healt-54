@@ -26,7 +26,14 @@ let processor: PPGSignalProcessor | null = null;
 function initProcessor() {
   processor = new PPGSignalProcessor(
     (signal: ProcessedSignal) => {
-      self.postMessage({ type: 'signal', signal });
+      if (!processor) return;
+      // Un solo mensaje por frame: señal + métricas alineadas (evita polling duplicado en main)
+      self.postMessage({
+        type: 'signal',
+        signal,
+        rgbStats: processor.getRGBStats(),
+        detectionMetrics: processor.getDetectionMetrics(),
+      });
     },
     (error: ProcessingError) => {
       self.postMessage({ type: 'error', error });

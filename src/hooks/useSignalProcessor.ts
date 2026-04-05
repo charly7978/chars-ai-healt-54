@@ -4,9 +4,10 @@ import { ProcessedSignal, ProcessingError } from '../types/signal';
 
 /**
  * HOOK DE PROCESAMIENTO PPG — WEB WORKER
- * 
- * Todo el procesamiento pesado (ROI, filtros, WTA, rescue, derivadas, SQI)
- * se ejecuta en un hilo background para no bloquear la UI (~0ms en main thread).
+ *
+ * Pipeline: cada frame → worker → un mensaje `signal` con ProcessedSignal + rgbStats
+ * + detectionMetrics (sin polling paralelo).
+ * `startProcessing` reintenta hasta que el worker emita `ready` (evita carrera al iniciar).
  */
 export const useSignalProcessor = () => {
   const workerRef = useRef<Worker | null>(null);
@@ -31,6 +32,8 @@ export const useSignalProcessor = () => {
   
   const isReadyRef = useRef(false);
   const isProcessingRef = useRef(false);
+  /** Invalida reintentos de startProcessing si se llama a stopProcessing entre medias */
+  const processingSessionRef = useRef(0);
   const sessionIdRef = useRef(`sig_${Date.now().toString(36)}_${(performance.now() | 0).toString(36)}`);
 
   // Initialize worker
@@ -52,14 +55,11 @@ export const useSignalProcessor = () => {
           setLastSignal(msg.signal);
           setError(null);
           setFramesProcessed(prev => (prev + 1) % 10000);
-          // Also cache detection metrics inline from signal
-          if (msg.signal) {
-            detectionMetricsRef.current = {
-              ...detectionMetricsRef.current,
-              fingerDetected: msg.signal.fingerDetected,
-              signalQuality: msg.signal.quality,
-              perfusionIndex: msg.signal.perfusionIndex || 0,
-            };
+          if (msg.rgbStats) {
+            rgbStatsRef.current = msg.rgbStats;
+          }
+          if (msg.detectionMetrics) {
+            detectionMetricsRef.current = msg.detectionMetrics;
           }
           break;
           
@@ -95,34 +95,50 @@ export const useSignalProcessor = () => {
     };
   }, []);
 
-  // Periodically poll metrics from worker (every ~500ms when processing)
-  useEffect(() => {
-    if (!isProcessing) return;
-    
-    const interval = setInterval(() => {
-      if (workerRef.current && isProcessingRef.current) {
-        workerRef.current.postMessage({ type: 'getRGBStats' });
-        workerRef.current.postMessage({ type: 'getDetectionMetrics' });
-      }
-    }, 500);
-    
-    return () => clearInterval(interval);
-  }, [isProcessing]);
-
   const startProcessing = useCallback(() => {
-    if (!workerRef.current || !isReadyRef.current || isProcessingRef.current) return;
-    
-    isProcessingRef.current = true;
-    setIsProcessing(true);
-    setFramesProcessed(0);
-    setError(null);
-    
-    workerRef.current.postMessage({ type: 'start' });
+    if (!workerRef.current || isProcessingRef.current) return;
+
+    processingSessionRef.current += 1;
+    const session = processingSessionRef.current;
+
+    const maxAttempts = 80;
+    let attempts = 0;
+
+    const tryStart = () => {
+      if (!workerRef.current || session !== processingSessionRef.current) return;
+      if (!isReadyRef.current) {
+        attempts += 1;
+        if (attempts >= maxAttempts) {
+          if (session === processingSessionRef.current) {
+            console.error('[PPG] Worker no emitió ready a tiempo; revisar carga del worker.');
+            setError({
+              code: 'WORKER_NOT_READY',
+              message: 'El procesador PPG no está listo. Recarga la página.',
+              timestamp: Date.now(),
+            });
+          }
+          return;
+        }
+        window.setTimeout(tryStart, 40);
+        return;
+      }
+
+      if (session !== processingSessionRef.current) return;
+
+      isProcessingRef.current = true;
+      setIsProcessing(true);
+      setFramesProcessed(0);
+      setError(null);
+      workerRef.current.postMessage({ type: 'start' });
+    };
+
+    tryStart();
   }, []);
 
   const stopProcessing = useCallback(() => {
+    processingSessionRef.current += 1;
     if (!workerRef.current) return;
-    
+
     workerRef.current.postMessage({ type: 'stop' });
     isProcessingRef.current = false;
     setIsProcessing(false);

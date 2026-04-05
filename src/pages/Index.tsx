@@ -61,7 +61,8 @@ const Index = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const frameLoopRef = useRef<number | null>(null);
-  const isProcessingRef = useRef(false);
+  /** Solo el loop requestAnimationFrame de captura (no confundir con worker PPG) */
+  const frameLoopActiveRef = useRef(false);
   
   // HOOKS DE PROCESAMIENTO
   const { 
@@ -69,7 +70,6 @@ const Index = () => {
     stopProcessing, 
     lastSignal, 
     processFrame, 
-    isProcessing, 
     getRGBStats,
     getDetectionMetrics,
   } = useSignalProcessor();
@@ -95,6 +95,9 @@ const Index = () => {
   
   const { saveMeasurement } = useSaveMeasurement();
   const [isCalibrated, setIsCalibrated] = useState(false);
+
+  const vitalSignsRef = useRef(vitalSigns);
+  vitalSignsRef.current = vitalSigns;
 
   // AUTO-CARGAR CALIBRACIÓN GUARDADA AL INICIAR
   useEffect(() => {
@@ -209,13 +212,13 @@ const Index = () => {
 
   // === LOOP DE CAPTURA DE FRAMES ===
   const startFrameLoop = useCallback(() => {
-    if (isProcessingRef.current) return;
-    isProcessingRef.current = true;
+    if (frameLoopActiveRef.current) return;
+    frameLoopActiveRef.current = true;
     
     const canvas = canvasRef.current;
     const ctx = ctxRef.current;
     if (!canvas || !ctx) {
-      isProcessingRef.current = false;
+      frameLoopActiveRef.current = false;
       return;
     }
     
@@ -224,7 +227,7 @@ const Index = () => {
     const FRAME_INTERVAL = 1000 / TARGET_FPS;
     
     const captureFrame = () => {
-      if (!isProcessingRef.current) return;
+      if (!frameLoopActiveRef.current) return;
       
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
@@ -252,7 +255,7 @@ const Index = () => {
   }, [processFrame]);
 
   const stopFrameLoop = useCallback(() => {
-    isProcessingRef.current = false;
+    frameLoopActiveRef.current = false;
     if (frameLoopRef.current) {
       cancelAnimationFrame(frameLoopRef.current);
       frameLoopRef.current = null;
@@ -473,14 +476,9 @@ const Index = () => {
       (lastSignal.diagnostics?.pulsatilityValue !== undefined &&
         lastSignal.diagnostics.pulsatilityValue > 0.06);
 
-    const plausibleContact =
-      (lastSignal.rawRed ?? 0) > 35 ||
-      (lastSignal.rawGreen ?? 0) > 25;
-
     const canEstimateHR =
       lastSignal.fingerDetected ||
-      pulsatileEnough ||
-      (lastSignal.quality >= 14 && plausibleContact);
+      pulsatileEnough;
 
     if (!canEstimateHR) {
       setHeartbeatSignal(signalValue);
@@ -501,7 +499,7 @@ const Index = () => {
       setTimeout(() => setBeatMarker(0), 300);
       // Contar latidos para resumen
       totalBeatsRef.current++;
-      const currentArrCount = vitalSigns.arrhythmiaCount || 0;
+      const currentArrCount = vitalSignsRef.current.arrhythmiaCount || 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
         arrhythmiaBeatsRef.current++;
         lastArrhythmiaCountForBeatsRef.current = currentArrCount;
