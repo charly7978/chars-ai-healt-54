@@ -1,6 +1,8 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
+import { BandpassFilter } from './BandpassFilter';
 import { WinnerTakesAllSelector, WTAResult } from './WinnerTakesAll';
 import { AutoRescueEngine, RescueLevel, type RescueState } from './AutoRescueEngine';
+import { computeTemporalNormalizedPulse } from './PulseSignalExtractor';
 
 /**
  * PROCESADOR PPG OPTIMIZADO - CON DERIVADAS VPG/APG
@@ -19,6 +21,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private wtaSelector: WinnerTakesAllSelector;
   private rescueEngine: AutoRescueEngine;
   private lastRescueState: RescueState | null = null;
+  /** Un solo pasabanda sobre la señal POS/CHROM (evita doble filtrado con WTA) */
+  private pulseBandpass: BandpassFilter;
+  private lastPulseSource: 'POS' | 'WTA' = 'WTA';
   
   // Buffers ampliados
   private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
@@ -67,9 +72,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    // Filtrado pasabanda por canal en WinnerTakesAll (evitar doble filtrado aquí)
     this.wtaSelector = new WinnerTakesAllSelector();
     this.rescueEngine = new AutoRescueEngine();
+    this.pulseBandpass = new BandpassFilter(30);
   }
 
   async initialize(): Promise<void> {
@@ -104,11 +109,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     
     // 1. GET RESCUE STATE for adaptive parameters
     const rescueState = this.lastRescueState;
-    const roiFraction = rescueState?.roiFraction ?? 0.85;
+    const roiFraction = rescueState?.roiFraction ?? 0.72;
     const agcGain = rescueState?.agcGain ?? 1.0;
-    
-    // 2. EXTRAER RGB DE ROI ADAPTATIVA
-    const { rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore } = this.extractROI(imageData, roiFraction);
+
+    // 2. RGB del parche central (contacto dedo-lente) + métricas espaciales en ROI amplia
+    const { rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore } =
+      this.extractROI(imageData, roiFraction);
     
     // 2. GUARDAR EN BUFFERS
     this.redBuffer.push(rawRed);
@@ -133,14 +139,35 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.calculateACDCPrecise();
     }
     
-    // 5. WINNER-TAKES-ALL: evaluar R, G, B, R-G, G-B, CHROM en paralelo
+    // 5. WTA (referencia / fallback) + POS/CHROM temporal (señal principal)
     const wtaResult = this.wtaSelector.process(rawRed, rawGreen, rawBlue);
     this.lastWTAResult = wtaResult;
-    
-    // Canal ganador: WTA ya aplica pasabanda por muestra — no duplicar filtro (evita señal amortiguada y BPM inestable)
-    const inverted = wtaResult.rawValue;
-    const filtered = wtaResult.filteredValue;
-    const mainFiltered = filtered;
+
+    const pulseBlend = computeTemporalNormalizedPulse(
+      rawRed,
+      rawGreen,
+      rawBlue,
+      this.redBuffer,
+      this.greenBuffer,
+      this.blueBuffer,
+      90
+    );
+
+    let inverted: number;
+    let filtered: number;
+    let mainFiltered: number;
+
+    if (pulseBlend && this.redBuffer.length >= 30) {
+      inverted = pulseBlend.rawPulse;
+      mainFiltered = this.pulseBandpass.filter(pulseBlend.rawPulse);
+      filtered = mainFiltered;
+      this.lastPulseSource = 'POS';
+    } else {
+      inverted = wtaResult.rawValue;
+      filtered = wtaResult.filteredValue;
+      mainFiltered = filtered;
+      this.lastPulseSource = 'WTA';
+    }
     
     // 6. GUARDAR EN BUFFER RAW (del canal ganador)
     this.rawBuffer.push(inverted);
@@ -170,12 +197,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const wta = wtaResult;
       const fingerStatus = this.fingerDetected ? '✅' : '❌';
       const rescueLabel = this.rescueEngine.getLevelLabel();
-      console.log(`📷 PPG [${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus} R:${rescueLabel}`);
+      console.log(
+        `📷 PPG [${this.lastPulseSource}/${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus} R:${rescueLabel}`
+      );
     }
     
     // 12. CALCULAR ÍNDICE DE PERFUSIÓN
     const perfusionIndex = this.calculatePerfusionIndex();
-    
+    const pulsatilityFromAC =
+      this.greenDC > 0 ? (this.greenAC / this.greenDC) * 100 : 0;
+
     // 13. EMITIR SEÑAL PROCESADA con AGC de rescate
     const rescuedFilteredValue = mainFiltered * agcGain;
     const processedSignal: ProcessedSignal = {
@@ -189,9 +220,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rawRed,
       rawGreen,
       diagnostics: {
-        message: `WTA:${wtaResult.winnerId}(${wtaResult.winnerScore.toFixed(0)}) PI:${perfusionIndex.toFixed(2)} FD:${this.fingerDetected ? '1' : '0'}`,
-        hasPulsatility: perfusionIndex > 0.1,
-        pulsatilityValue: perfusionIndex
+        message: `${this.lastPulseSource}:WTA:${wtaResult.winnerId}(${wtaResult.winnerScore.toFixed(0)}) PI:${perfusionIndex.toFixed(2)} FD:${this.fingerDetected ? '1' : '0'}`,
+        hasPulsatility: perfusionIndex > 0.015 || pulsatilityFromAC > 0.08,
+        pulsatilityValue: Math.max(perfusionIndex, pulsatilityFromAC)
       }
     };
 
@@ -199,9 +230,36 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * EXTRAER RGB DE REGIÓN AMPLIA (85%)
+   * Parche central (~38%): donde el dedo presiona el lente — máxima pulsación.
+   * ROI amplia (rescue): mosaico 3×3 para cobertura / estabilidad espacial.
    */
-  private extractROI(imageData: ImageData, roiFraction: number = 0.85): {
+  private extractCenterMeanRGB(imageData: ImageData, frac: number): { rawRed: number; rawGreen: number; rawBlue: number } {
+    const data = imageData.data;
+    const width = imageData.width;
+    const height = imageData.height;
+    const roiSize = Math.min(width, height) * frac;
+    const startX = Math.floor((width - roiSize) / 2);
+    const startY = Math.floor((height - roiSize) / 2);
+    const endX = startX + Math.floor(roiSize);
+    const endY = startY + Math.floor(roiSize);
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let count = 0;
+    for (let y = startY; y < endY; y += 2) {
+      for (let x = startX; x < endX; x += 2) {
+        const i = (y * width + x) * 4;
+        r += data[i];
+        g += data[i + 1];
+        b += data[i + 2];
+        count++;
+      }
+    }
+    if (count === 0) return { rawRed: 0, rawGreen: 0, rawBlue: 0 };
+    return { rawRed: r / count, rawGreen: g / count, rawBlue: b / count };
+  }
+
+  private extractROI(imageData: ImageData, roiFraction: number = 0.72): {
     rawRed: number;
     rawGreen: number;
     rawBlue: number;
@@ -209,12 +267,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     spatialStability: number;
     tilePulseScore: number;
   } {
+    const centerRgb = this.extractCenterMeanRGB(imageData, 0.38);
+
     const data = imageData.data;
     const width = imageData.width;
     const height = imageData.height;
-    
-    // ROI amplia - 85% del área
-    const roiSize = Math.min(width, height) * roiFraction;
+
+    const wideFrac = Math.max(0.52, Math.min(0.92, roiFraction));
+    const roiSize = Math.min(width, height) * wideFrac;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -254,20 +314,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         blue: tile.blue / tile.count,
       }));
 
-    const robustAverage = (channel: 'red' | 'green' | 'blue') => {
-      const values = validTiles
-        .map(tile => tile[channel])
-        .sort((a, b) => a - b);
-
-      if (values.length === 0) return 0;
-      if (values.length <= 3) {
-        return values.reduce((sum, value) => sum + value, 0) / values.length;
-      }
-
-      const trimmed = values.slice(1, -1);
-      return trimmed.reduce((sum, value) => sum + value, 0) / trimmed.length;
-    };
-
     const normalizedSpread = (channel: 'red' | 'green' | 'blue') => {
       const values = validTiles
         .map(tile => tile[channel])
@@ -284,14 +330,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const candidateTiles = validTiles.filter(tile => {
       const total = tile.red + tile.green + tile.blue;
-      if (total < 60) return false;
+      if (total < 45) return false;
 
       const redRatio = total > 0 ? tile.red / total : 0;
-      const redDominance = tile.red - ((tile.green + tile.blue) / 2);
-      const likelyFingerColor = redRatio > 0.34 && redDominance > 4;
-      const saturatedButPlausible = tile.red > 150 && tile.red >= tile.green * 0.95 && tile.green > tile.blue * 0.9;
+      const redDominance = tile.red - (tile.green + tile.blue) / 2;
+      const likelyFingerColor = redRatio > 0.31 && redDominance > 2;
+      const saturatedButPlausible =
+        tile.red > 120 && tile.red >= tile.green * 0.88 && tile.green > tile.blue * 0.85;
+      const torchSkin = tile.red > 95 && tile.green > 35 && total > 160;
 
-      return likelyFingerColor || saturatedButPlausible;
+      return likelyFingerColor || saturatedButPlausible || torchSkin;
     });
 
     const coverageScore = validTiles.length > 0 ? candidateTiles.length / validTiles.length : 0;
@@ -308,9 +356,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       : 0;
     
     return {
-      rawRed: robustAverage('red'),
-      rawGreen: robustAverage('green'),
-      rawBlue: robustAverage('blue'),
+      rawRed: centerRgb.rawRed,
+      rawGreen: centerRgb.rawGreen,
+      rawBlue: centerRgb.rawBlue,
       coverageScore,
       spatialStability,
       tilePulseScore,
@@ -364,41 +412,45 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redShareScore = Math.max(0, Math.min(1, (redShare - 0.30) / 0.22));
     const perfusionHint = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 1.2));
 
-    const coverageThreshold = Math.max(this.fingerDetected ? 0.10 : 0.14, (this.fingerDetected ? 0.28 : 0.42) / relax);
-    const spatialThreshold = Math.max(0.16, 0.32 / relax);
-    const pulseThreshold = Math.max(0.015, 0.04 / relax);
+    const coverageThreshold = Math.max(this.fingerDetected ? 0.08 : 0.11, (this.fingerDetected ? 0.22 : 0.32) / relax);
+    const spatialThreshold = Math.max(0.12, 0.26 / relax);
+    const pulseThreshold = Math.max(0.008, 0.028 / relax);
+
+    const torchThroughFinger =
+      totalIntensity > 200 && r > 85 && r > g * 0.82 && g > 30;
 
     let detectionScore = 0;
-    if (r > 24) detectionScore += 1;
-    if (rgRatio > 0.58 && rgRatio < 4.9) detectionScore += 1;
-    if (rbRatio > 0.96) detectionScore += 1;
-    if (totalIntensity > 60 && totalIntensity < 760) detectionScore += 1;
-    if (colorDominance > 0.04 || redShare > 0.34) detectionScore += 1;
+    if (r > 20) detectionScore += 1;
+    if (rgRatio > 0.52 && rgRatio < 5.2) detectionScore += 1;
+    if (rbRatio > 0.92) detectionScore += 1;
+    if (totalIntensity > 55 && totalIntensity < 765) detectionScore += 1;
+    if (colorDominance > 0.032 || redShare > 0.32) detectionScore += 1;
     if (coverageScore > coverageThreshold) detectionScore += 1;
     if (spatialStability > spatialThreshold) detectionScore += 1;
     if (tilePulseScore > pulseThreshold) detectionScore += 1;
-    if (perfusionHint > 0.10) detectionScore += 1;
+    if (perfusionHint > 0.08) detectionScore += 1;
+    if (torchThroughFinger) detectionScore += 2;
 
-    const motionPenalty = Math.max(0.65, 1 - this.motionLevel * 0.35);
+    const motionPenalty = Math.max(0.72, 1 - this.motionLevel * 0.28);
 
     const targetConfidence = plausibleSaturation
       ? Math.max(0, Math.min(1,
-          (detectionScore / 9) * 0.36 +
-          coverageScore * 0.16 +
-          spatialStability * 0.14 +
-          ratioScore * 0.10 +
+          (detectionScore / 11) * 0.38 +
+          coverageScore * 0.15 +
+          spatialStability * 0.13 +
+          ratioScore * 0.09 +
           intensityScore * 0.08 +
           dominanceScore * 0.06 +
           redShareScore * 0.05 +
-          perfusionHint * 0.05
+          perfusionHint * 0.06
         )) * motionPenalty
       : 0;
 
-    const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.28 : 0.12;
+    const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.32 : 0.14;
     this.detectionConfidence = this.detectionConfidence * (1 - confidenceAlpha) + targetConfidence * confidenceAlpha;
 
-    const enterThreshold = Math.max(0.34, 0.56 / Math.sqrt(relax));
-    const holdThreshold = Math.max(0.20, 0.34 / Math.sqrt(relax));
+    const enterThreshold = Math.max(0.22, 0.42 / Math.sqrt(relax));
+    const holdThreshold = Math.max(0.16, 0.28 / Math.sqrt(relax));
 
     const instantDetected = this.fingerDetected
       ? this.detectionConfidence >= holdThreshold
@@ -526,14 +578,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
    */
   private calculateSignalQuality(): number {
     if (this.filteredBuffer.length < 30) return 0;
-    if (!this.fingerDetected) return 0;
-    
-    const recent = this.filteredBuffer.slice(-90); // Ventana más amplia para mejor estimación
+
+    const recent = this.filteredBuffer.slice(-90);
     const max = Math.max(...recent);
     const min = Math.min(...recent);
     const range = max - min;
-    
-    if (range < 0.25) return 5;
+
+    if (range < 0.12) {
+      return this.fingerDetected ? 4 : 0;
+    }
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
@@ -558,13 +611,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // Penalizar saltos grandes (micro-movimientos bruscos)
     const jumpPenalty = Math.max(0, 1 - maxJump / (range * 0.6 + 0.01));
 
-    return Math.round(
+    const q = Math.round(
       snrScore * 38 +
       perfusionScore * 22 +
       stabilityScore * 18 +
       continuityScore * 12 +
       jumpPenalty * 10
     );
+
+    if (!this.fingerDetected) {
+      return Math.min(85, Math.round(q * 0.62));
+    }
+    return q;
   }
   
   /**
@@ -611,6 +669,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.motionLevel = 0;
     this.lastWTAResult = null;
     this.lastRescueState = null;
+    this.lastPulseSource = 'WTA';
+    this.pulseBandpass.reset();
     this.wtaSelector.reset();
     this.rescueEngine.reset();
   }
@@ -655,7 +715,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rescueLevel: rescue?.level ?? 0,
       rescueLevelLabel: this.rescueEngine.getLevelLabel(),
       rescueActive: rescue?.isRescueActive ?? false,
-      rescueRoiFraction: rescue?.roiFraction ?? 0.85,
+      pulseSource: this.lastPulseSource,
+      rescueRoiFraction: rescue?.roiFraction ?? 0.72,
       rescueAgcGain: rescue?.agcGain ?? 1.0,
     };
   }

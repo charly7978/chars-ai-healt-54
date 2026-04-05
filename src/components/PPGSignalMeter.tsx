@@ -29,6 +29,8 @@ interface PipelineMetrics {
   rescueActive?: boolean;
   rescueRoiFraction?: number;
   rescueAgcGain?: number;
+  /** POS (Wang) + CHROM vs WTA fallback */
+  pulseSource?: 'POS' | 'WTA';
 }
 
 interface PPGSignalMeterProps {

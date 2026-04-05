@@ -214,11 +214,13 @@ export class WinnerTakesAllSelector {
     if (buffer.length < 45) return 0;
     
     const recent = buffer.slice(-90);
-    
-    // Find zero crossings (positive slope)
+    const m = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const detrended = recent.map((v) => v - m);
+
+    // Cruces por cero en señal centrada (el pasabanda puede dejar offset residual)
     const crossings: number[] = [];
-    for (let i = 1; i < recent.length; i++) {
-      if (recent[i - 1] <= 0 && recent[i] > 0) {
+    for (let i = 1; i < detrended.length; i++) {
+      if (detrended[i - 1] <= 0 && detrended[i] > 0) {
         crossings.push(i);
       }
     }

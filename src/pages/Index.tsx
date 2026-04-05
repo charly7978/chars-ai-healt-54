@@ -127,8 +127,8 @@ const Index = () => {
   useEffect(() => {
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
-      canvasRef.current.width = 320;
-      canvasRef.current.height = 240;
+      canvasRef.current.width = 480;
+      canvasRef.current.height = 360;
       ctxRef.current = canvasRef.current.getContext('2d', { 
         willReadFrequently: true,
         alpha: false 
@@ -468,11 +468,19 @@ const Index = () => {
     const signalValue = lastSignal.filteredValue;
 
     const pulsatileEnough =
-      (lastSignal.diagnostics?.hasPulsatility === true) ||
-      (lastSignal.perfusionIndex !== undefined && lastSignal.perfusionIndex > 0.04);
+      lastSignal.diagnostics?.hasPulsatility === true ||
+      (lastSignal.perfusionIndex !== undefined && lastSignal.perfusionIndex > 0.02) ||
+      (lastSignal.diagnostics?.pulsatilityValue !== undefined &&
+        lastSignal.diagnostics.pulsatilityValue > 0.06);
+
+    const plausibleContact =
+      (lastSignal.rawRed ?? 0) > 35 ||
+      (lastSignal.rawGreen ?? 0) > 25;
+
     const canEstimateHR =
       lastSignal.fingerDetected ||
-      (lastSignal.quality >= 22 && pulsatileEnough);
+      pulsatileEnough ||
+      (lastSignal.quality >= 14 && plausibleContact);
 
     if (!canEstimateHR) {
       setHeartbeatSignal(signalValue);

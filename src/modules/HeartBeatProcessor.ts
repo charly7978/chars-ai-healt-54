@@ -232,7 +232,7 @@ export class HeartBeatProcessor {
     const range = max - min;
     
     // Factor 1: Rango de señal (debe ser suficiente para detectar pulsos)
-    const rangeFactor = Math.min(1, range / 20) * 40;
+    const rangeFactor = Math.min(1, range / 8) * 40;
     
     // Factor 2: Consistencia de RR intervals
     let rrFactor = 0;
@@ -259,7 +259,7 @@ export class HeartBeatProcessor {
     const max = Math.max(...recent);
     const range = max - min;
     
-    if (range < 0.5) {
+    if (range < 0.06) {
       return { normalizedValue: 0, range: 0 };
     }
     
@@ -298,7 +298,7 @@ export class HeartBeatProcessor {
     const min = Math.min(...slice);
     const max = Math.max(...slice);
     const range = max - min;
-    if (range < 0.5) return false;
+    if (range < 0.06) return false;
 
     const norm = (v: number) => ((v - min) / range - 0.5) * 100;
     const tail = this.signalBuffer.slice(-6);
