@@ -281,66 +281,60 @@ export class HeartBeatProcessor {
   }
   
   /**
-   * DETECCIÓN DE PICO CON ANÁLISIS DE DERIVADA
-   * Usa zero-crossing del VPG y análisis morfológico
+   * DETECCIÓN DE PICO CON ANÁLISIS DE DERIVADA (VPG)
+   * - Cruce VPG de + → − (descenso tras el máximo sistólico)
+   * - Máximo local en ventana corta alineada al instante actual (sin desfase de 3 frames)
    */
-  private detectPeakWithDerivative(normalizedValue: number, timeSinceLastPeak: number): boolean {
+  private detectPeakWithDerivative(_normalizedValue: number, timeSinceLastPeak: number): boolean {
     const n = this.signalBuffer.length;
     const dn = this.derivativeBuffer.length;
-    if (n < 7 || dn < 5) return false;
-    
-    // 1. ANÁLISIS DE DERIVADA (VPG)
-    // Pico sistólico = zero-crossing descendente del VPG
-    const deriv = this.derivativeBuffer.slice(-5);
-    const zeroCrossing = deriv[3] >= 0 && deriv[4] < 0; // Cruzando de + a -
-    
-    // 2. MÁXIMO LOCAL EN SEÑAL ORIGINAL
-    const recent = this.signalBuffer.slice(-7);
-    const recentNormalized = recent.map(v => {
-      const slice = this.signalBuffer.slice(-120);
-      const min = Math.min(...slice);
-      const max = Math.max(...slice);
-      const range = max - min;
-      if (range < 0.5) return 0;
-      return ((v - min) / range - 0.5) * 100;
-    });
-    
-    const [v0, v1, v2, v3, v4, v5, v6] = recentNormalized;
-    
-    // Verificar máximo local
-    const isLocalMax = v3 > v2 && v3 > v4 && v3 >= v1 && v3 >= v5;
-    
-    // 3. UMBRAL DE AMPLITUD
-    const aboveThreshold = v3 > this.peakThreshold;
-    
-    // 4. PENDIENTES ADECUADAS
-    const risingSlope = (v3 - v0) > 2;
-    const fallingSlope = (v3 - v6) > 2;
-    
-    // 5. INTERVALO MÍNIMO
+    if (n < 6 || dn < 4) return false;
+
+    const dPrev = this.derivativeBuffer[dn - 2];
+    const dCurr = this.derivativeBuffer[dn - 1];
+    const zeroCrossingDown = dPrev > 0 && dCurr <= 0;
+
+    const slice = this.signalBuffer.slice(-120);
+    const min = Math.min(...slice);
+    const max = Math.max(...slice);
+    const range = max - min;
+    if (range < 0.5) return false;
+
+    const norm = (v: number) => ((v - min) / range - 0.5) * 100;
+    const tail = this.signalBuffer.slice(-6);
+    const nv = tail.map(norm);
+
+    // nv[5] = muestra más reciente; pico causal típico en nv[4] o nv[3] al cruzar VPG
+    const vPeak = nv[4];
+    const isLocalMax =
+      vPeak >= nv[3] && vPeak >= nv[5] && vPeak >= nv[2];
+
+    const aboveThreshold = vPeak > this.peakThreshold;
+
     const notTooSoon = timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS;
-    
-    // 6. VALIDACIÓN DE AMPLITUD RELATIVA
+
     let amplitudeValid = true;
     if (this.lastPeakValue > 0) {
-      const ratio = v3 / this.lastPeakValue;
-      amplitudeValid = ratio > 0.2 && ratio < 5.0; // Más permisivo
+      const ratio = vPeak / this.lastPeakValue;
+      amplitudeValid = ratio > 0.15 && ratio < 6.0;
     }
-    
-    // Combinar criterios:
-    // - Zero-crossing O máximo local (flexibilidad)
-    // - Más: umbral, pendientes, timing, amplitud
-    const isPeak = (zeroCrossing || isLocalMax) && 
-                   aboveThreshold && 
-                   risingSlope && 
-                   fallingSlope && 
-                   notTooSoon && 
-                   amplitudeValid;
-    
+
+    // Pendientes suaves: subida antes del pico y bajada después (evita ruido HF)
+    const risingBefore = vPeak - nv[1] > 1;
+    const fallingAfter = vPeak - nv[5] > 0.5;
+
+    const isPeak =
+      (zeroCrossingDown || isLocalMax) &&
+      aboveThreshold &&
+      (risingBefore || zeroCrossingDown) &&
+      (fallingAfter || zeroCrossingDown) &&
+      notTooSoon &&
+      amplitudeValid;
+
     if (isPeak) {
-      this.lastPeakValue = v3;
+      this.lastPeakValue = vPeak;
     }
-    
+
     return isPeak;
   }
   

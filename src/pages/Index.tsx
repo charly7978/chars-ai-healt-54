@@ -467,7 +467,14 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    if (!lastSignal.fingerDetected) {
+    const pulsatileEnough =
+      (lastSignal.diagnostics?.hasPulsatility === true) ||
+      (lastSignal.perfusionIndex !== undefined && lastSignal.perfusionIndex > 0.04);
+    const canEstimateHR =
+      lastSignal.fingerDetected ||
+      (lastSignal.quality >= 22 && pulsatileEnough);
+
+    if (!canEstimateHR) {
       setHeartbeatSignal(signalValue);
       return;
     }

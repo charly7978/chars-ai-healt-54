@@ -1,5 +1,4 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
-import { BandpassFilter } from './BandpassFilter';
 import { WinnerTakesAllSelector, WTAResult } from './WinnerTakesAll';
 import { AutoRescueEngine, RescueLevel, type RescueState } from './AutoRescueEngine';
 
@@ -17,7 +16,6 @@ import { AutoRescueEngine, RescueLevel, type RescueState } from './AutoRescueEng
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing: boolean = false;
   
-  private bandpassFilter: BandpassFilter;
   private wtaSelector: WinnerTakesAllSelector;
   private rescueEngine: AutoRescueEngine;
   private lastRescueState: RescueState | null = null;
@@ -69,8 +67,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    // Filtro pasabanda: 0.5-4Hz (30-240 BPM)
-    this.bandpassFilter = new BandpassFilter(30);
+    // Filtrado pasabanda por canal en WinnerTakesAll (evitar doble filtrado aquí)
     this.wtaSelector = new WinnerTakesAllSelector();
     this.rescueEngine = new AutoRescueEngine();
   }
@@ -140,9 +137,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const wtaResult = this.wtaSelector.process(rawRed, rawGreen, rawBlue);
     this.lastWTAResult = wtaResult;
     
-    // Use WTA winner as the main signal
+    // Canal ganador: WTA ya aplica pasabanda por muestra — no duplicar filtro (evita señal amortiguada y BPM inestable)
     const inverted = wtaResult.rawValue;
     const filtered = wtaResult.filteredValue;
+    const mainFiltered = filtered;
     
     // 6. GUARDAR EN BUFFER RAW (del canal ganador)
     this.rawBuffer.push(inverted);
@@ -150,8 +148,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.rawBuffer.shift();
     }
     
-    // Also maintain filtered buffer from bandpass (for derivatives/quality using main filter)
-    const mainFiltered = this.bandpassFilter.filter(inverted);
     this.filteredBuffer.push(mainFiltered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
       this.filteredBuffer.shift();
@@ -615,7 +611,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.motionLevel = 0;
     this.lastWTAResult = null;
     this.lastRescueState = null;
-    this.bandpassFilter.reset();
     this.wtaSelector.reset();
     this.rescueEngine.reset();
   }
