@@ -19,6 +19,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   private bandpassFilter: BandpassFilter;
   private wtaSelector: WinnerTakesAllSelector;
+  private rescueEngine: AutoRescueEngine;
+  private lastRescueState: RescueState | null = null;
   
   // Buffers ampliados
   private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
