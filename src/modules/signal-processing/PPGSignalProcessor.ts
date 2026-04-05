@@ -519,28 +519,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const enterThreshold = Math.max(0.165, 0.34 / Math.sqrt(relax));
     const holdThreshold = Math.max(0.13, 0.23 / Math.sqrt(relax));
 
-    /**
-     * ROI estable + pulsación espacial sin perfil RGB perfecto (piel oscura / balance AWB).
-     * Requiere cobertura y estabilidad; excluye escenas ya marcadas como ambiente.
-     */
-    const roiStrongContact =
-      !likelyAmbientNoise &&
-      coverageScore >= 0.18 &&
-      spatialStability >= 0.14 &&
-      detectionScore >= 5 &&
-      totalIntensity >= 72 &&
-      tilePulseScore > 0.009;
-
-    /** Geometría de contacto: evita “FC” con solo ruido o vídeo ambiente */
-    const geometryOk =
-      torchThroughFinger ||
-      contactTransillumination ||
-      roiStrongContact ||
-      (detectionScore >= 6 && coverageScore >= 0.15 && spatialStability >= 0.11);
-
+    /** Confianza suavizada + penalización ambiente (sin segundo candado que bloqueaba dedo real). */
     const instantDetected = this.fingerDetected
       ? this.detectionConfidence >= holdThreshold
-      : this.detectionConfidence >= enterThreshold && geometryOk;
+      : this.detectionConfidence >= enterThreshold;
 
     // Histéresis: evitar parpadeo del estado
     if (instantDetected) {

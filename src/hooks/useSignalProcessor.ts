@@ -152,18 +152,29 @@ export const useSignalProcessor = () => {
    */
   const processFrame = useCallback((imageData: ImageData) => {
     if (!workerRef.current || !isProcessingRef.current) return;
-    
-    // Copy the buffer since we need to transfer it
-    const buffer = imageData.data.buffer.slice(0);
-    
+
+    const pixels = imageData.data;
+    const w = imageData.width;
+    const h = imageData.height;
+
+    /**
+     * Copiar SOLO el rango [byteOffset, byteOffset+byteLength] del ArrayBuffer.
+     * `buffer.slice(0)` puede incluir basura o tamaño incorrecto si `data` es una vista
+     * sobre un buffer compartido → el worker recibía píxeles corruptos y no había PPG.
+     */
+    const ab = pixels.buffer.slice(
+      pixels.byteOffset,
+      pixels.byteOffset + pixels.byteLength
+    );
+
     workerRef.current.postMessage(
       {
         type: 'processFrame',
-        data: buffer,
-        width: imageData.width,
-        height: imageData.height,
+        data: ab,
+        width: w,
+        height: h,
       },
-      [buffer] // Transfer ownership — zero-copy
+      [ab]
     );
   }, []);
 

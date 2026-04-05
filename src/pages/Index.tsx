@@ -68,7 +68,6 @@ const Index = () => {
   const { 
     startProcessing, 
     stopProcessing, 
-    isProcessing,
     lastSignal, 
     processFrame, 
     getRGBStats,
@@ -336,14 +335,18 @@ const Index = () => {
     setCameraStream(stream);
   }, []);
 
-  /** Inicia captura solo cuando hay stream Y el worker PPG aceptó frames (evita perder segundos al inicio). */
+  /**
+   * Arranca el loop con stream + monitoreo. NO exigir `isProcessing` del estado React:
+   * puede ir un render detrás de `isProcessingRef` y el loop nunca arrancaba (0 frames).
+   * `processFrame` ya descarta si el worker no está en marcha.
+   */
   useEffect(() => {
-    if (!isMonitoring || !cameraStream || !isProcessing) return;
+    if (!isMonitoring || !cameraStream) return;
     startFrameLoop();
     return () => {
       stopFrameLoop();
     };
-  }, [isMonitoring, cameraStream, isProcessing, startFrameLoop, stopFrameLoop]);
+  }, [isMonitoring, cameraStream, startFrameLoop, stopFrameLoop]);
 
   // === FINALIZAR MEDICIÓN ===
   const finalizeMeasurement = useCallback(async () => {
@@ -484,9 +487,15 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    // Solo con contacto dedo–lente: la pulsatilidad sola (luces, fondo, ruido) dispara FC falsas.
-    // Ver p. ej. buenas prácticas rPPG: ROI estable, linterna, SQI (p. ej. npj Biosensing 2024).
-    const canEstimateHR = lastSignal.fingerDetected === true;
+    // Dedo detectado O contacto óptico fuerte (RGB típico dedo+flash) + algo de perfusión — evita quedar en 0 si la histéresis va lenta.
+    const rr = lastSignal.rawRed ?? 0;
+    const rg = lastSignal.rawGreen ?? 0;
+    const proxyContact =
+      rr > 45 &&
+      rg > 20 &&
+      rr >= rg * 0.46 &&
+      (lastSignal.perfusionIndex ?? 0) > 0.011;
+    const canEstimateHR = lastSignal.fingerDetected === true || proxyContact;
 
     if (!canEstimateHR) {
       setHeartbeatSignal(signalValue);

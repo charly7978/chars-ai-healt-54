@@ -64,11 +64,20 @@ self.onmessage = (event: MessageEvent) => {
 
     case 'processFrame': {
       if (!processor || !processor.isProcessing) break;
-      // Reconstruct ImageData from transferred buffer
-      const { data, width, height } = msg;
-      const clampedArray = new Uint8ClampedArray(data);
-      const imageData = new ImageData(clampedArray, width, height);
-      processor.processFrame(imageData);
+      try {
+        const { data, width, height } = msg;
+        if (!data || !width || !height) break;
+        const clampedArray = new Uint8ClampedArray(data);
+        const need = width * height * 4;
+        if (clampedArray.byteLength !== need) {
+          console.warn('[PPG worker] Buffer RGBA inesperado:', clampedArray.byteLength, '!=', need);
+          break;
+        }
+        const imageData = new ImageData(clampedArray, width, height);
+        processor.processFrame(imageData);
+      } catch (e) {
+        console.error('[PPG worker] processFrame:', e);
+      }
       break;
     }
 
