@@ -54,7 +54,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 3;   // Confirmación rápida
+  private readonly FINGER_CONFIRM_FRAMES = 4;   // Un frame más contra falsos positivos (escena / luz)
   private readonly FINGER_LOST_FRAMES = 50;     // Ultra tolerante a temblores/reposiciones
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
@@ -249,7 +249,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rawGreen,
       diagnostics: {
         message: `${this.lastPulseSource}:WTA:${wtaResult.winnerId}(${wtaResult.winnerScore.toFixed(0)}) PI:${perfusionIndex.toFixed(2)} FD:${this.fingerDetected ? '1' : '0'}`,
-        hasPulsatility: perfusionIndex > 0.015 || pulsatilityFromAC > 0.08,
+        hasPulsatility:
+          this.fingerDetected &&
+          (perfusionIndex > 0.012 || pulsatilityFromAC > 0.055),
         pulsatilityValue: Math.max(perfusionIndex, pulsatilityFromAC)
       }
     };
@@ -395,11 +397,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * DETECCIÓN DE DEDO CON HISTÉRESIS Y SUAVIZADO
-   * 
-   * - Suaviza valores RGB para tolerar temblores/micromovimientos
-   * - Usa histéresis: requiere varios frames consecutivos para cambiar estado
-   * - Umbrales más permisivos para comodidad del usuario
+   * DETECCIÓN DE DEDO (contacto óptico) — histéresis + suavizado RGB
+   *
+   * Alineado con prácticas rPPG móvil: ROI central, linterna, SQI/estabilidad
+   * (p. ej. “Optimal signal quality index for remote PPG”, npj Biosensing 2024).
+   * - Rechaza escenas sin perfil hemoglobina/transiluminación ni coherencia espacial.
+   * - Exige geometría de contacto para pasar de “no dedo” → “dedo” (menos falsos positivos).
    */
   private detectFinger(
     rawRed: number,
@@ -445,8 +448,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const spatialThreshold = Math.max(0.12, 0.26 / relax);
     const pulseThreshold = Math.max(0.008, 0.028 / relax);
 
+    /** Linterna atravesando tejido: patrón muy claro en rPPG móvil */
     const torchThroughFinger =
       totalIntensity > 200 && r > 85 && r > g * 0.82 && g > 30;
+
+    /**
+     * Contacto dedo–lente sin saturar: R dominante vs G/B (absorción hemoglobina), intensidad suficiente.
+     * Umbrales algo amplios para tonos de piel distintos; se combina con cobertura ROI.
+     */
+    const contactTransillumination =
+      totalIntensity >= 72 &&
+      r >= 36 &&
+      redShare >= 0.262 &&
+      r >= g * 0.5 &&
+      r >= b * 0.76;
 
     let detectionScore = 0;
     if (r > 20) detectionScore += 1;
@@ -459,12 +474,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (tilePulseScore > pulseThreshold) detectionScore += 1;
     if (perfusionHint > 0.08) detectionScore += 1;
     if (torchThroughFinger) detectionScore += 2;
+    if (contactTransillumination) detectionScore += 1;
+
+    /** Escena / mesa / fondo: variación de color sin perfil de contacto ni ROI coherente */
+    const likelyAmbientNoise =
+      !torchThroughFinger &&
+      !contactTransillumination &&
+      totalIntensity > 52 &&
+      redShare < 0.27 &&
+      coverageScore < 0.125 &&
+      spatialStability < 0.155 &&
+      detectionScore < 6;
 
     const motionPenalty = Math.max(0.72, 1 - this.motionLevel * 0.28);
 
-    const targetConfidence = plausibleSaturation
+    let targetConfidence = plausibleSaturation
       ? Math.max(0, Math.min(1,
-          (detectionScore / 11) * 0.38 +
+          (detectionScore / 12) * 0.38 +
           coverageScore * 0.15 +
           spatialStability * 0.13 +
           ratioScore * 0.09 +
@@ -475,15 +501,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         )) * motionPenalty
       : 0;
 
+    if (likelyAmbientNoise) {
+      targetConfidence *= 0.12;
+    }
+
     const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.32 : 0.14;
     this.detectionConfidence = this.detectionConfidence * (1 - confidenceAlpha) + targetConfidence * confidenceAlpha;
 
-    const enterThreshold = Math.max(0.18, 0.36 / Math.sqrt(relax));
-    const holdThreshold = Math.max(0.14, 0.24 / Math.sqrt(relax));
+    const enterThreshold = Math.max(0.2, 0.38 / Math.sqrt(relax));
+    const holdThreshold = Math.max(0.15, 0.26 / Math.sqrt(relax));
+
+    /** Geometría de contacto: evita “FC” con solo ruido o vídeo ambiente */
+    const geometryOk =
+      torchThroughFinger ||
+      contactTransillumination ||
+      (detectionScore >= 7 && coverageScore >= 0.17 && spatialStability >= 0.13);
 
     const instantDetected = this.fingerDetected
       ? this.detectionConfidence >= holdThreshold
-      : this.detectionConfidence >= enterThreshold;
+      : this.detectionConfidence >= enterThreshold && geometryOk;
 
     // Histéresis: evitar parpadeo del estado
     if (instantDetected) {

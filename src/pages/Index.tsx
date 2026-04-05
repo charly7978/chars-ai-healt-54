@@ -470,15 +470,9 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    const pulsatileEnough =
-      lastSignal.diagnostics?.hasPulsatility === true ||
-      (lastSignal.perfusionIndex !== undefined && lastSignal.perfusionIndex > 0.02) ||
-      (lastSignal.diagnostics?.pulsatilityValue !== undefined &&
-        lastSignal.diagnostics.pulsatilityValue > 0.06);
-
-    const canEstimateHR =
-      lastSignal.fingerDetected ||
-      pulsatileEnough;
+    // Solo con contacto dedo–lente: la pulsatilidad sola (luces, fondo, ruido) dispara FC falsas.
+    // Ver p. ej. buenas prácticas rPPG: ROI estable, linterna, SQI (p. ej. npj Biosensing 2024).
+    const canEstimateHR = lastSignal.fingerDetected === true;
 
     if (!canEstimateHR) {
       setHeartbeatSignal(signalValue);
