@@ -70,9 +70,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private outputEma: number = 0;
   private outputEmaReady = false;
-  private readonly OUTPUT_EMA_ALPHA = 0.26;
-  /** Mezcla con salida directa del pasabanda para no aplastar amplitud (SQI / latidos) */
-  private readonly OUTPUT_DIRECT_BLEND = 0.42;
+  private readonly OUTPUT_EMA_ALPHA = 0.22;
+  /** Mezcla con pasabanda directo: más componente útil para SQI y picos */
+  private readonly OUTPUT_DIRECT_BLEND = 0.52;
   /** Calidad del frame anterior (EMA adaptativo antes de recalcular SQI) */
   private lastQualityForEma = 45;
 
@@ -165,7 +165,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let filtered: number;
     let mainFiltered: number;
 
-    if (pulseBlend && this.redBuffer.length >= 30) {
+    if (pulseBlend && this.redBuffer.length >= 26) {
       inverted = pulseBlend.rawPulse;
       mainFiltered = this.pulseBandpass.filter(pulseBlend.rawPulse);
       filtered = mainFiltered;
@@ -179,11 +179,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const q01 = Math.min(1, this.lastQualityForEma / 100);
     const weakBoost =
-      this.fingerDetected && q01 < 0.55 ? (0.55 - q01) * 0.1 : 0;
+      this.fingerDetected && q01 < 0.55 ? (0.55 - q01) * 0.13 : 0;
     const boosted = mainFiltered * (1 + weakBoost);
     const emaAlpha =
       this.fingerDetected && q01 < 0.45
-        ? Math.min(0.44, this.OUTPUT_EMA_ALPHA + 0.12)
+        ? Math.min(0.4, this.OUTPUT_EMA_ALPHA + 0.14)
         : this.OUTPUT_EMA_ALPHA;
 
     if (!this.outputEmaReady) {
@@ -260,8 +260,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * Parche central (~42%): yema sobre el lente — máxima pulsación.
-   * ROI amplia (rescue): mosaico 3×3 con muestreo denso.
+   * Parche central (~42%): media RGB ponderada por Gaussiana hacia el centro (yema).
+   * Da más peso al contacto real y menos a bordes del parche → mejor SNR pulsátil (rPPG).
    */
   private extractCenterMeanRGB(imageData: ImageData, frac: number): { rawRed: number; rawGreen: number; rawBlue: number } {
     const data = imageData.data;
@@ -272,21 +272,29 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
     const endY = startY + Math.floor(roiSize);
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    let count = 0;
-    for (let y = startY; y < endY; y += 1) {
-      for (let x = startX; x < endX; x += 1) {
+    const cx = (startX + endX) / 2;
+    const cy = (startY + endY) / 2;
+    const sigma = Math.max(roiSize * 0.19, 6);
+    const inv2Sigma2 = 1 / (2 * sigma * sigma);
+
+    let wr = 0;
+    let wg = 0;
+    let wb = 0;
+    let wsum = 0;
+    for (let y = startY; y < endY; y += 2) {
+      for (let x = startX; x < endX; x += 2) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const w = Math.exp(-(dx * dx + dy * dy) * inv2Sigma2);
         const i = (y * width + x) * 4;
-        r += data[i];
-        g += data[i + 1];
-        b += data[i + 2];
-        count++;
+        wr += data[i] * w;
+        wg += data[i + 1] * w;
+        wb += data[i + 2] * w;
+        wsum += w;
       }
     }
-    if (count === 0) return { rawRed: 0, rawGreen: 0, rawBlue: 0 };
-    return { rawRed: r / count, rawGreen: g / count, rawBlue: b / count };
+    if (wsum <= 0) return { rawRed: 0, rawGreen: 0, rawBlue: 0 };
+    return { rawRed: wr / wsum, rawGreen: wg / wsum, rawBlue: wb / wsum };
   }
 
   private extractROI(imageData: ImageData, roiFraction: number = 0.72): {
@@ -511,10 +519,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const enterThreshold = Math.max(0.2, 0.38 / Math.sqrt(relax));
     const holdThreshold = Math.max(0.15, 0.26 / Math.sqrt(relax));
 
+    /**
+     * ROI estable + pulsación espacial sin perfil RGB perfecto (piel oscura / balance AWB).
+     * Requiere cobertura y estabilidad; excluye escenas ya marcadas como ambiente.
+     */
+    const roiStrongContact =
+      !likelyAmbientNoise &&
+      coverageScore >= 0.21 &&
+      spatialStability >= 0.17 &&
+      detectionScore >= 6 &&
+      totalIntensity >= 80 &&
+      tilePulseScore > 0.011;
+
     /** Geometría de contacto: evita “FC” con solo ruido o vídeo ambiente */
     const geometryOk =
       torchThroughFinger ||
       contactTransillumination ||
+      roiStrongContact ||
       (detectionScore >= 7 && coverageScore >= 0.17 && spatialStability >= 0.13);
 
     const instantDetected = this.fingerDetected
