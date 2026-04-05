@@ -68,6 +68,7 @@ const Index = () => {
   const { 
     startProcessing, 
     stopProcessing, 
+    isProcessing,
     lastSignal, 
     processFrame, 
     getRGBStats,
@@ -126,6 +127,30 @@ const Index = () => {
     loadSavedCalibration();
   }, [calibrateBP]);
 
+  /** Máx. dimensión del canvas: más píxeles = mejor SNR en ROI (cbPPG / rPPG); cap por CPU */
+  const CANVAS_MAX_DIM = 1280;
+
+  const fitCanvasToVideo = useCallback((video: HTMLVideoElement) => {
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (!canvas || !ctx || !video.videoWidth || !video.videoHeight) return;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    let cw = vw;
+    let ch = vh;
+    if (Math.max(vw, vh) > CANVAS_MAX_DIM) {
+      const s = CANVAS_MAX_DIM / Math.max(vw, vh);
+      cw = Math.max(320, Math.floor(vw * s));
+      ch = Math.max(240, Math.floor(vh * s));
+    }
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width = cw;
+      canvas.height = ch;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+    }
+  }, []);
+
   // CANVAS PARA CAPTURA
   useEffect(() => {
     if (!canvasRef.current) {
@@ -134,8 +159,9 @@ const Index = () => {
       canvasRef.current.height = 480;
       ctxRef.current = canvasRef.current.getContext('2d', { 
         willReadFrequently: true,
-        alpha: false 
-      });
+        alpha: false,
+        colorSpace: 'srgb',
+      } as CanvasRenderingContext2DSettings);
     }
   }, []);
 
@@ -238,6 +264,7 @@ const Index = () => {
       const now = performance.now();
       if (now - lastFrameTime >= FRAME_INTERVAL) {
         try {
+          fitCanvasToVideo(video);
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           processFrame(imageData);
@@ -252,7 +279,7 @@ const Index = () => {
     
     console.log('🎬 Iniciando loop de captura');
     frameLoopRef.current = requestAnimationFrame(captureFrame);
-  }, [processFrame]);
+  }, [processFrame, fitCanvasToVideo]);
 
   const stopFrameLoop = useCallback(() => {
     frameLoopActiveRef.current = false;
@@ -303,33 +330,20 @@ const Index = () => {
     
   }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
 
-  // === CUANDO LA CÁMARA ESTÁ LISTA ===
+  // === STREAM LISTO (el loop de captura lo arranca el efecto: cámara + worker listos) ===
   const handleStreamReady = useCallback((stream: MediaStream) => {
     console.log('📹 Stream recibido');
     setCameraStream(stream);
-    
-    // Esperar a que el video esté listo y comenzar captura
-    setTimeout(() => {
-      const video = cameraRef.current?.getVideoElement();
-      if (video && video.readyState >= 2) {
-        console.log('✅ Video listo:', video.videoWidth, 'x', video.videoHeight);
-        startFrameLoop();
-      } else {
-        // Reintentar
-        const checkReady = setInterval(() => {
-          const v = cameraRef.current?.getVideoElement();
-          if (v && v.readyState >= 2 && v.videoWidth > 0) {
-            clearInterval(checkReady);
-            console.log('✅ Video listo (retry):', v.videoWidth, 'x', v.videoHeight);
-            startFrameLoop();
-          }
-        }, 100);
-        
-        // Timeout después de 5 segundos
-        setTimeout(() => clearInterval(checkReady), 5000);
-      }
-    }, 500);
-  }, [startFrameLoop]);
+  }, []);
+
+  /** Inicia captura solo cuando hay stream Y el worker PPG aceptó frames (evita perder segundos al inicio). */
+  useEffect(() => {
+    if (!isMonitoring || !cameraStream || !isProcessing) return;
+    startFrameLoop();
+    return () => {
+      stopFrameLoop();
+    };
+  }, [isMonitoring, cameraStream, isProcessing, startFrameLoop, stopFrameLoop]);
 
   // === FINALIZAR MEDICIÓN ===
   const finalizeMeasurement = useCallback(async () => {

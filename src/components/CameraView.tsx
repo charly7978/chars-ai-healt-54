@@ -157,11 +157,18 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       }
     };
 
-    const applyPPGTrackTuning = async (track: MediaStreamTrack) => {
+    /**
+     * AE/AF/WB después de la linterna — estudios cbPPG: exposición estable y resolución adecuada mejoran SNR.
+     * exposureCompensation: solo un empuje suave; valores fuertes arruinan la señal en muchos móviles.
+     */
+    const applyPPGTrackTuning = async (
+      track: MediaStreamTrack,
+      opts?: { applyExposureBias?: boolean }
+    ) => {
       const caps = getTrackCapabilities(track);
       if (!caps) return false;
 
-      const advanced: any = {};
+      const advanced: Record<string, unknown> = {};
 
       if (Array.isArray(caps.focusMode)) {
         if (caps.focusMode.includes('continuous')) advanced.focusMode = 'continuous';
@@ -183,19 +190,23 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         advanced.zoom = Math.max(caps.zoom.min ?? 1, Math.min(1, caps.zoom.max ?? 1));
       }
 
-      if (caps.exposureCompensation && typeof caps.exposureCompensation === 'object') {
+      if (
+        opts?.applyExposureBias &&
+        caps.exposureCompensation &&
+        typeof caps.exposureCompensation === 'object'
+      ) {
         const ec = caps.exposureCompensation;
         const lo = ec.min ?? -1;
         const hi = ec.max ?? 1;
         if (hi > lo) {
-          advanced.exposureCompensation = lo + (hi - lo) * 0.58;
+          advanced.exposureCompensation = lo + (hi - lo) * 0.38;
         }
       }
 
       const hasAdvancedParams = Object.keys(advanced).length > 0;
       if (!hasAdvancedParams) return false;
 
-      return safeApplyConstraints(track, { advanced: [advanced] });
+      return safeApplyConstraints(track, { advanced: [advanced as any] });
     };
 
     const enableTorchRobustly = async (track: MediaStreamTrack) => {
@@ -227,9 +238,9 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 
     const buildPreferredConstraints = (deviceId?: string | null): MediaTrackConstraints => ({
       ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' } }),
-      width: { ideal: 1280, min: 640 },
-      height: { ideal: 720, min: 480 },
-      frameRate: { ideal: 30, min: 24, max: 30 },
+      width: { ideal: 1920, min: 640 },
+      height: { ideal: 1080, min: 480 },
+      frameRate: { ideal: 30, min: 15, max: 60 },
       aspectRatio: { ideal: 16 / 9 },
     });
 
@@ -304,11 +315,13 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           await ensureVideoPlaying();
         }
 
-        // Pequeño warm-up para estabilizar AE/AF antes de torch
-        await new Promise(resolve => setTimeout(resolve, 450));
+        await new Promise(resolve => setTimeout(resolve, 280));
 
-        await applyPPGTrackTuning(track);
+        /** Linterna primero: muchos dispositivos fijan AE/AWB respecto al flash (cbPPG estándar). */
         const torchActivated = await enableTorchRobustly(track);
+        await new Promise(resolve => setTimeout(resolve, torchActivated ? 420 : 200));
+
+        await applyPPGTrackTuning(track, { applyExposureBias: torchActivated });
 
         const settings = track.getSettings?.() as any;
         const caps = getTrackCapabilities(track);
@@ -349,7 +362,10 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           }
 
           const track = fallbackStream.getVideoTracks()[0];
+          await new Promise((r) => setTimeout(r, 200));
           await enableTorchRobustly(track);
+          await new Promise((r) => setTimeout(r, 320));
+          await applyPPGTrackTuning(track, { applyExposureBias: true });
           onStreamReady?.(fallbackStream);
         } catch (fallbackError) {
           console.error('❌ Error cámara fallback:', fallbackError);

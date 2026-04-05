@@ -54,7 +54,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 4;   // Un frame más contra falsos positivos (escena / luz)
+  private readonly FINGER_CONFIRM_FRAMES = 3;   // Balance: rapidez de lock vs falsos positivos
   private readonly FINGER_LOST_FRAMES = 50;     // Ultra tolerante a temblores/reposiciones
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
@@ -465,11 +465,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
      * Umbrales algo amplios para tonos de piel distintos; se combina con cobertura ROI.
      */
     const contactTransillumination =
-      totalIntensity >= 72 &&
-      r >= 36 &&
-      redShare >= 0.262 &&
-      r >= g * 0.5 &&
-      r >= b * 0.76;
+      totalIntensity >= 62 &&
+      r >= 32 &&
+      redShare >= 0.248 &&
+      r >= g * 0.46 &&
+      r >= b * 0.72;
 
     let detectionScore = 0;
     if (r > 20) detectionScore += 1;
@@ -516,8 +516,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.32 : 0.14;
     this.detectionConfidence = this.detectionConfidence * (1 - confidenceAlpha) + targetConfidence * confidenceAlpha;
 
-    const enterThreshold = Math.max(0.2, 0.38 / Math.sqrt(relax));
-    const holdThreshold = Math.max(0.15, 0.26 / Math.sqrt(relax));
+    const enterThreshold = Math.max(0.165, 0.34 / Math.sqrt(relax));
+    const holdThreshold = Math.max(0.13, 0.23 / Math.sqrt(relax));
 
     /**
      * ROI estable + pulsación espacial sin perfil RGB perfecto (piel oscura / balance AWB).
@@ -525,18 +525,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
      */
     const roiStrongContact =
       !likelyAmbientNoise &&
-      coverageScore >= 0.21 &&
-      spatialStability >= 0.17 &&
-      detectionScore >= 6 &&
-      totalIntensity >= 80 &&
-      tilePulseScore > 0.011;
+      coverageScore >= 0.18 &&
+      spatialStability >= 0.14 &&
+      detectionScore >= 5 &&
+      totalIntensity >= 72 &&
+      tilePulseScore > 0.009;
 
     /** Geometría de contacto: evita “FC” con solo ruido o vídeo ambiente */
     const geometryOk =
       torchThroughFinger ||
       contactTransillumination ||
       roiStrongContact ||
-      (detectionScore >= 7 && coverageScore >= 0.17 && spatialStability >= 0.13);
+      (detectionScore >= 6 && coverageScore >= 0.15 && spatialStability >= 0.11);
 
     const instantDetected = this.fingerDetected
       ? this.detectionConfidence >= holdThreshold
