@@ -56,7 +56,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.12;     // Mucho más suavizado = ignora micro-movimientos
+  private readonly RGB_SMOOTH_ALPHA = 0.12;     // Base de suavizado; se adapta con rescue engine
   private detectionConfidence: number = 0;
   
   // Métricas de estabilidad expuestas
@@ -288,7 +288,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const candidateTiles = validTiles.filter(tile => {
       const total = tile.red + tile.green + tile.blue;
-      return total > 75 && tile.red > 28 && tile.red > tile.blue * 1.02;
+      if (total < 60) return false;
+
+      const redRatio = total > 0 ? tile.red / total : 0;
+      const redDominance = tile.red - ((tile.green + tile.blue) / 2);
+      const likelyFingerColor = redRatio > 0.34 && redDominance > 4;
+      const saturatedButPlausible = tile.red > 150 && tile.red >= tile.green * 0.95 && tile.green > tile.blue * 0.9;
+
+      return likelyFingerColor || saturatedButPlausible;
     });
 
     const coverageScore = validTiles.length > 0 ? candidateTiles.length / validTiles.length : 0;
@@ -329,15 +336,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     spatialStability: number,
     tilePulseScore: number,
   ): boolean {
+    const rescueState = this.lastRescueState;
+    const relax = rescueState?.fingerThresholdRelax ?? 1.0;
+    const adaptiveAlpha = rescueState?.smoothingAlpha ?? this.RGB_SMOOTH_ALPHA;
+
     // Suavizar RGB para absorber temblores y micromovimientos
     if (this.smoothedRed === 0) {
       this.smoothedRed = rawRed;
       this.smoothedGreen = rawGreen;
       this.smoothedBlue = rawBlue;
     } else {
-      this.smoothedRed = this.smoothedRed * (1 - this.RGB_SMOOTH_ALPHA) + rawRed * this.RGB_SMOOTH_ALPHA;
-      this.smoothedGreen = this.smoothedGreen * (1 - this.RGB_SMOOTH_ALPHA) + rawGreen * this.RGB_SMOOTH_ALPHA;
-      this.smoothedBlue = this.smoothedBlue * (1 - this.RGB_SMOOTH_ALPHA) + rawBlue * this.RGB_SMOOTH_ALPHA;
+      this.smoothedRed = this.smoothedRed * (1 - adaptiveAlpha) + rawRed * adaptiveAlpha;
+      this.smoothedGreen = this.smoothedGreen * (1 - adaptiveAlpha) + rawGreen * adaptiveAlpha;
+      this.smoothedBlue = this.smoothedBlue * (1 - adaptiveAlpha) + rawBlue * adaptiveAlpha;
     }
     
     const r = this.smoothedRed;
@@ -347,61 +358,76 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const rgRatio = g > 0 ? r / g : 0;
     const rbRatio = b > 0 ? r / b : 0;
     const totalIntensity = r + g + b;
+    const redShare = totalIntensity > 0 ? r / totalIntensity : 0;
     const colorDominance = totalIntensity > 0 ? (r - ((g + b) / 2)) / totalIntensity : 0;
-    const notBlownOut = !(r > 254.8 && g > 254.8 && b > 254.8);
-    const ratioScore = rgRatio > 0 ? Math.max(0, 1 - Math.abs(rgRatio - 1.45) / 2.9) : 0;
-    const intensityScore = Math.max(0, Math.min(1, (totalIntensity - 70) / 220));
-    const dominanceScore = Math.max(0, Math.min(1, (colorDominance - 0.05) / 0.22));
+    const brightnessNormalized = totalIntensity / 765;
+    const plausibleSaturation = !(r > 254.8 && g > 254.8 && b > 254.8) && totalIntensity > 40;
+    const ratioScore = rgRatio > 0 ? Math.max(0, 1 - Math.abs(rgRatio - 1.35) / 2.8) : 0;
+    const intensityScore = Math.max(0, Math.min(1, (totalIntensity - 55) / 260));
+    const dominanceScore = Math.max(0, Math.min(1, (colorDominance - 0.035) / 0.24));
+    const redShareScore = Math.max(0, Math.min(1, (redShare - 0.30) / 0.22));
+    const perfusionHint = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 1.2));
+
+    const coverageThreshold = Math.max(this.fingerDetected ? 0.10 : 0.14, (this.fingerDetected ? 0.28 : 0.42) / relax);
+    const spatialThreshold = Math.max(0.16, 0.32 / relax);
+    const pulseThreshold = Math.max(0.015, 0.04 / relax);
 
     let detectionScore = 0;
-    if (r > 30) detectionScore += 1;
-    if (rgRatio > 0.66 && rgRatio < 4.6) detectionScore += 1;
-    if (rbRatio > 1.04) detectionScore += 1;
-    if (totalIntensity > 75 && totalIntensity < 720) detectionScore += 1;
-    if (colorDominance > 0.07) detectionScore += 1;
-    if (coverageScore > (this.fingerDetected ? 0.28 : 0.42)) detectionScore += 1;
-    if (spatialStability > 0.32) detectionScore += 1;
-    if (tilePulseScore > 0.04) detectionScore += 1;
+    if (r > 24) detectionScore += 1;
+    if (rgRatio > 0.58 && rgRatio < 4.9) detectionScore += 1;
+    if (rbRatio > 0.96) detectionScore += 1;
+    if (totalIntensity > 60 && totalIntensity < 760) detectionScore += 1;
+    if (colorDominance > 0.04 || redShare > 0.34) detectionScore += 1;
+    if (coverageScore > coverageThreshold) detectionScore += 1;
+    if (spatialStability > spatialThreshold) detectionScore += 1;
+    if (tilePulseScore > pulseThreshold) detectionScore += 1;
+    if (perfusionHint > 0.10) detectionScore += 1;
 
-    const targetConfidence = notBlownOut
+    const motionPenalty = Math.max(0.65, 1 - this.motionLevel * 0.35);
+
+    const targetConfidence = plausibleSaturation
       ? Math.max(0, Math.min(1,
-          detectionScore / 8 * 0.42 +
-          coverageScore * 0.18 +
-          spatialStability * 0.16 +
-          ratioScore * 0.12 +
-          intensityScore * 0.06 +
-          dominanceScore * 0.06
-        ))
+          (detectionScore / 9) * 0.36 +
+          coverageScore * 0.16 +
+          spatialStability * 0.14 +
+          ratioScore * 0.10 +
+          intensityScore * 0.08 +
+          dominanceScore * 0.06 +
+          redShareScore * 0.05 +
+          perfusionHint * 0.05
+        )) * motionPenalty
       : 0;
 
-    const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.24 : 0.1;
+    const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.28 : 0.12;
     this.detectionConfidence = this.detectionConfidence * (1 - confidenceAlpha) + targetConfidence * confidenceAlpha;
 
+    const enterThreshold = Math.max(0.34, 0.56 / Math.sqrt(relax));
+    const holdThreshold = Math.max(0.20, 0.34 / Math.sqrt(relax));
+
     const instantDetected = this.fingerDetected
-      ? this.detectionConfidence >= 0.34
-      : this.detectionConfidence >= 0.56;
-    
-    // HISTÉRESIS: evitar parpadeo del estado
+      ? this.detectionConfidence >= holdThreshold
+      : this.detectionConfidence >= enterThreshold;
+
+    // Histéresis: evitar parpadeo del estado
     if (instantDetected) {
       this.fingerLostCount = 0;
-      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, this.FINGER_CONFIRM_FRAMES + 5);
-      
-      // Si ya estaba detectado, mantener. Si no, esperar confirmación
+      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, this.FINGER_CONFIRM_FRAMES + 6);
+
       if (this.fingerDetected) {
         return true;
-      } else {
-        return this.fingerConfidenceCount >= this.FINGER_CONFIRM_FRAMES;
       }
-    } else {
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
-      this.fingerLostCount++;
-      
-      // Si estaba detectado, tolerar pérdidas breves (temblor/reposición)
-      if (this.fingerDetected) {
-        return this.fingerLostCount < this.FINGER_LOST_FRAMES;
-      }
-      return false;
+
+      return this.fingerConfidenceCount >= Math.max(2, this.FINGER_CONFIRM_FRAMES - 1);
     }
+
+    this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
+    this.fingerLostCount++;
+
+    if (this.fingerDetected) {
+      return this.fingerLostCount < this.FINGER_LOST_FRAMES;
+    }
+
+    return false;
   }
   
   /**
