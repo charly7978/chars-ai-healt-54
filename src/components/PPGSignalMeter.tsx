@@ -73,7 +73,7 @@ const CONFIG = {
   PLOT_AREA: {
     LEFT: 80,    // Espacio para escala Y izquierda
     RIGHT: 80,   // Espacio para info derecha
-    TOP: 100,    // Espacio para info superior
+    TOP: 118,    // Info superior + franja de coaching
     BOTTOM: 60   // Espacio para escala tiempo
   },
   COLORS: {
@@ -409,16 +409,55 @@ const PPGSignalMeter = ({
       // Panel pulsante en el lado derecho
       const pulse = (Math.sin(now / 100) + 1) / 2;
       ctx.fillStyle = `rgba(239, 68, 68, ${0.3 + pulse * 0.4})`;
-      ctx.fillRect(W - 135, 92, 130, 28);
+      ctx.fillRect(W - 135, 124, 130, 28);
       ctx.strokeStyle = COLORS.TEXT_DANGER;
       ctx.lineWidth = 2;
-      ctx.strokeRect(W - 135, 92, 130, 28);
+      ctx.strokeRect(W - 135, 124, 130, 28);
       
       ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_DANGER;
       ctx.textAlign = 'center';
-      ctx.fillText(`⚠ ARRITMIA x${count}`, W - 70, 110);
+      ctx.fillText(`⚠ ARRITMIA x${count}`, W - 70, 142);
     }
+  }, []);
+
+  const drawCaptureCoaching = useCallback((ctx: CanvasRenderingContext2D) => {
+    const { CANVAS_WIDTH: W, COLORS } = CONFIG;
+    const { isFingerDetected, quality, pipelineMetrics } = propsRef.current;
+    let coach = '';
+    let coachColor: string = COLORS.TEXT_SECONDARY;
+    if (!isFingerDetected) {
+      coach =
+        'Cubre el lente con la yema · presión suave y uniforme · mantén la linterna encendida';
+      coachColor = '#fbbf24';
+    } else if (quality < 28) {
+      coach = 'Señal débil: centra el dedo sobre el flash y evita moverte';
+      coachColor = '#fb923c';
+    } else if (quality < 50) {
+      coach = 'Captando… mantén el dedo quieto unos segundos';
+      coachColor = '#a3e635';
+    } else {
+      coach = 'Buena señal — mantén la posición';
+      coachColor = '#4ade80';
+    }
+    const src = pipelineMetrics?.pulseSource;
+    if (src && isFingerDetected) {
+      coach += `  ·  canal ${src}`;
+    }
+    const barY = 93;
+    const barH = 26;
+    ctx.fillStyle = 'rgba(15,23,42,0.92)';
+    ctx.fillRect(8, barY, W - 16, barH);
+    ctx.strokeStyle = 'rgba(148,163,184,0.4)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(8, barY, W - 16, barH);
+    ctx.font = '600 11px system-ui, -apple-system, "Segoe UI", sans-serif';
+    ctx.fillStyle = coachColor;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(coach, W / 2, barY + barH / 2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }, []);
 
   // === PANEL DE DEBUG Y ESTABILIDAD DE DEDO ===
@@ -431,7 +470,7 @@ const PPGSignalMeter = ({
     if (!metrics) return;
     
     const panelX = 5;
-    const panelY = 130;
+    const panelY = 148;
     const panelW = W - 10;
     const panelH = 165;
     
@@ -600,7 +639,7 @@ const PPGSignalMeter = ({
     // Posición del panel: debajo del debug si está activo, sino debajo de los paneles vitales
     const debugActive = showDebugRef.current;
     const panelX = 5;
-    const panelY = debugActive ? 300 : 130;
+    const panelY = debugActive ? 318 : 148;
     const panelW = W - 10;
     const panelH = 270;
 
@@ -850,7 +889,14 @@ const PPGSignalMeter = ({
       }
       lastRenderTime = now;
       
-      const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, isPeak: peak } = propsRef.current;
+      const {
+        value: signalValue,
+        quality: signalQualityUi,
+        isFingerDetected: detected,
+        arrhythmiaStatus: arrStatus,
+        preserveResults: preserve,
+        isPeak: peak,
+      } = propsRef.current;
       const plot = getPlotArea();
       const { WINDOW_MS, COLORS } = CONFIG;
       
@@ -859,6 +905,7 @@ const PPGSignalMeter = ({
       drawAmplitudeScale(ctx);
       drawTimeScale(ctx);
       drawVitalInfo(ctx, now);
+      drawCaptureCoaching(ctx);
       
       // Panel de debug (si está activo)
       if (showDebugRef.current) {
@@ -875,7 +922,9 @@ const PPGSignalMeter = ({
       
       // === PROCESAMIENTO DE SEÑAL ===
       // Escalar valor a amplitud visual controlada
-      const scaledValue = signalValue * 2; // Amplificación para visualización
+      const visGain =
+        signalQualityUi < 30 ? 2.85 : signalQualityUi < 52 ? 2.45 : 2.05;
+      const scaledValue = signalValue * visGain;
       
       // Propagar estado de arritmia por latido individual
       // Solo marcar como arrítmico cuando el conteo INCREMENTA en ese pico específico
@@ -1170,7 +1219,7 @@ const PPGSignalMeter = ({
       isRunningRef.current = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, drawDebugPanel, drawHRVPanel, getPlotArea]);
+  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, drawCaptureCoaching, drawDebugPanel, drawHRVPanel, getPlotArea]);
 
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();

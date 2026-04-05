@@ -67,7 +67,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastSpatialStability: number = 0;
   private lastTilePulseScore: number = 0;
   private motionLevel: number = 0; // 0-1, basado en variación de señal reciente
-  
+
+  private outputEma: number = 0;
+  private outputEmaReady = false;
+  private readonly OUTPUT_EMA_ALPHA = 0.38;
+  /** Calidad del frame anterior (EMA adaptativo antes de recalcular SQI) */
+  private lastQualityForEma = 45;
+
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
@@ -168,6 +174,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       mainFiltered = filtered;
       this.lastPulseSource = 'WTA';
     }
+
+    const q01 = Math.min(1, this.lastQualityForEma / 100);
+    const weakBoost =
+      this.fingerDetected && q01 < 0.55 ? (0.55 - q01) * 0.14 : 0;
+    const boosted = mainFiltered * (1 + weakBoost);
+    const emaAlpha =
+      this.fingerDetected && q01 < 0.45
+        ? Math.min(0.52, this.OUTPUT_EMA_ALPHA + 0.16)
+        : this.OUTPUT_EMA_ALPHA;
+
+    if (!this.outputEmaReady) {
+      this.outputEma = boosted;
+      this.outputEmaReady = true;
+    } else {
+      this.outputEma = emaAlpha * boosted + (1 - emaAlpha) * this.outputEma;
+    }
+    const smoothedFiltered = this.outputEma;
     
     // 6. GUARDAR EN BUFFER RAW (del canal ganador)
     this.rawBuffer.push(inverted);
@@ -175,7 +198,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.rawBuffer.shift();
     }
     
-    this.filteredBuffer.push(mainFiltered);
+    this.filteredBuffer.push(smoothedFiltered);
     if (this.filteredBuffer.length > this.BUFFER_SIZE) {
       this.filteredBuffer.shift();
     }
@@ -185,6 +208,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     
     // 10. CALCULAR CALIDAD DE SEÑAL + NIVEL DE MOVIMIENTO
     this.signalQuality = this.calculateSignalQuality();
+    this.lastQualityForEma = this.signalQuality;
     this.updateMotionLevel();
     
     // 10b. RESCUE ENGINE: evaluar y adaptar
@@ -198,7 +222,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const fingerStatus = this.fingerDetected ? '✅' : '❌';
       const rescueLabel = this.rescueEngine.getLevelLabel();
       console.log(
-        `📷 PPG [${this.lastPulseSource}/${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus} R:${rescueLabel}`
+        `📷 PPG [${this.lastPulseSource}/${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${smoothedFiltered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus} R:${rescueLabel}`
       );
     }
     
@@ -207,8 +231,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const pulsatilityFromAC =
       this.greenDC > 0 ? (this.greenAC / this.greenDC) * 100 : 0;
 
-    // 13. EMITIR SEÑAL PROCESADA con AGC de rescate
-    const rescuedFilteredValue = mainFiltered * agcGain;
+    // 13. EMITIR SEÑAL PROCESADA con AGC de rescate (sobre muestra ya suavizada)
+    const rescuedFilteredValue = smoothedFiltered * agcGain;
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: inverted,
@@ -230,8 +254,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
   
   /**
-   * Parche central (~38%): donde el dedo presiona el lente — máxima pulsación.
-   * ROI amplia (rescue): mosaico 3×3 para cobertura / estabilidad espacial.
+   * Parche central (~42%): yema sobre el lente — máxima pulsación.
+   * ROI amplia (rescue): mosaico 3×3 con muestreo denso.
    */
   private extractCenterMeanRGB(imageData: ImageData, frac: number): { rawRed: number; rawGreen: number; rawBlue: number } {
     const data = imageData.data;
@@ -246,8 +270,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let g = 0;
     let b = 0;
     let count = 0;
-    for (let y = startY; y < endY; y += 2) {
-      for (let x = startX; x < endX; x += 2) {
+    for (let y = startY; y < endY; y += 1) {
+      for (let x = startX; x < endX; x += 1) {
         const i = (y * width + x) * 4;
         r += data[i];
         g += data[i + 1];
@@ -267,7 +291,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     spatialStability: number;
     tilePulseScore: number;
   } {
-    const centerRgb = this.extractCenterMeanRGB(imageData, 0.38);
+    const centerRgb = this.extractCenterMeanRGB(imageData, 0.42);
 
     const data = imageData.data;
     const width = imageData.width;
@@ -292,9 +316,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const roiWidth = Math.max(1, endX - startX);
     const roiHeight = Math.max(1, endY - startY);
     
-    // Muestrear cada 4 píxeles y usar medias robustas por subregión
-    for (let y = startY; y < endY; y += 4) {
-      for (let x = startX; x < endX; x += 4) {
+    // Muestreo denso (3 px) por subregión para mejor lectura con dedo débil / borroso
+    for (let y = startY; y < endY; y += 3) {
+      for (let x = startX; x < endX; x += 3) {
         const i = (y * width + x) * 4;
         const tileX = Math.min(tileColumns - 1, Math.floor(((x - startX) / roiWidth) * tileColumns));
         const tileY = Math.min(tileRows - 1, Math.floor(((y - startY) / roiHeight) * tileRows));
@@ -668,6 +692,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastWTAResult = null;
     this.lastRescueState = null;
     this.lastPulseSource = 'WTA';
+    this.outputEma = 0;
+    this.outputEmaReady = false;
+    this.lastQualityForEma = 45;
     this.pulseBandpass.reset();
     this.wtaSelector.reset();
     this.rescueEngine.reset();

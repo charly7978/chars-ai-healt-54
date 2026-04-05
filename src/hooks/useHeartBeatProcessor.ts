@@ -51,7 +51,11 @@ export const useHeartBeatProcessor = () => {
 
   // ELIMINADO: setGreenValue - la calidad de señal determina validez
 
-  const processSignal = useCallback((value: number, timestamp?: number): HeartBeatResult => {
+  const processSignal = useCallback((
+    value: number,
+    timestamp?: number,
+    opts?: { ppgQuality?: number }
+  ): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       const o = lastOutputRef.current;
       return {
@@ -72,14 +76,18 @@ export const useHeartBeatProcessor = () => {
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };
 
-    if (result.confidence >= 0.3 && result.bpm > 0) {
-      const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
+    const ppgOk = opts?.ppgQuality === undefined || opts.ppgQuality >= 32;
+    if (result.confidence >= 0.42 && result.bpm > 0 && ppgOk) {
+      const smoothingFactor = Math.min(0.38, result.confidence * 0.55);
       setCurrentBPM((prev) => {
         const next =
           prev > 0 ? prev * (1 - smoothingFactor) + result.bpm * smoothingFactor : result.bpm;
         return Math.round(next);
       });
       setConfidence(result.confidence);
+    } else if (opts?.ppgQuality !== undefined && opts.ppgQuality < 18 && result.confidence < 0.2) {
+      setCurrentBPM(0);
+      setConfidence(0);
     }
     setSignalQuality(result.sqi);
 

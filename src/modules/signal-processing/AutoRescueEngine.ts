@@ -60,47 +60,46 @@ const LEVEL_CONFIGS: Record<RescueLevel, LevelConfig> = {
     roiFraction: 0.85,
     bandpassLow: 0.5,
     bandpassHigh: 4.0,
-    smoothingAlpha: 0.12,
+    smoothingAlpha: 0.14,
     fingerThresholdRelax: 1.0,
-    agcGain: 1.0,
-    escalateAfterFrames: 60,    // ~2s a 30fps
-    deescalateAfterFrames: 999, // N/A
+    agcGain: 1.18,
+    escalateAfterFrames: 36,
+    deescalateAfterFrames: 999,
   },
   [RescueLevel.MILD]: {
     roiFraction: 0.70,
     bandpassLow: 0.5,
     bandpassHigh: 4.0,
-    smoothingAlpha: 0.15,
-    fingerThresholdRelax: 1.25,
-    agcGain: 1.3,
-    escalateAfterFrames: 90,    // ~3s
-    deescalateAfterFrames: 120, // ~4s de buena señal
+    smoothingAlpha: 0.17,
+    fingerThresholdRelax: 1.28,
+    agcGain: 1.52,
+    escalateAfterFrames: 48,
+    deescalateAfterFrames: 110,
   },
   [RescueLevel.MODERATE]: {
     roiFraction: 0.55,
     bandpassLow: 0.4,
     bandpassHigh: 4.5,
-    smoothingAlpha: 0.18,
-    fingerThresholdRelax: 1.5,
-    agcGain: 1.8,
-    escalateAfterFrames: 120,   // ~4s
-    deescalateAfterFrames: 150, // ~5s
+    smoothingAlpha: 0.2,
+    fingerThresholdRelax: 1.55,
+    agcGain: 2.05,
+    escalateAfterFrames: 72,
+    deescalateAfterFrames: 140,
   },
   [RescueLevel.AGGRESSIVE]: {
     roiFraction: 0.40,
     bandpassLow: 0.35,
     bandpassHigh: 5.0,
-    smoothingAlpha: 0.22,
-    fingerThresholdRelax: 2.0,
-    agcGain: 2.5,
-    escalateAfterFrames: 999,  // Ya está al máximo
-    deescalateAfterFrames: 180, // ~6s de buena señal
+    smoothingAlpha: 0.24,
+    fingerThresholdRelax: 2.05,
+    agcGain: 2.85,
+    escalateAfterFrames: 999,
+    deescalateAfterFrames: 170,
   },
 };
 
-// Umbrales de calidad
-const QUALITY_ESCALATE_THRESHOLD = 25;   // Escalar si SQI < 25
-const QUALITY_DEESCALATE_THRESHOLD = 55; // Desescalar si SQI > 55 sostenido
+const QUALITY_ESCALATE_THRESHOLD = 18;
+const QUALITY_DEESCALATE_THRESHOLD = 52;
 const MAX_RESCUE_HISTORY = 50;
 
 export class AutoRescueEngine {

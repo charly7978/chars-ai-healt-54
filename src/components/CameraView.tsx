@@ -15,6 +15,7 @@ type CameraDiagnosticCaps = MediaTrackCapabilities & {
   exposureMode?: string[];
   whiteBalanceMode?: string[];
   zoom?: { min?: number; max?: number } | number;
+  exposureCompensation?: { min?: number; max?: number; step?: number };
 };
 
 /**
@@ -180,6 +181,15 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 
       if (typeof caps.zoom === 'object' && caps.zoom && 'min' in caps.zoom && 'max' in caps.zoom) {
         advanced.zoom = Math.max(caps.zoom.min ?? 1, Math.min(1, caps.zoom.max ?? 1));
+      }
+
+      if (caps.exposureCompensation && typeof caps.exposureCompensation === 'object') {
+        const ec = caps.exposureCompensation;
+        const lo = ec.min ?? -1;
+        const hi = ec.max ?? 1;
+        if (hi > lo) {
+          advanced.exposureCompensation = lo + (hi - lo) * 0.58;
+        }
       }
 
       const hasAdvancedParams = Object.keys(advanced).length > 0;

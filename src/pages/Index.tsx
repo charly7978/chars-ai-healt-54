@@ -130,8 +130,8 @@ const Index = () => {
   useEffect(() => {
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
-      canvasRef.current.width = 480;
-      canvasRef.current.height = 360;
+      canvasRef.current.width = 640;
+      canvasRef.current.height = 480;
       ctxRef.current = canvasRef.current.getContext('2d', { 
         willReadFrequently: true,
         alpha: false 
@@ -486,12 +486,20 @@ const Index = () => {
     }
 
     // Procesar latidos
-    const heartBeatResult = processHeartBeat(
-      signalValue,
-      lastSignal.timestamp
-    );
-    
-    setHeartRate(heartBeatResult.bpm);
+    const heartBeatResult = processHeartBeat(signalValue, lastSignal.timestamp, {
+      ppgQuality: lastSignal.quality,
+    });
+
+    const hrStable =
+      heartBeatResult.confidence >= 0.48 &&
+      (lastSignal.quality ?? 0) >= 40 &&
+      heartBeatResult.bpm > 0;
+
+    if (hrStable) {
+      setHeartRate(heartBeatResult.bpm);
+    } else if ((lastSignal.quality ?? 0) < 22 && heartBeatResult.confidence < 0.18) {
+      setHeartRate(0);
+    }
     setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
     
     if (heartBeatResult.isPeak) {

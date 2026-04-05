@@ -45,8 +45,12 @@ export function computeTemporalNormalizedPulse(
   const chromX = 3 * Rn - 2 * Gn;
   const chromY = 1.5 * Rn + Gn - 1.5 * Bn;
 
-  const posWeight = 0.58;
-  const rawPulse = posWeight * pos + (1 - posWeight) * chromX + 0.1 * chromY;
+  const posWeight = 0.64;
+  const rawPulse =
+    posWeight * pos +
+    (1 - posWeight) * chromX +
+    0.12 * chromY +
+    0.06 * (Gn - 1);
 
   return { rawPulse, posWeight };
 }
