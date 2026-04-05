@@ -23,6 +23,12 @@ interface PipelineMetrics {
   wtaWinnerLabel?: string;
   wtaWinnerScore?: number;
   wtaAllScores?: Record<string, number>;
+  // Rescue metrics
+  rescueLevel?: number;
+  rescueLevelLabel?: string;
+  rescueActive?: boolean;
+  rescueRoiFraction?: number;
+  rescueAgcGain?: number;
 }
 
 interface PPGSignalMeterProps {
@@ -549,6 +555,26 @@ const PPGSignalMeter = ({
           xOff += 38;
         }
       }
+    }
+    
+    // --- Fila 6: Rescue Engine Status ---
+    if (metrics.rescueLevelLabel) {
+      y += 14;
+      const rescueColors: Record<string, string> = {
+        'NORMAL': '#22c55e',
+        'MILD': '#f59e0b',
+        'MODERATE': '#f97316',
+        'AGGRESSIVE': '#ef4444',
+      };
+      const rColor = rescueColors[metrics.rescueLevelLabel] || '#64748b';
+      ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = rColor;
+      const rescueIcon = metrics.rescueActive ? '🚨' : '✅';
+      ctx.fillText(`${rescueIcon} RESCUE: ${metrics.rescueLevelLabel}`, col1, y + 4);
+      
+      ctx.font = '7px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText(`ROI:${((metrics.rescueRoiFraction || 0.85) * 100).toFixed(0)}% AGC:${(metrics.rescueAgcGain || 1).toFixed(1)}x`, col2, y + 4);
     }
   }, []);
 

@@ -1,6 +1,7 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
 import { WinnerTakesAllSelector, WTAResult } from './WinnerTakesAll';
+import { AutoRescueEngine, RescueLevel, type RescueState } from './AutoRescueEngine';
 
 /**
  * PROCESADOR PPG OPTIMIZADO - CON DERIVADAS VPG/APG
@@ -18,6 +19,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   private bandpassFilter: BandpassFilter;
   private wtaSelector: WinnerTakesAllSelector;
+  private rescueEngine: AutoRescueEngine;
+  private lastRescueState: RescueState | null = null;
   
   // Buffers ampliados
   private readonly BUFFER_SIZE = 180; // 6 segundos @ 30fps
@@ -69,6 +72,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // Filtro pasabanda: 0.5-4Hz (30-240 BPM)
     this.bandpassFilter = new BandpassFilter(30);
     this.wtaSelector = new WinnerTakesAllSelector();
+    this.rescueEngine = new AutoRescueEngine();
   }
 
   async initialize(): Promise<void> {
@@ -101,8 +105,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount++;
     const timestamp = Date.now();
     
-    // 1. EXTRAER RGB DE ROI CENTRAL (85% del área)
-    const { rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore } = this.extractROI(imageData);
+    // 1. GET RESCUE STATE for adaptive parameters
+    const rescueState = this.lastRescueState;
+    const roiFraction = rescueState?.roiFraction ?? 0.85;
+    const agcGain = rescueState?.agcGain ?? 1.0;
+    
+    // 2. EXTRAER RGB DE ROI ADAPTATIVA
+    const { rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore } = this.extractROI(imageData, roiFraction);
     
     // 2. GUARDAR EN BUFFERS
     this.redBuffer.push(rawRed);
@@ -155,23 +164,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.signalQuality = this.calculateSignalQuality();
     this.updateMotionLevel();
     
+    // 10b. RESCUE ENGINE: evaluar y adaptar
+    this.lastRescueState = this.rescueEngine.evaluate(this.signalQuality, this.fingerDetected);
+    
     // 11. LOG CADA SEGUNDO
     const now = Date.now();
     if (now - this.lastLogTime >= 1000) {
       this.lastLogTime = now;
       const wta = wtaResult;
       const fingerStatus = this.fingerDetected ? '✅' : '❌';
-      console.log(`📷 PPG [${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus}`);
+      const rescueLabel = this.rescueEngine.getLevelLabel();
+      console.log(`📷 PPG [${wta.winnerId}]: Score=${wta.winnerScore.toFixed(0)} Filt=${filtered.toFixed(2)} Q=${this.signalQuality.toFixed(0)}% AC_R=${this.redAC.toFixed(1)} AC_G=${this.greenAC.toFixed(1)} ${fingerStatus} R:${rescueLabel}`);
     }
     
     // 12. CALCULAR ÍNDICE DE PERFUSIÓN
     const perfusionIndex = this.calculatePerfusionIndex();
     
-    // 13. EMITIR SEÑAL PROCESADA
+    // 13. EMITIR SEÑAL PROCESADA con AGC de rescate
+    const rescuedFilteredValue = mainFiltered * agcGain;
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: inverted,
-      filteredValue: mainFiltered,
+      filteredValue: rescuedFilteredValue,
       quality: this.signalQuality,
       fingerDetected: this.fingerDetected,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
@@ -191,7 +205,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   /**
    * EXTRAER RGB DE REGIÓN AMPLIA (85%)
    */
-  private extractROI(imageData: ImageData): {
+  private extractROI(imageData: ImageData, roiFraction: number = 0.85): {
     rawRed: number;
     rawGreen: number;
     rawBlue: number;
@@ -204,7 +218,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const height = imageData.height;
     
     // ROI amplia - 85% del área
-    const roiSize = Math.min(width, height) * 0.85;
+    const roiSize = Math.min(width, height) * roiFraction;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
@@ -574,8 +588,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastTilePulseScore = 0;
     this.motionLevel = 0;
     this.lastWTAResult = null;
+    this.lastRescueState = null;
     this.bandpassFilter.reset();
     this.wtaSelector.reset();
+    this.rescueEngine.reset();
   }
 
   getRGBStats() {
@@ -593,6 +609,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   getDetectionMetrics() {
     const wtaInfo = this.wtaSelector.getWinnerInfo();
+    const rescue = this.lastRescueState;
     return {
       detectionConfidence: this.detectionConfidence,
       fingerDetected: this.fingerDetected,
@@ -613,6 +630,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       wtaWinnerLabel: wtaInfo.winnerLabel,
       wtaWinnerScore: wtaInfo.winnerScore,
       wtaAllScores: wtaInfo.allScores,
+      // Rescue metrics
+      rescueLevel: rescue?.level ?? 0,
+      rescueLevelLabel: this.rescueEngine.getLevelLabel(),
+      rescueActive: rescue?.isRescueActive ?? false,
+      rescueRoiFraction: rescue?.roiFraction ?? 0.85,
+      rescueAgcGain: rescue?.agcGain ?? 1.0,
     };
   }
   
