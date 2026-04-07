@@ -49,31 +49,32 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  const emptyResult = useCallback((filteredValue = 0): HeartBeatResult => ({
-    bpm: currentBPM,
-    confidence: 0,
-    isPeak: false,
-    filteredValue,
-    arrhythmiaCount: 0,
-    signalQuality: 0,
-    rrData: { intervals: [], lastPeakTime: null },
-  }), [currentBPM]);
+  // Use refs to avoid stale closures and prevent callback identity churn
+  const currentBPMRef = useRef(0);
+  const confidenceRef = useRef(0);
+  const signalQualityRef = useRef(0);
+
+  // Keep refs in sync
+  currentBPMRef.current = currentBPM;
+  confidenceRef.current = confidence;
+  signalQualityRef.current = signalQuality;
 
   const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
-      return emptyResult();
+      return {
+        bpm: currentBPMRef.current, confidence: 0, isPeak: false,
+        filteredValue: 0, arrhythmiaCount: 0, signalQuality: 0,
+        rrData: { intervals: [], lastPeakTime: null },
+      };
     }
 
     const currentTime = timestamp ?? Date.now();
 
     if (currentTime - lastProcessTimeRef.current < 12) {
       return {
-        bpm: currentBPM,
-        confidence,
-        isPeak: false,
-        filteredValue: 0,
-        arrhythmiaCount: 0,
-        signalQuality,
+        bpm: currentBPMRef.current, confidence: confidenceRef.current,
+        isPeak: false, filteredValue: 0, arrhythmiaCount: 0,
+        signalQuality: signalQualityRef.current,
         rrData: { intervals: [], lastPeakTime: null },
       };
     }
@@ -89,7 +90,11 @@ export const useHeartBeatProcessor = () => {
         setSignalQuality(0);
       }
 
-      return emptyResult();
+      return {
+        bpm: currentBPMRef.current, confidence: 0, isPeak: false,
+        filteredValue: 0, arrhythmiaCount: 0, signalQuality: 0,
+        rrData: { intervals: [], lastPeakTime: null },
+      };
     }
 
     lostContactFramesRef.current = 0;
@@ -119,7 +124,7 @@ export const useHeartBeatProcessor = () => {
       signalQuality: roundedSQI,
       rrData,
     };
-  }, [confidence, currentBPM, emptyResult, signalQuality]);
+  }, []);
 
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
