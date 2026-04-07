@@ -181,7 +181,7 @@ export function usePPGEngine() {
     );
 
     // 6. Beat detection (only with sufficient contact and quality)
-    let beatResult = { isPeak: false, beat: undefined as DetectedBeat | undefined, bpm: 0, bpmConfidence: 0, rrIntervals: [] as number[], consecutiveValidBeats: 0 };
+    let beatResult: { isPeak: boolean; beat?: DetectedBeat; bpm: number; bpmConfidence: number; rrIntervals: number[]; consecutiveValidBeats: number } = { isPeak: false, beat: undefined, bpm: 0, bpmConfidence: 0, rrIntervals: [], consecutiveValidBeats: 0 };
 
     if (contactResult.fingerDetected && qualityResult.level !== 'UNUSABLE') {
       beatResult = beatEngine.current.process(filtered, now, qualityResult.score, motionScore);
