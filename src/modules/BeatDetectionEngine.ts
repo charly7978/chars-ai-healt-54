@@ -78,7 +78,7 @@ export class BeatDetectionEngine {
     if (this.warmupStartTime === 0) this.warmupStartTime = timestamp;
 
     if (this.signalBuffer.length < 25) {
-      return this.noDetection();
+      return { isPeak: false, bpm: 0, bpmConfidence: 0, rrIntervals: [], consecutiveValidBeats: 0 };
     }
 
     const timeSinceLastBeat = this.lastAcceptedBeatTime > 0
@@ -87,7 +87,7 @@ export class BeatDetectionEngine {
 
     // Refractory period
     if (timeSinceLastBeat < B.refractoryMs) {
-      return this.noDetection();
+      return { isPeak: false, bpm: this.getPublishableBPM(qualityScore, timestamp), bpmConfidence: this.getBPMConfidence(), rrIntervals: [...this.rrIntervals], consecutiveValidBeats: this.consecutiveValidBeats };
     }
 
     // --- DETECTOR A: derivative zero-crossing + morphology ---
@@ -355,7 +355,7 @@ export class BeatDetectionEngine {
       this.smoothBPM = instantBPM;
     } else {
       const diff = Math.abs(instantBPM - this.smoothBPM) / Math.max(1, this.smoothBPM);
-      let alpha = PUB.smoothingAlpha;
+      let alpha: number = PUB.smoothingAlpha;
       if (diff > 0.35) alpha = 0.1;
       else if (diff > 0.2) alpha = 0.18;
       if (this.consecutiveValidBeats < 4) alpha = Math.max(0.08, alpha - 0.05);
