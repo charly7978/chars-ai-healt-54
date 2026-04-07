@@ -555,6 +555,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.smoothedRed = 0;
     this.smoothedGreen = 0;
     this.smoothedBlue = 0;
+    this.detectionConfidence = 0;
     this.redDC = 0;
     this.redAC = 0;
     this.greenDC = 0;
@@ -592,8 +593,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       fingerDetected: this.fingerDetected,
       contactLikely: this.contactLikely,
       signalQuality: this.signalQuality,
+      perfusionIndex: this.calculatePerfusionIndex(),
       smoothedRed: this.smoothedRed,
-      smoothedGreen: this.smoothedGreen,
       smoothedBlue: this.smoothedBlue,
       fingerConfidenceCount: this.fingerConfidenceCount,
       fingerLostCount: this.fingerLostCount,
