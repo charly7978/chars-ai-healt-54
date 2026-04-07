@@ -276,28 +276,46 @@ export class VitalSignsProcessor {
     };
   }
 
+  /**
+   * CÁLCULO UNIFICADO DE SIGNOS VITALES
+   * Usa extractCycleFeatures (API moderna) en lugar de extractAllFeatures (legacy)
+   * para glucosa, hemoglobina y lípidos con modelos basados en literatura
+   */
   private calculateVitalSigns(
     signalValue: number, 
     rrData: { intervals: number[], lastPeakTime: number | null }
   ): void {
-    const features = PPGFeatureExtractor.extractAllFeatures(this.signalHistory, rrData.intervals);
-    
     // Validar calidad de señal mínima antes de calcular
     const minQualityForCalculation = 15;
     if (this.measurements.signalQuality < minQualityForCalculation) {
-      // Señal muy débil - no actualizar valores para evitar ruido
       return;
     }
     
     // 1. SpO2 - Fórmula estándar TI - suavizado estable
     const spo2 = this.calculateSpO2Raw();
     if (spo2 !== 0 && spo2 > 50 && spo2 < 105) {
-      // Solo aceptar valores en rango razonable (aunque no forzamos, filtramos ruido extremo)
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
       this.updateHistory('spo2', spo2);
     }
 
-    // 2. Presión arterial - Desde BloodPressureProcessor avanzado
+    // 2. Extraer cycle features para BP, glucosa, hemoglobina, lípidos
+    const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, 30);
+    const validCycleFeatures: import('./PPGFeatureExtractor').CycleFeatures[] = [];
+    
+    for (const cycle of cycles) {
+      const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
+      if (features && features.quality > 0.4) {
+        validCycleFeatures.push(features);
+      }
+    }
+
+    // HR y HRV
+    const validRR = rrData.intervals.filter(i => i > 200 && i < 2000);
+    const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
+    const hr = avgRR > 0 ? 60000 / avgRR : 0;
+    const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
+
+    // 3. Presión arterial - Desde BloodPressureProcessor avanzado
     const bpEstimate = this.bloodPressureProcessor.estimate(
       this.signalHistory, rrData.intervals, 30
     );
@@ -310,28 +328,33 @@ export class VitalSignsProcessor {
       this.updateHistory('diastolic', bpEstimate.diastolic);
     }
 
-    // 3. Glucosa - Desde características PPG - suavizado dinámico
-    const glucose = this.calculateGlucoseRaw(features, rrData.intervals);
-    if (glucose !== 0 && glucose > 40 && glucose < 400) {
-      this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
-      this.updateHistory('glucose', glucose);
+    // 4-6: Solo calcular con suficientes ciclos válidos
+    if (validCycleFeatures.length >= 3 && hr > 0) {
+      const medianF = this.medianCycleFeatures(validCycleFeatures);
+      
+      // 4. Glucosa - Modelo multivariable (Islam et al. 2021, Satter et al. 2024)
+      const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
+      if (glucose > 40 && glucose < 400) {
+        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
+        this.updateHistory('glucose', glucose);
+      }
+
+      // 5. Hemoglobina - Beer-Lambert multichannel
+      const hemoglobin = this.calculateHemoglobinAdvanced(medianF);
+      if (hemoglobin > 5 && hemoglobin < 25) {
+        this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin, 'stable');
+        this.updateHistory('hemoglobin', hemoglobin);
+      }
+
+      // 6. Lípidos - Rigidez arterial (Ferizoli et al. 2024, Arguello-Prada 2025)
+      const lipids = this.calculateLipidsAdvanced(medianF, hr, rrVar);
+      if (lipids.totalCholesterol > 80 && lipids.totalCholesterol < 400) {
+        this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipids.totalCholesterol, 'dynamic');
+        this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipids.triglycerides, 'dynamic');
+      }
     }
 
-    // 4. Hemoglobina - Desde absorción RGB - suavizado estable
-    const hemoglobin = this.calculateHemoglobinRaw(features);
-    if (hemoglobin !== 0 && hemoglobin > 5 && hemoglobin < 25) {
-      this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin, 'stable');
-      this.updateHistory('hemoglobin', hemoglobin);
-    }
-
-    // 5. Lípidos - suavizado dinámico
-    const lipids = this.calculateLipidsRaw(features, rrData.intervals);
-    if (lipids.totalCholesterol !== 0 && lipids.totalCholesterol > 80 && lipids.totalCholesterol < 400) {
-      this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipids.totalCholesterol, 'dynamic');
-      this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipids.triglycerides, 'dynamic');
-    }
-
-    // 6. Arritmias
+    // 7. Arritmias
     if (rrData.intervals.length >= 5) {
       const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
       this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
