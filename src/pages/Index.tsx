@@ -126,43 +126,16 @@ const Index = () => {
     loadSavedCalibration();
   }, [calibrateBP]);
 
-  /** Máx. dimensión del canvas: más píxeles = mejor SNR en ROI (cbPPG / rPPG); cap por CPU */
-  const CANVAS_MAX_DIM = 1280;
-
-  const fitCanvasToVideo = useCallback((video: HTMLVideoElement) => {
-    const canvas = canvasRef.current;
-    const ctx = ctxRef.current;
-    if (!canvas || !ctx || !video.videoWidth || !video.videoHeight) return;
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    let cw = vw;
-    let ch = vh;
-    if (Math.max(vw, vh) > CANVAS_MAX_DIM) {
-      const s = CANVAS_MAX_DIM / Math.max(vw, vh);
-      cw = Math.max(320, Math.floor(vw * s));
-      ch = Math.max(240, Math.floor(vh * s));
-    }
-    if (canvas.width !== cw || canvas.height !== ch) {
-      canvas.width = cw;
-      canvas.height = ch;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-    }
-  }, []);
-
   // CANVAS PARA CAPTURA
   useEffect(() => {
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
       canvasRef.current.width = 640;
       canvasRef.current.height = 480;
-      const opts: CanvasRenderingContext2DSettings = {
+      ctxRef.current = canvasRef.current.getContext('2d', { 
         willReadFrequently: true,
-        alpha: false,
-      };
-      ctxRef.current =
-        canvasRef.current.getContext('2d', opts) ||
-        canvasRef.current.getContext('2d');
+        alpha: false 
+      });
     }
   }, []);
 
@@ -240,55 +213,46 @@ const Index = () => {
   // === LOOP DE CAPTURA DE FRAMES ===
   const startFrameLoop = useCallback(() => {
     if (frameLoopActiveRef.current) return;
-    if (!canvasRef.current) {
-      console.warn('[PPG] Canvas aún no creado; reintenta al siguiente stream.');
+    frameLoopActiveRef.current = true;
+    
+    const canvas = canvasRef.current;
+    const ctx = ctxRef.current;
+    if (!canvas || !ctx) {
+      frameLoopActiveRef.current = false;
       return;
     }
-    frameLoopActiveRef.current = true;
-
+    
     let lastFrameTime = 0;
     const TARGET_FPS = 30;
     const FRAME_INTERVAL = 1000 / TARGET_FPS;
     
     const captureFrame = () => {
       if (!frameLoopActiveRef.current) return;
-
-      const canvasEl = canvasRef.current;
-      let ctxLive = ctxRef.current;
-      if ((!ctxLive || !canvasEl) && canvasRef.current) {
-        ctxLive = canvasRef.current.getContext('2d', { willReadFrequently: true, alpha: false });
-        ctxRef.current = ctxLive;
-      }
-      if (!canvasEl || !ctxLive) {
-        frameLoopRef.current = requestAnimationFrame(captureFrame);
-        return;
-      }
-
+      
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
         frameLoopRef.current = requestAnimationFrame(captureFrame);
         return;
       }
-
+      
       const now = performance.now();
       if (now - lastFrameTime >= FRAME_INTERVAL) {
         try {
-          fitCanvasToVideo(video);
-          ctxLive.drawImage(video, 0, 0, canvasEl.width, canvasEl.height);
-          const imageData = ctxLive.getImageData(0, 0, canvasEl.width, canvasEl.height);
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
           processFrame(imageData);
           lastFrameTime = now;
         } catch (e) {
           console.error('Error capturando frame:', e);
         }
       }
-
+      
       frameLoopRef.current = requestAnimationFrame(captureFrame);
     };
     
     console.log('🎬 Iniciando loop de captura');
     frameLoopRef.current = requestAnimationFrame(captureFrame);
-  }, [processFrame, fitCanvasToVideo]);
+  }, [processFrame]);
 
   const stopFrameLoop = useCallback(() => {
     frameLoopActiveRef.current = false;
@@ -318,8 +282,8 @@ const Index = () => {
     lastArrhythmiaCountForBeatsRef.current = 0;
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
     
-    // PPG: startProcessing va en handleStreamReady (cuando exista MediaStream) para no
-    // procesar “en vacío” y alinearse con el único <video> que lleva el stream.
+    // Iniciar procesamiento
+    startProcessing();
     setIsCameraOn(true);
     setIsMonitoring(true);
     
@@ -337,29 +301,35 @@ const Index = () => {
     startCalibration();
     setTimeout(() => setIsCalibrating(false), 3000);
     
-  }, [isMonitoring, startCalibration, enterFullScreen]);
+  }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
 
-  const handleStreamReady = useCallback(
-    (stream: MediaStream) => {
-      console.log('📹 Stream recibido, arrancando PPG');
-      setCameraStream(stream);
-      startProcessing();
-    },
-    [startProcessing]
-  );
-
-  /**
-   * Arranca el loop con stream + monitoreo. NO exigir `isProcessing` del estado React:
-   * puede ir un render detrás de `isProcessingRef` y el loop nunca arrancaba (0 frames).
-   * `processFrame` ya descarta si el worker no está en marcha.
-   */
-  useEffect(() => {
-    if (!isMonitoring || !cameraStream) return;
-    startFrameLoop();
-    return () => {
-      stopFrameLoop();
-    };
-  }, [isMonitoring, cameraStream, startFrameLoop, stopFrameLoop]);
+  // === CUANDO LA CÁMARA ESTÁ LISTA ===
+  const handleStreamReady = useCallback((stream: MediaStream) => {
+    console.log('📹 Stream recibido');
+    setCameraStream(stream);
+    
+    // Esperar a que el video esté listo y comenzar captura
+    setTimeout(() => {
+      const video = cameraRef.current?.getVideoElement();
+      if (video && video.readyState >= 2) {
+        console.log('✅ Video listo:', video.videoWidth, 'x', video.videoHeight);
+        startFrameLoop();
+      } else {
+        // Reintentar
+        const checkReady = setInterval(() => {
+          const v = cameraRef.current?.getVideoElement();
+          if (v && v.readyState >= 2 && v.videoWidth > 0) {
+            clearInterval(checkReady);
+            console.log('✅ Video listo (retry):', v.videoWidth, 'x', v.videoHeight);
+            startFrameLoop();
+          }
+        }, 100);
+        
+        // Timeout después de 5 segundos
+        setTimeout(() => clearInterval(checkReady), 5000);
+      }
+    }, 500);
+  }, [startFrameLoop]);
 
   // === FINALIZAR MEDICIÓN ===
   const finalizeMeasurement = useCallback(async () => {
@@ -500,15 +470,9 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    // Dedo detectado O contacto óptico fuerte (RGB típico dedo+flash) + algo de perfusión — evita quedar en 0 si la histéresis va lenta.
-    const rr = lastSignal.rawRed ?? 0;
-    const rg = lastSignal.rawGreen ?? 0;
-    const proxyContact =
-      rr > 45 &&
-      rg > 20 &&
-      rr >= rg * 0.46 &&
-      (lastSignal.perfusionIndex ?? 0) > 0.011;
-    const canEstimateHR = lastSignal.fingerDetected === true || proxyContact;
+    // Solo con contacto dedo–lente: la pulsatilidad sola (luces, fondo, ruido) dispara FC falsas.
+    // Ver p. ej. buenas prácticas rPPG: ROI estable, linterna, SQI (p. ej. npj Biosensing 2024).
+    const canEstimateHR = lastSignal.fingerDetected === true;
 
     if (!canEstimateHR) {
       setHeartbeatSignal(signalValue);
@@ -520,13 +484,10 @@ const Index = () => {
       ppgQuality: lastSignal.quality,
     });
 
-    const q = lastSignal.quality ?? 0;
-    // FC estable: siempre exigir SQI razonable; proxyContact solo abre el pipeline, no sustituye calidad.
     const hrStable =
-      heartBeatResult.bpm > 0 &&
-      q >= 20 &&
-      heartBeatResult.confidence >=
-        (lastSignal.fingerDetected ? 0.32 : 0.38);
+      heartBeatResult.confidence >= 0.32 &&
+      (lastSignal.quality ?? 0) >= 20 &&
+      heartBeatResult.bpm > 0;
 
     if (hrStable) {
       setHeartRate(heartBeatResult.bpm);

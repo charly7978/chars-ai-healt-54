@@ -1,5 +1,5 @@
 /**
- * FILTRO PASABANDA IIR BUTTERWORTH ~0.25-5Hz - OPTIMIZADO PARA PPG
+ * FILTRO PASABANDA IIR BUTTERWORTH 0.3-5Hz - OPTIMIZADO PARA PPG
  * 
  * CRÍTICO PARA DETECCIÓN DE LATIDOS:
  * - Frecuencia cardíaca: 18-300 BPM = 0.3-5 Hz (rango amplio para robustez)
@@ -52,8 +52,8 @@ export class BandpassFilter {
   private computeCoefficients(): void {
     const fs = this.sampleRate;
     
-    // === PASA-ALTOS ~0.25 Hz: conserva más energía pulsátil en señales débiles (rPPG móvil) ===
-    const fcHp = 0.25;
+    // === PASA-ALTOS a 0.3Hz (más permisivo para señales débiles) ===
+    const fcHp = 0.3;
     const wcHp = Math.tan(Math.PI * fcHp / fs);
     const kHp = wcHp;
     const normHp = 1 / (1 + Math.sqrt(2) * kHp + kHp * kHp);
@@ -116,7 +116,7 @@ export class BandpassFilter {
   
   /**
    * FILTRO PASABANDA COMPLETO
-   * Aplica HPF ~0.25Hz -> LPF 5Hz en cascada
+   * Aplica HPF 0.5Hz -> LPF 4Hz en cascada
    * 
    * @param value Valor crudo de entrada (ej: intensidad rojo promedio)
    * @returns Valor filtrado con solo componentes de frecuencia cardíaca
@@ -126,7 +126,7 @@ export class BandpassFilter {
       return 0;
     }
     
-    // Paso 1: Pasa-altos ~0.25 Hz (elimina DC y deriva lenta)
+    // Paso 1: Pasa-altos (elimina DC y deriva lenta)
     const hpFiltered = this.applyBiquad(value, this.hpfB, this.hpfA, this.hpfState);
     
     // Paso 2: Pasa-bajos (elimina ruido de alta frecuencia)

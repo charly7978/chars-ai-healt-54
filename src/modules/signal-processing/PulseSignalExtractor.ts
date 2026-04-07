@@ -24,7 +24,7 @@ export function computeTemporalNormalizedPulse(
   windowLen: number = 90
 ): PulseBlendResult | null {
   const n = rWindow.length;
-  const minSamples = 24;
+  const minSamples = 28;
   if (n < minSamples) return null;
 
   const win = Math.min(windowLen, n);
@@ -45,12 +45,12 @@ export function computeTemporalNormalizedPulse(
   const chromX = 3 * Rn - 2 * Gn;
   const chromY = 1.5 * Rn + Gn - 1.5 * Bn;
 
-  const posWeight = 0.67;
+  const posWeight = 0.64;
   const rawPulse =
     posWeight * pos +
     (1 - posWeight) * chromX +
-    0.13 * chromY +
-    0.07 * (Gn - 1);
+    0.12 * chromY +
+    0.06 * (Gn - 1);
 
   return { rawPulse, posWeight };
 }
