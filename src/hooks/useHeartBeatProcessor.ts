@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
+import type { ContactState } from '../types/signal';
 
 interface HeartBeatResult {
   bpm: number;
@@ -15,10 +16,11 @@ interface HeartBeatResult {
 }
 
 /**
- * HOOK DE PROCESAMIENTO CARDÍACO
- * - Ignora ruido cuando no hay dedo confirmado
- * - Evita contaminar el detector con frames sin contacto
- * - Usa el BPM ya estabilizado por HeartBeatProcessor
+ * HOOK DE PROCESAMIENTO CARDÍACO - ALINEADO CON CONTACTSTATE
+ * 
+ * - Usa ContactState del PPGSignalProcessor en vez de su propia lógica de reset
+ * - Solo resetea cuando NO_CONTACT sostenido
+ * - En UNSTABLE_CONTACT sigue procesando sin resetear historial
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
@@ -30,13 +32,19 @@ export const useHeartBeatProcessor = () => {
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
   const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
-  const lostContactFramesRef = useRef<number>(0);
+  // Track sustained NO_CONTACT to align with PPGSignalProcessor
+  const noContactFramesRef = useRef<number>(0);
+  const NO_CONTACT_RESET_THRESHOLD = 90; // ~3s @ 30fps
+
+  // Refs for stable callback
+  const currentBPMRef = useRef(0);
+  const confidenceRef = useRef(0);
+  const signalQualityRef = useRef(0);
 
   useEffect(() => {
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `hb_${t}_${p}`;
-
     processorRef.current = new HeartBeatProcessor();
     processingStateRef.current = 'ACTIVE';
 
@@ -49,17 +57,16 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  // Use refs to avoid stale closures and prevent callback identity churn
-  const currentBPMRef = useRef(0);
-  const confidenceRef = useRef(0);
-  const signalQualityRef = useRef(0);
-
   // Keep refs in sync
   currentBPMRef.current = currentBPM;
   confidenceRef.current = confidence;
   signalQualityRef.current = signalQuality;
 
-  const processSignal = useCallback((value: number, fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
+  const processSignal = useCallback((
+    value: number,
+    contactState: ContactState = 'STABLE_CONTACT',
+    timestamp?: number
+  ): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
       return {
         bpm: currentBPMRef.current, confidence: 0, isPeak: false,
@@ -70,6 +77,7 @@ export const useHeartBeatProcessor = () => {
 
     const currentTime = timestamp ?? Date.now();
 
+    // Throttle to ~80fps max
     if (currentTime - lastProcessTimeRef.current < 12) {
       return {
         bpm: currentBPMRef.current, confidence: confidenceRef.current,
@@ -78,13 +86,14 @@ export const useHeartBeatProcessor = () => {
         rrData: { intervals: [], lastPeakTime: null },
       };
     }
-
     lastProcessTimeRef.current = currentTime;
 
-    if (!fingerDetected) {
-      lostContactFramesRef.current += 1;
+    // === CONTACT STATE HANDLING ===
+    if (contactState === 'NO_CONTACT') {
+      noContactFramesRef.current += 1;
 
-      if (lostContactFramesRef.current >= 8) {
+      // Only reset after sustained NO_CONTACT (aligned with PPGSignalProcessor)
+      if (noContactFramesRef.current >= NO_CONTACT_RESET_THRESHOLD) {
         processorRef.current.reset();
         setConfidence(0);
         setSignalQuality(0);
@@ -97,7 +106,8 @@ export const useHeartBeatProcessor = () => {
       };
     }
 
-    lostContactFramesRef.current = 0;
+    // UNSTABLE_CONTACT or STABLE_CONTACT — process normally
+    noContactFramesRef.current = 0;
     processedSignalsRef.current++;
 
     const result = processorRef.current.processSignal(value, timestamp);
@@ -108,7 +118,7 @@ export const useHeartBeatProcessor = () => {
 
     setSignalQuality(roundedSQI);
 
-    if (result.bpm > 0 && (result.confidence >= 0.18 || result.sqi >= 45)) {
+    if (result.bpm > 0 && (result.confidence >= 0.15 || result.sqi >= 40)) {
       setCurrentBPM(Math.round(result.bpm));
       setConfidence(result.confidence);
     } else if (result.confidence > 0) {
@@ -128,20 +138,16 @@ export const useHeartBeatProcessor = () => {
 
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
-
     processingStateRef.current = 'RESETTING';
 
-    if (processorRef.current) {
-      processorRef.current.reset();
-    }
+    if (processorRef.current) processorRef.current.reset();
 
     setCurrentBPM(0);
     setConfidence(0);
     setSignalQuality(0);
-
     lastProcessTimeRef.current = 0;
     processedSignalsRef.current = 0;
-    lostContactFramesRef.current = 0;
+    noContactFramesRef.current = 0;
 
     processingStateRef.current = 'ACTIVE';
   }, []);

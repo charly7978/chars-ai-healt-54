@@ -1,3 +1,13 @@
+/**
+ * HEARTBEAT PROCESSOR - FUSIÓN TIEMPO + FRECUENCIA
+ *
+ * Mejoras:
+ * 1. NO resetea buffers por fingerDetected — eso lo maneja el caller
+ * 2. Fusión explícita: peak-domain dominante cuando morfología buena,
+ *    spectral dominante cuando señal débil
+ * 3. Scoring de candidatos de pico por prominencia + pendiente + consistencia RR
+ * 4. Ventanas adaptativas: cortas para señal débil, largas para estable
+ */
 export class HeartBeatProcessor {
   private readonly MIN_PEAK_INTERVAL_MS = 280;
   private readonly MAX_PEAK_INTERVAL_MS = 2200;
@@ -5,14 +15,14 @@ export class HeartBeatProcessor {
   private signalBuffer: number[] = [];
   private derivativeBuffer: number[] = [];
   private timestampBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 240;
+  private readonly BUFFER_SIZE = 300;
 
   private lastPeakTime = 0;
-  private peakThreshold = 4.2;
+  private peakThreshold = 4.0;
   private lastPeakValue = 0;
 
   private rrIntervals: number[] = [];
-  private readonly MAX_RR_INTERVALS = 24;
+  private readonly MAX_RR_INTERVALS = 30;
   private smoothBPM = 0;
   private frequencyBPM = 0;
   private periodicityScore = 0;
@@ -41,7 +51,6 @@ export class HeartBeatProcessor {
         document.removeEventListener('click', unlock);
       } catch {}
     };
-
     document.addEventListener('touchstart', unlock, { passive: true });
     document.addEventListener('click', unlock, { passive: true });
   }
@@ -70,27 +79,23 @@ export class HeartBeatProcessor {
       this.derivativeBuffer.shift();
     }
 
-    if (this.signalBuffer.length < 24) {
-      return {
-        bpm: 0,
-        confidence: 0,
-        isPeak: false,
-        filteredValue: 0,
-        arrhythmiaCount: 0,
-        sqi: 0,
-      };
+    if (this.signalBuffer.length < 20) {
+      return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
-    const { normalizedValue, range } = this.normalizeSignal(filteredValue);
+    // Adaptive window for normalization
+    const windowLen = this.consecutivePeaks < 3 ? 90 : 150;
+    const { normalizedValue, range } = this.normalizeSignal(filteredValue, windowLen);
+    
     const periodicity = this.estimatePeriodicity();
     this.periodicityScore = periodicity.score;
 
     if (periodicity.bpm > 0) {
       this.frequencyBPM = this.frequencyBPM === 0
         ? periodicity.bpm
-        : this.frequencyBPM * 0.84 + periodicity.bpm * 0.16;
+        : this.frequencyBPM * 0.82 + periodicity.bpm * 0.18;
     } else {
-      this.frequencyBPM = this.frequencyBPM * 0.92;
+      this.frequencyBPM = this.frequencyBPM * 0.94;
     }
 
     this.updateThreshold(range, this.periodicityScore);
@@ -100,7 +105,7 @@ export class HeartBeatProcessor {
     let isPeak = false;
 
     if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
-      isPeak = this.detectPeakWithDerivative(timeSinceLastPeak);
+      isPeak = this.detectPeakWithScoring(timeSinceLastPeak);
 
       if (isPeak) {
         if (this.lastPeakTime > 0 && timeSinceLastPeak <= this.MAX_PEAK_INTERVAL_MS) {
@@ -115,14 +120,10 @@ export class HeartBeatProcessor {
             this.smoothBPM = instantBPM;
           } else {
             const relativeDiff = Math.abs(instantBPM - this.smoothBPM) / Math.max(1, this.smoothBPM);
-            let alpha = 0.34;
-
-            if (relativeDiff > 0.35) alpha = 0.16;
-            else if (relativeDiff > 0.2) alpha = 0.24;
-
-            if (this.consecutivePeaks < 4) {
-              alpha = Math.max(0.14, alpha - 0.06);
-            }
+            let alpha = 0.3;
+            if (relativeDiff > 0.35) alpha = 0.12;
+            else if (relativeDiff > 0.2) alpha = 0.2;
+            if (this.consecutivePeaks < 4) alpha = Math.max(0.1, alpha - 0.06);
 
             this.smoothBPM = this.smoothBPM * (1 - alpha) + instantBPM * alpha;
           }
@@ -140,32 +141,23 @@ export class HeartBeatProcessor {
       this.consecutivePeaks = Math.max(0, this.consecutivePeaks - 1);
     }
 
-    if ((this.smoothBPM === 0 || this.consecutivePeaks < 2) && this.frequencyBPM > 0) {
-      this.smoothBPM = this.smoothBPM === 0
-        ? this.frequencyBPM
-        : this.smoothBPM * 0.88 + this.frequencyBPM * 0.12;
-    }
-
-    const confidence = this.calculateConfidence();
+    // === FUSIÓN TIEMPO + FRECUENCIA ===
     let displayBPM = this.smoothBPM;
 
     if (this.frequencyBPM > 0) {
       if (displayBPM === 0) {
+        // Sin picos aún — usar frecuencia pura
         displayBPM = this.frequencyBPM;
-      } else if (this.consecutivePeaks < 3 || confidence < 0.38) {
-        displayBPM = displayBPM * 0.6 + this.frequencyBPM * 0.4;
+      } else if (this.consecutivePeaks < 3 || this.signalQualityIndex < 30) {
+        // Señal débil — ponderar más la frecuencia
+        displayBPM = displayBPM * 0.5 + this.frequencyBPM * 0.5;
       } else {
-        displayBPM = displayBPM * 0.84 + this.frequencyBPM * 0.16;
+        // Señal fuerte — confiar más en picos
+        displayBPM = displayBPM * 0.85 + this.frequencyBPM * 0.15;
       }
     }
 
-    if (this.frameCount % 60 === 0) {
-      console.log(
-        `📊 BPM=${displayBPM.toFixed(1)} Conf=${(confidence * 100).toFixed(0)}% ` +
-        `SQI=${this.signalQualityIndex.toFixed(0)}% Peaks=${this.consecutivePeaks} ` +
-        `Corr=${this.periodicityScore.toFixed(2)}`
-      );
-    }
+    const confidence = this.calculateConfidence();
 
     return {
       bpm: displayBPM,
@@ -180,95 +172,64 @@ export class HeartBeatProcessor {
   private calculateDerivative(): number {
     const n = this.signalBuffer.length;
     if (n < 3) return 0;
-
-    const current = this.signalBuffer[n - 1];
-    const previous = this.signalBuffer[n - 2];
-    const older = this.signalBuffer[n - 3];
-
-    return (current - older) * 0.5 + (current - previous) * 0.5;
+    return (this.signalBuffer[n - 1] - this.signalBuffer[n - 3]) * 0.5 + (this.signalBuffer[n - 1] - this.signalBuffer[n - 2]) * 0.5;
   }
 
   private getRobustBounds(values: number[]): { low: number; high: number; range: number } {
     const sorted = [...values].sort((a, b) => a - b);
-    if (sorted.length === 0) {
-      return { low: 0, high: 0, range: 0 };
-    }
-
+    if (sorted.length === 0) return { low: 0, high: 0, range: 0 };
     const low = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? sorted[0];
     const high = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? sorted[sorted.length - 1];
-
-    return {
-      low,
-      high,
-      range: Math.max(0, high - low),
-    };
+    return { low, high, range: Math.max(0, high - low) };
   }
 
-  private normalizeSignal(value: number): { normalizedValue: number; range: number } {
-    const recent = this.signalBuffer.slice(-150);
+  private normalizeSignal(value: number, windowLen: number = 150): { normalizedValue: number; range: number } {
+    const recent = this.signalBuffer.slice(-windowLen);
     const { low, high, range } = this.getRobustBounds(recent);
-
-    if (range < 0.18) {
-      return { normalizedValue: 0, range: 0 };
-    }
-
+    if (range < 0.15) return { normalizedValue: 0, range: 0 };
     const clipped = Math.min(high, Math.max(low, value));
     const normalizedValue = ((clipped - low) / range - 0.5) * 120;
-
     return { normalizedValue, range };
   }
 
-  private normalizeWindow(values: number[]): number[] {
-    const referenceWindow = this.signalBuffer.slice(-150);
-    const { low, high, range } = this.getRobustBounds(referenceWindow);
-
-    if (range < 0.18) {
-      return values.map(() => 0);
-    }
-
-    return values.map((value) => {
-      const clipped = Math.min(high, Math.max(low, value));
-      return ((clipped - low) / range - 0.5) * 120;
+  private normalizeWindow(values: number[], windowLen: number = 150): number[] {
+    const refWindow = this.signalBuffer.slice(-windowLen);
+    const { low, high, range } = this.getRobustBounds(refWindow);
+    if (range < 0.15) return values.map(() => 0);
+    return values.map((v) => {
+      const c = Math.min(high, Math.max(low, v));
+      return ((c - low) / range - 0.5) * 120;
     });
   }
 
   private estimateSampleRate(): number {
     if (this.timestampBuffer.length < 10) return 30;
-
-    const recent = this.timestampBuffer.slice(-40);
+    const recent = this.timestampBuffer.slice(-50);
     const intervals: number[] = [];
-
     for (let i = 1; i < recent.length; i++) {
-      const delta = recent[i] - recent[i - 1];
-      if (delta >= 12 && delta <= 80) {
-        intervals.push(delta);
-      }
+      const d = recent[i] - recent[i - 1];
+      if (d >= 10 && d <= 100) intervals.push(d);
     }
-
     if (intervals.length < 6) return 30;
-
     const sorted = [...intervals].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)] ?? 33;
-    return this.clamp(1000 / median, 24, 36);
+    return this.clamp(1000 / median, 20, 40);
   }
 
   private estimatePeriodicity(): { bpm: number; score: number } {
-    if (this.signalBuffer.length < 72) {
-      return { bpm: 0, score: 0 };
-    }
+    if (this.signalBuffer.length < 60) return { bpm: 0, score: 0 };
 
     const sampleRate = this.estimateSampleRate();
-    const recentSignal = this.normalizeWindow(this.signalBuffer.slice(-180));
-    const mean = recentSignal.reduce((sum, value) => sum + value, 0) / recentSignal.length;
-    const centered = recentSignal.map((value) => value - mean);
-    const energy = centered.reduce((sum, value) => sum + value * value, 0);
+    const windowLen = this.consecutivePeaks < 3 ? 120 : 180;
+    const recentSignal = this.normalizeWindow(this.signalBuffer.slice(-windowLen), windowLen);
+    const mean = recentSignal.reduce((s, v) => s + v, 0) / recentSignal.length;
+    const centered = recentSignal.map((v) => v - mean);
+    const energy = centered.reduce((s, v) => s + v * v, 0);
 
-    if (energy < 1200) {
-      return { bpm: 0, score: 0 };
-    }
+    if (energy < 800) return { bpm: 0, score: 0 };
 
-    const minLag = Math.max(6, Math.round((sampleRate * 60) / 180));
-    const maxLag = Math.min(centered.length - 10, Math.round((sampleRate * 60) / 42));
+    const minLag = Math.max(5, Math.round((sampleRate * 60) / 200));
+    const maxLag = Math.min(centered.length - 8, Math.round((sampleRate * 60) / 38));
 
     let bestLag = 0;
     let bestScore = 0;
@@ -276,99 +237,82 @@ export class HeartBeatProcessor {
     const expectedLag = expectedRR > 0 ? Math.round((expectedRR / 1000) * sampleRate) : 0;
 
     for (let lag = minLag; lag <= maxLag; lag++) {
-      let cross = 0;
-      let energyA = 0;
-      let energyB = 0;
-
+      let cross = 0, eA = 0, eB = 0;
       for (let i = lag; i < centered.length; i++) {
-        const a = centered[i];
-        const b = centered[i - lag];
-        cross += a * b;
-        energyA += a * a;
-        energyB += b * b;
+        cross += centered[i] * centered[i - lag];
+        eA += centered[i] ** 2;
+        eB += centered[i - lag] ** 2;
       }
+      if (eA === 0 || eB === 0) continue;
 
-      if (energyA === 0 || energyB === 0) continue;
-
-      const correlation = cross / Math.sqrt(energyA * energyB);
+      const correlation = cross / Math.sqrt(eA * eB);
       const rhythmBias = expectedLag > 0
         ? 1 - Math.min(0.2, Math.abs(lag - expectedLag) / Math.max(1, expectedLag) * 0.12)
         : 1;
-      const weightedScore = correlation * rhythmBias;
+      const weighted = correlation * rhythmBias;
 
-      if (weightedScore > bestScore) {
-        bestScore = weightedScore;
+      if (weighted > bestScore) {
+        bestScore = weighted;
         bestLag = lag;
       }
     }
 
-    if (bestLag === 0 || bestScore < 0.18) {
-      return { bpm: 0, score: Math.max(0, bestScore) };
-    }
-
-    return {
-      bpm: (60 * sampleRate) / bestLag,
-      score: this.clamp(bestScore, 0, 1),
-    };
+    if (bestLag === 0 || bestScore < 0.15) return { bpm: 0, score: Math.max(0, bestScore) };
+    return { bpm: (60 * sampleRate) / bestLag, score: this.clamp(bestScore, 0, 1) };
   }
 
   private calculateSQI(range: number, periodicityScore: number): number {
-    if (this.signalBuffer.length < 40) return 0;
+    if (this.signalBuffer.length < 30) return 0;
 
-    const rangeFactor = Math.min(1, range / 6) * 24;
-
-    const derivativeWindow = this.derivativeBuffer.slice(-60);
-    const meanAbsDerivative = derivativeWindow.length > 0
-      ? derivativeWindow.reduce((sum, value) => sum + Math.abs(value), 0) / derivativeWindow.length
+    const rangeFactor = Math.min(1, range / 5) * 22;
+    const derivWindow = this.derivativeBuffer.slice(-60);
+    const meanAbsDeriv = derivWindow.length > 0
+      ? derivWindow.reduce((s, v) => s + Math.abs(v), 0) / derivWindow.length
       : 0;
-    const slopeFactor = Math.min(1, meanAbsDerivative / 1.2) * 14;
+    const slopeFactor = Math.min(1, meanAbsDeriv / 1.0) * 14;
 
     let rrFactor = 0;
     if (this.rrIntervals.length >= 3) {
-      const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
-      const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
-      const cv = Math.sqrt(variance) / Math.max(1, mean);
+      const m = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
+      const v = this.rrIntervals.reduce((a, rr) => a + (rr - m) ** 2, 0) / this.rrIntervals.length;
+      const cv = Math.sqrt(v) / Math.max(1, m);
       rrFactor = Math.max(0, 1 - cv * 2) * 22;
     }
 
-    const peakFactor = Math.min(1, this.consecutivePeaks / 4) * 18;
+    const peakFactor = Math.min(1, this.consecutivePeaks / 4) * 20;
     const periodicityFactor = periodicityScore * 22;
 
     return this.clamp(rangeFactor + slopeFactor + rrFactor + peakFactor + periodicityFactor, 0, 100);
   }
 
   private updateThreshold(range: number, periodicityScore: number): void {
-    const baseThreshold = periodicityScore > 0.38 ? 3.4 : 4.2;
-    const newThreshold = this.clamp(baseThreshold + range * 0.32, 2.8, 7.2);
-    this.peakThreshold = this.peakThreshold * 0.82 + newThreshold * 0.18;
+    const base = periodicityScore > 0.35 ? 3.0 : 4.0;
+    const target = this.clamp(base + range * 0.3, 2.5, 7.5);
+    this.peakThreshold = this.peakThreshold * 0.8 + target * 0.2;
   }
 
   private getExpectedRR(): number {
     if (this.rrIntervals.length >= 3) {
-      const recent = this.rrIntervals.slice(-5).sort((a, b) => a - b);
+      const recent = this.rrIntervals.slice(-6).sort((a, b) => a - b);
       return recent[Math.floor(recent.length / 2)] ?? recent[0] ?? 0;
     }
-
-    if (this.frequencyBPM > 0) {
-      return 60000 / this.frequencyBPM;
-    }
-
+    if (this.frequencyBPM > 0) return 60000 / this.frequencyBPM;
     return 0;
   }
 
-  private detectPeakWithDerivative(timeSinceLastPeak: number): boolean {
+  // === PEAK DETECTION WITH CANDIDATE SCORING ===
+  private detectPeakWithScoring(timeSinceLastPeak: number): boolean {
     const n = this.signalBuffer.length;
     const dn = this.derivativeBuffer.length;
     if (n < 11 || dn < 6) return false;
 
     const deriv = this.derivativeBuffer.slice(-6);
-    const zeroCrossing =
-      (deriv[2] > 0 && deriv[3] <= 0) ||
-      (deriv[3] > 0 && deriv[4] <= 0);
+    const zeroCrossing = (deriv[2] > 0 && deriv[3] <= 0) || (deriv[3] > 0 && deriv[4] <= 0);
 
-    const recentNormalized = this.normalizeWindow(this.signalBuffer.slice(-11));
-    const centerIndex = 5;
-    const center = recentNormalized[centerIndex];
+    const windowLen = this.consecutivePeaks < 3 ? 90 : 150;
+    const recentNormalized = this.normalizeWindow(this.signalBuffer.slice(-11), windowLen);
+    const ci = 5;
+    const center = recentNormalized[ci];
     const neighborhoodMin = Math.min(...recentNormalized);
     const prominence = center - neighborhoodMin;
 
@@ -382,34 +326,37 @@ export class HeartBeatProcessor {
     const fallingSlope = center - recentNormalized[8];
     const expectedRR = this.getExpectedRR();
     const nearExpected = expectedRR > 0 &&
-      timeSinceLastPeak >= expectedRR * 0.5 &&
-      timeSinceLastPeak <= expectedRR * 1.55;
+      timeSinceLastPeak >= expectedRR * 0.45 &&
+      timeSinceLastPeak <= expectedRR * 1.6;
 
-    const adaptiveThreshold = (nearExpected || this.periodicityScore > 0.4)
-      ? this.peakThreshold * 0.8
-      : this.peakThreshold;
+    // === CANDIDATE SCORING ===
+    let score = 0;
 
-    const aboveThreshold =
-      center > adaptiveThreshold ||
-      prominence > Math.max(1.3, adaptiveThreshold * 0.72);
+    // Prominence (0-30 points)
+    score += Math.min(30, prominence * 2);
 
-    const notTooSoon = timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS;
+    // Morphology: rising + falling slope (0-20 points)
+    score += Math.min(10, risingSlope * 1.5);
+    score += Math.min(10, fallingSlope * 1.2);
 
-    let amplitudeValid = true;
-    if (this.lastPeakValue > 0) {
-      const ratio = Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue));
-      amplitudeValid = ratio > 0.06 && ratio < 10;
-    }
+    // Zero crossing derivative (0-15 points)
+    if (zeroCrossing) score += 15;
 
-    const morphologyValid = risingSlope > 0.75 && fallingSlope > 0.55 && prominence > 1.35;
-    const derivativeAssist = zeroCrossing && prominence > 1.05;
-    const rhythmAssist = nearExpected && zeroCrossing && prominence > 1.2;
+    // Rhythm consistency (0-20 points)
+    if (nearExpected) score += 20;
 
-    const isPeak =
-      isLocalMax &&
-      notTooSoon &&
-      amplitudeValid &&
-      ((aboveThreshold && (morphologyValid || derivativeAssist)) || rhythmAssist);
+    // Periodicity boost (0-15 points)
+    score += this.periodicityScore * 15;
+
+    // Thresholds: lower for weak signals
+    const minScore = this.consecutivePeaks < 2 ? 25 : 35;
+    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.7 : 1.0) || prominence > Math.max(1.0, this.peakThreshold * 0.65);
+
+    const amplitudeValid = this.lastPeakValue > 0
+      ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.05 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 12
+      : true;
+
+    const isPeak = isLocalMax && amplitudeValid && timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS && score >= minScore && thresholdCheck;
 
     if (isPeak) {
       this.lastPeakValue = center;
@@ -423,57 +370,38 @@ export class HeartBeatProcessor {
     const peakSupport = Math.min(1, this.consecutivePeaks / 5);
 
     if (this.rrIntervals.length < 2) {
-      return this.clamp(
-        sqiFactor * 0.24 + peakSupport * 0.18 + this.periodicityScore * 0.28,
-        0,
-        0.58
-      );
+      return this.clamp(sqiFactor * 0.22 + peakSupport * 0.2 + this.periodicityScore * 0.3, 0, 0.6);
     }
 
     const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
-    const variance = this.rrIntervals.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / this.rrIntervals.length;
+    const variance = this.rrIntervals.reduce((a, rr) => a + (rr - mean) ** 2, 0) / this.rrIntervals.length;
     const cv = Math.sqrt(variance) / Math.max(1, mean);
     const rrStability = this.clamp(1 - cv * 1.7, 0, 1);
 
-    return this.clamp(
-      rrStability * 0.34 + peakSupport * 0.22 + sqiFactor * 0.2 + this.periodicityScore * 0.24,
-      0,
-      1
-    );
+    return this.clamp(rrStability * 0.32 + peakSupport * 0.24 + sqiFactor * 0.2 + this.periodicityScore * 0.24, 0, 1);
   }
 
   private vibrate(): void {
-    try {
-      if (navigator.vibrate) {
-        navigator.vibrate(60);
-      }
-    } catch {}
+    try { if (navigator.vibrate) navigator.vibrate(55); } catch {}
   }
 
   private async playBeep(): Promise<void> {
     if (!this.audioContext || !this.audioUnlocked) return;
     const now = Date.now();
     if (now - this.lastBeepTime < 220) return;
-
     try {
-      if (this.audioContext.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-
+      if (this.audioContext.state === 'suspended') await this.audioContext.resume();
       const t = this.audioContext.currentTime;
       const osc = this.audioContext.createOscillator();
       const gain = this.audioContext.createGain();
-
       osc.frequency.setValueAtTime(820, t);
       osc.frequency.exponentialRampToValueAtTime(460, t + 0.08);
       gain.gain.setValueAtTime(0.12, t);
       gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-
       osc.connect(gain);
       gain.connect(this.audioContext.destination);
       osc.start(t);
       osc.stop(t + 0.12);
-
       this.lastBeepTime = now;
     } catch {}
   }
@@ -482,21 +410,10 @@ export class HeartBeatProcessor {
     return Math.min(max, Math.max(min, value));
   }
 
-  getRRIntervals(): number[] {
-    return [...this.rrIntervals];
-  }
-
-  getLastPeakTime(): number {
-    return this.lastPeakTime;
-  }
-
-  getSQI(): number {
-    return this.signalQualityIndex;
-  }
-
-  getDerivativeBuffer(): number[] {
-    return [...this.derivativeBuffer];
-  }
+  getRRIntervals(): number[] { return [...this.rrIntervals]; }
+  getLastPeakTime(): number { return this.lastPeakTime; }
+  getSQI(): number { return this.signalQualityIndex; }
+  getDerivativeBuffer(): number[] { return [...this.derivativeBuffer]; }
 
   setArrhythmiaDetected(_isDetected: boolean): void {}
   setFingerDetected(_detected: boolean): void {}
@@ -510,7 +427,7 @@ export class HeartBeatProcessor {
     this.frequencyBPM = 0;
     this.periodicityScore = 0;
     this.lastPeakTime = 0;
-    this.peakThreshold = 4.2;
+    this.peakThreshold = 4.0;
     this.lastPeakValue = 0;
     this.frameCount = 0;
     this.consecutivePeaks = 0;
@@ -518,8 +435,6 @@ export class HeartBeatProcessor {
   }
 
   dispose(): void {
-    if (this.audioContext) {
-      this.audioContext.close().catch(() => {});
-    }
+    if (this.audioContext) this.audioContext.close().catch(() => {});
   }
 }
