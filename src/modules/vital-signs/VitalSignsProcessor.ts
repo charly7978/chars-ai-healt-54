@@ -156,8 +156,8 @@ export class VitalSignsProcessor {
       }
     }
 
-    // Calcular calidad de señal
-    this.measurements.signalQuality = this.calculateSignalQuality();
+    // SQI ahora viene del PPGSignalProcessor — no recalcular aquí
+    // this.measurements.signalQuality se actualiza externamente o se usa el del caller
 
     // Validar pulso real
     const hasRealPulse = this.validateRealPulse(rrData);

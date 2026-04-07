@@ -1,4 +1,4 @@
-import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface } from '../../types/signal';
+import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface, ContactState } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
 
 interface ROIMetrics {
@@ -9,32 +9,45 @@ interface ROIMetrics {
   fingerScore: number;
 }
 
-type PulseSourceLabel = 'R' | 'G' | 'RG';
-
+/**
+ * MULTI-SOURCE PPG SIGNAL PROCESSOR
+ * 
+ * Mejoras clave:
+ * 1. Estado de contacto 3-niveles (NO_CONTACT / UNSTABLE / STABLE)
+ * 2. Selección competitiva de canal (R, G, R-G, CHROM 3R-2G)
+ * 3. SQI unificado — única fuente de verdad
+ * 4. Histéresis fuerte para tolerancia a temblores
+ */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing = false;
 
   private bandpassFilter: BandpassFilter;
 
-  private readonly BUFFER_SIZE = 240;
-  private readonly ACDC_WINDOW = 150;
+  private readonly BUFFER_SIZE = 300;
+  private readonly ACDC_WINDOW = 180;
   private readonly TILE_COLUMNS = 5;
   private readonly TILE_ROWS = 5;
 
+  // Buffers
   private rawBuffer: number[] = [];
   private filteredBuffer: number[] = [];
   private redBuffer: number[] = [];
   private greenBuffer: number[] = [];
+  private blueBuffer: number[] = [];
   private vpgBuffer: number[] = [];
   private apgBuffer: number[] = [];
   private tileConfidence: number[] = new Array(25).fill(0);
   private frameIntervalBuffer: number[] = [];
 
+  // AC/DC
   private redDC = 0;
   private redAC = 0;
   private greenDC = 0;
   private greenAC = 0;
+  private blueDC = 0;
+  private blueAC = 0;
 
+  // Baselines dinámicas
   private redBaseline = 0;
   private greenBaseline = 0;
   private blueBaseline = 0;
@@ -44,36 +57,51 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount = 0;
   private lastLogTime = 0;
 
+  // === ESTADO DE CONTACTO UNIFICADO ===
+  private contactState: ContactState = 'NO_CONTACT';
   private fingerDetected = false;
   private signalQuality = 0;
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 2;
-  private readonly FINGER_LOST_FRAMES = 45;
+  private stableContactCount = 0;
+  private readonly FINGER_CONFIRM_FRAMES = 3;
+  private readonly FINGER_LOST_FRAMES = 60; // ~2s tolerancia
+  private readonly STABLE_THRESHOLD = 15; // ~0.5s para STABLE
+  private readonly UNSTABLE_GRACE = 90; // ~3s antes de NO_CONTACT total
 
+  // Suavizado temporal
   private smoothedRed = 0;
   private smoothedGreen = 0;
   private smoothedBlue = 0;
   private smoothedCoverage = 0;
   private smoothedFingerScore = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.12;
-  private readonly COVERAGE_SMOOTH_ALPHA = 0.14;
+  private readonly RGB_SMOOTH_ALPHA = 0.10;
+  private readonly COVERAGE_SMOOTH_ALPHA = 0.12;
 
+  // IMU / Motion
   private motionScore = 0;
   private motionListenerActive = false;
   private lastAcceleration = { x: 0, y: 0, z: 0 };
-  private readonly MOTION_THRESHOLD = 0.55;
+  private readonly MOTION_THRESHOLD = 0.6;
+
+  // === MULTI-SOURCE RANKING ===
+  private sourceBuffers: { [key: string]: number[] } = {};
+  private activeSource: string = 'RG';
+  private sourceScores: { [key: string]: number } = {};
+  private lastSourceSwitch = 0;
+  private readonly SOURCE_HYSTERESIS_MS = 2000; // No cambiar canal en <2s
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
+    this.sourceBuffers = { R: [], G: [], RG: [], CHROM: [] };
+    this.sourceScores = { R: 0, G: 0, RG: 0, CHROM: 0 };
   }
 
   async initialize(): Promise<void> {
     this.reset();
-    console.log('✅ PPGSignalProcessor inicializado - captura reforzada');
   }
 
   start(): void {
@@ -81,13 +109,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.isProcessing = true;
     this.initialize();
     this.startMotionListener();
-    console.log('🚀 PPGSignalProcessor iniciado');
   }
 
   stop(): void {
     this.isProcessing = false;
     this.stopMotionListener();
-    console.log('🛑 PPGSignalProcessor detenido');
   }
 
   async calibrate(): Promise<boolean> {
@@ -101,28 +127,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const timestamp = Date.now();
     this.updateSampleRate(timestamp);
 
-    const { rawRed, rawGreen, rawBlue, coverageRatio, fingerScore } = this.extractROI(imageData);
-    const previousFingerDetected = this.fingerDetected;
-    this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue, coverageRatio, fingerScore);
-
-    const contactLikely =
-      coverageRatio > 0.14 &&
-      rawRed > 28 &&
-      rawRed > rawBlue * 0.92 &&
-      rawRed > rawGreen * 0.78;
-
-    if (this.fingerDetected && !previousFingerDetected) {
-      this.resetSignalTrackingBuffers();
-    }
-
-    if (!this.fingerDetected && !contactLikely && this.fingerLostCount >= this.FINGER_LOST_FRAMES) {
-      this.resetSignalTrackingBuffers();
-      this.resetBaselines();
-    }
+    const roi = this.extractROI(imageData);
+    this.updateContactState(roi);
 
     const motionArtifact = this.motionScore > this.MOTION_THRESHOLD;
 
-    if (!this.fingerDetected && !contactLikely) {
+    if (this.contactState === 'NO_CONTACT') {
       this.signalQuality = 0;
       this.onSignalReady({
         timestamp,
@@ -130,13 +140,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         filteredValue: 0,
         quality: 0,
         fingerDetected: false,
+        contactState: 'NO_CONTACT',
         motionArtifact,
         roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
         perfusionIndex: 0,
-        rawRed,
-        rawGreen,
+        rawRed: roi.rawRed,
+        rawGreen: roi.rawGreen,
         diagnostics: {
-          message: `BUSCANDO DEDO C:${(coverageRatio * 100).toFixed(0)}%`,
+          message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}%`,
           hasPulsatility: false,
           pulsatilityValue: 0,
         },
@@ -144,20 +155,24 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       return;
     }
 
-    this.updateChannelBaselines(rawRed, rawGreen, rawBlue, motionArtifact);
+    // Tenemos contacto (UNSTABLE o STABLE)
+    this.updateChannelBaselines(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
 
-    this.redBuffer.push(rawRed);
-    this.greenBuffer.push(rawGreen);
+    this.redBuffer.push(roi.rawRed);
+    this.greenBuffer.push(roi.rawGreen);
+    this.blueBuffer.push(roi.rawBlue);
     if (this.redBuffer.length > this.BUFFER_SIZE) {
       this.redBuffer.shift();
       this.greenBuffer.shift();
+      this.blueBuffer.shift();
     }
 
     if (this.redBuffer.length >= 36) {
       this.calculateACDCPrecise();
     }
 
-    const pulseSource = this.extractPulseSignal(rawRed, rawGreen, motionArtifact);
+    // Multi-source extraction
+    const pulseSource = this.extractBestPulseSignal(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
 
     this.rawBuffer.push(pulseSource.value);
     if (this.rawBuffer.length > this.BUFFER_SIZE) {
@@ -175,17 +190,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const perfusionIndex = this.calculatePerfusionIndex();
     const adjustedQuality = motionArtifact
-      ? Math.max(0, this.signalQuality * 0.78)
+      ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
 
     const now = Date.now();
-    if (now - this.lastLogTime >= 1000) {
+    if (now - this.lastLogTime >= 2000) {
       this.lastLogTime = now;
       console.log(
-        `📷 PPG [${pulseSource.label}] Pulse=${pulseSource.value.toFixed(2)} Filt=${filtered.toFixed(3)} ` +
-          `Q=${adjustedQuality.toFixed(0)}% PI=${perfusionIndex.toFixed(2)} ` +
-          `C=${(this.smoothedCoverage * 100).toFixed(0)}% FPS=${this.estimatedSampleRate.toFixed(0)} ` +
-          `${this.fingerDetected ? '✅' : '❌'}`
+        `📷 PPG [${pulseSource.label}] Filt=${filtered.toFixed(3)} ` +
+        `Q=${adjustedQuality.toFixed(0)}% PI=${perfusionIndex.toFixed(2)} ` +
+        `Contact=${this.contactState} FPS=${this.estimatedSampleRate.toFixed(0)}`
       );
     }
 
@@ -195,20 +209,118 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       filteredValue: filtered,
       quality: adjustedQuality,
       fingerDetected: this.fingerDetected,
+      contactState: this.contactState,
       motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex,
-      rawRed,
-      rawGreen,
+      rawRed: roi.rawRed,
+      rawGreen: roi.rawGreen,
       diagnostics: {
         message:
           `${pulseSource.label}:${pulseSource.strength.toFixed(1)} ` +
           `PI:${perfusionIndex.toFixed(2)} C:${(this.smoothedCoverage * 100).toFixed(0)} ` +
-          `FPS:${this.estimatedSampleRate.toFixed(0)}${motionArtifact ? ' MOV' : ''}`,
-        hasPulsatility: perfusionIndex > 0.02 || pulseSource.strength > 4,
+          `${this.contactState}${motionArtifact ? ' MOV' : ''}`,
+        hasPulsatility: perfusionIndex > 0.02 || pulseSource.strength > 3,
         pulsatilityValue: Math.max(perfusionIndex, pulseSource.strength * 0.02),
       },
     });
+  }
+
+  // === ESTADO DE CONTACTO UNIFICADO ===
+  private updateContactState(roi: ROIMetrics): void {
+    const previousState = this.contactState;
+    const instantDetected = this.detectFingerInstant(roi);
+
+    if (instantDetected) {
+      this.fingerLostCount = 0;
+      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, 100);
+      this.stableContactCount++;
+
+      if (this.fingerConfidenceCount >= this.FINGER_CONFIRM_FRAMES) {
+        this.fingerDetected = true;
+        this.contactState = this.stableContactCount >= this.STABLE_THRESHOLD
+          ? 'STABLE_CONTACT'
+          : 'UNSTABLE_CONTACT';
+      }
+    } else {
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
+      this.fingerLostCount++;
+      this.stableContactCount = Math.max(0, this.stableContactCount - 1);
+
+      if (this.fingerDetected) {
+        // Soft hold: mantener contacto con gracia
+        const softHold =
+          this.smoothedCoverage > 0.08 &&
+          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 3 &&
+          this.smoothedFingerScore > 0.15;
+
+        if (softHold || this.fingerLostCount < this.FINGER_LOST_FRAMES) {
+          this.contactState = 'UNSTABLE_CONTACT';
+        } else if (this.fingerLostCount < this.UNSTABLE_GRACE) {
+          this.contactState = 'UNSTABLE_CONTACT';
+          // Don't reset buffers yet
+        } else {
+          this.contactState = 'NO_CONTACT';
+          this.fingerDetected = false;
+          this.stableContactCount = 0;
+          this.resetSignalTrackingBuffers();
+          this.resetBaselines();
+        }
+      } else {
+        this.contactState = 'NO_CONTACT';
+      }
+    }
+
+    // Resetear buffers solo al entrar en contacto desde NO_CONTACT
+    if (previousState === 'NO_CONTACT' && this.contactState !== 'NO_CONTACT') {
+      this.resetSignalTrackingBuffers();
+    }
+  }
+
+  private detectFingerInstant(roi: ROIMetrics): boolean {
+    const { rawRed, rawGreen, rawBlue, coverageRatio, fingerScore } = roi;
+
+    // Smooth inputs
+    if (this.smoothedRed === 0) {
+      this.smoothedRed = rawRed;
+      this.smoothedGreen = rawGreen;
+      this.smoothedBlue = rawBlue;
+      this.smoothedCoverage = coverageRatio;
+      this.smoothedFingerScore = fingerScore;
+    } else {
+      const a = this.RGB_SMOOTH_ALPHA;
+      const ca = this.COVERAGE_SMOOTH_ALPHA;
+      this.smoothedRed = this.smoothedRed * (1 - a) + rawRed * a;
+      this.smoothedGreen = this.smoothedGreen * (1 - a) + rawGreen * a;
+      this.smoothedBlue = this.smoothedBlue * (1 - a) + rawBlue * a;
+      this.smoothedCoverage = this.smoothedCoverage * (1 - ca) + coverageRatio * ca;
+      this.smoothedFingerScore = this.smoothedFingerScore * (1 - ca) + fingerScore * ca;
+    }
+
+    const r = this.smoothedRed;
+    const g = this.smoothedGreen;
+    const b = this.smoothedBlue;
+    const totalIntensity = r + g + b;
+    const redDominance = r - (g + b) / 2;
+    const rgRatio = r / Math.max(1, g);
+    const rbRatio = r / Math.max(1, b);
+    const notBlownOut = !(r > 253 && g > 252 && b > 252);
+
+    let score = 0;
+    if (r > 25) score += 1;
+    if (rgRatio > 0.8 && rgRatio < 6) score += 1;
+    if (rbRatio > 0.9) score += 1;
+    if (totalIntensity > 60 && totalIntensity < 760) score += 1;
+    if (redDominance > 5) score += 1;
+    if (this.smoothedCoverage > 0.15) score += 2;
+    if (this.smoothedFingerScore > 0.28) score += 2;
+    if (this.motionScore < 1.5) score += 1;
+
+    // Hysteresis: easier to keep than to acquire
+    const required = this.fingerDetected ? 3 : 5;
+    const contactLikely = r > 25 && rgRatio > 0.82 && redDominance > 5 && this.smoothedCoverage > 0.12;
+
+    return notBlownOut && (contactLikely || score >= required);
   }
 
   private updateSampleRate(timestamp: number): void {
@@ -220,10 +332,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const delta = timestamp - this.lastFrameTimestamp;
     this.lastFrameTimestamp = timestamp;
 
-    if (delta < 12 || delta > 80) return;
+    if (delta < 10 || delta > 100) return;
 
     this.frameIntervalBuffer.push(delta);
-    if (this.frameIntervalBuffer.length > 24) {
+    if (this.frameIntervalBuffer.length > 30) {
       this.frameIntervalBuffer.shift();
     }
 
@@ -231,9 +343,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const sorted = [...this.frameIntervalBuffer].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)] ?? 33;
-    const estimatedFps = this.clamp(1000 / median, 24, 36);
+    const estimatedFps = this.clamp(1000 / median, 20, 40);
 
-    if (Math.abs(estimatedFps - this.estimatedSampleRate) > 1.5) {
+    if (Math.abs(estimatedFps - this.estimatedSampleRate) > 2) {
       this.estimatedSampleRate = estimatedFps;
       this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
     }
@@ -244,22 +356,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const width = imageData.width;
     const height = imageData.height;
 
-    const roiSize = Math.min(width, height) * 0.76;
+    const roiSize = Math.min(width, height) * 0.78;
     const startX = Math.floor((width - roiSize) / 2);
     const startY = Math.floor((height - roiSize) / 2);
     const endX = startX + Math.floor(roiSize);
     const endY = startY + Math.floor(roiSize);
 
     const tiles = Array.from({ length: this.TILE_COLUMNS * this.TILE_ROWS }, () => ({
-      red: 0,
-      green: 0,
-      blue: 0,
-      count: 0,
+      red: 0, green: 0, blue: 0, count: 0,
     }));
 
     const roiWidth = Math.max(1, endX - startX);
     const roiHeight = Math.max(1, endY - startY);
 
+    // Sample every 3rd pixel for performance
     for (let y = startY; y < endY; y += 3) {
       for (let x = startX; x < endX; x += 3) {
         const i = (y * width + x) * 4;
@@ -289,28 +399,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         const normX = this.TILE_COLUMNS <= 1 ? 0 : gridX / (this.TILE_COLUMNS - 1);
         const normY = this.TILE_ROWS <= 1 ? 0 : gridY / (this.TILE_ROWS - 1);
         const distanceFromCenter = Math.sqrt((normX - 0.5) ** 2 + (normY - 0.5) ** 2);
-        const centerBias = this.clamp(1 - distanceFromCenter * 1.25, 0.35, 1);
+        const centerBias = this.clamp(1 - distanceFromCenter * 1.2, 0.3, 1);
 
-        const brightnessScore = this.clamp((total - 85) / 170, 0, 1);
-        const redRatioScore = this.clamp((rednessRatio - 0.82) / 0.85, 0, 1);
-        const dominanceScore = this.clamp((redDominance - 4) / 26, 0, 1);
+        const brightnessScore = this.clamp((total - 80) / 180, 0, 1);
+        const redRatioScore = this.clamp((rednessRatio - 0.8) / 0.9, 0, 1);
+        const dominanceScore = this.clamp((redDominance - 3) / 28, 0, 1);
         const frameScore = redRatioScore * 0.4 + dominanceScore * 0.4 + brightnessScore * 0.2;
 
-        this.tileConfidence[index] = this.tileConfidence[index] * 0.72 + frameScore * centerBias * 0.28;
+        this.tileConfidence[index] = this.tileConfidence[index] * 0.75 + frameScore * centerBias * 0.25;
         const combinedScore = this.tileConfidence[index] * 0.7 + frameScore * 0.3;
 
-        return {
-          red,
-          green,
-          blue,
-          total,
-          redDominance,
-          rednessRatio,
-          centerBias,
-          frameScore,
-          combinedScore,
-          temporalScore: this.tileConfidence[index],
-        };
+        return { red, green, blue, total, redDominance, rednessRatio, centerBias, frameScore, combinedScore, temporalScore: this.tileConfidence[index] };
       });
 
     if (averagedTiles.length === 0) {
@@ -318,220 +417,190 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
 
     const fingerTiles = averagedTiles.filter((tile) =>
-      tile.red > 24 &&
-      tile.total > 70 &&
-      tile.red > tile.blue * 0.92 &&
-      tile.combinedScore > 0.36
+      tile.red > 22 && tile.total > 60 && tile.red > tile.blue * 0.9 && tile.combinedScore > 0.3
     );
 
     const selectedTiles = fingerTiles.length >= 4
       ? fingerTiles
-      : [...averagedTiles]
-          .sort((a, b) => b.combinedScore - a.combinedScore)
-          .slice(0, Math.max(7, Math.round(averagedTiles.length * 0.55)));
+      : [...averagedTiles].sort((a, b) => b.combinedScore - a.combinedScore).slice(0, Math.max(7, Math.round(averagedTiles.length * 0.55)));
 
     const weightedAverage = (channel: 'red' | 'green' | 'blue') => {
-      let weightedSum = 0;
-      let totalWeight = 0;
-
+      let ws = 0, tw = 0;
       for (const tile of selectedTiles) {
-        const weight = 0.35 + tile.combinedScore * 1.8 + tile.centerBias * 0.45;
-        weightedSum += tile[channel] * weight;
-        totalWeight += weight;
+        const w = 0.3 + tile.combinedScore * 2 + tile.centerBias * 0.4;
+        ws += tile[channel] * w;
+        tw += w;
       }
-
-      if (totalWeight > 0) {
-        return weightedSum / totalWeight;
-      }
-
-      return averagedTiles.reduce((sum, tile) => sum + tile[channel], 0) / averagedTiles.length;
+      return tw > 0 ? ws / tw : averagedTiles.reduce((s, t) => s + t[channel], 0) / averagedTiles.length;
     };
 
-    const confidentTiles = averagedTiles.filter((tile) => tile.temporalScore > 0.34).length;
+    const confidentTiles = averagedTiles.filter((t) => t.temporalScore > 0.3).length;
     const coverageRatio = confidentTiles / averagedTiles.length;
-    const averageFingerScore = selectedTiles.reduce((sum, tile) => sum + tile.combinedScore, 0) / Math.max(1, selectedTiles.length);
+    const avgFingerScore = selectedTiles.reduce((s, t) => s + t.combinedScore, 0) / Math.max(1, selectedTiles.length);
 
     return {
       rawRed: weightedAverage('red'),
       rawGreen: weightedAverage('green'),
       rawBlue: weightedAverage('blue'),
       coverageRatio,
-      fingerScore: averageFingerScore,
+      fingerScore: avgFingerScore,
     };
   }
 
-  private detectFinger(
-    rawRed: number,
-    rawGreen: number,
-    rawBlue: number,
-    coverageRatio: number,
-    fingerScore: number
-  ): boolean {
-    if (this.smoothedRed === 0) {
-      this.smoothedRed = rawRed;
-      this.smoothedGreen = rawGreen;
-      this.smoothedBlue = rawBlue;
-      this.smoothedCoverage = coverageRatio;
-      this.smoothedFingerScore = fingerScore;
-    } else {
-      this.smoothedRed = this.smoothedRed * (1 - this.RGB_SMOOTH_ALPHA) + rawRed * this.RGB_SMOOTH_ALPHA;
-      this.smoothedGreen = this.smoothedGreen * (1 - this.RGB_SMOOTH_ALPHA) + rawGreen * this.RGB_SMOOTH_ALPHA;
-      this.smoothedBlue = this.smoothedBlue * (1 - this.RGB_SMOOTH_ALPHA) + rawBlue * this.RGB_SMOOTH_ALPHA;
-      this.smoothedCoverage = this.smoothedCoverage * (1 - this.COVERAGE_SMOOTH_ALPHA) + coverageRatio * this.COVERAGE_SMOOTH_ALPHA;
-      this.smoothedFingerScore = this.smoothedFingerScore * (1 - this.COVERAGE_SMOOTH_ALPHA) + fingerScore * this.COVERAGE_SMOOTH_ALPHA;
-    }
-
-    const r = this.smoothedRed;
-    const g = this.smoothedGreen;
-    const b = this.smoothedBlue;
-    const totalIntensity = r + g + b;
-    const redDominance = r - (g + b) / 2;
-    const rgRatio = r / Math.max(1, g);
-    const rbRatio = r / Math.max(1, b);
-    const colorDominance = totalIntensity > 0 ? redDominance / totalIntensity : 0;
-    const notBlownOut = !(r > 253 && g > 252 && b > 252);
-
-    let detectionScore = 0;
-    if (r > 28) detectionScore += 1;
-    if (rgRatio > 0.82 && rgRatio < 5.5) detectionScore += 1;
-    if (rbRatio > 0.92) detectionScore += 1;
-    if (totalIntensity > 70 && totalIntensity < 760) detectionScore += 1;
-    if (colorDominance > 0.08) detectionScore += 1;
-    if (redDominance > 6) detectionScore += 1;
-    if (this.smoothedCoverage > 0.18) detectionScore += 2;
-    if (this.smoothedFingerScore > 0.32) detectionScore += 2;
-    if (this.motionScore < 1.2) detectionScore += 1;
-
-    const contactLikely = r > 30 && rgRatio > 0.85 && redDominance > 7 && this.smoothedCoverage > 0.14;
-    const requiredScore = this.fingerDetected ? 3 : 5;
-    const instantDetected = notBlownOut && (contactLikely || detectionScore >= requiredScore);
-
-    if (instantDetected) {
-      this.fingerLostCount = 0;
-      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, this.FINGER_CONFIRM_FRAMES + 10);
-      return this.fingerDetected ? true : this.fingerConfidenceCount >= this.FINGER_CONFIRM_FRAMES;
-    }
-
-    this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
-    this.fingerLostCount++;
-
-    if (this.fingerDetected) {
-      const softHold =
-        this.smoothedCoverage > 0.1 &&
-        redDominance > 4 &&
-        this.smoothedFingerScore > 0.2;
-
-      if (softHold) {
-        return true;
-      }
-
-      return this.fingerLostCount < this.FINGER_LOST_FRAMES;
-    }
-
-    return false;
-  }
-
   private updateChannelBaselines(rawRed: number, rawGreen: number, rawBlue: number, motionArtifact: boolean): void {
-    if (this.redBaseline === 0 || this.greenBaseline === 0 || this.blueBaseline === 0) {
+    if (this.redBaseline === 0) {
       this.redBaseline = rawRed;
       this.greenBaseline = rawGreen;
       this.blueBaseline = rawBlue;
       return;
     }
 
-    const alpha = motionArtifact ? 0.012 : this.fingerDetected ? 0.028 : 0.05;
-
+    const alpha = motionArtifact ? 0.008 : this.contactState === 'STABLE_CONTACT' ? 0.02 : 0.04;
     this.redBaseline = this.redBaseline * (1 - alpha) + rawRed * alpha;
     this.greenBaseline = this.greenBaseline * (1 - alpha) + rawGreen * alpha;
     this.blueBaseline = this.blueBaseline * (1 - alpha) + rawBlue * alpha;
   }
 
-  private extractPulseSignal(
-    rawRed: number,
-    rawGreen: number,
-    motionArtifact: boolean
-  ): { value: number; label: PulseSourceLabel; strength: number } {
-    const redNorm = this.redBaseline > 0 ? (this.redBaseline - rawRed) / this.redBaseline : 0;
-    const greenNorm = this.greenBaseline > 0 ? (this.greenBaseline - rawGreen) / this.greenBaseline : 0;
+  // === MULTI-SOURCE COMPETITIVE EXTRACTION ===
+  private extractBestPulseSignal(
+    rawRed: number, rawGreen: number, rawBlue: number, motionArtifact: boolean
+  ): { value: number; label: string; strength: number } {
+    const rNorm = this.redBaseline > 0 ? (this.redBaseline - rawRed) / this.redBaseline : 0;
+    const gNorm = this.greenBaseline > 0 ? (this.greenBaseline - rawGreen) / this.greenBaseline : 0;
+    const bNorm = this.blueBaseline > 0 ? (this.blueBaseline - rawBlue) / this.blueBaseline : 0;
 
-    const redPulse = this.clamp(redNorm, -0.03, 0.03);
-    const greenPulse = this.clamp(greenNorm, -0.03, 0.03);
+    const clamp = (v: number) => this.clamp(v, -0.04, 0.04);
+    const rPulse = clamp(rNorm);
+    const gPulse = clamp(gNorm);
 
-    let redWeight = 0.42;
-    let greenWeight = 0.58;
+    // Source candidates
+    const sources: { [key: string]: number } = {
+      R: rPulse * 3200,
+      G: gPulse * 3200,
+      RG: this.blendRG(rPulse, gPulse, rawRed, rawGreen, motionArtifact) * 3200,
+      CHROM: (3 * rPulse - 2 * gPulse) * 3200 / 3, // CHROM-like: 3R - 2G
+    };
 
+    // Update per-source buffers
+    for (const key of Object.keys(sources)) {
+      this.sourceBuffers[key].push(sources[key]);
+      if (this.sourceBuffers[key].length > 120) {
+        this.sourceBuffers[key].shift();
+      }
+    }
+
+    // Rank sources every ~1 second (30 frames)
+    if (this.frameCount % 30 === 0 && this.redBuffer.length >= 60) {
+      this.rankSources();
+    }
+
+    const value = this.clamp(sources[this.activeSource] ?? sources['RG'], -80, 80);
+    const strength = Math.max(Math.abs(rPulse), Math.abs(gPulse)) * 1000;
+
+    return { value, label: this.activeSource, strength };
+  }
+
+  private blendRG(rPulse: number, gPulse: number, rawRed: number, rawGreen: number, motionArtifact: boolean): number {
     const redPI = this.redDC > 0 ? this.redAC / this.redDC : 0;
     const greenPI = this.greenDC > 0 ? this.greenAC / this.greenDC : 0;
     const piSum = redPI + greenPI;
 
+    let greenWeight = 0.55;
+    let redWeight = 0.45;
+
     if (piSum > 0) {
-      greenWeight = this.clamp(greenPI / piSum, 0.28, 0.78);
+      greenWeight = this.clamp(greenPI / piSum, 0.25, 0.8);
       redWeight = 1 - greenWeight;
     }
 
-    if (rawGreen > 245) {
-      greenWeight *= 0.45;
-      redWeight = 1 - greenWeight;
+    // Clipping penalties
+    if (rawGreen > 245) { greenWeight *= 0.4; redWeight = 1 - greenWeight; }
+    if (rawRed > 245) { redWeight *= 0.4; greenWeight = 1 - redWeight; }
+    if (motionArtifact) { greenWeight = this.clamp(greenWeight + 0.05, 0.3, 0.8); redWeight = 1 - greenWeight; }
+
+    return rPulse * redWeight + gPulse * greenWeight;
+  }
+
+  private rankSources(): void {
+    const now = Date.now();
+    // Hysteresis: don't switch too often
+    if (now - this.lastSourceSwitch < this.SOURCE_HYSTERESIS_MS) return;
+
+    let bestSource = this.activeSource;
+    let bestScore = -1;
+
+    for (const key of Object.keys(this.sourceBuffers)) {
+      const buf = this.sourceBuffers[key];
+      if (buf.length < 45) continue;
+
+      const recent = buf.slice(-90);
+      const score = this.computeSourceScore(recent);
+      this.sourceScores[key] = score;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestSource = key;
+      }
     }
 
-    if (rawRed < rawGreen * 0.72) {
-      greenWeight = this.clamp(greenWeight + 0.08, 0.35, 0.82);
-      redWeight = 1 - greenWeight;
+    // Only switch if new source is significantly better (>20%)
+    const currentScore = this.sourceScores[this.activeSource] ?? 0;
+    if (bestSource !== this.activeSource && bestScore > currentScore * 1.2) {
+      this.activeSource = bestSource;
+      this.lastSourceSwitch = now;
     }
+  }
 
-    if (motionArtifact) {
-      greenWeight = this.clamp(greenWeight + 0.04, 0.35, 0.8);
-      redWeight = 1 - greenWeight;
-    }
+  private computeSourceScore(buffer: number[]): number {
+    if (buffer.length < 30) return 0;
 
-    const blendedPulse = redPulse * redWeight + greenPulse * greenWeight;
-    const scaledPulse = this.clamp(blendedPulse * 3200, -60, 60);
-    const strength = Math.max(Math.abs(redPulse), Math.abs(greenPulse)) * 1000;
-    const label: PulseSourceLabel = greenWeight > 0.72 ? 'G' : redWeight > 0.72 ? 'R' : 'RG';
+    const sorted = [...buffer].sort((a, b) => a - b);
+    const p10 = sorted[Math.floor(sorted.length * 0.1)] ?? 0;
+    const p90 = sorted[Math.floor(sorted.length * 0.9)] ?? 0;
+    const range = p90 - p10;
+    if (range < 0.3) return 0;
 
-    return {
-      value: scaledPulse,
-      label,
-      strength,
-    };
+    const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length;
+    const variance = buffer.reduce((a, v) => a + (v - mean) ** 2, 0) / buffer.length;
+    const snr = range / (Math.sqrt(variance) + 0.1);
+
+    // Check for clipping
+    const clipped = buffer.filter(v => Math.abs(v) > 70).length / buffer.length;
+    const clipPenalty = clipped * 30;
+
+    return Math.max(0, snr * 15 - clipPenalty);
   }
 
   private calculateACDCPrecise(): void {
     const windowSize = Math.min(this.ACDC_WINDOW, this.redBuffer.length);
     if (windowSize < 36) return;
 
-    const redWindow = this.redBuffer.slice(-windowSize);
-    const greenWindow = this.greenBuffer.slice(-windowSize);
+    const redW = this.redBuffer.slice(-windowSize);
+    const greenW = this.greenBuffer.slice(-windowSize);
+    const blueW = this.blueBuffer.slice(-windowSize);
 
-    this.redDC = redWindow.reduce((a, b) => a + b, 0) / redWindow.length;
-    this.greenDC = greenWindow.reduce((a, b) => a + b, 0) / greenWindow.length;
+    this.redDC = redW.reduce((a, b) => a + b, 0) / redW.length;
+    this.greenDC = greenW.reduce((a, b) => a + b, 0) / greenW.length;
+    this.blueDC = blueW.reduce((a, b) => a + b, 0) / blueW.length;
 
     if (this.redDC < 5 || this.greenDC < 5) return;
 
-    let redSumSq = 0;
-    let greenSumSq = 0;
+    const computeAC = (window: number[], dc: number) => {
+      let sumSq = 0;
+      for (let i = 0; i < window.length; i++) {
+        sumSq += (window[i] - dc) ** 2;
+      }
+      const rms = Math.sqrt(sumSq / window.length);
+      const sorted = [...window].sort((a, b) => a - b);
+      const p5 = sorted[Math.floor(window.length * 0.05)] ?? 0;
+      const p95 = sorted[Math.floor(window.length * 0.95)] ?? 0;
+      const p2p = p95 - p5;
+      return (rms * Math.sqrt(2) + p2p * 0.5) / 2;
+    };
 
-    for (let i = 0; i < windowSize; i++) {
-      redSumSq += Math.pow(redWindow[i] - this.redDC, 2);
-      greenSumSq += Math.pow(greenWindow[i] - this.greenDC, 2);
-    }
-
-    const redRMS = Math.sqrt(redSumSq / windowSize);
-    const greenRMS = Math.sqrt(greenSumSq / windowSize);
-
-    const sortedRed = [...redWindow].sort((a, b) => a - b);
-    const sortedGreen = [...greenWindow].sort((a, b) => a - b);
-    const p5 = Math.floor(windowSize * 0.05);
-    const p95 = Math.floor(windowSize * 0.95);
-
-    const redP2P = sortedRed[p95] - sortedRed[p5];
-    const greenP2P = sortedGreen[p95] - sortedGreen[p5];
-
-    const redACFromRMS = redRMS * Math.sqrt(2);
-    const greenACFromRMS = greenRMS * Math.sqrt(2);
-
-    this.redAC = (redACFromRMS + redP2P * 0.5) / 2;
-    this.greenAC = (greenACFromRMS + greenP2P * 0.5) / 2;
+    this.redAC = computeAC(redW, this.redDC);
+    this.greenAC = computeAC(greenW, this.greenDC);
+    this.blueAC = computeAC(blueW, this.blueDC);
 
     const redPI = this.redAC / this.redDC;
     const greenPI = this.greenAC / this.greenDC;
@@ -548,54 +617,50 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (n >= 3) {
       const vpg = (this.filteredBuffer[n - 1] - this.filteredBuffer[n - 3]) / 2;
       this.vpgBuffer.push(vpg);
-      if (this.vpgBuffer.length > this.BUFFER_SIZE) {
-        this.vpgBuffer.shift();
-      }
+      if (this.vpgBuffer.length > this.BUFFER_SIZE) this.vpgBuffer.shift();
     }
 
     if (this.vpgBuffer.length >= 3) {
       const vn = this.vpgBuffer.length;
       const apg = (this.vpgBuffer[vn - 1] - this.vpgBuffer[vn - 3]) / 2;
       this.apgBuffer.push(apg);
-      if (this.apgBuffer.length > this.BUFFER_SIZE) {
-        this.apgBuffer.shift();
-      }
+      if (this.apgBuffer.length > this.BUFFER_SIZE) this.apgBuffer.shift();
     }
   }
 
+  // === SQI UNIFICADO - ÚNICA FUENTE DE VERDAD ===
   private calculateSignalQuality(): number {
     if (this.filteredBuffer.length < 24) return 0;
-    if (!this.fingerDetected) return 0;
+    if (this.contactState === 'NO_CONTACT') return 0;
 
     const recent = this.filteredBuffer.slice(-90);
     const sorted = [...recent].sort((a, b) => a - b);
-    const p12 = sorted[Math.floor((sorted.length - 1) * 0.12)] ?? 0;
-    const p88 = sorted[Math.floor((sorted.length - 1) * 0.88)] ?? 0;
-    const range = p88 - p12;
+    const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
+    const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
+    const range = p90 - p10;
 
-    if (range < 0.35) return 6;
+    if (range < 0.3) return 5;
 
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((acc, value) => acc + Math.pow(value - mean, 2), 0) / recent.length;
+    const variance = recent.reduce((a, v) => a + (v - mean) ** 2, 0) / recent.length;
     const stdDev = Math.sqrt(variance);
-    const snr = range / (stdDev + 0.18);
+    const snr = range / (stdDev + 0.15);
 
-    const snrScore = Math.min(34, snr * 10.5);
-    const perfusionScore = Math.min(26, this.calculatePerfusionIndex() * 12);
-    const coverageScore = Math.min(18, this.smoothedCoverage * 32);
-    const fingerScore = Math.min(18, this.smoothedFingerScore * 28);
-    const motionPenalty = Math.min(24, this.motionScore * 20);
+    const snrScore = Math.min(35, snr * 11);
+    const perfusionScore = Math.min(25, this.calculatePerfusionIndex() * 12);
+    const coverageScore = Math.min(18, this.smoothedCoverage * 30);
+    const fingerScore = Math.min(18, this.smoothedFingerScore * 26);
+    const motionPenalty = Math.min(20, this.motionScore * 16);
 
-    return this.clamp(snrScore + perfusionScore + coverageScore + fingerScore - motionPenalty, 0, 100);
+    // Bonus for stable contact
+    const stabilityBonus = this.contactState === 'STABLE_CONTACT' ? 5 : 0;
+
+    return this.clamp(snrScore + perfusionScore + coverageScore + fingerScore - motionPenalty + stabilityBonus, 0, 100);
   }
 
   private calculatePerfusionIndex(): number {
-    if (this.greenDC > 0) {
-      return (this.greenAC / this.greenDC) * 100;
-    }
-    if (this.redDC > 0) {
-      return (this.redAC / this.redDC) * 100;
-    }
+    if (this.greenDC > 0) return (this.greenAC / this.greenDC) * 100;
+    if (this.redDC > 0) return (this.redAC / this.redDC) * 100;
     return 0;
   }
 
@@ -610,12 +675,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.filteredBuffer = [];
     this.redBuffer = [];
     this.greenBuffer = [];
+    this.blueBuffer = [];
     this.vpgBuffer = [];
     this.apgBuffer = [];
-    this.redDC = 0;
-    this.redAC = 0;
-    this.greenDC = 0;
-    this.greenAC = 0;
+    this.redDC = 0; this.redAC = 0;
+    this.greenDC = 0; this.greenAC = 0;
+    this.blueDC = 0; this.blueAC = 0;
+    this.sourceBuffers = { R: [], G: [], RG: [], CHROM: [] };
     this.bandpassFilter.reset();
   }
 
@@ -624,6 +690,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.filteredBuffer = [];
     this.redBuffer = [];
     this.greenBuffer = [];
+    this.blueBuffer = [];
     this.vpgBuffer = [];
     this.apgBuffer = [];
     this.tileConfidence = new Array(25).fill(0);
@@ -633,20 +700,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastFrameTimestamp = 0;
     this.estimatedSampleRate = 30;
     this.fingerDetected = false;
+    this.contactState = 'NO_CONTACT';
     this.signalQuality = 0;
     this.fingerConfidenceCount = 0;
     this.fingerLostCount = 0;
+    this.stableContactCount = 0;
     this.smoothedRed = 0;
     this.smoothedGreen = 0;
     this.smoothedBlue = 0;
     this.smoothedCoverage = 0;
     this.smoothedFingerScore = 0;
-    this.redDC = 0;
-    this.redAC = 0;
-    this.greenDC = 0;
-    this.greenAC = 0;
+    this.redDC = 0; this.redAC = 0;
+    this.greenDC = 0; this.greenAC = 0;
+    this.blueDC = 0; this.blueAC = 0;
     this.motionScore = 0;
     this.lastAcceleration = { x: 0, y: 0, z: 0 };
+    this.sourceBuffers = { R: [], G: [], RG: [], CHROM: [] };
+    this.sourceScores = { R: 0, G: 0, RG: 0, CHROM: 0 };
+    this.activeSource = 'RG';
+    this.lastSourceSwitch = 0;
     this.resetBaselines();
     this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
     this.bandpassFilter.reset();
@@ -667,20 +739,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     let gyroRMS = 0;
 
     if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
-      gyroRMS = Math.sqrt(
-        (rot.alpha ?? 0) ** 2 +
-        (rot.beta ?? 0) ** 2 +
-        (rot.gamma ?? 0) ** 2
-      ) / 120;
+      gyroRMS = Math.sqrt((rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2) / 120;
     }
 
-    const rawScore = accelRMS * 0.55 + gyroRMS * 0.3;
-    this.motionScore = this.motionScore * 0.82 + rawScore * 0.18;
+    const rawScore = accelRMS * 0.5 + gyroRMS * 0.3;
+    this.motionScore = this.motionScore * 0.85 + rawScore * 0.15;
   };
 
   private startMotionListener(): void {
     if (this.motionListenerActive) return;
-
     try {
       if (typeof DeviceMotionEvent !== 'undefined') {
         if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
@@ -697,9 +764,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.motionListenerActive = true;
         }
       }
-    } catch (error) {
-      console.warn('⚠️ IMU no disponible:', error);
-    }
+    } catch {}
   }
 
   private stopMotionListener(): void {
@@ -715,10 +780,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   getRGBStats() {
     return {
-      redAC: this.redAC,
-      redDC: this.redDC,
-      greenAC: this.greenAC,
-      greenDC: this.greenDC,
+      redAC: this.redAC, redDC: this.redDC,
+      greenAC: this.greenAC, greenDC: this.greenDC,
       rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0,
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC)

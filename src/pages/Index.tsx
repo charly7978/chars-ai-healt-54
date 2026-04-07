@@ -3,7 +3,6 @@ import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2 } from "
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
-import CameraPreview from "@/components/CameraPreview";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
@@ -207,7 +206,7 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  // === LOOP DE CAPTURA DE FRAMES ===
+  // === LOOP DE CAPTURA — requestVideoFrameCallback con fallback RAF ===
   const startFrameLoop = useCallback(() => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
@@ -218,37 +217,33 @@ const Index = () => {
       isProcessingRef.current = false;
       return;
     }
-    
-    let lastFrameTime = 0;
-    const TARGET_FPS = 30;
-    const FRAME_INTERVAL = 1000 / TARGET_FPS;
-    
-    const captureFrame = () => {
+
+    const captureOneFrame = () => {
       if (!isProcessingRef.current) return;
-      
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
-        frameLoopRef.current = requestAnimationFrame(captureFrame);
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
         return;
       }
-      
-      const now = performance.now();
-      if (now - lastFrameTime >= FRAME_INTERVAL) {
-        try {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          processFrame(imageData);
-          lastFrameTime = now;
-        } catch (e) {
-          console.error('Error capturando frame:', e);
-        }
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        processFrame(imageData);
+      } catch {}
+      scheduleNext(video);
+    };
+
+    const scheduleNext = (video: HTMLVideoElement) => {
+      if (!isProcessingRef.current) return;
+      if ('requestVideoFrameCallback' in video) {
+        (video as any).requestVideoFrameCallback(() => captureOneFrame());
+      } else {
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
       }
-      
-      frameLoopRef.current = requestAnimationFrame(captureFrame);
     };
     
-    console.log('🎬 Iniciando loop de captura');
-    frameLoopRef.current = requestAnimationFrame(captureFrame);
+    console.log('🎬 Captura iniciada (requestVideoFrameCallback)');
+    captureOneFrame();
   }, [processFrame]);
 
   const stopFrameLoop = useCallback(() => {
@@ -257,7 +252,6 @@ const Index = () => {
       cancelAnimationFrame(frameLoopRef.current);
       frameLoopRef.current = null;
     }
-    console.log('🛑 Loop de captura detenido');
   }, []);
 
   // === INICIO DE MONITOREO ===
@@ -465,15 +459,15 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    // Procesar latidos
+    // Procesar latidos — pasar contactState en vez de fingerDetected booleano
     const heartBeatResult = processHeartBeat(
       signalValue,
-      lastSignal.fingerDetected,
+      (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT'),
       lastSignal.timestamp
     );
     
     setHeartRate(heartBeatResult.bpm);
-    setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
+    setHeartbeatSignal(heartBeatResult.filteredValue);
     
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
@@ -612,13 +606,6 @@ const Index = () => {
       )}
 
       <div className="flex-1 relative">
-        {/* PREVIEW DE CÁMARA */}
-        <CameraPreview 
-          stream={cameraStream}
-          isFingerDetected={lastSignal?.fingerDetected || false}
-          signalQuality={lastSignal?.quality || 0}
-          isVisible={isCameraOn}
-        />
 
         {/* CÁMARA - Con ref directo */}
         <div className="absolute inset-0">
