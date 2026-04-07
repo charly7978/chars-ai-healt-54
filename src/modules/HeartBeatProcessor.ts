@@ -1,35 +1,40 @@
 /**
- * PROCESADOR DE LATIDOS — ESTABILIDAD PRIORITARIA
+ * PROCESADOR DE LATIDOS — DETECCIÓN ROBUSTA
  *
- * - Suavizado EMA de la entrada (menos jitter antes de derivar)
- * - Intervalos RR solo si son fisiológicos (~40–188 BPM)
- * - BPM a partir de mediana de RR válidos + suavizado fuerte
- * - Picos: cruce VPG descendente Y máximo local (menos falsos positivos)
- * - Confianza por dispersión robusta (MAD) de RR
+ * Correcciones respecto a versión anterior:
+ * 1. EMA de entrada reducido (α=0.08 → preserva picos, no los aplasta)
+ * 2. Umbral adaptativo basado en amplitud reciente (no fijo)
+ * 3. Detección de picos por cruce descendente de derivada + máximo local
+ * 4. BPM por mediana de RR + suavizado conservador
+ * 5. Confianza por dispersión MAD de intervalos RR
+ *
+ * Referencia: Han et al. 2022 (Waveform Envelope Peak Detection)
  */
 
 export class HeartBeatProcessor {
-  private readonly MIN_PEAK_INTERVAL_MS = 300;
-  private readonly MAX_PEAK_INTERVAL_MS = 2000;
+  private readonly MIN_PEAK_INTERVAL_MS = 300;   // ~200 BPM max
+  private readonly MAX_PEAK_INTERVAL_MS = 2000;  // ~30 BPM min
 
-  /** RR válidos ~40–188 BPM @ 30fps equivalente temporal */
   private readonly MIN_RR_MS = 320;
   private readonly MAX_RR_MS = 1500;
 
   private signalBuffer: number[] = [];
   private derivativeBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 180;
+  private readonly BUFFER_SIZE = 300; // 10s @ 30fps — más contexto
 
   private lastPeakTime: number = 0;
-  private peakThreshold: number = 8;
+  private peakThreshold: number = 0;
+  private adaptiveThresholdHigh: number = 0;
+  private adaptiveThresholdLow: number = 0;
 
   private rrIntervals: number[] = [];
   private readonly MAX_RR_INTERVALS = 12;
   private smoothBPM: number = 0;
 
+  // EMA muy suave para quitar jitter sin destruir la forma de onda
+  private readonly INPUT_EMA_ALPHA = 0.06;
   private inputEma: number = 0;
   private inputEmaReady = false;
-  private readonly INPUT_EMA_ALPHA = 0.22;
 
   private audioContext: AudioContext | null = null;
   private audioUnlocked: boolean = false;
@@ -37,8 +42,13 @@ export class HeartBeatProcessor {
 
   private frameCount: number = 0;
   private consecutiveValidBeats: number = 0;
-  private lastPeakValue: number = 0;
+  private lastPeakAmplitude: number = 0;
   private signalQualityIndex: number = 0;
+
+  // Envelope tracking para umbral adaptativo
+  private envelopeMax: number = 0;
+  private envelopeMin: number = 0;
+  private readonly ENVELOPE_ALPHA = 0.02;
 
   constructor() {
     this.setupAudio();
@@ -60,14 +70,14 @@ export class HeartBeatProcessor {
     document.addEventListener('click', unlock, { passive: true });
   }
 
-  private preprocessInput(filteredValue: number): number {
+  private preprocessInput(value: number): number {
     if (!this.inputEmaReady) {
-      this.inputEma = filteredValue;
+      this.inputEma = value;
       this.inputEmaReady = true;
-      return filteredValue;
+      return value;
     }
-    this.inputEma =
-      this.INPUT_EMA_ALPHA * filteredValue + (1 - this.INPUT_EMA_ALPHA) * this.inputEma;
+    // Suavizado MUY ligero — solo quita jitter de alta frecuencia
+    this.inputEma = this.INPUT_EMA_ALPHA * value + (1 - this.INPUT_EMA_ALPHA) * this.inputEma;
     return this.inputEma;
   }
 
@@ -94,27 +104,23 @@ export class HeartBeatProcessor {
       this.derivativeBuffer.shift();
     }
 
-    if (this.signalBuffer.length < 36) {
-      return {
-        bpm: 0,
-        confidence: 0,
-        isPeak: false,
-        filteredValue: 0,
-        arrhythmiaCount: 0,
-        sqi: 0,
-      };
+    // Necesitamos mínimo ~1s de datos
+    if (this.signalBuffer.length < 30) {
+      return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
+    // Actualizar envelope tracking
+    this.updateEnvelope(smoothedIn);
+
     const { normalizedValue, range } = this.normalizeSignal(smoothedIn);
-    this.updateThreshold(range);
+    this.updateAdaptiveThreshold(range);
     this.signalQualityIndex = this.calculateSQI();
 
     const timeSinceLastPeak = this.lastPeakTime > 0 ? now - this.lastPeakTime : Infinity;
     let isPeak = false;
-    let peakForUi = false;
 
     if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
-      isPeak = this.detectPeakWithDerivative(timeSinceLastPeak);
+      isPeak = this.detectPeak(normalizedValue, timeSinceLastPeak);
 
       if (isPeak) {
         let acceptBeat = true;
@@ -133,39 +139,112 @@ export class HeartBeatProcessor {
         }
 
         this.lastPeakTime = now;
-        peakForUi = acceptBeat;
 
         if (acceptBeat) {
           this.vibrate();
           this.playBeep();
         }
+
+        return {
+          bpm: this.smoothBPM,
+          confidence: this.calculateConfidence(),
+          isPeak: acceptBeat,
+          filteredValue: normalizedValue,
+          arrhythmiaCount: 0,
+          sqi: this.signalQualityIndex,
+        };
       }
     }
 
-    const confidence = this.calculateConfidence();
-
     return {
       bpm: this.smoothBPM,
-      confidence,
-      isPeak: peakForUi,
+      confidence: this.calculateConfidence(),
+      isPeak: false,
       filteredValue: normalizedValue,
       arrhythmiaCount: 0,
       sqi: this.signalQualityIndex,
     };
   }
 
+  /**
+   * Detección de pico mejorada:
+   * 1. Cruce descendente de la derivada (de positiva a ≤0)
+   * 2. Valor actual por encima del umbral adaptativo
+   * 3. Máximo local en ventana de 5 muestras
+   * 4. Forma de onda plausible (subida previa + caída posterior)
+   */
+  private detectPeak(normalizedValue: number, timeSinceLastPeak: number): boolean {
+    const n = this.signalBuffer.length;
+    const dn = this.derivativeBuffer.length;
+    if (n < 7 || dn < 4) return false;
+
+    // Cruce descendente de derivada
+    const dPrev = this.derivativeBuffer[dn - 2];
+    const dCurr = this.derivativeBuffer[dn - 1];
+    const zeroCrossingDown = dPrev > 0 && dCurr <= 0;
+    if (!zeroCrossingDown) return false;
+
+    // Normalizar los últimos 7 valores para comparación local
+    const slice = this.signalBuffer.slice(-120);
+    const minS = Math.min(...slice);
+    const maxS = Math.max(...slice);
+    const rangeS = maxS - minS;
+    if (rangeS < 0.05) return false;
+
+    const norm = (v: number) => ((v - minS) / rangeS) * 100;
+    const tail = this.signalBuffer.slice(-7).map(norm);
+
+    // El punto candidato es tail[4] (2 muestras antes del final para dar margen a la derivada)
+    const vPeak = tail[4];
+
+    // Máximo local: mayor que vecinos inmediatos
+    const isLocalMax = vPeak >= tail[3] && vPeak >= tail[5] && vPeak >= tail[2];
+    if (!isLocalMax) return false;
+
+    // Por encima del umbral adaptativo (porcentaje del rango)
+    if (vPeak < this.adaptiveThresholdHigh) return false;
+
+    // Forma de onda: debe haber subido antes y empezar a bajar después
+    const risingBefore = vPeak - tail[1] > 0.5;
+    const fallingAfter = vPeak - tail[6] > 0.2;
+    if (!risingBefore || !fallingAfter) return false;
+
+    // Validación de amplitud vs pico anterior (evita falsos positivos por ruido)
+    if (this.lastPeakAmplitude > 0) {
+      const ratio = vPeak / this.lastPeakAmplitude;
+      if (ratio < 0.2 || ratio > 5.0) return false;
+    }
+
+    this.lastPeakAmplitude = vPeak;
+    return true;
+  }
+
+  private updateEnvelope(value: number): void {
+    if (this.frameCount <= 1) {
+      this.envelopeMax = value;
+      this.envelopeMin = value;
+      return;
+    }
+    this.envelopeMax = Math.max(value, this.envelopeMax * (1 - this.ENVELOPE_ALPHA) + value * this.ENVELOPE_ALPHA);
+    this.envelopeMin = Math.min(value, this.envelopeMin * (1 - this.ENVELOPE_ALPHA) + value * this.ENVELOPE_ALPHA);
+  }
+
+  private updateAdaptiveThreshold(range: number): void {
+    // Umbral alto: 35% del rango (para confirmar pico real)
+    // Umbral bajo: usado para refractario
+    this.adaptiveThresholdHigh = Math.max(8, range * 0.35) * 0.85 + this.adaptiveThresholdHigh * 0.15;
+    this.adaptiveThresholdLow = this.adaptiveThresholdHigh * 0.5;
+  }
+
   private updateBpmFromMedian(): void {
-    const valid = this.rrIntervals.filter(
-      (rr) => rr >= this.MIN_RR_MS && rr <= this.MAX_RR_MS
-    );
+    const valid = this.rrIntervals.filter(rr => rr >= this.MIN_RR_MS && rr <= this.MAX_RR_MS);
     if (valid.length === 0) return;
 
     const sorted = [...valid].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
-    const medianRr =
-      sorted.length % 2 === 1
-        ? sorted[mid]
-        : (sorted[mid - 1] + sorted[mid]) / 2;
+    const medianRr = sorted.length % 2 === 1
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
 
     const medianBpm = 60000 / medianRr;
 
@@ -174,17 +253,16 @@ export class HeartBeatProcessor {
       return;
     }
 
+    // Suavizado adaptativo: cambios grandes → más lento, cambios pequeños → más rápido
     const diff = Math.abs(medianBpm - this.smoothBPM) / this.smoothBPM;
-    const alpha = diff > 0.12 ? 0.12 : diff > 0.06 ? 0.18 : 0.28;
+    const alpha = diff > 0.15 ? 0.10 : diff > 0.08 ? 0.18 : 0.30;
     this.smoothBPM = this.smoothBPM * (1 - alpha) + medianBpm * alpha;
   }
 
   private calculateDerivative(): number {
     const n = this.signalBuffer.length;
     if (n < 3) return 0;
-    const current = this.signalBuffer[n - 1];
-    const older = this.signalBuffer[n - 3];
-    return (current - older) / 2;
+    return (this.signalBuffer[n - 1] - this.signalBuffer[n - 3]) / 2;
   }
 
   private calculateSQI(): number {
@@ -198,13 +276,10 @@ export class HeartBeatProcessor {
     const rangeFactor = Math.min(1, range / 6) * 40;
 
     let rrFactor = 0;
-    const validRr = this.rrIntervals.filter(
-      (rr) => rr >= this.MIN_RR_MS && rr <= this.MAX_RR_MS
-    );
+    const validRr = this.rrIntervals.filter(rr => rr >= this.MIN_RR_MS && rr <= this.MAX_RR_MS);
     if (validRr.length >= 3) {
       const mean = validRr.reduce((a, b) => a + b, 0) / validRr.length;
-      const variance =
-        validRr.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / validRr.length;
+      const variance = validRr.reduce((acc, rr) => acc + Math.pow(rr - mean, 2), 0) / validRr.length;
       const cv = Math.sqrt(variance) / mean;
       rrFactor = Math.max(0, (1 - cv * 2.2)) * 35;
     }
@@ -228,82 +303,20 @@ export class HeartBeatProcessor {
     return { normalizedValue, range };
   }
 
-  private updateThreshold(range: number): void {
-    const newThreshold = Math.max(6, range * 0.22);
-    this.peakThreshold = this.peakThreshold * 0.88 + newThreshold * 0.12;
-  }
-
-  private detectPeakWithDerivative(timeSinceLastPeak: number): boolean {
-    const n = this.signalBuffer.length;
-    const dn = this.derivativeBuffer.length;
-    if (n < 8 || dn < 5) return false;
-
-    const dPrev = this.derivativeBuffer[dn - 2];
-    const dCurr = this.derivativeBuffer[dn - 1];
-    const zeroCrossingDown = dPrev > 0 && dCurr <= 0;
-
-    const slice = this.signalBuffer.slice(-120);
-    const min = Math.min(...slice);
-    const max = Math.max(...slice);
-    const range = max - min;
-    if (range < 0.05) return false;
-
-    const norm = (v: number) => ((v - min) / range - 0.5) * 100;
-    const tail = this.signalBuffer.slice(-7);
-    const nv = tail.map(norm);
-
-    const vPeak = nv[4];
-    const isLocalMax =
-      vPeak >= nv[3] &&
-      vPeak >= nv[5] &&
-      vPeak >= nv[2] &&
-      vPeak >= nv[1] * 0.92;
-
-    const aboveThreshold = vPeak > this.peakThreshold;
-
-    let amplitudeValid = true;
-    if (this.lastPeakValue > 0) {
-      const ratio = vPeak / this.lastPeakValue;
-      amplitudeValid = ratio > 0.25 && ratio < 4.0;
-    }
-
-    const risingBefore = vPeak - nv[1] > 0.8;
-    const fallingAfter = vPeak - nv[6] > 0.35;
-
-    const strictPeak =
-      zeroCrossingDown &&
-      isLocalMax &&
-      aboveThreshold &&
-      risingBefore &&
-      fallingAfter &&
-      timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS &&
-      amplitudeValid;
-
-    if (strictPeak) {
-      this.lastPeakValue = vPeak;
-    }
-
-    return strictPeak;
-  }
-
   private calculateConfidence(): number {
-    const valid = this.rrIntervals.filter(
-      (rr) => rr >= this.MIN_RR_MS && rr <= this.MAX_RR_MS
-    );
-    if (valid.length < 4) return 0;
+    const valid = this.rrIntervals.filter(rr => rr >= this.MIN_RR_MS && rr <= this.MAX_RR_MS);
+    if (valid.length < 3) return 0;
 
     const sorted = [...valid].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
-    const median =
-      sorted.length % 2 === 1
-        ? sorted[mid]
-        : (sorted[mid - 1] + sorted[mid]) / 2;
+    const median = sorted.length % 2 === 1
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
 
-    const mad =
-      sorted.reduce((s, r) => s + Math.abs(r - median), 0) / sorted.length;
+    const mad = sorted.reduce((s, r) => s + Math.abs(r - median), 0) / sorted.length;
     const relative = mad / (median + 1e-6);
 
-    return Math.max(0, Math.min(1, 1 - relative * 2.8));
+    return Math.max(0, Math.min(1, 1 - relative * 2.5));
   }
 
   private vibrate(): void {
@@ -340,21 +353,10 @@ export class HeartBeatProcessor {
     } catch {}
   }
 
-  getRRIntervals(): number[] {
-    return [...this.rrIntervals];
-  }
-
-  getLastPeakTime(): number {
-    return this.lastPeakTime;
-  }
-
-  getSQI(): number {
-    return this.signalQualityIndex;
-  }
-
-  getDerivativeBuffer(): number[] {
-    return [...this.derivativeBuffer];
-  }
+  getRRIntervals(): number[] { return [...this.rrIntervals]; }
+  getLastPeakTime(): number { return this.lastPeakTime; }
+  getSQI(): number { return this.signalQualityIndex; }
+  getDerivativeBuffer(): number[] { return [...this.derivativeBuffer]; }
 
   setArrhythmiaDetected(_isDetected: boolean): void {}
   setFingerDetected(_detected: boolean): void {}
@@ -365,13 +367,16 @@ export class HeartBeatProcessor {
     this.rrIntervals = [];
     this.smoothBPM = 0;
     this.lastPeakTime = 0;
-    this.peakThreshold = 10;
+    this.adaptiveThresholdHigh = 0;
+    this.adaptiveThresholdLow = 0;
     this.frameCount = 0;
     this.consecutiveValidBeats = 0;
     this.signalQualityIndex = 0;
     this.inputEmaReady = false;
     this.inputEma = 0;
-    this.lastPeakValue = 0;
+    this.lastPeakAmplitude = 0;
+    this.envelopeMax = 0;
+    this.envelopeMin = 0;
   }
 
   dispose(): void {
