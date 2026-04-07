@@ -9,6 +9,8 @@ interface CameraViewProps {
   isMonitoring: boolean;
 }
 
+type RangeCapability = { min?: number; max?: number; step?: number } | number | undefined;
+
 type CameraDiagnosticCaps = MediaTrackCapabilities & {
   torch?: boolean;
   focusMode?: string[];
@@ -16,27 +18,21 @@ type CameraDiagnosticCaps = MediaTrackCapabilities & {
   whiteBalanceMode?: string[];
   zoom?: { min?: number; max?: number } | number;
   exposureCompensation?: { min?: number; max?: number; step?: number };
+  brightness?: { min?: number; max?: number; step?: number };
+  contrast?: { min?: number; max?: number; step?: number };
+  saturation?: { min?: number; max?: number; step?: number };
+  sharpness?: { min?: number; max?: number; step?: number };
+  colorTemperature?: { min?: number; max?: number; step?: number };
+  iso?: { min?: number; max?: number; step?: number };
 };
 
-/**
- * CÁMARA PPG OPTIMIZADA
- *
- * Objetivos:
- * 1. Priorizar cámara trasera principal (evitar selfie / macro / depth)
- * 2. Activar torch de forma robusta cuando el dispositivo lo soporte
- * 3. Reducir hunting de auto-focus / auto-exposure que arruina la señal PPG
- * 4. Exponer el video element para el pipeline de captura
- */
-const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
-  onStreamReady,
-  isMonitoring,
-}, ref) => {
+const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({ onStreamReady, isMonitoring }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
-    getVideoElement: () => videoRef.current
+    getVideoElement: () => videoRef.current,
   }), []);
 
   useEffect(() => {
@@ -93,13 +89,19 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       }
     };
 
-    const getTrackLabel = (track: MediaStreamTrack | undefined) => {
-      return track?.label?.toLowerCase() ?? '';
-    };
+    const getTrackLabel = (track: MediaStreamTrack | undefined) => track?.label?.toLowerCase() ?? '';
 
     const isProbablyFrontCamera = (track: MediaStreamTrack | undefined) => {
       const label = getTrackLabel(track);
       return /front|frontal|user|selfie/.test(label);
+    };
+
+    const getRangeTarget = (capability: RangeCapability, ratio: number) => {
+      if (typeof capability === 'number') return capability;
+      if (!capability || typeof capability !== 'object') return undefined;
+      const lo = capability.min ?? 0;
+      const hi = capability.max ?? lo;
+      return lo + (hi - lo) * ratio;
     };
 
     const selectBestBackCamera = async (): Promise<string | null> => {
@@ -109,10 +111,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         if (!videoDevices.length) return null;
 
         const ranked = videoDevices
-          .map(device => ({
-            device,
-            score: scoreBackCameraLabel(device.label || ''),
-          }))
+          .map(device => ({ device, score: scoreBackCameraLabel(device.label || '') }))
           .sort((a, b) => b.score - a.score);
 
         for (const entry of ranked) {
@@ -123,8 +122,8 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
               audio: false,
               video: {
                 deviceId: { exact: entry.device.deviceId },
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: 640 },
+                height: { ideal: 480 },
                 frameRate: { ideal: 30, max: 30 },
               }
             });
@@ -157,44 +156,62 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       }
     };
 
-    const applyPPGTrackTuning = async (track: MediaStreamTrack) => {
+    const applyPPGTrackTuning = async (track: MediaStreamTrack, stage: 'preTorch' | 'postTorch' = 'preTorch') => {
       const caps = getTrackCapabilities(track);
       if (!caps) return false;
 
-      const advanced: any = {};
+      const advanced: Record<string, any> = {};
+      const exposureRatio = stage === 'postTorch' ? 0.95 : 0.78;
+      const brightnessRatio = stage === 'postTorch' ? 0.88 : 0.68;
 
       if (Array.isArray(caps.focusMode)) {
-        if (caps.focusMode.includes('manual')) advanced.focusMode = 'manual';
-        else if (caps.focusMode.includes('single-shot')) advanced.focusMode = 'single-shot';
+        if (caps.focusMode.includes('single-shot')) advanced.focusMode = 'single-shot';
         else if (caps.focusMode.includes('continuous')) advanced.focusMode = 'continuous';
       }
 
-      if (Array.isArray(caps.exposureMode)) {
-        if (caps.exposureMode.includes('manual')) advanced.exposureMode = 'manual';
-        else if (caps.exposureMode.includes('continuous')) advanced.exposureMode = 'continuous';
+      if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes('continuous')) {
+        advanced.exposureMode = 'continuous';
       }
 
-      if (Array.isArray(caps.whiteBalanceMode)) {
-        if (caps.whiteBalanceMode.includes('manual')) advanced.whiteBalanceMode = 'manual';
-        else if (caps.whiteBalanceMode.includes('continuous')) advanced.whiteBalanceMode = 'continuous';
+      if (Array.isArray(caps.whiteBalanceMode) && caps.whiteBalanceMode.includes('continuous')) {
+        advanced.whiteBalanceMode = 'continuous';
       }
 
       if (typeof caps.zoom === 'object' && caps.zoom && 'min' in caps.zoom && 'max' in caps.zoom) {
-        advanced.zoom = Math.max(caps.zoom.min ?? 1, Math.min(1, caps.zoom.max ?? 1));
+        advanced.zoom = caps.zoom.min ?? 1;
       }
 
-      if (caps.exposureCompensation && typeof caps.exposureCompensation === 'object') {
-        const ec = caps.exposureCompensation;
-        const lo = ec.min ?? -1;
-        const hi = ec.max ?? 1;
-        if (hi > lo) {
-          advanced.exposureCompensation = lo + (hi - lo) * 0.58;
-        }
+      const exposureCompensation = getRangeTarget(caps.exposureCompensation, exposureRatio);
+      if (typeof exposureCompensation === 'number' && Number.isFinite(exposureCompensation)) {
+        advanced.exposureCompensation = exposureCompensation;
       }
 
-      const hasAdvancedParams = Object.keys(advanced).length > 0;
-      if (!hasAdvancedParams) return false;
+      const brightness = getRangeTarget(caps.brightness, brightnessRatio);
+      if (typeof brightness === 'number' && Number.isFinite(brightness)) {
+        advanced.brightness = brightness;
+      }
 
+      const iso = getRangeTarget(caps.iso, stage === 'postTorch' ? 0.74 : 0.58);
+      if (typeof iso === 'number' && Number.isFinite(iso)) {
+        advanced.iso = iso;
+      }
+
+      const contrast = getRangeTarget(caps.contrast, 0.58);
+      if (typeof contrast === 'number' && Number.isFinite(contrast)) {
+        advanced.contrast = contrast;
+      }
+
+      const saturation = getRangeTarget(caps.saturation, 0.62);
+      if (typeof saturation === 'number' && Number.isFinite(saturation)) {
+        advanced.saturation = saturation;
+      }
+
+      const sharpness = getRangeTarget(caps.sharpness, 0.45);
+      if (typeof sharpness === 'number' && Number.isFinite(sharpness)) {
+        advanced.sharpness = sharpness;
+      }
+
+      if (!Object.keys(advanced).length) return false;
       return safeApplyConstraints(track, { advanced: [advanced] });
     };
 
@@ -227,10 +244,10 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 
     const buildPreferredConstraints = (deviceId?: string | null): MediaTrackConstraints => ({
       ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' } }),
-      width: { ideal: 1280, min: 640 },
-      height: { ideal: 720, min: 480 },
+      width: { ideal: 640, min: 480 },
+      height: { ideal: 480, min: 360 },
       frameRate: { ideal: 30, min: 24, max: 30 },
-      aspectRatio: { ideal: 16 / 9 },
+      aspectRatio: { ideal: 4 / 3 },
     });
 
     const ensureVideoPlaying = async () => {
@@ -258,6 +275,17 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       });
     };
 
+    const prepareTrackForPPG = async (track: MediaStreamTrack) => {
+      await applyPPGTrackTuning(track, 'preTorch');
+      const torchActivated = await enableTorchRobustly(track);
+      await new Promise(resolve => setTimeout(resolve, torchActivated ? 350 : 180));
+      await applyPPGTrackTuning(track, torchActivated ? 'postTorch' : 'preTorch');
+      if (!torchActivated) {
+        await enableTorchRobustly(track);
+      }
+      return torchActivated;
+    };
+
     const startCamera = async () => {
       if (isStartingRef.current) return;
       isStartingRef.current = true;
@@ -269,7 +297,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       }
 
       try {
-        // 1) Abrir rápidamente cámara trasera ideal para destrabar permisos y labels
         let stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: buildPreferredConstraints(null),
@@ -278,7 +305,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         let track = stream.getVideoTracks()[0];
         const initialLabel = getTrackLabel(track);
 
-        // 2) Si por heurística parece frontal, re-seleccionar cámara trasera principal ya con labels visibles
         if (isProbablyFrontCamera(track) || /macro|depth|tele/.test(initialLabel)) {
           const betterDeviceId = await selectBestBackCamera();
           if (betterDeviceId) {
@@ -304,11 +330,8 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           await ensureVideoPlaying();
         }
 
-        // Pequeño warm-up para estabilizar AE/AF antes de torch
-        await new Promise(resolve => setTimeout(resolve, 450));
-
-        await applyPPGTrackTuning(track);
-        const torchActivated = await enableTorchRobustly(track);
+        await new Promise(resolve => setTimeout(resolve, 320));
+        const torchActivated = await prepareTrackForPPG(track);
 
         const settings = track.getSettings?.() as any;
         const caps = getTrackCapabilities(track);
@@ -320,6 +343,9 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           torchActivated,
           facingMode: settings?.facingMode,
           frameRate: settings?.frameRate,
+          exposureCompensation: settings?.exposureCompensation,
+          brightness: settings?.brightness,
+          iso: settings?.iso,
         });
 
         onStreamReady?.(stream);
@@ -329,12 +355,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         try {
           const fallbackStream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: {
-              facingMode: 'environment',
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 },
-            }
+            video: buildPreferredConstraints(null),
           });
 
           if (!mounted) {
@@ -349,7 +370,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           }
 
           const track = fallbackStream.getVideoTracks()[0];
-          await enableTorchRobustly(track);
+          await prepareTrackForPPG(track);
           onStreamReady?.(fallbackStream);
         } catch (fallbackError) {
           console.error('❌ Error cámara fallback:', fallbackError);
