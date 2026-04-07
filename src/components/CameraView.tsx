@@ -140,13 +140,13 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
               deviceId: { exact: mainCameraId },
               width: { ideal: 640, max: 1280 },
               height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              frameRate: { ideal: 60, min: 30, max: 60 }
             }
           : {
               facingMode: { exact: "environment" },
               width: { ideal: 640, max: 1280 },
               height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              frameRate: { ideal: 60, min: 30, max: 60 }
             };
         
         // PASO 3: Obtener stream
@@ -165,7 +165,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
               facingMode: "environment",
               width: { ideal: 640 },
               height: { ideal: 480 },
-              frameRate: { ideal: 30 }
+              frameRate: { ideal: 30, min: 24, max: 30 }
             }
           });
         }
