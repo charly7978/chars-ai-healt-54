@@ -135,18 +135,20 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         const mainCameraId = await findMainBackCamera();
         
         // PASO 2: Configurar constraints
-        const videoConstraints: MediaTrackConstraints = mainCameraId 
+        // Para finger-PPG priorizamos 30 fps estables y más luz por frame sobre 60 fps nominales.
+        const preferredFrameRate = 30;
+        const videoConstraints: MediaTrackConstraints = mainCameraId
           ? {
               deviceId: { exact: mainCameraId },
-              width: { ideal: 640, max: 1280 },
+              width: { ideal: 640, max: 960 },
               height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 60, min: 30, max: 60 }
+              frameRate: { ideal: preferredFrameRate, min: 24, max: 30 }
             }
           : {
-              facingMode: { exact: "environment" },
-              width: { ideal: 640, max: 1280 },
+              facingMode: { ideal: "environment" },
+              width: { ideal: 640, max: 960 },
               height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 60, min: 30, max: 60 }
+              frameRate: { ideal: preferredFrameRate, min: 24, max: 30 }
             };
         
         // PASO 3: Obtener stream
@@ -162,7 +164,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: {
-              facingMode: "environment",
+              facingMode: { ideal: "environment" },
               width: { ideal: 640 },
               height: { ideal: 480 },
               frameRate: { ideal: 30, min: 24, max: 30 }
@@ -228,52 +230,54 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             console.warn('⚠️ No se pudo activar el flash después de 5 intentos');
           }
 
-          // PASO 6: BLOQUEAR EXPOSICIÓN/ISO/WB para señal PPG estable
-          // El flash en contacto directo satura si no se controlan estos parámetros
+          // PASO 6: Estabilizar frame rate/exposición/ISO/WB para fortalecer señal PPG útil
           await new Promise(r => setTimeout(r, 300));
           try {
             const caps = track.getCapabilities?.() as any;
             const lockConstraints: any[] = [];
             
-            // Bloquear exposición automática
+            if (caps?.frameRate) {
+              lockConstraints.push({ frameRate: 30 });
+            }
+
             if (caps?.exposureMode?.includes('manual')) {
               lockConstraints.push({ exposureMode: 'manual' });
-              console.log('📷 Exposición bloqueada: manual');
+            } else if (caps?.exposureMode?.includes('continuous')) {
+              lockConstraints.push({ exposureMode: 'continuous' });
             }
             
-            // Reducir compensación de exposición (evitar saturación con flash)
             if (caps?.exposureCompensation) {
               const minExp = caps.exposureCompensation.min ?? -2;
-              const lowExp = Math.max(minExp, -1.5);
-              lockConstraints.push({ exposureCompensation: lowExp });
-              console.log(`📷 Exposición compensada: ${lowExp}`);
+              const maxExp = caps.exposureCompensation.max ?? 2;
+              const targetExp = Math.max(minExp, Math.min(maxExp, -0.35));
+              lockConstraints.push({ exposureCompensation: targetExp });
+              console.log(`📷 Exposición compensada: ${targetExp}`);
             }
             
-            // Bloquear balance de blancos
             if (caps?.whiteBalanceMode?.includes('manual')) {
               lockConstraints.push({ whiteBalanceMode: 'manual' });
-              console.log('📷 Balance de blancos bloqueado');
             }
             
-            // ISO bajo para evitar saturación con flash directo
             if (caps?.iso) {
               const minISO = caps.iso.min ?? 50;
-              const targetISO = Math.max(minISO, Math.min(100, caps.iso.max ?? 100));
+              const maxISO = caps.iso.max ?? 400;
+              const targetISO = Math.max(minISO, Math.min(maxISO, 140));
               lockConstraints.push({ iso: targetISO });
               console.log(`📷 ISO fijado: ${targetISO}`);
             }
             
-            // Bloquear enfoque
             if (caps?.focusMode?.includes('manual')) {
               lockConstraints.push({ focusMode: 'manual' });
+            } else if (caps?.focusMode?.includes('continuous')) {
+              lockConstraints.push({ focusMode: 'continuous' });
             }
             
             if (lockConstraints.length > 0) {
               await track.applyConstraints({ advanced: lockConstraints });
-              console.log('✅ Parámetros de cámara bloqueados para PPG');
+              console.log('✅ Parámetros de cámara estabilizados para PPG');
             }
           } catch (lockErr) {
-            console.warn('⚠️ No se pudieron bloquear parámetros de cámara:', lockErr);
+            console.warn('⚠️ No se pudieron estabilizar parámetros de cámara:', lockErr);
           }
         }
 
