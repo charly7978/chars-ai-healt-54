@@ -124,7 +124,7 @@ export const useHeartBeatProcessor = () => {
       signalQuality: roundedSQI,
       rrData,
     };
-  }, [confidence, currentBPM, emptyResult, signalQuality]);
+  }, []);
 
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
