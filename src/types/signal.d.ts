@@ -6,6 +6,7 @@ export interface ProcessedSignal {
   filteredValue: number;
   quality: number;
   fingerDetected: boolean;
+  motionArtifact?: boolean;
   roi: {
     x: number;
     y: number;

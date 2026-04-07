@@ -679,19 +679,19 @@ const Index = () => {
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
               <VitalSign 
-                label="HEMOGLOBINA"
+                label="HEMOGLOBINA (EST.)"
                 value={vitalSigns.hemoglobin > 0 ? vitalSigns.hemoglobin : "--"}
                 unit="g/dL"
                 highlighted={showResults}
               />
               <VitalSign 
-                label="GLUCOSA"
+                label="GLUCOSA (EST.)"
                 value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
                 unit="mg/dL"
                 highlighted={showResults}
               />
               <VitalSign 
-                label="COLESTEROL/TRIGL."
+                label="COLEST./TRIGL. (EST.)"
                 value={
                   vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
                     ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`

@@ -37,17 +37,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount: number = 0;
   private lastLogTime: number = 0;
   
-  // Detección de dedo con histéresis
+  // Detección de dedo con histéresis - MÁS TOLERANTE
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 4;   // Confirmación un poco más rápida para comodidad
-  private readonly FINGER_LOST_FRAMES = 24;     // Mayor tolerancia a temblores/microajustes
+  private readonly FINGER_CONFIRM_FRAMES = 3;   // Detección más rápida para comodidad
+  private readonly FINGER_LOST_FRAMES = 30;     // ~1 segundo tolerancia a temblores/reposición
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.22;     // Más estabilidad ante pequeños movimientos
+  private readonly RGB_SMOOTH_ALPHA = 0.18;     // Más estabilidad ante pequeños movimientos
+  
+  // IMU - Rechazo de movimiento
+  private motionScore: number = 0;
+  private motionListenerActive: boolean = false;
+  private lastAcceleration: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
+  private readonly MOTION_THRESHOLD = 0.35; // RMS threshold
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -66,11 +72,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.initialize();
+    this.startMotionListener();
     console.log('🚀 PPGSignalProcessor iniciado');
   }
 
   stop(): void {
     this.isProcessing = false;
+    this.stopMotionListener();
     console.log('🛑 PPGSignalProcessor detenido');
   }
 
@@ -146,18 +154,24 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const perfusionIndex = this.calculatePerfusionIndex();
     
     // 13. EMITIR SEÑAL PROCESADA
+    const motionArtifact = this.motionScore > this.MOTION_THRESHOLD;
+    const adjustedQuality = motionArtifact 
+      ? Math.max(0, this.signalQuality * 0.5) 
+      : this.signalQuality;
+
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: inverted,
       filteredValue: filtered,
-      quality: this.signalQuality,
+      quality: adjustedQuality,
       fingerDetected: this.fingerDetected,
+      motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex,
       rawRed,
       rawGreen,
       diagnostics: {
-        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}`,
+        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}${motionArtifact ? ' MOV' : ''}`,
         hasPulsatility: perfusionIndex > 0.1,
         pulsatilityValue: perfusionIndex
       }
@@ -439,6 +453,73 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.greenDC = 0;
     this.greenAC = 0;
     this.bandpassFilter.reset();
+    this.motionScore = 0;
+  }
+
+  // ─── IMU MOTION REJECTION ───
+  
+  private handleMotionEvent = (event: DeviceMotionEvent) => {
+    const acc = event.accelerationIncludingGravity;
+    if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
+    
+    // Calcular delta de aceleración (movimiento relativo)
+    const dx = (acc.x ?? 0) - this.lastAcceleration.x;
+    const dy = (acc.y ?? 0) - this.lastAcceleration.y;
+    const dz = (acc.z ?? 0) - this.lastAcceleration.z;
+    
+    this.lastAcceleration = { x: acc.x ?? 0, y: acc.y ?? 0, z: acc.z ?? 0 };
+    
+    // RMS del delta (mide cambio, no gravedad estática)
+    const accelRMS = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    
+    // Incorporar rotación si disponible
+    const rot = event.rotationRate;
+    let gyroRMS = 0;
+    if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
+      gyroRMS = Math.sqrt(
+        (rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2
+      ) / 100; // Normalizar grados/s
+    }
+    
+    // Combinar: 60% aceleración, 40% giro
+    const rawScore = accelRMS * 0.6 + gyroRMS * 0.4;
+    
+    // EMA para suavizar
+    this.motionScore = this.motionScore * 0.7 + rawScore * 0.3;
+  };
+  
+  private startMotionListener(): void {
+    if (this.motionListenerActive) return;
+    
+    try {
+      if (typeof DeviceMotionEvent !== 'undefined') {
+        // iOS 13+ requires permission
+        if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
+          (DeviceMotionEvent as any).requestPermission()
+            .then((state: string) => {
+              if (state === 'granted') {
+                window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
+                this.motionListenerActive = true;
+                console.log('📱 IMU activado (iOS)');
+              }
+            })
+            .catch(() => console.warn('⚠️ IMU: permiso denegado'));
+        } else {
+          window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
+          this.motionListenerActive = true;
+          console.log('📱 IMU activado');
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ IMU no disponible:', e);
+    }
+  }
+  
+  private stopMotionListener(): void {
+    if (!this.motionListenerActive) return;
+    window.removeEventListener('devicemotion', this.handleMotionEvent);
+    this.motionListenerActive = false;
+    this.motionScore = 0;
   }
 
   /**
@@ -452,7 +533,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       greenAC: this.greenAC,
       greenDC: this.greenDC,
       rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0,
-      // Ratio R para SpO2: (AC_red/DC_red) / (AC_green/DC_green)
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0 
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) 
         : 0

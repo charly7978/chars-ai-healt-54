@@ -274,14 +274,27 @@ export class BloodPressureProcessor {
     const systolicError = effectiveBaselineSystolic > 0 ? systolicRef - effectiveBaselineSystolic : 0;
     const diastolicError = effectiveBaselineDiastolic > 0 ? diastolicRef - effectiveBaselineDiastolic : 0;
 
+    // Guard: si la referencia es más del doble del baseline, limitar corrección
+    const sysGain = effectiveBaselineSystolic > 0 
+      ? (systolicRef > effectiveBaselineSystolic * 2 
+          ? 0.3 
+          : this.calculateCalibrationGain(systolicError, effectiveBaselineSystolic))
+      : 0.3; // Gain conservador cuando no hay baseline
+    
+    const diaGain = effectiveBaselineDiastolic > 0
+      ? (diastolicRef > effectiveBaselineDiastolic * 2
+          ? 0.3
+          : this.calculateCalibrationGain(diastolicError, effectiveBaselineDiastolic))
+      : 0.3;
+
     this.calibration = {
       systolicRef,
       diastolicRef,
       timestamp: Date.now(),
       baselineSystolic: effectiveBaselineSystolic,
       baselineDiastolic: effectiveBaselineDiastolic,
-      systolicGain: effectiveBaselineSystolic > 0 ? this.calculateCalibrationGain(systolicError, effectiveBaselineSystolic) : 0.45,
-      diastolicGain: effectiveBaselineDiastolic > 0 ? this.calculateCalibrationGain(diastolicError, effectiveBaselineDiastolic) : 0.45
+      systolicGain: sysGain,
+      diastolicGain: diaGain
     };
   }
 
