@@ -3,7 +3,6 @@ import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2 } from "
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
-import CameraPreview from "@/components/CameraPreview";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
