@@ -37,17 +37,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameCount: number = 0;
   private lastLogTime: number = 0;
   
-  // Detección de dedo con histéresis
+  // Detección de dedo con histéresis - MÁS TOLERANTE
   private fingerDetected: boolean = false;
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 4;   // Confirmación un poco más rápida para comodidad
-  private readonly FINGER_LOST_FRAMES = 24;     // Mayor tolerancia a temblores/microajustes
+  private readonly FINGER_CONFIRM_FRAMES = 3;   // Detección más rápida para comodidad
+  private readonly FINGER_LOST_FRAMES = 30;     // ~1 segundo tolerancia a temblores/reposición
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.22;     // Más estabilidad ante pequeños movimientos
+  private readonly RGB_SMOOTH_ALPHA = 0.18;     // Más estabilidad ante pequeños movimientos
+  
+  // IMU - Rechazo de movimiento
+  private motionScore: number = 0;
+  private motionListenerActive: boolean = false;
+  private lastAcceleration: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 };
+  private readonly MOTION_THRESHOLD = 0.35; // RMS threshold
   
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -66,11 +72,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.initialize();
+    this.startMotionListener();
     console.log('🚀 PPGSignalProcessor iniciado');
   }
 
   stop(): void {
     this.isProcessing = false;
+    this.stopMotionListener();
     console.log('🛑 PPGSignalProcessor detenido');
   }
 

@@ -206,14 +206,13 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
               if (caps?.torch) {
                 await track.applyConstraints({ advanced: [{ torch: true } as any] });
                 
-                // Verificar que se activó
                 const settings = track.getSettings() as any;
                 if (settings?.torch === true) {
                   flashActivated = true;
                   console.log('🔦 Flash ACTIVADO (verificado)');
                 } else {
                   console.log(`🔦 Intento ${attempt + 1}: Flash aplicado, verificando...`);
-                  flashActivated = true; // Asumir que funcionó
+                  flashActivated = true;
                 }
               } else {
                 console.warn('⚠️ Esta cámara no soporta torch');
@@ -227,6 +226,54 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           
           if (!flashActivated) {
             console.warn('⚠️ No se pudo activar el flash después de 5 intentos');
+          }
+
+          // PASO 6: BLOQUEAR EXPOSICIÓN/ISO/WB para señal PPG estable
+          // El flash en contacto directo satura si no se controlan estos parámetros
+          await new Promise(r => setTimeout(r, 300));
+          try {
+            const caps = track.getCapabilities?.() as any;
+            const lockConstraints: any[] = [];
+            
+            // Bloquear exposición automática
+            if (caps?.exposureMode?.includes('manual')) {
+              lockConstraints.push({ exposureMode: 'manual' });
+              console.log('📷 Exposición bloqueada: manual');
+            }
+            
+            // Reducir compensación de exposición (evitar saturación con flash)
+            if (caps?.exposureCompensation) {
+              const minExp = caps.exposureCompensation.min ?? -2;
+              const lowExp = Math.max(minExp, -1.5);
+              lockConstraints.push({ exposureCompensation: lowExp });
+              console.log(`📷 Exposición compensada: ${lowExp}`);
+            }
+            
+            // Bloquear balance de blancos
+            if (caps?.whiteBalanceMode?.includes('manual')) {
+              lockConstraints.push({ whiteBalanceMode: 'manual' });
+              console.log('📷 Balance de blancos bloqueado');
+            }
+            
+            // ISO bajo para evitar saturación con flash directo
+            if (caps?.iso) {
+              const minISO = caps.iso.min ?? 50;
+              const targetISO = Math.max(minISO, Math.min(100, caps.iso.max ?? 100));
+              lockConstraints.push({ iso: targetISO });
+              console.log(`📷 ISO fijado: ${targetISO}`);
+            }
+            
+            // Bloquear enfoque
+            if (caps?.focusMode?.includes('manual')) {
+              lockConstraints.push({ focusMode: 'manual' });
+            }
+            
+            if (lockConstraints.length > 0) {
+              await track.applyConstraints({ advanced: lockConstraints });
+              console.log('✅ Parámetros de cámara bloqueados para PPG');
+            }
+          } catch (lockErr) {
+            console.warn('⚠️ No se pudieron bloquear parámetros de cámara:', lockErr);
           }
         }
 
