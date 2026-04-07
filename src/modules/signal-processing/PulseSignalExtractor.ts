@@ -44,12 +44,13 @@ export function computeTemporalNormalizedPulse(
   const mb = mean(bs);
 
   // ─── DC FLOOR GUARD ───
-  // Flash through finger always produces bright channels.
-  // If any channel mean < 80, there's no finger → return null.
-  if (mr < 80 || mg < 80 || mb < 80) return null;
+  // For contact PPG (finger + flash): Red is always bright, Green moderate,
+  // Blue is strongly absorbed by hemoglobin and often < 80.
+  // Only gate on R and G which are the channels POS/CHROM actually use.
+  if (mr < 50 || mg < 30) return null;
 
   // ─── AC/DC CHECK ───
-  // At least one channel must show pulsatile activity (AC/DC > 0.05%)
+  // At least R or G must show pulsatile activity (AC/DC > 0.04%)
   const acdc = (arr: number[], dc: number) => {
     const max = Math.max(...arr);
     const min = Math.min(...arr);
@@ -57,8 +58,7 @@ export function computeTemporalNormalizedPulse(
   };
   const acdcR = acdc(rs, mr);
   const acdcG = acdc(gs, mg);
-  const acdcB = acdc(bs, mb);
-  if (Math.max(acdcR, acdcG, acdcB) < 0.05) return null;
+  if (Math.max(acdcR, acdcG) < 0.04) return null;
 
   const Rn = r / (mr + EPS);
   const Gn = g / (mg + EPS);

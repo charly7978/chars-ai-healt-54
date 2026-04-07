@@ -71,7 +71,7 @@ export const useHeartBeatProcessor = () => {
 
     processedSignalsRef.current++;
 
-    const result = processorRef.current.processSignal(value, timestamp);
+    const result = processorRef.current.processSignal(value, timestamp, opts?.ppgQuality);
     const rrIntervals = processorRef.current.getRRIntervals();
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };

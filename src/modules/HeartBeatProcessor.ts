@@ -31,7 +31,7 @@ export class HeartBeatProcessor {
   private readonly MAX_RR_INTERVALS = 12;
   private smoothBPM: number = 0;
 
-  private readonly INPUT_EMA_ALPHA = 0.06;
+  private readonly INPUT_EMA_ALPHA = 0.15;
   private inputEma: number = 0;
   private inputEmaReady = false;
 
@@ -217,7 +217,7 @@ export class HeartBeatProcessor {
     
     // ─── MINIMUM RANGE THRESHOLD ───
     // Require meaningful signal range (not noise)
-    if (rangeS < 0.5) return false;
+    if (rangeS < 0.3) return false;
 
     const norm = (v: number) => ((v - minS) / rangeS) * 100;
     const tail = this.signalBuffer.slice(-7).map(norm);
