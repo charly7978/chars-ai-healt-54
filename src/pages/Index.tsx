@@ -467,15 +467,18 @@ const Index = () => {
   
   useEffect(() => {
     if (!lastSignal || !isMonitoring) return;
-    
+
     const signalValue = lastSignal.filteredValue;
     const fingerOk = lastSignal.fingerDetected === true;
+    const hasPulsatilityHint = lastSignal.diagnostics?.hasPulsatility === true;
+    const warmContact = (lastSignal.rawRed ?? 0) > 80 && (lastSignal.rawGreen ?? 0) > 25;
+    const contactLikely = fingerOk || hasPulsatilityHint || warmContact || (lastSignal.quality ?? 0) >= 8;
 
-    // ─── FINGER GATE ───
-    // If no finger detected, zero everything immediately
-    if (!fingerOk) {
+    if (!contactLikely) {
       setHeartRate(0);
       setHeartbeatSignal(0);
+      setBeatMarker(0);
+      setRRIntervals([]);
       return;
     }
 
@@ -483,23 +486,22 @@ const Index = () => {
       ppgQuality: lastSignal.quality,
     });
 
-    // Show BPM only when confident
+    setHeartbeatSignal(heartBeatResult.filteredValue || signalValue);
+
     const hrStable =
-      heartBeatResult.confidence >= 0.40 &&
-      (lastSignal.quality ?? 0) >= 30 &&
+      heartBeatResult.confidence >= 0.28 &&
+      (lastSignal.quality ?? 0) >= 20 &&
       heartBeatResult.bpm > 0;
 
     if (hrStable) {
       setHeartRate(heartBeatResult.bpm);
-    } else if ((lastSignal.quality ?? 0) < 15 && heartBeatResult.confidence < 0.15) {
+    } else if ((lastSignal.quality ?? 0) < 8 && heartBeatResult.confidence < 0.12) {
       setHeartRate(0);
     }
-    setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
-    
+
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 300);
-      // Contar latidos para resumen
       totalBeatsRef.current++;
       const currentArrCount = vitalSignsRef.current.arrhythmiaCount || 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
@@ -507,23 +509,19 @@ const Index = () => {
         lastArrhythmiaCountForBeatsRef.current = currentArrCount;
       }
     }
-    
+
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-60));
     }
-    
-    // Throttle signos vitales
+
     vitalSignsFrameCounter.current++;
-    
+
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
-      
-      // INTEGRACIÓN DE DATOS RGB REALES DESDE PPGSignalProcessor
-      // Usar getRGBStats() para obtener AC/DC calculados con precisión
+
       const rgbStats = getRGBStats();
-      
+
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
-        // Usar valores calculados con ventana de 4 segundos (más precisos)
         setRGBData({
           redAC: rgbStats.redAC,
           redDC: rgbStats.redDC,
@@ -531,36 +529,39 @@ const Index = () => {
           greenDC: rgbStats.greenDC
         });
       }
-      
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
+
+      if (
+        fingerOk &&
+        (lastSignal.quality ?? 0) >= 25 &&
+        heartBeatResult.rrData &&
+        heartBeatResult.rrData.intervals.length >= 3
+      ) {
         const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-          
+
         if (vitals) {
           setVitalSigns(vitals);
-          
-          // Actualizar estado de arritmia
+
           const arrhythmiaStatus = vitals.arrhythmiaStatus;
           if (arrhythmiaStatus) {
             lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
             const parts = arrhythmiaStatus.split('|');
             const count = parts.length > 1 ? parts[1] : "0";
             setArrhythmiaCount(count);
-            
+
             const isArrhythmiaDetected = arrhythmiaStatus.includes("ARRITMIA DETECTADA");
             if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
               arrhythmiaDetectedRef.current = isArrhythmiaDetected;
               setArrhythmiaState(isArrhythmiaDetected);
-              
+
               if (isArrhythmiaDetected) {
-                // Vibración fuerte para arritmia
                 if (navigator.vibrate) {
                   navigator.vibrate([200, 100, 200]);
                 }
-                toast({ 
-                  title: "⚠️ Arritmia detectada", 
-                  description: `Latido irregular #${vitals.arrhythmiaCount}`, 
-                  variant: "destructive", 
-                  duration: 4000 
+                toast({
+                  title: "⚠️ Arritmia detectada",
+                  description: `Latido irregular #${vitals.arrhythmiaCount}`,
+                  variant: "destructive",
+                  duration: 4000
                 });
               }
             }

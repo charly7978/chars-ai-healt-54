@@ -45,11 +45,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastLogTime: number = 0;
 
   private fingerDetected: boolean = false;
+  private contactLikely: boolean = false;
   private signalQuality: number = 0;
   private fingerConfidenceCount: number = 0;
   private fingerLostCount: number = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 3;
-  private readonly FINGER_LOST_FRAMES = 50;
   private smoothedRed: number = 0;
   private smoothedGreen: number = 0;
   private smoothedBlue: number = 0;
@@ -120,13 +119,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastSpatialStability = spatialStability;
     this.lastTilePulseScore = tilePulseScore;
 
-    // 3. Detección de dedo
-    this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore);
-
-    // 4. AC/DC
+    // 3. AC/DC previo a compuertas para usar la ventana RGB más reciente
     if (this.redBuffer.length >= 60) {
       this.calculateACDCPrecise();
     }
+
+    // 4. Detección de contacto / dedo
+    this.fingerDetected = this.detectFinger(rawRed, rawGreen, rawBlue, coverageScore, spatialStability, tilePulseScore);
 
     // 5. Extracción de señal: POS/CHROM (primario) o WTA (fallback)
     const wtaResult = this.wtaSelector.process(rawRed, rawGreen, rawBlue);
@@ -332,8 +331,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // FINGER DETECTION — STRICT PHYSIOLOGICAL THRESHOLDS
   // ═══════════════════════════════════════════════════════════
 
-  private readonly FINGER_CONFIRM_STRICT = 5;
-  private readonly FINGER_LOST_STRICT = 15; // ~0.5s @ 30fps
+  private readonly FINGER_CONFIRM_STRICT = 4;
+  private readonly FINGER_LOST_STRICT = 10;
 
   private detectFinger(
     rawRed: number, rawGreen: number, rawBlue: number,
@@ -355,47 +354,57 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const g = this.smoothedGreen;
     const b = this.smoothedBlue;
     const totalIntensity = r + g + b;
-
-    // ─── HARD PHYSIOLOGICAL GATES ───
-    // When flash illuminates through finger tissue:
-    // - Red channel is always dominant and bright (hemoglobin transmits red)
-    // - R/G ratio > 1.15 (blood absorbs green strongly)
-    // - R/B ratio > 1.4 (blood absorbs blue even more)
-    // - Total intensity > 200 (flash + tissue = bright)
-    // These conditions are physically impossible for ambient scenes.
-
     const rgRatio = g > 0 ? r / g : 0;
     const rbRatio = b > 0 ? r / b : 0;
+    const redDominance = r - g;
+    const blueAbsorption = g - b;
+    const perfusionHint = Math.max(
+      this.greenDC > 0 ? (this.greenAC / this.greenDC) * 100 : 0,
+      this.redDC > 0 ? (this.redAC / this.redDC) * 100 : 0
+    );
 
-    const passRed = r > 140;
-    const passRG = rgRatio > 1.15;
-    const passRB = rbRatio > 1.4;
-    const passIntensity = totalIntensity > 200;
-    const passCoverage = coverageScore > 0.6;
+    const passBrightness = r > 85 && totalIntensity > 150;
+    const passColor = (rgRatio > 0.98 || redDominance > 10) && (rbRatio > 1.05 || blueAbsorption > 6);
+    const passCoverage = coverageScore > 0.34;
+    const passSpatial = spatialStability > 0.10;
+    const passTile = tilePulseScore > 0.01 || coverageScore > 0.55;
     const notSaturated = !(r > 254.5 && g > 254.5 && b > 254.5);
 
-    // All hard gates must pass
-    const hardGatePass = passRed && passRG && passRB && passIntensity && passCoverage && notSaturated;
+    const softContact = passBrightness && passColor && passCoverage && passSpatial && notSaturated;
+    const strongContact = softContact && r > 110 && totalIntensity > 185 && rgRatio > 1.04;
+    const pulsatileContact = softContact && perfusionHint > 0.05;
 
-    if (hardGatePass) {
+    this.contactLikely = softContact || pulsatileContact;
+
+    const redScore = Math.max(0, Math.min(1, (r - 85) / 85));
+    const ratioScore = Math.max(0, Math.min(1, (rgRatio - 0.98) / 0.35));
+    const perfScore = Math.max(0, Math.min(1, perfusionHint / 0.35));
+    const contactScore =
+      redScore * 0.28 +
+      ratioScore * 0.18 +
+      Math.max(0, Math.min(1, coverageScore)) * 0.16 +
+      Math.max(0, Math.min(1, spatialStability)) * 0.12 +
+      Math.max(0, Math.min(1, tilePulseScore * 12)) * 0.10 +
+      perfScore * 0.16;
+    this.detectionConfidence = this.contactLikely ? Math.max(0.12, contactScore) : Math.max(0, this.detectionConfidence - 0.08);
+
+    const confirmGate = strongContact || pulsatileContact || (softContact && passTile && this.redBuffer.length >= 45);
+
+    if (confirmGate) {
       this.fingerLostCount = 0;
       this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, this.FINGER_CONFIRM_STRICT + 6);
-
-      // Compute confidence for quality scoring
-      const redScore = Math.min(1, (r - 140) / 80);
-      const rgScore = Math.min(1, (rgRatio - 1.15) / 0.6);
-      const intensityScore = Math.min(1, (totalIntensity - 200) / 300);
-      this.detectionConfidence = (redScore * 0.35 + rgScore * 0.25 + intensityScore * 0.2 + coverageScore * 0.1 + spatialStability * 0.1);
-
       if (this.fingerDetected) return true;
       return this.fingerConfidenceCount >= this.FINGER_CONFIRM_STRICT;
     }
 
-    // Gate failed
+    if (this.contactLikely) {
+      this.fingerLostCount = 0;
+      this.fingerConfidenceCount = Math.max(1, this.fingerConfidenceCount);
+      return false;
+    }
+
     this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
     this.fingerLostCount++;
-    this.detectionConfidence = Math.max(0, this.detectionConfidence - 0.05);
-
     if (this.fingerDetected) {
       return this.fingerLostCount < this.FINGER_LOST_STRICT;
     }
@@ -466,17 +475,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // ═══════════════════════════════════════════════════════════
 
   private calculateSignalQuality(): number {
-    // HARD GATE: no finger → quality = 0
-    if (!this.fingerDetected) return 0;
-
     if (this.filteredBuffer.length < 30) return 0;
+    if (!this.fingerDetected && !this.contactLikely) return 0;
 
     const recent = this.filteredBuffer.slice(-90);
     const max = Math.max(...recent);
     const min = Math.min(...recent);
     const range = max - min;
 
-    if (range < 0.05) return 2;
+    if (range < 0.05) {
+      return this.contactLikely ? 6 : 0;
+    }
 
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
@@ -497,8 +506,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const stabilityScore = Math.max(0, Math.min(1, 1 - motionNoise / (range * 0.5 + 0.01)));
     const snrScore = Math.max(0, Math.min(1, snr / 4.0));
     const jumpPenalty = Math.max(0, 1 - maxJump / (range * 0.6 + 0.01));
-
-    // Require minimum perfusion index for quality > 20
     const perfGate = perfIdx > 0.1 ? 1.0 : perfIdx / 0.1;
 
     const baseQuality = (snrScore * 35 +
@@ -506,7 +513,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       stabilityScore * 20 +
       jumpPenalty * 20) * perfGate;
 
-    return Math.round(Math.min(100, baseQuality));
+    const shapedQuality = this.fingerDetected
+      ? baseQuality
+      : Math.min(25, Math.max(6, baseQuality * (0.35 + this.detectionConfidence * 0.45)));
+
+    return Math.round(Math.min(100, shapedQuality));
   }
 
   private updateMotionLevel(): void {
@@ -537,13 +548,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameCount = 0;
     this.lastLogTime = 0;
     this.fingerDetected = false;
+    this.contactLikely = false;
     this.signalQuality = 0;
     this.fingerConfidenceCount = 0;
     this.fingerLostCount = 0;
     this.smoothedRed = 0;
     this.smoothedGreen = 0;
     this.smoothedBlue = 0;
-    this.detectionConfidence = 0;
     this.redDC = 0;
     this.redAC = 0;
     this.greenDC = 0;
@@ -579,8 +590,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return {
       detectionConfidence: this.detectionConfidence,
       fingerDetected: this.fingerDetected,
+      contactLikely: this.contactLikely,
       signalQuality: this.signalQuality,
-      perfusionIndex: this.calculatePerfusionIndex(),
       smoothedRed: this.smoothedRed,
       smoothedGreen: this.smoothedGreen,
       smoothedBlue: this.smoothedBlue,
