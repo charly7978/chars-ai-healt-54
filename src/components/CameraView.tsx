@@ -405,6 +405,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({ onStreamRead
         height: "100%",
         objectFit: "cover",
         opacity: 1,
+        filter: "brightness(1.18) contrast(1.12) saturate(1.08)",
         pointerEvents: "none",
       }}
     />

@@ -53,7 +53,7 @@ const CameraPreview: React.FC<CameraPreviewProps> = ({
           className="w-full h-20 object-cover"
           style={{ 
             transform: 'none',
-            filter: 'none'
+            filter: 'brightness(1.22) contrast(1.14) saturate(1.12)'
           }}
         />
         
