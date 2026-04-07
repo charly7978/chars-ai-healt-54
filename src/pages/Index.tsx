@@ -470,9 +470,15 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    // Solo con contacto dedo–lente: la pulsatilidad sola (luces, fondo, ruido) dispara FC falsas.
-    // Ver p. ej. buenas prácticas rPPG: ROI estable, linterna, SQI (p. ej. npj Biosensing 2024).
-    const canEstimateHR = lastSignal.fingerDetected === true;
+    const pulsatileEnough =
+      lastSignal.diagnostics?.hasPulsatility === true ||
+      (lastSignal.perfusionIndex !== undefined && lastSignal.perfusionIndex > 0.02) ||
+      (lastSignal.diagnostics?.pulsatilityValue !== undefined &&
+        lastSignal.diagnostics.pulsatilityValue > 0.06);
+
+    const canEstimateHR =
+      lastSignal.fingerDetected ||
+      pulsatileEnough;
 
     if (!canEstimateHR) {
       setHeartbeatSignal(signalValue);
@@ -485,13 +491,13 @@ const Index = () => {
     });
 
     const hrStable =
-      heartBeatResult.confidence >= 0.32 &&
-      (lastSignal.quality ?? 0) >= 20 &&
+      heartBeatResult.confidence >= 0.48 &&
+      (lastSignal.quality ?? 0) >= 40 &&
       heartBeatResult.bpm > 0;
 
     if (hrStable) {
       setHeartRate(heartBeatResult.bpm);
-    } else if ((lastSignal.quality ?? 0) < 14 && heartBeatResult.confidence < 0.12) {
+    } else if ((lastSignal.quality ?? 0) < 22 && heartBeatResult.confidence < 0.18) {
       setHeartRate(0);
     }
     setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
