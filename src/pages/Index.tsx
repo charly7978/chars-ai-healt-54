@@ -606,13 +606,6 @@ const Index = () => {
       )}
 
       <div className="flex-1 relative">
-        {/* PREVIEW DE CÁMARA */}
-        <CameraPreview 
-          stream={cameraStream}
-          isFingerDetected={lastSignal?.fingerDetected || false}
-          signalQuality={lastSignal?.quality || 0}
-          isVisible={isCameraOn}
-        />
 
         {/* CÁMARA - Con ref directo */}
         <div className="absolute inset-0">
