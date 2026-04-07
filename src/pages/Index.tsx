@@ -470,34 +470,21 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
 
-    const pulsatileEnough =
-      lastSignal.diagnostics?.hasPulsatility === true ||
-      (lastSignal.perfusionIndex !== undefined && lastSignal.perfusionIndex > 0.02) ||
-      (lastSignal.diagnostics?.pulsatilityValue !== undefined &&
-        lastSignal.diagnostics.pulsatilityValue > 0.06);
-
-    const canEstimateHR =
-      lastSignal.fingerDetected ||
-      pulsatileEnough;
-
-    if (!canEstimateHR) {
-      setHeartbeatSignal(signalValue);
-      return;
-    }
-
-    // Procesar latidos
+    // SIEMPRE procesar latidos — el HeartBeatProcessor decide internamente si la señal
+    // es suficiente para detectar picos. Bloquear aquí causaba que nunca se procesara.
     const heartBeatResult = processHeartBeat(signalValue, lastSignal.timestamp, {
       ppgQuality: lastSignal.quality,
     });
 
+    // Mostrar BPM cuando hay confianza razonable
     const hrStable =
-      heartBeatResult.confidence >= 0.48 &&
-      (lastSignal.quality ?? 0) >= 40 &&
+      heartBeatResult.confidence >= 0.35 &&
+      (lastSignal.quality ?? 0) >= 20 &&
       heartBeatResult.bpm > 0;
 
     if (hrStable) {
       setHeartRate(heartBeatResult.bpm);
-    } else if ((lastSignal.quality ?? 0) < 22 && heartBeatResult.confidence < 0.18) {
+    } else if ((lastSignal.quality ?? 0) < 10 && heartBeatResult.confidence < 0.15) {
       setHeartRate(0);
     }
     setHeartbeatSignal(heartBeatResult.filteredValue); // Valor normalizado
