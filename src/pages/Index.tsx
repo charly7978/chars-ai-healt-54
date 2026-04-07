@@ -438,11 +438,11 @@ const Index = () => {
               <span className="text-xs text-white/90 font-mono flex-1 truncate">
                 {measurementState.instruction}
               </span>
-              {measurementState.phase === 'CONTACT_OK_WARMING_UP' || measurementState.phase === 'STABILIZING_CONTACT' ? (
+              {(measurementState.phase === 'STABILIZING_CONTACT' || measurementState.phase === 'CAPTURING_SIGNAL') && (
                 <span className="text-[10px] text-yellow-300 font-mono">
                   {(warmupProgressRef.current * 100).toFixed(0)}%
                 </span>
-              ) : null}
+              )}
               <span className="text-[10px] text-white/50 font-mono">{elapsedTime}s</span>
             </div>
           )}
