@@ -154,18 +154,24 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const perfusionIndex = this.calculatePerfusionIndex();
     
     // 13. EMITIR SEÑAL PROCESADA
+    const motionArtifact = this.motionScore > this.MOTION_THRESHOLD;
+    const adjustedQuality = motionArtifact 
+      ? Math.max(0, this.signalQuality * 0.5) 
+      : this.signalQuality;
+
     const processedSignal: ProcessedSignal = {
       timestamp,
       rawValue: inverted,
       filteredValue: filtered,
-      quality: this.signalQuality,
+      quality: adjustedQuality,
       fingerDetected: this.fingerDetected,
+      motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex,
       rawRed,
       rawGreen,
       diagnostics: {
-        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}`,
+        message: `${greenSaturated ? 'R' : 'G'}:${signalSource.toFixed(0)} PI:${perfusionIndex.toFixed(2)}${motionArtifact ? ' MOV' : ''}`,
         hasPulsatility: perfusionIndex > 0.1,
         pulsatilityValue: perfusionIndex
       }
