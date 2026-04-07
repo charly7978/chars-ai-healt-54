@@ -426,12 +426,13 @@ const PPGSignalMeter = ({
     const { isFingerDetected, quality, pipelineMetrics } = propsRef.current;
     let coach = '';
     let coachColor: string = COLORS.TEXT_SECONDARY;
-    if (!isFingerDetected) {
+    const contactInProgress = !isFingerDetected && quality > 0;
+    if (!isFingerDetected && !contactInProgress) {
       coach = '⚠ COLOCA TU DEDO sobre la cámara y flash — presión suave';
-      coachColor = '#ef4444'; // Red — clear warning
-    } else if (quality < 30) {
+      coachColor = '#ef4444';
+    } else if (!isFingerDetected || quality < 30) {
       coach = 'ESTABILIZANDO… mantén el dedo quieto';
-      coachColor = '#fbbf24'; // Yellow
+      coachColor = '#fbbf24';
     } else if (quality < 50) {
       coach = 'Captando señal… no muevas el dedo';
       coachColor = '#a3e635';
@@ -440,14 +441,14 @@ const PPGSignalMeter = ({
       coachColor = '#4ade80';
     }
     const src = pipelineMetrics?.pulseSource;
-    if (src && isFingerDetected && quality >= 30) {
+    if (src && (isFingerDetected || quality >= 20)) {
       coach += `  ·  canal ${src}`;
     }
     const barY = 93;
     const barH = 26;
     ctx.fillStyle = 'rgba(15,23,42,0.92)';
     ctx.fillRect(8, barY, W - 16, barH);
-    ctx.strokeStyle = !isFingerDetected ? 'rgba(239,68,68,0.6)' : 
+    ctx.strokeStyle = !isFingerDetected && !contactInProgress ? 'rgba(239,68,68,0.6)' : 
                       quality < 30 ? 'rgba(251,191,36,0.5)' :
                       quality >= 50 ? 'rgba(74,222,128,0.5)' : 'rgba(148,163,184,0.4)';
     ctx.lineWidth = !isFingerDetected ? 2 : 1;

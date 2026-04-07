@@ -45,7 +45,7 @@ export class HeartBeatProcessor {
   private signalQualityIndex: number = 0;
 
   // Consecutive physiologically consistent beats required before reporting BPM
-  private readonly MIN_CONSECUTIVE_BEATS = 3;
+  private readonly MIN_CONSECUTIVE_BEATS = 2;
 
   // Envelope tracking for adaptive threshold
   private envelopeMax: number = 0;
@@ -233,11 +233,11 @@ export class HeartBeatProcessor {
 
     // ─── MINIMUM ABSOLUTE AMPLITUDE ───
     // Peak must represent meaningful pulsatile amplitude
-    if (vPeak < 15) return false;
+    if (vPeak < 10) return false;
 
     // Waveform shape: must have risen before and started falling after
-    const risingBefore = vPeak - tail[1] > 0.5;
-    const fallingAfter = vPeak - tail[6] > 0.2;
+    const risingBefore = vPeak - tail[1] > 0.35;
+    const fallingAfter = vPeak - tail[6] > 0.15;
     if (!risingBefore || !fallingAfter) return false;
 
     // Amplitude consistency vs previous peak

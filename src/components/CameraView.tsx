@@ -164,19 +164,19 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       const advanced: any = {};
 
       if (Array.isArray(caps.focusMode)) {
-        if (caps.focusMode.includes('continuous')) advanced.focusMode = 'continuous';
+        if (caps.focusMode.includes('manual')) advanced.focusMode = 'manual';
         else if (caps.focusMode.includes('single-shot')) advanced.focusMode = 'single-shot';
-        else if (caps.focusMode.includes('manual')) advanced.focusMode = 'manual';
+        else if (caps.focusMode.includes('continuous')) advanced.focusMode = 'continuous';
       }
 
       if (Array.isArray(caps.exposureMode)) {
-        if (caps.exposureMode.includes('continuous')) advanced.exposureMode = 'continuous';
-        else if (caps.exposureMode.includes('manual')) advanced.exposureMode = 'manual';
+        if (caps.exposureMode.includes('manual')) advanced.exposureMode = 'manual';
+        else if (caps.exposureMode.includes('continuous')) advanced.exposureMode = 'continuous';
       }
 
       if (Array.isArray(caps.whiteBalanceMode)) {
-        if (caps.whiteBalanceMode.includes('continuous')) advanced.whiteBalanceMode = 'continuous';
-        else if (caps.whiteBalanceMode.includes('manual')) advanced.whiteBalanceMode = 'manual';
+        if (caps.whiteBalanceMode.includes('manual')) advanced.whiteBalanceMode = 'manual';
+        else if (caps.whiteBalanceMode.includes('continuous')) advanced.whiteBalanceMode = 'continuous';
       }
 
       if (typeof caps.zoom === 'object' && caps.zoom && 'min' in caps.zoom && 'max' in caps.zoom) {
