@@ -90,7 +90,11 @@ export const useHeartBeatProcessor = () => {
         setSignalQuality(0);
       }
 
-      return emptyResult();
+      return {
+        bpm: currentBPMRef.current, confidence: 0, isPeak: false,
+        filteredValue: 0, arrhythmiaCount: 0, signalQuality: 0,
+        rrData: { intervals: [], lastPeakTime: null },
+      };
     }
 
     lostContactFramesRef.current = 0;
