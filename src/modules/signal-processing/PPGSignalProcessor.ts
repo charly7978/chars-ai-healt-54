@@ -453,6 +453,73 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.greenDC = 0;
     this.greenAC = 0;
     this.bandpassFilter.reset();
+    this.motionScore = 0;
+  }
+
+  // ─── IMU MOTION REJECTION ───
+  
+  private handleMotionEvent = (event: DeviceMotionEvent) => {
+    const acc = event.accelerationIncludingGravity;
+    if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
+    
+    // Calcular delta de aceleración (movimiento relativo)
+    const dx = (acc.x ?? 0) - this.lastAcceleration.x;
+    const dy = (acc.y ?? 0) - this.lastAcceleration.y;
+    const dz = (acc.z ?? 0) - this.lastAcceleration.z;
+    
+    this.lastAcceleration = { x: acc.x ?? 0, y: acc.y ?? 0, z: acc.z ?? 0 };
+    
+    // RMS del delta (mide cambio, no gravedad estática)
+    const accelRMS = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    
+    // Incorporar rotación si disponible
+    const rot = event.rotationRate;
+    let gyroRMS = 0;
+    if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
+      gyroRMS = Math.sqrt(
+        (rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2
+      ) / 100; // Normalizar grados/s
+    }
+    
+    // Combinar: 60% aceleración, 40% giro
+    const rawScore = accelRMS * 0.6 + gyroRMS * 0.4;
+    
+    // EMA para suavizar
+    this.motionScore = this.motionScore * 0.7 + rawScore * 0.3;
+  };
+  
+  private startMotionListener(): void {
+    if (this.motionListenerActive) return;
+    
+    try {
+      if (typeof DeviceMotionEvent !== 'undefined') {
+        // iOS 13+ requires permission
+        if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
+          (DeviceMotionEvent as any).requestPermission()
+            .then((state: string) => {
+              if (state === 'granted') {
+                window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
+                this.motionListenerActive = true;
+                console.log('📱 IMU activado (iOS)');
+              }
+            })
+            .catch(() => console.warn('⚠️ IMU: permiso denegado'));
+        } else {
+          window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
+          this.motionListenerActive = true;
+          console.log('📱 IMU activado');
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ IMU no disponible:', e);
+    }
+  }
+  
+  private stopMotionListener(): void {
+    if (!this.motionListenerActive) return;
+    window.removeEventListener('devicemotion', this.handleMotionEvent);
+    this.motionListenerActive = false;
+    this.motionScore = 0;
   }
 
   /**
@@ -466,7 +533,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       greenAC: this.greenAC,
       greenDC: this.greenDC,
       rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0,
-      // Ratio R para SpO2: (AC_red/DC_red) / (AC_green/DC_green)
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0 
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) 
         : 0
