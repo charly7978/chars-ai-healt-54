@@ -20,7 +20,7 @@ export class HeartBeatProcessor {
 
   private signalBuffer: number[] = [];
   private derivativeBuffer: number[] = [];
-  private readonly BUFFER_SIZE = 300; // 10s @ 30fps — más contexto
+  private readonly BUFFER_SIZE = 300;
 
   private lastPeakTime: number = 0;
   private peakThreshold: number = 0;
@@ -31,7 +31,6 @@ export class HeartBeatProcessor {
   private readonly MAX_RR_INTERVALS = 12;
   private smoothBPM: number = 0;
 
-  // EMA muy suave para quitar jitter sin destruir la forma de onda
   private readonly INPUT_EMA_ALPHA = 0.06;
   private inputEma: number = 0;
   private inputEmaReady = false;
@@ -45,10 +44,16 @@ export class HeartBeatProcessor {
   private lastPeakAmplitude: number = 0;
   private signalQualityIndex: number = 0;
 
-  // Envelope tracking para umbral adaptativo
+  // Consecutive physiologically consistent beats required before reporting BPM
+  private readonly MIN_CONSECUTIVE_BEATS = 3;
+
+  // Envelope tracking for adaptive threshold
   private envelopeMax: number = 0;
   private envelopeMin: number = 0;
   private readonly ENVELOPE_ALPHA = 0.02;
+  
+  // Low-quality frames counter for auto-reset
+  private lowQualityFrames: number = 0;
 
   constructor() {
     this.setupAudio();
@@ -81,7 +86,7 @@ export class HeartBeatProcessor {
     return this.inputEma;
   }
 
-  processSignal(filteredValue: number, timestamp?: number): {
+  processSignal(filteredValue: number, timestamp?: number, signalQuality?: number): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
@@ -104,12 +109,24 @@ export class HeartBeatProcessor {
       this.derivativeBuffer.shift();
     }
 
-    // Necesitamos mínimo ~1s de datos
     if (this.signalBuffer.length < 30) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
-    // Actualizar envelope tracking
+    // ─── AUTO-RESET when signal quality is very low for >1s ───
+    if (signalQuality !== undefined && signalQuality < 10) {
+      this.lowQualityFrames++;
+      if (this.lowQualityFrames > 30) { // ~1 second
+        this.smoothBPM = 0;
+        this.rrIntervals = [];
+        this.consecutiveValidBeats = 0;
+        this.lastPeakAmplitude = 0;
+        return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
+      }
+    } else {
+      this.lowQualityFrames = 0;
+    }
+
     this.updateEnvelope(smoothedIn);
 
     const { normalizedValue, range } = this.normalizeSignal(smoothedIn);
@@ -128,6 +145,7 @@ export class HeartBeatProcessor {
           const rr = timeSinceLastPeak;
           if (rr < this.MIN_RR_MS || rr > this.MAX_RR_MS) {
             acceptBeat = false;
+            this.consecutiveValidBeats = 0; // Reset on invalid interval
           } else {
             this.rrIntervals.push(rr);
             if (this.rrIntervals.length > this.MAX_RR_INTERVALS) {
@@ -140,13 +158,19 @@ export class HeartBeatProcessor {
 
         this.lastPeakTime = now;
 
-        if (acceptBeat) {
+        // Only accept beat if we have enough consecutive valid beats
+        if (acceptBeat && this.consecutiveValidBeats >= this.MIN_CONSECUTIVE_BEATS) {
           this.vibrate();
           this.playBeep();
+        } else if (this.consecutiveValidBeats < this.MIN_CONSECUTIVE_BEATS) {
+          acceptBeat = false; // Don't report as peak until pattern is established
         }
 
+        // Only report BPM if we have enough consecutive beats
+        const reportedBPM = this.consecutiveValidBeats >= this.MIN_CONSECUTIVE_BEATS ? this.smoothBPM : 0;
+
         return {
-          bpm: this.smoothBPM,
+          bpm: reportedBPM,
           confidence: this.calculateConfidence(),
           isPeak: acceptBeat,
           filteredValue: normalizedValue,
@@ -156,8 +180,10 @@ export class HeartBeatProcessor {
       }
     }
 
+    const reportedBPM = this.consecutiveValidBeats >= this.MIN_CONSECUTIVE_BEATS ? this.smoothBPM : 0;
+
     return {
-      bpm: this.smoothBPM,
+      bpm: reportedBPM,
       confidence: this.calculateConfidence(),
       isPeak: false,
       filteredValue: normalizedValue,
@@ -178,38 +204,43 @@ export class HeartBeatProcessor {
     const dn = this.derivativeBuffer.length;
     if (n < 7 || dn < 4) return false;
 
-    // Cruce descendente de derivada
+    // Zero-crossing of derivative (descending)
     const dPrev = this.derivativeBuffer[dn - 2];
     const dCurr = this.derivativeBuffer[dn - 1];
     const zeroCrossingDown = dPrev > 0 && dCurr <= 0;
     if (!zeroCrossingDown) return false;
 
-    // Normalizar los últimos 7 valores para comparación local
     const slice = this.signalBuffer.slice(-120);
     const minS = Math.min(...slice);
     const maxS = Math.max(...slice);
     const rangeS = maxS - minS;
-    if (rangeS < 0.05) return false;
+    
+    // ─── MINIMUM RANGE THRESHOLD ───
+    // Require meaningful signal range (not noise)
+    if (rangeS < 0.5) return false;
 
     const norm = (v: number) => ((v - minS) / rangeS) * 100;
     const tail = this.signalBuffer.slice(-7).map(norm);
 
-    // El punto candidato es tail[4] (2 muestras antes del final para dar margen a la derivada)
     const vPeak = tail[4];
 
-    // Máximo local: mayor que vecinos inmediatos
+    // Local maximum
     const isLocalMax = vPeak >= tail[3] && vPeak >= tail[5] && vPeak >= tail[2];
     if (!isLocalMax) return false;
 
-    // Por encima del umbral adaptativo (porcentaje del rango)
+    // Above adaptive threshold
     if (vPeak < this.adaptiveThresholdHigh) return false;
 
-    // Forma de onda: debe haber subido antes y empezar a bajar después
+    // ─── MINIMUM ABSOLUTE AMPLITUDE ───
+    // Peak must represent meaningful pulsatile amplitude
+    if (vPeak < 15) return false;
+
+    // Waveform shape: must have risen before and started falling after
     const risingBefore = vPeak - tail[1] > 0.5;
     const fallingAfter = vPeak - tail[6] > 0.2;
     if (!risingBefore || !fallingAfter) return false;
 
-    // Validación de amplitud vs pico anterior (evita falsos positivos por ruido)
+    // Amplitude consistency vs previous peak
     if (this.lastPeakAmplitude > 0) {
       const ratio = vPeak / this.lastPeakAmplitude;
       if (ratio < 0.2 || ratio > 5.0) return false;
@@ -377,6 +408,7 @@ export class HeartBeatProcessor {
     this.lastPeakAmplitude = 0;
     this.envelopeMax = 0;
     this.envelopeMin = 0;
+    this.lowQualityFrames = 0;
   }
 
   dispose(): void {

@@ -329,16 +329,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // FINGER DETECTION
+  // FINGER DETECTION — STRICT PHYSIOLOGICAL THRESHOLDS
   // ═══════════════════════════════════════════════════════════
+
+  private readonly FINGER_CONFIRM_STRICT = 5;
+  private readonly FINGER_LOST_STRICT = 15; // ~0.5s @ 30fps
 
   private detectFinger(
     rawRed: number, rawGreen: number, rawBlue: number,
     coverageScore: number, spatialStability: number, tilePulseScore: number,
   ): boolean {
-    const rescueState = this.lastRescueState;
-    const relax = rescueState?.fingerThresholdRelax ?? 1.0;
-    const adaptiveAlpha = rescueState?.smoothingAlpha ?? this.RGB_SMOOTH_ALPHA;
+    const adaptiveAlpha = this.lastRescueState?.smoothingAlpha ?? this.RGB_SMOOTH_ALPHA;
 
     if (this.smoothedRed === 0) {
       this.smoothedRed = rawRed;
@@ -353,75 +354,50 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const r = this.smoothedRed;
     const g = this.smoothedGreen;
     const b = this.smoothedBlue;
+    const totalIntensity = r + g + b;
+
+    // ─── HARD PHYSIOLOGICAL GATES ───
+    // When flash illuminates through finger tissue:
+    // - Red channel is always dominant and bright (hemoglobin transmits red)
+    // - R/G ratio > 1.15 (blood absorbs green strongly)
+    // - R/B ratio > 1.4 (blood absorbs blue even more)
+    // - Total intensity > 200 (flash + tissue = bright)
+    // These conditions are physically impossible for ambient scenes.
 
     const rgRatio = g > 0 ? r / g : 0;
     const rbRatio = b > 0 ? r / b : 0;
-    const totalIntensity = r + g + b;
-    const redShare = totalIntensity > 0 ? r / totalIntensity : 0;
-    const colorDominance = totalIntensity > 0 ? (r - ((g + b) / 2)) / totalIntensity : 0;
-    const plausibleSaturation = !(r > 254.8 && g > 254.8 && b > 254.8) && totalIntensity > 40;
 
-    const ratioScore = rgRatio > 0 ? Math.max(0, 1 - Math.abs(rgRatio - 1.35) / 2.8) : 0;
-    const intensityScore = Math.max(0, Math.min(1, (totalIntensity - 55) / 260));
-    const dominanceScore = Math.max(0, Math.min(1, (colorDominance - 0.035) / 0.24));
-    const redShareScore = Math.max(0, Math.min(1, (redShare - 0.30) / 0.22));
-    const perfusionHint = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 1.2));
+    const passRed = r > 140;
+    const passRG = rgRatio > 1.15;
+    const passRB = rbRatio > 1.4;
+    const passIntensity = totalIntensity > 200;
+    const passCoverage = coverageScore > 0.6;
+    const notSaturated = !(r > 254.5 && g > 254.5 && b > 254.5);
 
-    const coverageThreshold = Math.max(this.fingerDetected ? 0.08 : 0.11, (this.fingerDetected ? 0.22 : 0.32) / relax);
-    const spatialThreshold = Math.max(0.12, 0.26 / relax);
-    const pulseThreshold = Math.max(0.008, 0.028 / relax);
+    // All hard gates must pass
+    const hardGatePass = passRed && passRG && passRB && passIntensity && passCoverage && notSaturated;
 
-    const torchThroughFinger = totalIntensity > 200 && r > 85 && r > g * 0.82 && g > 30;
-
-    let detectionScore = 0;
-    if (r > 20) detectionScore += 1;
-    if (rgRatio > 0.52 && rgRatio < 5.2) detectionScore += 1;
-    if (rbRatio > 0.92) detectionScore += 1;
-    if (totalIntensity > 55 && totalIntensity < 765) detectionScore += 1;
-    if (colorDominance > 0.032 || redShare > 0.32) detectionScore += 1;
-    if (coverageScore > coverageThreshold) detectionScore += 1;
-    if (spatialStability > spatialThreshold) detectionScore += 1;
-    if (tilePulseScore > pulseThreshold) detectionScore += 1;
-    if (perfusionHint > 0.08) detectionScore += 1;
-    if (torchThroughFinger) detectionScore += 2;
-
-    const motionPenalty = Math.max(0.72, 1 - this.motionLevel * 0.28);
-
-    const targetConfidence = plausibleSaturation
-      ? Math.max(0, Math.min(1,
-          (detectionScore / 11) * 0.38 +
-          coverageScore * 0.15 +
-          spatialStability * 0.13 +
-          ratioScore * 0.09 +
-          intensityScore * 0.08 +
-          dominanceScore * 0.06 +
-          redShareScore * 0.05 +
-          perfusionHint * 0.06
-        )) * motionPenalty
-      : 0;
-
-    const confidenceAlpha = targetConfidence >= this.detectionConfidence ? 0.32 : 0.14;
-    this.detectionConfidence = this.detectionConfidence * (1 - confidenceAlpha) + targetConfidence * confidenceAlpha;
-
-    const enterThreshold = Math.max(0.22, 0.42 / Math.sqrt(relax));
-    const holdThreshold = Math.max(0.16, 0.28 / Math.sqrt(relax));
-
-    const instantDetected = this.fingerDetected
-      ? this.detectionConfidence >= holdThreshold
-      : this.detectionConfidence >= enterThreshold;
-
-    if (instantDetected) {
+    if (hardGatePass) {
       this.fingerLostCount = 0;
-      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, this.FINGER_CONFIRM_FRAMES + 6);
+      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, this.FINGER_CONFIRM_STRICT + 6);
+
+      // Compute confidence for quality scoring
+      const redScore = Math.min(1, (r - 140) / 80);
+      const rgScore = Math.min(1, (rgRatio - 1.15) / 0.6);
+      const intensityScore = Math.min(1, (totalIntensity - 200) / 300);
+      this.detectionConfidence = (redScore * 0.35 + rgScore * 0.25 + intensityScore * 0.2 + coverageScore * 0.1 + spatialStability * 0.1);
+
       if (this.fingerDetected) return true;
-      return this.fingerConfidenceCount >= Math.max(2, this.FINGER_CONFIRM_FRAMES - 1);
+      return this.fingerConfidenceCount >= this.FINGER_CONFIRM_STRICT;
     }
 
+    // Gate failed
     this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
     this.fingerLostCount++;
+    this.detectionConfidence = Math.max(0, this.detectionConfidence - 0.05);
 
     if (this.fingerDetected) {
-      return this.fingerLostCount < this.FINGER_LOST_FRAMES;
+      return this.fingerLostCount < this.FINGER_LOST_STRICT;
     }
     return false;
   }
@@ -486,10 +462,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   // ═══════════════════════════════════════════════════════════
-  // SIGNAL QUALITY — NO LONGER ZEROED WITHOUT FINGER
+  // SIGNAL QUALITY — GATED BY FINGER DETECTION
   // ═══════════════════════════════════════════════════════════
 
   private calculateSignalQuality(): number {
+    // HARD GATE: no finger → quality = 0
+    if (!this.fingerDetected) return 0;
+
     if (this.filteredBuffer.length < 30) return 0;
 
     const recent = this.filteredBuffer.slice(-90);
@@ -513,21 +492,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     motionNoise /= Math.max(1, recent.length - 1);
 
     const snr = range / (stdDev + 0.01);
-    const perfusionScore = Math.max(0, Math.min(1, this.calculatePerfusionIndex() / 2.0));
+    const perfIdx = this.calculatePerfusionIndex();
+    const perfusionScore = Math.max(0, Math.min(1, perfIdx / 2.0));
     const stabilityScore = Math.max(0, Math.min(1, 1 - motionNoise / (range * 0.5 + 0.01)));
     const snrScore = Math.max(0, Math.min(1, snr / 4.0));
-    const continuityScore = Math.max(0, Math.min(1, this.detectionConfidence));
     const jumpPenalty = Math.max(0, 1 - maxJump / (range * 0.6 + 0.01));
 
-    // Finger bonus: si hay dedo detectado, la calidad base sube
-    const fingerBonus = this.fingerDetected ? 15 : 0;
+    // Require minimum perfusion index for quality > 20
+    const perfGate = perfIdx > 0.1 ? 1.0 : perfIdx / 0.1;
 
-    const baseQuality = snrScore * 30 +
-      perfusionScore * 18 +
-      stabilityScore * 18 +
-      continuityScore * 10 +
-      jumpPenalty * 9 +
-      fingerBonus;
+    const baseQuality = (snrScore * 35 +
+      perfusionScore * 25 +
+      stabilityScore * 20 +
+      jumpPenalty * 20) * perfGate;
 
     return Math.round(Math.min(100, baseQuality));
   }

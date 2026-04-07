@@ -39,25 +39,39 @@ export function computeTemporalNormalizedPulse(
   const bs = bWindow.slice(-win);
 
   const mean = (arr: number[]) => arr.reduce((a, v) => a + v, 0) / arr.length;
-  const mr = mean(rs) + EPS;
-  const mg = mean(gs) + EPS;
-  const mb = mean(bs) + EPS;
+  const mr = mean(rs);
+  const mg = mean(gs);
+  const mb = mean(bs);
 
-  const Rn = r / mr;
-  const Gn = g / mg;
-  const Bn = b / mb;
+  // ─── DC FLOOR GUARD ───
+  // Flash through finger always produces bright channels.
+  // If any channel mean < 80, there's no finger → return null.
+  if (mr < 80 || mg < 80 || mb < 80) return null;
 
-  // POS: proyecto la señal en el plano ortogonal a la componente de iluminación
-  // S1 = Gn - Bn (componente pulsátil dominante)
-  // S2 = Gn + Bn - 2*Rn (eje ortogonal)
+  // ─── AC/DC CHECK ───
+  // At least one channel must show pulsatile activity (AC/DC > 0.05%)
+  const acdc = (arr: number[], dc: number) => {
+    const max = Math.max(...arr);
+    const min = Math.min(...arr);
+    return dc > 0 ? ((max - min) / dc) * 100 : 0;
+  };
+  const acdcR = acdc(rs, mr);
+  const acdcG = acdc(gs, mg);
+  const acdcB = acdc(bs, mb);
+  if (Math.max(acdcR, acdcG, acdcB) < 0.05) return null;
+
+  const Rn = r / (mr + EPS);
+  const Gn = g / (mg + EPS);
+  const Bn = b / (mb + EPS);
+
+  // POS: project onto plane orthogonal to illumination
   const S1 = Gn - Bn;
   const S2 = Gn + Bn - 2 * Rn;
 
-  // CHROM simplificado
+  // CHROM simplified
   const chromX = 3 * Rn - 2 * Gn;
 
-  // Fusión adaptativa: POS domina, CHROM complementa
-  // La señal POS es más robusta bajo iluminación variable
+  // Adaptive fusion: POS dominates, CHROM complements
   const rawPulse = (S1 * 0.65 + chromX * 0.25 + S2 * 0.10) * PULSE_SCALE;
 
   return { rawPulse, posWeight: 0.65 };
