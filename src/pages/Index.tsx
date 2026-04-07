@@ -635,10 +635,9 @@ const Index = () => {
 
       <div className="flex-1 relative">
         {/* PREVIEW DE CÁMARA */}
-        <CameraPreview 
-          stream={cameraStream}
-          isVisible={isCameraOn}
-        />
+        {isCameraOn && (
+          <CameraPreview stream={cameraStream} />
+        )}
 
         {/* CÁMARA - Con ref directo */}
         <div className="absolute inset-0">
