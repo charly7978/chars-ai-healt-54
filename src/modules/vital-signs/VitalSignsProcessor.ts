@@ -782,3 +782,25 @@ export class VitalSignsProcessor {
     };
   }
 }
+
+interface MedianCycleFeatures {
+  sutMs: number;
+  diastolicTimeMs: number;
+  pw10Ms: number;
+  pw25Ms: number;
+  pw50Ms: number;
+  pw75Ms: number;
+  systolicAmplitude: number;
+  diastolicAmplitude: number;
+  dicroticDepth: number;
+  systolicArea: number;
+  diastolicArea: number;
+  areaRatio: number;
+  ipaRatio: number;
+  stiffnessIndex: number;
+  augmentationIndex: number;
+  pwvProxy: number;
+  apgBDivA: number;
+  apgDDivA: number;
+  apgAgi: number;
+}
