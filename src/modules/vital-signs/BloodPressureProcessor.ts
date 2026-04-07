@@ -159,12 +159,9 @@ export class BloodPressureProcessor {
     this.lastRawSBP = sbp;
     this.lastRawDBP = dbp;
 
-    const featureQuality = this.assessFeatureQuality(avgFeatures, useCycles.length);
-    const confidence = this.assessConfidence(featureQuality, useCycles.length);
-
     // 8. Apply calibration as complementary correction, not blind duplication
     if (this.calibration) {
-      const calibrated = this.applyCalibration(sbp, dbp, featureQuality);
+      const calibrated = this.applyCalibration(sbp, dbp);
       sbp = calibrated.systolic;
       dbp = calibrated.diastolic;
     }
@@ -176,6 +173,10 @@ export class BloodPressureProcessor {
     }
     this.lastSBP = sbp;
     this.lastDBP = dbp;
+
+    // 10. Confidence assessment
+    const featureQuality = this.assessFeatureQuality(avgFeatures, useCycles.length);
+    const confidence = this.assessConfidence(featureQuality, useCycles.length);
 
     return {
       systolic: sbp,
@@ -286,17 +287,13 @@ export class BloodPressureProcessor {
 
   private calculateCalibrationGain(error: number, baseline: number): number {
     const relativeError = baseline > 0 ? Math.abs(error) / baseline : 0;
-    if (relativeError <= 0.04) return 0.18;
-    if (relativeError <= 0.1) return 0.28;
-    if (relativeError <= 0.18) return 0.4;
-    return 0.5;
+    if (relativeError <= 0.04) return 0.25;
+    if (relativeError <= 0.1) return 0.4;
+    if (relativeError <= 0.18) return 0.55;
+    return 0.65;
   }
 
-  private applyCalibration(
-    systolic: number,
-    diastolic: number,
-    featureQuality: number,
-  ): { systolic: number; diastolic: number } {
+  private applyCalibration(systolic: number, diastolic: number): { systolic: number; diastolic: number } {
     if (!this.calibration) {
       return { systolic, diastolic };
     }
@@ -311,44 +308,16 @@ export class BloodPressureProcessor {
       };
     }
 
-    const qualityWeight = Math.max(0.3, Math.min(1, featureQuality / 100));
-    const systolicSimilarity = this.calculateBaselineSimilarity(systolic, this.calibration.baselineSystolic, 0.22);
-    const diastolicSimilarity = this.calculateBaselineSimilarity(diastolic, this.calibration.baselineDiastolic, 0.25);
+    const sysDelta = this.calibration.systolicRef - this.calibration.baselineSystolic;
+    const diaDelta = this.calibration.diastolicRef - this.calibration.baselineDiastolic;
 
-    const systolicCorrection = this.limitAdjustment(
-      (this.calibration.systolicRef - systolic) * this.calibration.systolicGain * qualityWeight * systolicSimilarity,
-      this.calibration.baselineSystolic,
-      18,
-      0.12,
-    );
-    const diastolicCorrection = this.limitAdjustment(
-      (this.calibration.diastolicRef - diastolic) * this.calibration.diastolicGain * qualityWeight * diastolicSimilarity,
-      this.calibration.baselineDiastolic,
-      12,
-      0.14,
-    );
+    const calibratedSystolic = systolic + sysDelta * this.calibration.systolicGain;
+    const calibratedDiastolic = diastolic + diaDelta * this.calibration.diastolicGain;
 
     return {
-      systolic: systolic + systolicCorrection,
-      diastolic: diastolic + diastolicCorrection,
+      systolic: calibratedSystolic,
+      diastolic: calibratedDiastolic,
     };
-  }
-
-  private calculateBaselineSimilarity(current: number, baseline: number, tolerance: number): number {
-    if (baseline <= 0) return 0.5;
-
-    const relativeDrift = Math.abs(current - baseline) / baseline;
-    if (relativeDrift >= tolerance) return 0;
-
-    return Math.max(0, 1 - relativeDrift / tolerance);
-  }
-
-  private limitAdjustment(adjustment: number, baseline: number, absoluteLimit: number, relativeLimit: number): number {
-    const dynamicLimit = baseline > 0
-      ? Math.max(6, Math.min(absoluteLimit, baseline * relativeLimit))
-      : absoluteLimit;
-
-    return Math.max(-dynamicLimit, Math.min(dynamicLimit, adjustment));
   }
 
   /**

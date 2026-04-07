@@ -29,8 +29,8 @@ export const useHeartBeatProcessor = () => {
   
   const sessionIdRef = useRef<string>("");
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
+  const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
-  const lastOutputRef = useRef({ bpm: 0, confidence: 0, signalQuality: 0 });
 
   useEffect(() => {
     const t = Date.now().toString(36);
@@ -51,63 +51,66 @@ export const useHeartBeatProcessor = () => {
 
   // ELIMINADO: setGreenValue - la calidad de señal determina validez
 
-  const processSignal = useCallback((
-    value: number,
-    timestamp?: number,
-    opts?: { ppgQuality?: number }
-  ): HeartBeatResult => {
+  const processSignal = useCallback((value: number, _fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
-      const o = lastOutputRef.current;
       return {
-        bpm: o.bpm,
-        confidence: o.confidence,
+        bpm: currentBPM,
+        confidence: 0,
         isPeak: false,
         filteredValue: 0,
         arrhythmiaCount: 0,
-        signalQuality: o.signalQuality,
+        signalQuality: 0,
         rrData: { intervals: [], lastPeakTime: null }
       };
     }
 
+    const currentTime = Date.now();
+    
+    // Control de tasa (~60 FPS)
+    if (currentTime - lastProcessTimeRef.current < 16) {
+      return {
+        bpm: currentBPM,
+        confidence,
+        isPeak: false,
+        filteredValue: 0,
+        arrhythmiaCount: 0,
+        signalQuality,
+        rrData: { intervals: [], lastPeakTime: null }
+      };
+    }
+    
+    lastProcessTimeRef.current = currentTime;
     processedSignalsRef.current++;
 
-    const result = processorRef.current.processSignal(value, timestamp, opts?.ppgQuality);
+    // Procesar señal directamente - la validación de dedo está en HeartBeatProcessor
+    const result = processorRef.current.processSignal(value, timestamp);
     const rrIntervals = processorRef.current.getRRIntervals();
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime };
-
-    const ppgOk = opts?.ppgQuality === undefined || opts.ppgQuality >= 32;
-    if (result.confidence >= 0.42 && result.bpm > 0 && ppgOk) {
-      const smoothingFactor = Math.min(0.38, result.confidence * 0.55);
-      setCurrentBPM((prev) => {
-        const next =
-          prev > 0 ? prev * (1 - smoothingFactor) + result.bpm * smoothingFactor : result.bpm;
-        return Math.round(next);
-      });
+    
+    // Actualizar BPM si hay confianza suficiente
+    if (result.confidence >= 0.3 && result.bpm > 0) {
+      const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
+      const newBPM = currentBPM > 0 ? 
+        currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
+        result.bpm;
+      
+      // Guardar como entero
+      setCurrentBPM(Math.round(newBPM));
       setConfidence(result.confidence);
-    } else if (opts?.ppgQuality !== undefined && opts.ppgQuality < 18 && result.confidence < 0.2) {
-      setCurrentBPM(0);
-      setConfidence(0);
     }
-    setSignalQuality(result.sqi);
 
-    const bpmOut = Math.round(result.bpm);
-    lastOutputRef.current = {
-      bpm: bpmOut,
-      confidence: result.confidence,
-      signalQuality: result.sqi,
-    };
-
+    // Retornar BPM redondeado a entero
     return {
-      bpm: bpmOut,
+      bpm: Math.round(result.bpm),
       confidence: result.confidence,
       isPeak: result.isPeak,
       filteredValue: result.filteredValue,
       arrhythmiaCount: result.arrhythmiaCount,
-      signalQuality: result.sqi,
-      rrData,
+      signalQuality: signalQuality,
+      rrData
     };
-  }, []);
+  }, [currentBPM, confidence, signalQuality]);
 
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
@@ -121,8 +124,8 @@ export const useHeartBeatProcessor = () => {
     setCurrentBPM(0);
     setConfidence(0);
     setSignalQuality(0);
-    lastOutputRef.current = { bpm: 0, confidence: 0, signalQuality: 0 };
-
+    
+    lastProcessTimeRef.current = 0;
     processedSignalsRef.current = 0;
     
     processingStateRef.current = 'ACTIVE';

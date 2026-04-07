@@ -67,95 +67,42 @@ export type Database = {
       }
       measurements: {
         Row: {
-          algorithm_version: string | null
           arrhythmia_count: number
-          calibration_id: string | null
           created_at: string
           diastolic: number
-          glucose: number | null
           heart_rate: number
-          hemoglobin: number | null
-          hf_power: number | null
           id: string
-          lf_hf_ratio: number | null
-          lf_power: number | null
           measured_at: string
-          measurement_confidence: string | null
-          measurement_window_seconds: number | null
-          pnn50: number | null
           quality: number
-          rmssd: number | null
-          sdnn: number | null
-          signal_quality_index: number | null
           spo2: number
           systolic: number
-          total_cholesterol: number | null
-          triglycerides: number | null
           user_id: string
         }
         Insert: {
-          algorithm_version?: string | null
           arrhythmia_count?: number
-          calibration_id?: string | null
           created_at?: string
           diastolic: number
-          glucose?: number | null
           heart_rate: number
-          hemoglobin?: number | null
-          hf_power?: number | null
           id?: string
-          lf_hf_ratio?: number | null
-          lf_power?: number | null
           measured_at?: string
-          measurement_confidence?: string | null
-          measurement_window_seconds?: number | null
-          pnn50?: number | null
           quality?: number
-          rmssd?: number | null
-          sdnn?: number | null
-          signal_quality_index?: number | null
           spo2: number
           systolic: number
-          total_cholesterol?: number | null
-          triglycerides?: number | null
           user_id: string
         }
         Update: {
-          algorithm_version?: string | null
           arrhythmia_count?: number
-          calibration_id?: string | null
           created_at?: string
           diastolic?: number
-          glucose?: number | null
           heart_rate?: number
-          hemoglobin?: number | null
-          hf_power?: number | null
           id?: string
-          lf_hf_ratio?: number | null
-          lf_power?: number | null
           measured_at?: string
-          measurement_confidence?: string | null
-          measurement_window_seconds?: number | null
-          pnn50?: number | null
           quality?: number
-          rmssd?: number | null
-          sdnn?: number | null
-          signal_quality_index?: number | null
           spo2?: number
           systolic?: number
-          total_cholesterol?: number | null
-          triglycerides?: number | null
           user_id?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "measurements_calibration_id_fkey"
-            columns: ["calibration_id"]
-            isOneToOne: false
-            referencedRelation: "calibration_settings"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       profiles: {
         Row: {

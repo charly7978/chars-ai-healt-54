@@ -1,37 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart, Activity, Shield } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
-import { HRVAnalyzer, HRVMetrics, PoincarePoint, FrequencyDomainMetrics } from '../modules/vital-signs/HRVAnalyzer';
-
-interface PipelineMetrics {
-  detectionConfidence: number;
-  fingerDetected: boolean;
-  signalQuality: number;
-  perfusionIndex: number;
-  smoothedRed: number;
-  smoothedGreen: number;
-  smoothedBlue: number;
-  fingerConfidenceCount: number;
-  fingerLostCount: number;
-  bufferFill: number;
-  coverageScore: number;
-  spatialStability: number;
-  tilePulseScore: number;
-  motionLevel: number;
-  // WTA metrics
-  wtaWinnerId?: string;
-  wtaWinnerLabel?: string;
-  wtaWinnerScore?: number;
-  wtaAllScores?: Record<string, number>;
-  // Rescue metrics
-  rescueLevel?: number;
-  rescueLevelLabel?: string;
-  rescueActive?: boolean;
-  rescueRoiFraction?: number;
-  rescueAgcGain?: number;
-  /** POS (Wang) + CHROM vs WTA fallback */
-  pulseSource?: 'POS' | 'WTA';
-}
 
 interface PPGSignalMeterProps {
   value: number;
@@ -54,12 +23,6 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
-  // NUEVAS: métricas de pipeline para debug
-  pipelineMetrics?: PipelineMetrics;
-  vitalSignsFeatureQuality?: number;
-  pressure?: { systolic: number; diastolic: number; confidence: string; featureQuality: number };
-  elapsedTime?: number;
-  maxMeasurementTime?: number;
 }
 
 // Configuración del monitor profesional
@@ -73,7 +36,7 @@ const CONFIG = {
   PLOT_AREA: {
     LEFT: 80,    // Espacio para escala Y izquierda
     RIGHT: 80,   // Espacio para info derecha
-    TOP: 118,    // Info superior + franja de coaching
+    TOP: 100,    // Espacio para info superior
     BOTTOM: 60   // Espacio para escala tiempo
   },
   COLORS: {
@@ -112,12 +75,7 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = [],
-  pipelineMetrics,
-  vitalSignsFeatureQuality = 0,
-  pressure,
-  elapsedTime = 0,
-  maxMeasurementTime = 60,
+  rrIntervals = []
 }: PPGSignalMeterProps) => {
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -125,27 +83,24 @@ const PPGSignalMeter = ({
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, pipelineMetrics, vitalSignsFeatureQuality, pressure });
+  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
-  const showDebugRef = useRef(false);
-  
-  useEffect(() => { showDebugRef.current = showDebug; }, [showDebug]);
   
   // Estado de arritmia persistente por latido completo
   const beatArrhythmiaRef = useRef(false);
+  // Rastrear el último conteo de arritmias para detectar incrementos individuales
   const lastArrhythmiaCountRef = useRef(0);
   
-  // Historial de últimos 20 latidos
+  // Historial de últimos 20 latidos (true = arrítmico, false = normal)
   const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
   
   // Estadísticas de amplitud para escala dinámica
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
 
   useEffect(() => {
-    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, pipelineMetrics, vitalSignsFeatureQuality, pressure };
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, pipelineMetrics, vitalSignsFeatureQuality, pressure]);
+    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals };
+  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals]);
 
   // Efecto visual de pulso
   useEffect(() => {
@@ -409,454 +364,16 @@ const PPGSignalMeter = ({
       // Panel pulsante en el lado derecho
       const pulse = (Math.sin(now / 100) + 1) / 2;
       ctx.fillStyle = `rgba(239, 68, 68, ${0.3 + pulse * 0.4})`;
-      ctx.fillRect(W - 135, 124, 130, 28);
+      ctx.fillRect(W - 135, 92, 130, 28);
       ctx.strokeStyle = COLORS.TEXT_DANGER;
       ctx.lineWidth = 2;
-      ctx.strokeRect(W - 135, 124, 130, 28);
+      ctx.strokeRect(W - 135, 92, 130, 28);
       
       ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_DANGER;
       ctx.textAlign = 'center';
-      ctx.fillText(`⚠ ARRITMIA x${count}`, W - 70, 142);
+      ctx.fillText(`⚠ ARRITMIA x${count}`, W - 70, 110);
     }
-  }, []);
-
-  const drawCaptureCoaching = useCallback((ctx: CanvasRenderingContext2D) => {
-    const { CANVAS_WIDTH: W, COLORS } = CONFIG;
-    const { isFingerDetected, quality, pipelineMetrics } = propsRef.current;
-    let coach = '';
-    let coachColor: string = COLORS.TEXT_SECONDARY;
-    const contactInProgress = !isFingerDetected && quality > 0;
-    if (!isFingerDetected && !contactInProgress) {
-      coach = '⚠ COLOCA TU DEDO sobre la cámara y flash — presión suave';
-      coachColor = '#ef4444';
-    } else if (!isFingerDetected || quality < 30) {
-      coach = 'ESTABILIZANDO… mantén el dedo quieto';
-      coachColor = '#fbbf24';
-    } else if (quality < 50) {
-      coach = 'Captando señal… no muevas el dedo';
-      coachColor = '#a3e635';
-    } else {
-      coach = '✓ SEÑAL OK — mantén la posición';
-      coachColor = '#4ade80';
-    }
-    const src = pipelineMetrics?.pulseSource;
-    if (src && (isFingerDetected || quality >= 20)) {
-      coach += `  ·  canal ${src}`;
-    }
-    const barY = 93;
-    const barH = 26;
-    ctx.fillStyle = 'rgba(15,23,42,0.92)';
-    ctx.fillRect(8, barY, W - 16, barH);
-    ctx.strokeStyle = !isFingerDetected && !contactInProgress ? 'rgba(239,68,68,0.6)' : 
-                      quality < 30 ? 'rgba(251,191,36,0.5)' :
-                      quality >= 50 ? 'rgba(74,222,128,0.5)' : 'rgba(148,163,184,0.4)';
-    ctx.lineWidth = !isFingerDetected ? 2 : 1;
-    ctx.strokeRect(8, barY, W - 16, barH);
-    ctx.font = '600 11px system-ui, -apple-system, "Segoe UI", sans-serif';
-    ctx.fillStyle = coachColor;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(coach, W / 2, barY + barH / 2);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-  }, []);
-
-  // === PANEL DE DEBUG Y ESTABILIDAD DE DEDO ===
-  const drawDebugPanel = useCallback((ctx: CanvasRenderingContext2D) => {
-    const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
-    const metrics = propsRef.current.pipelineMetrics;
-    const fq = propsRef.current.vitalSignsFeatureQuality || 0;
-    const bp = propsRef.current.pressure;
-    
-    if (!metrics) return;
-    
-    const panelX = 5;
-    const panelY = 148;
-    const panelW = W - 10;
-    const panelH = 165;
-    
-    // Fondo semitransparente
-    ctx.fillStyle = 'rgba(5, 10, 25, 0.92)';
-    ctx.fillRect(panelX, panelY, panelW, panelH);
-    ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(panelX, panelY, panelW, panelH);
-    
-    // Título
-    ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#60a5fa';
-    ctx.textAlign = 'left';
-    ctx.fillText('🔧 PIPELINE DEBUG', panelX + 8, panelY + 14);
-    
-    const col1 = panelX + 8;
-    const col2 = panelX + panelW * 0.36;
-    const col3 = panelX + panelW * 0.70;
-    let y = panelY + 28;
-    const lineH = 14;
-    
-    const drawMetric = (x: number, y: number, label: string, value: string, color: string) => {
-      ctx.font = '7px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.textAlign = 'left';
-      ctx.fillText(label, x, y);
-      ctx.font = 'bold 9px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = color;
-      ctx.fillText(value, x, y + 10);
-    };
-
-    const drawBar = (x: number, y: number, w: number, value: number, max: number, color: string) => {
-      ctx.fillStyle = 'rgba(255,255,255,0.08)';
-      ctx.fillRect(x, y, w, 4);
-      const fill = Math.max(0, Math.min(1, value / max));
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, w * fill, 4);
-    };
-
-    // --- Fila 1: Confianza | SQI | Perfusión ---
-    const confColor = metrics.detectionConfidence > 0.7 ? '#22c55e' : metrics.detectionConfidence > 0.4 ? '#f59e0b' : '#ef4444';
-    drawMetric(col1, y, 'CONFIANZA', `${(metrics.detectionConfidence * 100).toFixed(0)}%`, confColor);
-    drawBar(col1, y + 14, 85, metrics.detectionConfidence, 1, confColor);
-    
-    const sqiColor = metrics.signalQuality > 60 ? '#22c55e' : metrics.signalQuality > 30 ? '#f59e0b' : '#ef4444';
-    drawMetric(col2, y, 'SQI', `${metrics.signalQuality.toFixed(0)}%`, sqiColor);
-    drawBar(col2, y + 14, 85, metrics.signalQuality, 100, sqiColor);
-    
-    const piColor = metrics.perfusionIndex > 1.0 ? '#22c55e' : metrics.perfusionIndex > 0.3 ? '#f59e0b' : '#ef4444';
-    drawMetric(col3, y, 'PERFUSIÓN', `${metrics.perfusionIndex.toFixed(2)}%`, piColor);
-    drawBar(col3, y + 14, 85, metrics.perfusionIndex, 5, piColor);
-    
-    y += lineH + 18;
-    
-    // --- Fila 2: Cobertura | Estabilidad Espacial | Movimiento ---
-    const covColor = metrics.coverageScore > 0.7 ? '#22c55e' : metrics.coverageScore > 0.4 ? '#f59e0b' : '#ef4444';
-    drawMetric(col1, y, 'COBERTURA', `${(metrics.coverageScore * 100).toFixed(0)}%`, covColor);
-    drawBar(col1, y + 14, 85, metrics.coverageScore, 1, covColor);
-    
-    const spatColor = metrics.spatialStability > 0.7 ? '#22c55e' : metrics.spatialStability > 0.4 ? '#f59e0b' : '#ef4444';
-    drawMetric(col2, y, 'ESTAB. ESPACIAL', `${(metrics.spatialStability * 100).toFixed(0)}%`, spatColor);
-    drawBar(col2, y + 14, 85, metrics.spatialStability, 1, spatColor);
-    
-    const motColor = metrics.motionLevel < 0.3 ? '#22c55e' : metrics.motionLevel < 0.6 ? '#f59e0b' : '#ef4444';
-    drawMetric(col3, y, 'MOVIMIENTO', `${(metrics.motionLevel * 100).toFixed(0)}%`, motColor);
-    drawBar(col3, y + 14, 85, metrics.motionLevel, 1, motColor);
-    
-    y += lineH + 18;
-    
-    // --- Fila 3: Feature Quality | Buffer | Estab. Dedo ---
-    const fqColor = fq > 60 ? '#22c55e' : fq > 30 ? '#f59e0b' : '#ef4444';
-    drawMetric(col1, y, 'FEAT. QUALITY', `${fq.toFixed(0)}`, fqColor);
-    drawBar(col1, y + 14, 85, fq, 100, fqColor);
-    
-    const bufColor = metrics.bufferFill > 0.7 ? '#22c55e' : metrics.bufferFill > 0.3 ? '#f59e0b' : '#94a3b8';
-    drawMetric(col2, y, 'BUFFER', `${(metrics.bufferFill * 100).toFixed(0)}%`, bufColor);
-    drawBar(col2, y + 14, 85, metrics.bufferFill, 1, bufColor);
-    
-    const stability = metrics.fingerConfidenceCount / (metrics.fingerConfidenceCount + metrics.fingerLostCount + 1);
-    const stabColor = stability > 0.7 ? '#22c55e' : stability > 0.35 ? '#f59e0b' : '#ef4444';
-    drawMetric(col3, y, 'ESTAB. DEDO', `${(stability * 100).toFixed(0)}%`, stabColor);
-    drawBar(col3, y + 14, 85, stability, 1, stabColor);
-    
-    y += lineH + 18;
-    
-    // --- Fila 4: RGB + PA + Dedo status ---
-    ctx.font = '7px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText(`RGB: R=${metrics.smoothedRed.toFixed(0)} G=${metrics.smoothedGreen.toFixed(0)} B=${metrics.smoothedBlue.toFixed(0)}  Pulse:${metrics.tilePulseScore.toFixed(3)}`, col1, y + 4);
-    
-    if (bp && bp.systolic > 0) {
-      const bpConfColor = bp.confidence === 'HIGH' ? '#22c55e' : bp.confidence === 'MEDIUM' ? '#f59e0b' : bp.confidence === 'LOW' ? '#ef4444' : '#64748b';
-      ctx.fillStyle = bpConfColor;
-      ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
-      ctx.fillText(`PA: ${bp.systolic}/${bp.diastolic} [${bp.confidence}] FQ:${bp.featureQuality}`, col2, y + 4);
-    }
-    
-    const fingerIcon = metrics.fingerDetected ? '🟢' : '🔴';
-    ctx.font = '8px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = metrics.fingerDetected ? '#22c55e' : '#ef4444';
-    ctx.textAlign = 'right';
-    ctx.fillText(`${fingerIcon} DEDO: ${metrics.fingerDetected ? 'OK' : 'NO'}  Lost:${metrics.fingerLostCount}`, panelX + panelW - 8, panelY + 14);
-    ctx.textAlign = 'left';
-    
-    // --- Fila 5: WTA Winner-Takes-All ---
-    if (metrics.wtaWinnerId) {
-      y += 14;
-      const winColor = (metrics.wtaWinnerScore || 0) >= 60 ? '#22c55e' : (metrics.wtaWinnerScore || 0) >= 35 ? '#f59e0b' : '#ef4444';
-      ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = winColor;
-      ctx.fillText(`🏆 WTA: ${metrics.wtaWinnerId} (${metrics.wtaWinnerScore || 0})`, col1, y + 4);
-      
-      // Show all channel scores as compact bar
-      if (metrics.wtaAllScores) {
-        ctx.font = '6.5px "SF Mono", Consolas, monospace';
-        const entries = Object.entries(metrics.wtaAllScores).sort((a, b) => b[1] - a[1]);
-        let xOff = col2;
-        for (const [ch, score] of entries) {
-          const isWinner = ch === metrics.wtaWinnerId;
-          ctx.fillStyle = isWinner ? winColor : '#64748b';
-          ctx.fillText(`${ch}:${score}`, xOff, y + 4);
-          xOff += 38;
-        }
-      }
-    }
-    
-    // --- Fila 6: Rescue Engine Status ---
-    if (metrics.rescueLevelLabel) {
-      y += 14;
-      const rescueColors: Record<string, string> = {
-        'NORMAL': '#22c55e',
-        'MILD': '#f59e0b',
-        'MODERATE': '#f97316',
-        'AGGRESSIVE': '#ef4444',
-      };
-      const rColor = rescueColors[metrics.rescueLevelLabel] || '#64748b';
-      ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = rColor;
-      const rescueIcon = metrics.rescueActive ? '🚨' : '✅';
-      ctx.fillText(`${rescueIcon} RESCUE: ${metrics.rescueLevelLabel}`, col1, y + 4);
-      
-      ctx.font = '7px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillText(`ROI:${((metrics.rescueRoiFraction || 0.85) * 100).toFixed(0)}% AGC:${(metrics.rescueAgcGain || 1).toFixed(1)}x`, col2, y + 4);
-    }
-  }, []);
-
-  // === PANEL HRV + POINCARÉ ===
-  const hrvRef = useRef<HRVMetrics | null>(null);
-  const lastHRVCalcRef = useRef<number>(0);
-
-  const drawHRVPanel = useCallback((ctx: CanvasRenderingContext2D, now: number) => {
-    const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
-    const intervals = propsRef.current.rrIntervals;
-    if (!intervals || intervals.length < 6) return;
-
-    // Recalcular HRV cada 500ms para eficiencia
-    if (now - lastHRVCalcRef.current > 500) {
-      hrvRef.current = HRVAnalyzer.compute(intervals);
-      lastHRVCalcRef.current = now;
-    }
-    const hrv = hrvRef.current;
-    if (!hrv || !hrv.isValid) return;
-
-    // Posición del panel: debajo del debug si está activo, sino debajo de los paneles vitales
-    const debugActive = showDebugRef.current;
-    const panelX = 5;
-    const panelY = debugActive ? 318 : 148;
-    const panelW = W - 10;
-    const panelH = 270;
-
-    // Fondo
-    ctx.fillStyle = 'rgba(5, 8, 20, 0.93)';
-    ctx.fillRect(panelX, panelY, panelW, panelH);
-    ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(panelX, panelY, panelW, panelH);
-
-    // Título
-    ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#a855f7';
-    ctx.textAlign = 'left';
-    ctx.fillText('📊 HRV ANALYSIS', panelX + 8, panelY + 14);
-
-    ctx.font = '7px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#94a3b8';
-    ctx.textAlign = 'right';
-    ctx.fillText(`N=${hrv.totalIntervals}`, panelX + panelW - 8, panelY + 14);
-
-    // --- Métricas en columnas ---
-    const col1 = panelX + 8;
-    const col2 = panelX + panelW * 0.36;
-    const col3 = panelX + panelW * 0.68;
-    let y = panelY + 28;
-
-    const drawM = (x: number, y: number, label: string, value: string, unit: string, color: string) => {
-      ctx.font = '7px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = '#94a3b8';
-      ctx.textAlign = 'left';
-      ctx.fillText(label, x, y);
-      ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = color;
-      ctx.fillText(value, x, y + 13);
-      ctx.font = '7px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText(unit, x + ctx.measureText(value).width + 3, y + 13);
-    };
-
-    // Fila 1: SDNN | RMSSD | pNN50
-    const sdnnColor = hrv.sdnn > 100 ? '#22c55e' : hrv.sdnn > 50 ? '#f59e0b' : '#ef4444';
-    drawM(col1, y, 'SDNN', hrv.sdnn.toFixed(1), 'ms', sdnnColor);
-
-    const rmssdColor = hrv.rmssd > 40 ? '#22c55e' : hrv.rmssd > 20 ? '#f59e0b' : '#ef4444';
-    drawM(col2, y, 'RMSSD', hrv.rmssd.toFixed(1), 'ms', rmssdColor);
-
-    const pnnColor = hrv.pnn50 > 20 ? '#22c55e' : hrv.pnn50 > 5 ? '#f59e0b' : '#ef4444';
-    drawM(col3, y, 'pNN50', hrv.pnn50.toFixed(1), '%', pnnColor);
-
-    y += 30;
-
-    // Fila 2: MeanRR | MeanHR | SD1/SD2
-    drawM(col1, y, 'MEAN RR', hrv.meanRR.toString(), 'ms', '#38bdf8');
-    drawM(col2, y, 'MEAN HR', hrv.meanHR.toFixed(1), 'bpm', '#38bdf8');
-    drawM(col3, y, 'SD1/SD2', hrv.sd1sd2Ratio.toFixed(2), '', '#c084fc');
-
-    y += 30;
-
-    // --- Poincaré Plot (miniatura) ---
-    const plotSize = 90;
-    const plotX = panelX + panelW - plotSize - 12;
-    const plotY2 = y + 2;
-
-    // Fondo del scatter
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(plotX, plotY2, plotSize, plotSize);
-    ctx.strokeStyle = 'rgba(168, 85, 247, 0.3)';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(plotX, plotY2, plotSize, plotSize);
-
-    // Línea de identidad (diagonal)
-    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(plotX, plotY2 + plotSize);
-    ctx.lineTo(plotX + plotSize, plotY2);
-    ctx.stroke();
-
-    // Ejes label
-    ctx.font = '6px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#64748b';
-    ctx.textAlign = 'center';
-    ctx.fillText('RR(n) ms', plotX + plotSize / 2, plotY2 + plotSize + 10);
-    ctx.save();
-    ctx.translate(plotX - 6, plotY2 + plotSize / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillText('RR(n+1)', 0, 0);
-    ctx.restore();
-
-    // Plot points
-    const points = HRVAnalyzer.getPoincarePoints(intervals);
-    if (points.length > 0) {
-      // Auto-scale
-      const allRR = intervals.filter(rr => rr >= 300 && rr <= 2000);
-      const minRR = Math.min(...allRR) - 30;
-      const maxRR = Math.max(...allRR) + 30;
-      const rangeRR = maxRR - minRR || 1;
-
-      // Draw SD1/SD2 ellipse
-      const centerPx = plotSize / 2;
-      const sd1Px = (hrv.sd1 / rangeRR) * plotSize;
-      const sd2Px = (hrv.sd2 / rangeRR) * plotSize;
-      ctx.save();
-      ctx.translate(plotX + centerPx, plotY2 + centerPx);
-      ctx.rotate(-Math.PI / 4);
-      ctx.beginPath();
-      ctx.ellipse(0, 0, Math.max(2, sd2Px), Math.max(2, sd1Px), 0, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.5)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(168, 85, 247, 0.08)';
-      ctx.fill();
-      ctx.restore();
-
-      // Draw scatter points
-      points.forEach((pt, i) => {
-        const px = plotX + ((pt.rrN - minRR) / rangeRR) * plotSize;
-        const py = plotY2 + plotSize - ((pt.rrN1 - minRR) / rangeRR) * plotSize;
-
-        if (px >= plotX && px <= plotX + plotSize && py >= plotY2 && py <= plotY2 + plotSize) {
-          const alpha = 0.4 + (i / points.length) * 0.6; // más recientes más brillantes
-          ctx.beginPath();
-          ctx.arc(px, py, 2.5, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(168, 85, 247, ${alpha})`;
-          ctx.fill();
-        }
-      });
-    }
-
-    // Título del plot
-    ctx.font = 'bold 7px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#c084fc';
-    ctx.textAlign = 'center';
-    ctx.fillText('POINCARÉ', plotX + plotSize / 2, plotY2 - 3);
-
-    // SD1 / SD2 valores debajo del scatter
-    ctx.font = '7px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#a855f7';
-    ctx.textAlign = 'left';
-    ctx.fillText(`SD1: ${hrv.sd1.toFixed(1)}ms`, col1, y + plotSize - 5);
-    ctx.fillText(`SD2: ${hrv.sd2.toFixed(1)}ms`, col1, y + plotSize + 7);
-
-    // Interpretación tiempo
-    ctx.font = '7px "SF Mono", Consolas, monospace';
-    const interpretation = hrv.rmssd > 40 ? 'TONO VAGAL ALTO' :
-                           hrv.rmssd > 20 ? 'VARIABILIDAD NORMAL' : 'VARIABILIDAD REDUCIDA';
-    const interpColor = hrv.rmssd > 40 ? '#22c55e' : hrv.rmssd > 20 ? '#f59e0b' : '#ef4444';
-    ctx.fillStyle = interpColor;
-    ctx.fillText(interpretation, col1, y + plotSize + 20);
-
-    // === DOMINIO FRECUENCIA (LF / HF / LF:HF) ===
-    const freq = hrv.frequency;
-    const freqY = y + plotSize + 32;
-
-    // Separador
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    ctx.moveTo(panelX + 8, freqY);
-    ctx.lineTo(panelX + panelW - 8, freqY);
-    ctx.stroke();
-
-    ctx.font = 'bold 8px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = '#38bdf8';
-    ctx.textAlign = 'left';
-    ctx.fillText('⚡ DOMINIO FRECUENCIA', panelX + 8, freqY + 12);
-
-    if (!freq.isValid) {
-      ctx.font = '7px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = '#64748b';
-      ctx.fillText(`Esperando ≥16 intervalos... (${hrv.totalIntervals})`, panelX + 8, freqY + 24);
-    } else {
-      const fy = freqY + 18;
-
-      // LF | HF | LF/HF
-      drawM(col1, fy, 'LF', freq.lfPower.toFixed(1), 'ms²', '#f59e0b');
-      drawM(col2, fy, 'HF', freq.hfPower.toFixed(1), 'ms²', '#22c55e');
-      drawM(col3, fy, 'LF/HF', freq.lfHfRatio.toFixed(2), '', '#38bdf8');
-
-      // Barra proporcional LF vs HF
-      const barY = fy + 18;
-      const barW = panelW - 20;
-      const barH = 6;
-      const lfFrac = freq.lfNorm / 100;
-
-      ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.fillRect(col1, barY, barW, barH);
-
-      // LF portion (amber)
-      ctx.fillStyle = '#f59e0b';
-      ctx.fillRect(col1, barY, barW * lfFrac, barH);
-      // HF portion (green)
-      ctx.fillStyle = '#22c55e';
-      ctx.fillRect(col1 + barW * lfFrac, barY, barW * (1 - lfFrac), barH);
-
-      // Labels
-      ctx.font = '6px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = '#f59e0b';
-      ctx.textAlign = 'left';
-      ctx.fillText(`LF ${freq.lfNorm.toFixed(0)}%`, col1, barY + barH + 8);
-      ctx.fillStyle = '#22c55e';
-      ctx.textAlign = 'right';
-      ctx.fillText(`HF ${freq.hfNorm.toFixed(0)}%`, col1 + barW, barY + barH + 8);
-
-      // Interpretación autonómica
-      ctx.textAlign = 'left';
-      const autoInterp = freq.lfHfRatio > 2 ? 'PREDOMINIO SIMPÁTICO' :
-                          freq.lfHfRatio < 0.5 ? 'PREDOMINIO PARASIMPÁTICO' : 'BALANCE AUTONÓMICO';
-      const autoColor = freq.lfHfRatio > 2 ? '#ef4444' : freq.lfHfRatio < 0.5 ? '#22c55e' : '#38bdf8';
-      ctx.font = '7px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = autoColor;
-      ctx.fillText(autoInterp, col1, barY + barH + 18);
-    }
-    ctx.textAlign = 'left';
   }, []);
 
   // Loop de renderizado principal
@@ -891,14 +408,7 @@ const PPGSignalMeter = ({
       }
       lastRenderTime = now;
       
-      const {
-        value: signalValue,
-        quality: signalQualityUi,
-        isFingerDetected: detected,
-        arrhythmiaStatus: arrStatus,
-        preserveResults: preserve,
-        isPeak: peak,
-      } = propsRef.current;
+      const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, isPeak: peak } = propsRef.current;
       const plot = getPlotArea();
       const { WINDOW_MS, COLORS } = CONFIG;
       
@@ -907,15 +417,6 @@ const PPGSignalMeter = ({
       drawAmplitudeScale(ctx);
       drawTimeScale(ctx);
       drawVitalInfo(ctx, now);
-      drawCaptureCoaching(ctx);
-      
-      // Panel de debug (si está activo)
-      if (showDebugRef.current) {
-        drawDebugPanel(ctx);
-      }
-      
-      // Panel HRV siempre visible durante monitoreo
-      drawHRVPanel(ctx, now);
       
       if (preserve && !detected) {
         animationRef.current = requestAnimationFrame(render);
@@ -924,9 +425,7 @@ const PPGSignalMeter = ({
       
       // === PROCESAMIENTO DE SEÑAL ===
       // Escalar valor a amplitud visual controlada
-      const visGain =
-        signalQualityUi < 30 ? 2.85 : signalQualityUi < 52 ? 2.45 : 2.05;
-      const scaledValue = signalValue * visGain;
+      const scaledValue = signalValue * 2; // Amplificación para visualización
       
       // Propagar estado de arritmia por latido individual
       // Solo marcar como arrítmico cuando el conteo INCREMENTA en ese pico específico
@@ -1221,7 +720,7 @@ const PPGSignalMeter = ({
       isRunningRef.current = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, drawCaptureCoaching, drawDebugPanel, drawHRVPanel, getPlotArea]);
+  }, [drawGrid, drawAmplitudeScale, drawTimeScale, drawVitalInfo, getPlotArea]);
 
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
@@ -1252,14 +751,7 @@ const PPGSignalMeter = ({
           />
         </div>
         <Activity className="w-3.5 h-3.5 text-emerald-400" />
-        <button 
-          onClick={() => setShowDebug(prev => !prev)}
-          className={`text-[10px] font-mono px-1.5 py-0.5 rounded transition-colors ${
-            showDebug ? 'text-blue-300 bg-blue-500/20' : 'text-emerald-400/80'
-          }`}
-        >
-          {showDebug ? '🔧 DEBUG ON' : 'PPG MONITOR v2'}
-        </button>
+        <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v2</span>
       </div>
 
       <button
@@ -1273,29 +765,6 @@ const PPGSignalMeter = ({
         <Shield className="h-3.5 w-3.5" />
         {isCalibrated ? 'CALIBRADA' : 'CALIBRAR PA'}
       </button>
-
-      {/* BARRA DE PROGRESO Y TIEMPO */}
-      {isMonitoring && (
-        <div className="fixed bottom-12 left-0 right-0 z-10">
-          <div className="h-1 w-full bg-slate-800">
-            <div 
-              className="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-1000 ease-linear"
-              style={{ width: `${Math.min(100, (elapsedTime / maxMeasurementTime) * 100)}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between px-3 py-1 bg-slate-900/90">
-            <span className="text-[10px] font-mono text-slate-400">
-              {String(Math.floor(elapsedTime / 60)).padStart(1, '0')}:{String(elapsedTime % 60).padStart(2, '0')}
-            </span>
-            <span className="text-[10px] font-mono text-emerald-400/70">
-              {maxMeasurementTime - elapsedTime}s restantes
-            </span>
-            <span className="text-[10px] font-mono text-slate-500">
-              {Math.round((elapsedTime / maxMeasurementTime) * 100)}%
-            </span>
-          </div>
-        </div>
-      )}
 
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-3 z-10">
         <button 

@@ -282,12 +282,10 @@ export class VitalSignsProcessor {
   ): void {
     const features = PPGFeatureExtractor.extractAllFeatures(this.signalHistory, rrData.intervals);
     
-    // ─── STRICT QUALITY GATE ───
-    // Require SQI >= 40 AND at least 5 valid pulses before calculating ANY vital sign.
-    // This prevents generating values from noise.
-    const minQualityForCalculation = 40;
-    const minPulsesForCalculation = 5;
-    if (this.measurements.signalQuality < minQualityForCalculation || this.validPulseCount < minPulsesForCalculation) {
+    // Validar calidad de señal mínima antes de calcular
+    const minQualityForCalculation = 15;
+    if (this.measurements.signalQuality < minQualityForCalculation) {
+      // Señal muy débil - no actualizar valores para evitar ruido
       return;
     }
     

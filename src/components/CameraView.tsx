@@ -9,63 +9,36 @@ interface CameraViewProps {
   isMonitoring: boolean;
 }
 
-type RangeCapability = { min?: number; max?: number; step?: number } | number | undefined;
-
-type CameraDiagnosticCaps = MediaTrackCapabilities & {
-  torch?: boolean;
-  focusMode?: string[];
-  exposureMode?: string[];
-  whiteBalanceMode?: string[];
-  zoom?: { min?: number; max?: number } | number;
-  exposureCompensation?: { min?: number; max?: number; step?: number };
-  brightness?: { min?: number; max?: number; step?: number };
-  contrast?: { min?: number; max?: number; step?: number };
-  saturation?: { min?: number; max?: number; step?: number };
-  sharpness?: { min?: number; max?: number; step?: number };
-  colorTemperature?: { min?: number; max?: number; step?: number };
-  iso?: { min?: number; max?: number; step?: number };
-};
-
 /**
- * CAMERA VIEW — PPG-OPTIMIZED
+ * CÁMARA PPG OPTIMIZADA - SELECCIÓN AUTOMÁTICA DE CÁMARA TRASERA PRINCIPAL
  * 
- * CRITICAL: For contact PPG (finger + flash), the flash provides ABUNDANT light
- * through tissue. We must NOT boost exposure/ISO or the sensor saturates,
- * destroying the pulsatile AC component we need.
- * 
- * Best practices (Xuan et al. 2023, PMC10705321):
- * - Lock exposure to MODERATE values (avoid auto-gain that chases saturation)
- * - Lock white balance (prevent color shifts during measurement)
- * - Lock focus (prevent hunting)
- * - ISO should be LOW to avoid amplifying shot noise
+ * CARACTERÍSTICAS:
+ * 1. Enumera dispositivos y selecciona la cámara trasera principal (con torch)
+ * 2. Activa flash LED de forma robusta con reintentos
+ * 3. Expone el video element para captura externa
+ * 4. Configuración optimizada para PPG: 30fps, resolución moderada
  */
-const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({ onStreamReady, isMonitoring }, ref) => {
+const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
+  onStreamReady,
+  isMonitoring,
+}, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
 
   useImperativeHandle(ref, () => ({
-    getVideoElement: () => videoRef.current,
+    getVideoElement: () => videoRef.current
   }), []);
 
   useEffect(() => {
     let mounted = true;
-
-    const safeApplyConstraints = async (track: MediaStreamTrack, constraints: MediaTrackConstraints) => {
-      try {
-        await track.applyConstraints(constraints);
-        return true;
-      } catch (error) {
-        console.warn('⚠️ Constraints avanzadas no soportadas:', error);
-        return false;
-      }
-    };
-
+    
     const stopCamera = async () => {
       if (streamRef.current) {
+        // Apagar flash primero
         for (const track of streamRef.current.getVideoTracks()) {
           try {
-            const caps = track.getCapabilities?.() as CameraDiagnosticCaps | undefined;
+            const caps = track.getCapabilities?.() as any;
             if (caps?.torch) {
               await track.applyConstraints({ advanced: [{ torch: false } as any] });
             }
@@ -74,299 +47,195 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({ onStreamRead
         }
         streamRef.current = null;
       }
-
+      
       if (videoRef.current) {
-        videoRef.current.pause?.();
         videoRef.current.srcObject = null;
       }
       isStartingRef.current = false;
     };
 
-    const scoreBackCameraLabel = (label: string): number => {
-      const normalized = label.toLowerCase();
-      let score = 0;
-      if (/back|rear|environment|trasera|posterior/.test(normalized)) score += 50;
-      if (/main|wide|primary|camera 0|camera0|back camera/.test(normalized)) score += 20;
-      if (/ultra|macro|depth|tele|front|frontal|selfie|iris/.test(normalized)) score -= 35;
-      if (/external|usb|virtual/.test(normalized)) score -= 25;
-      return score;
-    };
-
-    const getTrackCapabilities = (track: MediaStreamTrack | undefined) => {
-      try {
-        return (track?.getCapabilities?.() as CameraDiagnosticCaps | undefined) ?? undefined;
-      } catch { return undefined; }
-    };
-
-    const getTrackLabel = (track: MediaStreamTrack | undefined) => track?.label?.toLowerCase() ?? '';
-
-    const isProbablyFrontCamera = (track: MediaStreamTrack | undefined) => {
-      const label = getTrackLabel(track);
-      return /front|frontal|user|selfie/.test(label);
-    };
-
-    const getRangeTarget = (capability: RangeCapability, ratio: number) => {
-      if (typeof capability === 'number') return capability;
-      if (!capability || typeof capability !== 'object') return undefined;
-      const lo = capability.min ?? 0;
-      const hi = capability.max ?? lo;
-      return lo + (hi - lo) * ratio;
-    };
-
-    const selectBestBackCamera = async (): Promise<string | null> => {
+    /**
+     * ENCONTRAR CÁMARA TRASERA PRINCIPAL
+     * Prioriza la cámara que tenga torch (flash) disponible
+     */
+    const findMainBackCamera = async (): Promise<string | null> => {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(device => device.kind === 'videoinput');
-        if (!videoDevices.length) return null;
-
-        const ranked = videoDevices
-          .map(device => ({ device, score: scoreBackCameraLabel(device.label || '') }))
-          .sort((a, b) => b.score - a.score);
-
-        for (const entry of ranked) {
-          if (entry.score < 0) continue;
-          try {
-            const probeStream = await navigator.mediaDevices.getUserMedia({
-              audio: false,
-              video: {
-                deviceId: { exact: entry.device.deviceId },
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                frameRate: { ideal: 30, max: 30 },
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        
+        console.log('📷 Cámaras encontradas:', videoDevices.map(d => d.label || d.deviceId));
+        
+        // Buscar cámara trasera con torch
+        for (const device of videoDevices) {
+          const label = device.label.toLowerCase();
+          
+          // Priorizar cámara trasera principal (back, rear, environment)
+          if (label.includes('back') || label.includes('rear') || label.includes('environment') || 
+              label.includes('trasera') || label.includes('camera 0') || label.includes('camera0')) {
+            
+            // Verificar si tiene torch
+            try {
+              const testStream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: device.deviceId } }
+              });
+              
+              const track = testStream.getVideoTracks()[0];
+              const caps = track.getCapabilities?.() as any;
+              const hasTorch = caps?.torch === true;
+              
+              testStream.getTracks().forEach(t => t.stop());
+              
+              if (hasTorch) {
+                console.log('✅ Cámara principal encontrada:', device.label);
+                return device.deviceId;
               }
+            } catch {}
+          }
+        }
+        
+        // Fallback: buscar cualquier cámara con torch
+        for (const device of videoDevices) {
+          try {
+            const testStream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: device.deviceId } }
             });
-            const track = probeStream.getVideoTracks()[0];
-            const caps = getTrackCapabilities(track);
-            const labelScore = scoreBackCameraLabel(`${entry.device.label} ${track?.label || ''}`);
-            const torchBonus = caps?.torch ? 25 : 0;
-            const frontPenalty = isProbablyFrontCamera(track) ? -100 : 0;
-            probeStream.getTracks().forEach(t => t.stop());
-            if (labelScore + torchBonus + frontPenalty >= 20) {
-              console.log('✅ Cámara trasera seleccionada:', entry.device.label || entry.device.deviceId);
-              return entry.device.deviceId;
+            
+            const track = testStream.getVideoTracks()[0];
+            const caps = track.getCapabilities?.() as any;
+            const hasTorch = caps?.torch === true;
+            
+            testStream.getTracks().forEach(t => t.stop());
+            
+            if (hasTorch) {
+              console.log('✅ Cámara con torch encontrada:', device.label);
+              return device.deviceId;
             }
           } catch {}
         }
-
-        return ranked.find(entry => entry.score >= 0)?.device.deviceId ?? null;
-      } catch {
+        
+        return null;
+      } catch (e) {
+        console.warn('No se pudo enumerar dispositivos:', e);
         return null;
       }
-    };
-
-    /**
-     * PPG-OPTIMAL CAMERA TUNING
-     * 
-     * Key principle: When flash illuminates through finger tissue,
-     * the sensor receives ABUNDANT light (red channel often > 200).
-     * We need LOW exposure and LOW ISO to avoid saturation.
-     * 
-     * Saturation = 0 pulsatile signal = 0 heartbeats detected.
-     */
-    const applyPPGTrackTuning = async (track: MediaStreamTrack, hasTorch: boolean) => {
-      const caps = getTrackCapabilities(track);
-      if (!caps) return false;
-
-      const advanced: Record<string, any> = {};
-
-      // Lock focus — prevent hunting during measurement
-      if (Array.isArray(caps.focusMode)) {
-        if (caps.focusMode.includes('manual')) advanced.focusMode = 'manual';
-        else if (caps.focusMode.includes('single-shot')) advanced.focusMode = 'single-shot';
-      }
-
-      // Lock white balance — prevent color channel shifts
-      if (Array.isArray(caps.whiteBalanceMode)) {
-        if (caps.whiteBalanceMode.includes('manual')) advanced.whiteBalanceMode = 'manual';
-        else if (caps.whiteBalanceMode.includes('single-shot')) advanced.whiteBalanceMode = 'single-shot';
-      }
-
-      // Exposure: use CONTINUOUS mode — let the camera auto-adjust
-      // BUT set exposure compensation to NEGATIVE/LOW to prevent saturation
-      if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes('continuous')) {
-        advanced.exposureMode = 'continuous';
-      }
-
-      // Zoom to minimum
-      if (typeof caps.zoom === 'object' && caps.zoom && 'min' in caps.zoom) {
-        advanced.zoom = caps.zoom.min ?? 1;
-      }
-
-      // CRITICAL: Exposure compensation LOW — flash through finger is very bright
-      // Use 15-25% of range (NOT 95% which causes complete saturation)
-      if (hasTorch) {
-        const expComp = getRangeTarget(caps.exposureCompensation, 0.20);
-        if (typeof expComp === 'number' && Number.isFinite(expComp)) {
-          advanced.exposureCompensation = expComp;
-        }
-
-        // ISO LOW — flash provides plenty of photons, high ISO just adds noise
-        const iso = getRangeTarget(caps.iso, 0.15);
-        if (typeof iso === 'number' && Number.isFinite(iso)) {
-          advanced.iso = iso;
-        }
-
-        // Brightness LOW-MODERATE
-        const brightness = getRangeTarget(caps.brightness, 0.30);
-        if (typeof brightness === 'number' && Number.isFinite(brightness)) {
-          advanced.brightness = brightness;
-        }
-      } else {
-        // Without torch, use moderate settings
-        const expComp = getRangeTarget(caps.exposureCompensation, 0.50);
-        if (typeof expComp === 'number' && Number.isFinite(expComp)) {
-          advanced.exposureCompensation = expComp;
-        }
-        const iso = getRangeTarget(caps.iso, 0.40);
-        if (typeof iso === 'number' && Number.isFinite(iso)) {
-          advanced.iso = iso;
-        }
-      }
-
-      // Contrast and saturation: moderate
-      const contrast = getRangeTarget(caps.contrast, 0.50);
-      if (typeof contrast === 'number' && Number.isFinite(contrast)) {
-        advanced.contrast = contrast;
-      }
-
-      const saturation = getRangeTarget(caps.saturation, 0.50);
-      if (typeof saturation === 'number' && Number.isFinite(saturation)) {
-        advanced.saturation = saturation;
-      }
-
-      if (!Object.keys(advanced).length) return false;
-      return safeApplyConstraints(track, { advanced: [advanced] });
-    };
-
-    const enableTorchRobustly = async (track: MediaStreamTrack) => {
-      const caps = getTrackCapabilities(track);
-      if (!caps?.torch) {
-        console.warn('⚠️ Esta cámara no soporta torch');
-        return false;
-      }
-
-      for (let attempt = 0; attempt < 5; attempt++) {
-        try {
-          await track.applyConstraints({ advanced: [{ torch: true } as any] });
-          await new Promise(resolve => setTimeout(resolve, 250));
-
-          const settings = track.getSettings?.() as any;
-          if (settings?.torch === true || settings?.torch === undefined) {
-            console.log('🔦 Flash activado (intento', attempt + 1, ')');
-            return true;
-          }
-        } catch (error) {
-          console.warn(`🔦 Intento ${attempt + 1} fallido:`, error);
-        }
-        await new Promise(resolve => setTimeout(resolve, 200));
-      }
-      return false;
-    };
-
-    const buildPreferredConstraints = (deviceId?: string | null): MediaTrackConstraints => ({
-      ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' } }),
-      width: { ideal: 640, min: 480 },
-      height: { ideal: 480, min: 360 },
-      frameRate: { ideal: 30, min: 24, max: 30 },
-      aspectRatio: { ideal: 4 / 3 },
-    });
-
-    const ensureVideoPlaying = async () => {
-      if (!videoRef.current) return;
-      const video = videoRef.current;
-      await new Promise<void>((resolve) => {
-        const finish = async () => {
-          try { await video.play(); } catch {}
-          resolve();
-        };
-        if (video.readyState >= 2) { finish(); return; }
-        video.onloadedmetadata = () => finish();
-      });
     };
 
     const startCamera = async () => {
       if (isStartingRef.current) return;
       isStartingRef.current = true;
+      
       await stopCamera();
-      if (!mounted) { isStartingRef.current = false; return; }
+      if (!mounted) {
+        isStartingRef.current = false;
+        return;
+      }
 
       try {
-        let stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: buildPreferredConstraints(null),
-        });
-
-        let track = stream.getVideoTracks()[0];
-        const initialLabel = getTrackLabel(track);
-
-        if (isProbablyFrontCamera(track) || /macro|depth|tele/.test(initialLabel)) {
-          const betterDeviceId = await selectBestBackCamera();
-          if (betterDeviceId) {
-            stream.getTracks().forEach(t => t.stop());
-            stream = await navigator.mediaDevices.getUserMedia({
-              audio: false,
-              video: buildPreferredConstraints(betterDeviceId),
-            });
-            track = stream.getVideoTracks()[0];
-          }
+        // PASO 1: Buscar cámara trasera principal
+        const mainCameraId = await findMainBackCamera();
+        
+        // PASO 2: Configurar constraints
+        const videoConstraints: MediaTrackConstraints = mainCameraId 
+          ? {
+              deviceId: { exact: mainCameraId },
+              width: { ideal: 640, max: 1280 },
+              height: { ideal: 480, max: 720 },
+              frameRate: { ideal: 30, min: 24, max: 30 }
+            }
+          : {
+              facingMode: { exact: "environment" },
+              width: { ideal: 640, max: 1280 },
+              height: { ideal: 480, max: 720 },
+              frameRate: { ideal: 30, min: 24, max: 30 }
+            };
+        
+        // PASO 3: Obtener stream
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: videoConstraints
+          });
+        } catch (e) {
+          // Fallback sin exact
+          console.warn('Fallback a constraints simples');
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: "environment",
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 30 }
+            }
+          });
         }
-
-        if (!mounted) { stream.getTracks().forEach(t => t.stop()); isStartingRef.current = false; return; }
+        
+        if (!mounted) {
+          stream.getTracks().forEach(t => t.stop());
+          isStartingRef.current = false;
+          return;
+        }
 
         streamRef.current = stream;
+        
+        // PASO 4: Conectar video
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await ensureVideoPlaying();
-        }
-
-        // Wait for camera to stabilize before configuring
-        await new Promise(resolve => setTimeout(resolve, 400));
-
-        // Step 1: Enable torch FIRST
-        const torchActivated = await enableTorchRobustly(track);
-        
-        // Step 2: Wait for auto-exposure to settle after torch
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Step 3: NOW apply PPG tuning with LOW exposure (after torch is on)
-        await applyPPGTrackTuning(track, torchActivated);
-
-        const settings = track.getSettings?.() as any;
-        const caps = getTrackCapabilities(track);
-        console.log('📹 Cámara lista para PPG:', {
-          label: track.label,
-          resolution: `${videoRef.current?.videoWidth}x${videoRef.current?.videoHeight}`,
-          torchActive: torchActivated,
-          facingMode: settings?.facingMode,
-          frameRate: settings?.frameRate,
-          exposureComp: settings?.exposureCompensation,
-          iso: settings?.iso,
-          brightness: settings?.brightness,
-        });
-
-        onStreamReady?.(stream);
-      } catch (error) {
-        console.error('❌ Error abriendo cámara:', error);
-        try {
-          const fallback = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: buildPreferredConstraints(null),
+          
+          await new Promise<void>((resolve) => {
+            const video = videoRef.current!;
+            video.onloadedmetadata = async () => {
+              try {
+                await video.play();
+              } catch {}
+              resolve();
+            };
           });
-          if (!mounted) { fallback.getTracks().forEach(t => t.stop()); return; }
-          streamRef.current = fallback;
-          if (videoRef.current) {
-            videoRef.current.srcObject = fallback;
-            await ensureVideoPlaying();
-          }
-          const track = fallback.getVideoTracks()[0];
-          const torchOn = await enableTorchRobustly(track);
-          await new Promise(resolve => setTimeout(resolve, 500));
-          await applyPPGTrackTuning(track, torchOn);
-          onStreamReady?.(fallback);
-        } catch (e2) {
-          console.error('❌ Cámara fallback falló:', e2);
         }
-      } finally {
+
+        // PASO 5: ACTIVAR FLASH - Crítico para PPG
+        const track = stream.getVideoTracks()[0];
+        if (track) {
+          // Esperar estabilización de cámara
+          await new Promise(r => setTimeout(r, 500));
+          
+          let flashActivated = false;
+          for (let attempt = 0; attempt < 5 && !flashActivated; attempt++) {
+            try {
+              const caps = track.getCapabilities?.() as any;
+              if (caps?.torch) {
+                await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                
+                // Verificar que se activó
+                const settings = track.getSettings() as any;
+                if (settings?.torch === true) {
+                  flashActivated = true;
+                  console.log('🔦 Flash ACTIVADO (verificado)');
+                } else {
+                  console.log(`🔦 Intento ${attempt + 1}: Flash aplicado, verificando...`);
+                  flashActivated = true; // Asumir que funcionó
+                }
+              } else {
+                console.warn('⚠️ Esta cámara no soporta torch');
+                break;
+              }
+            } catch (e) {
+              console.warn(`🔦 Intento ${attempt + 1} fallido:`, e);
+              await new Promise(r => setTimeout(r, 300));
+            }
+          }
+          
+          if (!flashActivated) {
+            console.warn('⚠️ No se pudo activar el flash después de 5 intentos');
+          }
+        }
+
+        console.log('📹 Cámara lista:', videoRef.current?.videoWidth, 'x', videoRef.current?.videoHeight);
+        onStreamReady?.(stream);
+        isStartingRef.current = false;
+
+      } catch (err) {
+        console.error('❌ Error cámara:', err);
         isStartingRef.current = false;
       }
     };
@@ -376,7 +245,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({ onStreamRead
     } else {
       stopCamera();
     }
-
+    
     return () => {
       mounted = false;
       stopCamera();
