@@ -523,41 +523,32 @@ const PPGSignalMeter = ({
           prevY = y;
         }
         
-        // === DETECTAR Y MARCAR PICOS/VALLES ===
-        const recentPoints = points.filter(p => now - p.time < WINDOW_MS);
-        
-        for (let i = 3; i < recentPoints.length - 3; i++) {
-          const pt = recentPoints[i];
-          const age = now - pt.time;
-          const x = plot.x + plot.width - (age * plot.width / WINDOW_MS);
-          const normalizedY = (stats.max - pt.value) / stats.range;
-          const y = plot.y + normalizedY * plot.height;
+      // === MARCAR PICOS DESDE HeartBeatProcessor (isPeak prop) ===
+        // Los picos ya fueron registrados en beatHistoryRef cuando isPeak=true
+        // Usamos esos timestamps para posicionar marcadores exactos
+        const history = beatHistoryRef.current;
+        for (const beat of history) {
+          const age = now - beat.time;
+          if (age > WINDOW_MS || age < 0) continue;
           
+          const x = plot.x + plot.width - (age * plot.width / WINDOW_MS);
           if (x < plot.x || x > plot.x + plot.width) continue;
           
-          const prev1 = recentPoints[i - 1].value;
-          const prev2 = recentPoints[i - 2].value;
-          const prev3 = recentPoints[i - 3].value;
-          const next1 = recentPoints[i + 1].value;
-          const next2 = recentPoints[i + 2].value;
-          const next3 = recentPoints[i + 3].value;
-          
-          // Detectar pico (máximo local significativo)
-          const isPeakPoint = pt.value > prev1 && pt.value > prev2 && pt.value > prev3 &&
-                              pt.value > next1 && pt.value > next2 && pt.value > next3 &&
-                              pt.value > stats.min + stats.range * 0.4;
-          
-          // Detectar valle (mínimo local significativo)
-          const isValley = pt.value < prev1 && pt.value < prev2 && pt.value < prev3 &&
-                          pt.value < next1 && pt.value < next2 && pt.value < next3 &&
-                          pt.value < stats.max - stats.range * 0.4;
-          
-          if (isPeakPoint) {
-            peaks.push({ x, y, isArrhythmia: pt.isArrhythmia });
+          // Buscar el punto más cercano en el buffer para obtener la Y
+          let closestPt: PPGDataPoint | null = null;
+          let minDist = Infinity;
+          for (const pt of points) {
+            const dist = Math.abs(pt.time - beat.time);
+            if (dist < minDist) {
+              minDist = dist;
+              closestPt = pt;
+            }
           }
           
-          if (isValley) {
-            valleys.push({ x, y });
+          if (closestPt && minDist < 200) {
+            const normalizedY = (stats.max - closestPt.value) / stats.range;
+            const y = plot.y + normalizedY * plot.height;
+            peaks.push({ x, y, isArrhythmia: beat.isArrhythmia });
           }
         }
         
