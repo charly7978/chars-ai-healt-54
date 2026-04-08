@@ -226,7 +226,7 @@ export class VitalSignsProcessor {
   }
 
   private calculateSignalQuality(): number {
-    if (this.signalHistory.length < 45) return 0;
+    if (this.signalHistory.length < 30) return 0;
     
     const recent = this.signalHistory.slice(-60);
     const sorted = [...recent].sort((a, b) => a - b);
