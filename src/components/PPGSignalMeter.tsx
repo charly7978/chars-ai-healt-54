@@ -475,6 +475,14 @@ const PPGSignalMeter = ({
         if (currentCount > lastArrhythmiaCountRef.current) {
           beatArrhythmiaRef.current = true;
           lastArrhythmiaCountRef.current = currentCount;
+          
+          // === RETROACTIVAMENTE MARCAR EL LATIDO COMPLETO ===
+          // Usa el último intervalo RR (o 800ms default) para cubrir
+          // toda la fase de subida del latido arrítmico
+          const { rrIntervals: rr } = propsRef.current;
+          const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
+          const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
+          buffer.markArrhythmiaBack(retroDuration);
         } else {
           beatArrhythmiaRef.current = false;
         }
