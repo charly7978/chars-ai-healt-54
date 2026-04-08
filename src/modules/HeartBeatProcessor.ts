@@ -83,6 +83,15 @@ export class HeartBeatProcessor {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
+    // === GATE: minimum signal energy to reject noise ===
+    const recentForGate = this.signalBuffer.slice(-60);
+    const gSorted = [...recentForGate].sort((a, b) => a - b);
+    const gRange = (gSorted[Math.floor(gSorted.length * 0.9)] ?? 0) - (gSorted[Math.floor(gSorted.length * 0.1)] ?? 0);
+    if (gRange < 0.8) {
+      // Signal too weak — noise-level, don't detect anything
+      return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
+    }
+
     // Adaptive window for normalization
     const windowLen = this.consecutivePeaks < 3 ? 90 : 150;
     const { normalizedValue, range } = this.normalizeSignal(filteredValue, windowLen);
@@ -142,20 +151,19 @@ export class HeartBeatProcessor {
     }
 
     // === FUSIÓN TIEMPO + FRECUENCIA ===
+    // BLOCK: never show frequency-only BPM without at least 1 confirmed time-domain peak
     let displayBPM = this.smoothBPM;
 
-    if (this.frequencyBPM > 0) {
-      if (displayBPM === 0) {
-        // Sin picos aún — usar frecuencia pura
-        displayBPM = this.frequencyBPM;
-      } else if (this.consecutivePeaks < 3 || this.signalQualityIndex < 30) {
-        // Señal débil — ponderar más la frecuencia
+    if (this.frequencyBPM > 0 && this.consecutivePeaks >= 1) {
+      if (this.consecutivePeaks < 3 || this.signalQualityIndex < 30) {
+        // Weak signal — blend equally
         displayBPM = displayBPM * 0.5 + this.frequencyBPM * 0.5;
       } else {
-        // Señal fuerte — confiar más en picos
+        // Strong signal — trust peaks more
         displayBPM = displayBPM * 0.85 + this.frequencyBPM * 0.15;
       }
     }
+    // If no peaks confirmed yet, displayBPM stays 0 — no guessing
 
     const confidence = this.calculateConfidence();
 
@@ -226,7 +234,7 @@ export class HeartBeatProcessor {
     const centered = recentSignal.map((v) => v - mean);
     const energy = centered.reduce((s, v) => s + v * v, 0);
 
-    if (energy < 800) return { bpm: 0, score: 0 };
+    if (energy < 2000) return { bpm: 0, score: 0 };
 
     const minLag = Math.max(5, Math.round((sampleRate * 60) / 200));
     const maxLag = Math.min(centered.length - 8, Math.round((sampleRate * 60) / 38));
@@ -257,7 +265,7 @@ export class HeartBeatProcessor {
       }
     }
 
-    if (bestLag === 0 || bestScore < 0.15) return { bpm: 0, score: Math.max(0, bestScore) };
+    if (bestLag === 0 || bestScore < 0.35) return { bpm: 0, score: Math.max(0, bestScore) };
     return { bpm: (60 * sampleRate) / bestLag, score: this.clamp(bestScore, 0, 1) };
   }
 
@@ -332,6 +340,12 @@ export class HeartBeatProcessor {
     // === CANDIDATE SCORING ===
     let score = 0;
 
+    // Prominence gate: real PPG peaks have significant prominence
+    if (prominence < 3.0) return false;
+
+    // Morphology gate: real PPG has fast rise, gradual fall
+    if (risingSlope < 1.0 || fallingSlope < 0.5) return false;
+
     // Prominence (0-30 points)
     score += Math.min(30, prominence * 2);
 
@@ -348,9 +362,9 @@ export class HeartBeatProcessor {
     // Periodicity boost (0-15 points)
     score += this.periodicityScore * 15;
 
-    // Thresholds: lower for weak signals
-    const minScore = this.consecutivePeaks < 2 ? 25 : 35;
-    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.7 : 1.0) || prominence > Math.max(1.0, this.peakThreshold * 0.65);
+    // Threshold: always require minimum score of 40
+    const minScore = 40;
+    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.7 : 1.0) || prominence > Math.max(3.0, this.peakThreshold * 0.65);
 
     const amplitudeValid = this.lastPeakValue > 0
       ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.05 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 12
