@@ -187,35 +187,24 @@ export class VitalSignsProcessor {
   }
 
   private validateRealPulse(rrData?: { intervals: number[], lastPeakTime: number | null }): boolean {
-    if (!rrData || !rrData.intervals || rrData.intervals.length < 3) {
+    if (!rrData || !rrData.intervals || rrData.intervals.length < 2) {
       this.validPulseCount = 0;
       return false;
     }
     
     // Ventana humana conservadora: evita ruido no fisiológico sin forzar rangos clínicos “bonitos”
     const validIntervals = rrData.intervals.filter(interval => 
-      interval >= 280 && interval <= 2200
+      interval >= 270 && interval <= 2200
     );
     
-    if (validIntervals.length < 3) {
+    if (validIntervals.length < 2) {
       this.validPulseCount = 0;
       return false;
     }
 
-    const recent = validIntervals.slice(-5);
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const maxJump = recent.slice(1).reduce((max, value, index) => {
-      return Math.max(max, Math.abs(value - recent[index]));
-    }, 0);
-
-    if (mean < 300 || mean > 2000 || maxJump > 900) {
-      this.validPulseCount = 0;
-      return false;
-    }
-    
     if (rrData.lastPeakTime) {
       const timeSinceLastPeak = Date.now() - rrData.lastPeakTime;
-      if (timeSinceLastPeak > 2500) {
+      if (timeSinceLastPeak > 4000) {
         this.validPulseCount = 0;
         return false;
       }
