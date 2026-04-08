@@ -179,7 +179,7 @@ export class VitalSignsProcessor {
     }
 
     // Calcular signos vitales solo con pulso humano confirmado
-    if (this.signalHistory.length >= 45 && rrData && rrData.intervals.length >= 5) {
+    if (this.signalHistory.length >= 30 && rrData && rrData.intervals.length >= 3) {
       this.calculateVitalSigns(signalValue, rrData);
     }
 
