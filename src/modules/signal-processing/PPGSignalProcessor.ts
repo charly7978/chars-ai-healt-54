@@ -192,13 +192,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const adjustedQuality = motionArtifact
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
+    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05
+      ? adjustedQuality
+      : Math.min(12, adjustedQuality * 0.35);
 
     const now = Date.now();
     if (now - this.lastLogTime >= 2000) {
       this.lastLogTime = now;
       console.log(
         `📷 PPG [${pulseSource.label}] Filt=${filtered.toFixed(3)} ` +
-        `Q=${adjustedQuality.toFixed(0)}% PI=${perfusionIndex.toFixed(2)} ` +
+        `Q=${gatedQuality.toFixed(0)}% PI=${perfusionIndex.toFixed(2)} ` +
         `Contact=${this.contactState} FPS=${this.estimatedSampleRate.toFixed(0)}`
       );
     }
@@ -207,7 +210,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       timestamp,
       rawValue: pulseSource.value,
       filteredValue: filtered,
-      quality: adjustedQuality,
+      quality: gatedQuality,
       fingerDetected: this.fingerDetected,
       contactState: this.contactState,
       motionArtifact,
@@ -220,8 +223,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           `${pulseSource.label}:${pulseSource.strength.toFixed(1)} ` +
           `PI:${perfusionIndex.toFixed(2)} C:${(this.smoothedCoverage * 100).toFixed(0)} ` +
           `${this.contactState}${motionArtifact ? ' MOV' : ''}`,
-        hasPulsatility: perfusionIndex > 0.02 || pulseSource.strength > 3,
-        pulsatilityValue: Math.max(perfusionIndex, pulseSource.strength * 0.02),
+        hasPulsatility: this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05 && pulseSource.strength > 1.5,
+        pulsatilityValue: this.contactState === 'STABLE_CONTACT' ? Math.max(perfusionIndex, pulseSource.strength * 0.02) : 0,
       },
     });
   }
@@ -412,10 +415,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         const distanceFromCenter = Math.sqrt((normX - 0.5) ** 2 + (normY - 0.5) ** 2);
         const centerBias = this.clamp(1 - distanceFromCenter * 1.2, 0.3, 1);
 
-        const brightnessScore = this.clamp((total - 80) / 180, 0, 1);
-        const redRatioScore = this.clamp((rednessRatio - 0.8) / 0.9, 0, 1);
-        const dominanceScore = this.clamp((redDominance - 3) / 28, 0, 1);
-        const frameScore = redRatioScore * 0.4 + dominanceScore * 0.4 + brightnessScore * 0.2;
+        const brightnessScore = this.clamp((total - 120) / 220, 0, 1);
+        const redRatioScore = this.clamp((rednessRatio - 1.02) / 0.85, 0, 1);
+        const dominanceScore = this.clamp((redDominance - 10) / 35, 0, 1);
+        const frameScore = redRatioScore * 0.45 + dominanceScore * 0.4 + brightnessScore * 0.15;
 
         this.tileConfidence[index] = this.tileConfidence[index] * 0.75 + frameScore * centerBias * 0.25;
         const combinedScore = this.tileConfidence[index] * 0.7 + frameScore * 0.3;
@@ -428,12 +431,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
 
     const fingerTiles = averagedTiles.filter((tile) =>
-      tile.red > 22 && tile.total > 60 && tile.red > tile.blue * 0.9 && tile.combinedScore > 0.3
+      tile.red > 55 &&
+      tile.total > 120 &&
+      tile.redDominance > 12 &&
+      tile.rednessRatio > 1.08 &&
+      tile.combinedScore > 0.42
     );
 
-    const selectedTiles = fingerTiles.length >= 4
+    const selectedTiles = fingerTiles.length >= 5
       ? fingerTiles
-      : [...averagedTiles].sort((a, b) => b.combinedScore - a.combinedScore).slice(0, Math.max(7, Math.round(averagedTiles.length * 0.55)));
+      : averagedTiles;
 
     const weightedAverage = (channel: 'red' | 'green' | 'blue') => {
       let ws = 0, tw = 0;
@@ -445,9 +452,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       return tw > 0 ? ws / tw : averagedTiles.reduce((s, t) => s + t[channel], 0) / averagedTiles.length;
     };
 
-    const confidentTiles = averagedTiles.filter((t) => t.temporalScore > 0.3).length;
-    const coverageRatio = confidentTiles / averagedTiles.length;
-    const avgFingerScore = selectedTiles.reduce((s, t) => s + t.combinedScore, 0) / Math.max(1, selectedTiles.length);
+    const coverageRatio = fingerTiles.length / averagedTiles.length;
+    const avgFingerScore = fingerTiles.length > 0
+      ? fingerTiles.reduce((s, t) => s + t.combinedScore, 0) / fingerTiles.length
+      : 0;
 
     return {
       rawRed: weightedAverage('red'),

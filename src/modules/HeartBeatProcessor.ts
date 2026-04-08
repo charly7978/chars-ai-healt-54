@@ -353,8 +353,14 @@ export class HeartBeatProcessor {
     score += Math.min(10, risingSlope * 1.5);
     score += Math.min(10, fallingSlope * 1.2);
 
+    // Zero crossing derivative is mandatory for real pulse morphology
+    if (!zeroCrossing) return false;
+
+    // Early peaks need explicit periodic support to avoid noise-triggered BPM
+    if (this.consecutivePeaks === 0 && this.periodicityScore < 0.4) return false;
+
     // Zero crossing derivative (0-15 points)
-    if (zeroCrossing) score += 15;
+    score += 15;
 
     // Rhythm consistency (0-20 points)
     if (nearExpected) score += 20;
