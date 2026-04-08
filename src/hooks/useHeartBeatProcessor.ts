@@ -77,6 +77,26 @@ export const useHeartBeatProcessor = () => {
 
     const currentTime = timestamp ?? Date.now();
 
+    // === CONTACT STATE HANDLING ===
+    // NO_CONTACT must bypass throttle so stale BPM cannot leak into the UI
+    if (contactState === 'NO_CONTACT') {
+      noContactFramesRef.current += 1;
+
+      if (noContactFramesRef.current >= NO_CONTACT_RESET_THRESHOLD) {
+        processorRef.current.reset();
+      }
+
+      if (currentBPMRef.current !== 0) setCurrentBPM(0);
+      if (confidenceRef.current !== 0) setConfidence(0);
+      if (signalQualityRef.current !== 0) setSignalQuality(0);
+
+      return {
+        bpm: 0, confidence: 0, isPeak: false,
+        filteredValue: 0, arrhythmiaCount: 0, signalQuality: 0,
+        rrData: { intervals: [], lastPeakTime: null },
+      };
+    }
+
     // Throttle to ~80fps max
     if (currentTime - lastProcessTimeRef.current < 12) {
       return {
@@ -88,24 +108,6 @@ export const useHeartBeatProcessor = () => {
     }
     lastProcessTimeRef.current = currentTime;
 
-    // === CONTACT STATE HANDLING ===
-    if (contactState === 'NO_CONTACT') {
-      noContactFramesRef.current += 1;
-
-      // Only reset after sustained NO_CONTACT (aligned with PPGSignalProcessor)
-      if (noContactFramesRef.current >= NO_CONTACT_RESET_THRESHOLD) {
-        processorRef.current.reset();
-        setConfidence(0);
-        setSignalQuality(0);
-      }
-
-      return {
-        bpm: currentBPMRef.current, confidence: 0, isPeak: false,
-        filteredValue: 0, arrhythmiaCount: 0, signalQuality: 0,
-        rrData: { intervals: [], lastPeakTime: null },
-      };
-    }
-
     // UNSTABLE_CONTACT or STABLE_CONTACT — process normally
     noContactFramesRef.current = 0;
     processedSignalsRef.current++;
@@ -115,24 +117,27 @@ export const useHeartBeatProcessor = () => {
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime: lastPeakTime || null };
     const roundedSQI = Math.round(result.sqi);
+    const publishableSignal = contactState === 'STABLE_CONTACT' && roundedSQI >= 20;
+    const publishableBPM = publishableSignal && result.confidence >= 0.25 && rrIntervals.length >= 2 && result.bpm > 0;
 
-    setSignalQuality(roundedSQI);
-
-    if (result.bpm > 0 && (result.confidence >= 0.15 || result.sqi >= 40)) {
+    if (publishableBPM) {
       setCurrentBPM(Math.round(result.bpm));
       setConfidence(result.confidence);
-    } else if (result.confidence > 0) {
-      setConfidence(result.confidence);
+      setSignalQuality(roundedSQI);
+    } else {
+      if (currentBPMRef.current !== 0) setCurrentBPM(0);
+      setConfidence(publishableSignal ? result.confidence : 0);
+      setSignalQuality(publishableSignal ? roundedSQI : 0);
     }
 
     return {
-      bpm: Math.round(result.bpm),
-      confidence: result.confidence,
-      isPeak: result.isPeak,
-      filteredValue: result.filteredValue,
-      arrhythmiaCount: result.arrhythmiaCount,
-      signalQuality: roundedSQI,
-      rrData,
+      bpm: publishableBPM ? Math.round(result.bpm) : 0,
+      confidence: publishableSignal ? result.confidence : 0,
+      isPeak: publishableBPM ? result.isPeak : false,
+      filteredValue: publishableSignal ? result.filteredValue : 0,
+      arrhythmiaCount: publishableSignal ? result.arrhythmiaCount : 0,
+      signalQuality: publishableSignal ? roundedSQI : 0,
+      rrData: publishableSignal ? rrData : { intervals: [], lastPeakTime: null },
     };
   }, []);
 

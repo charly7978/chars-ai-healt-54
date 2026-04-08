@@ -99,9 +99,9 @@ export class PPGFeatureExtractor {
       const nextOnset = valleys[i + 1];
       const cycleLength = nextOnset - onset;
 
-      // Validate cycle length (300ms - 2000ms → 30-200 BPM)
+      // Validate cycle length (350ms - 1800ms → ~33-171 BPM) to reject non-human noise
       const cycleLengthMs = (cycleLength / sampleRate) * 1000;
-      if (cycleLengthMs < 300 || cycleLengthMs > 2000) continue;
+      if (cycleLengthMs < 350 || cycleLengthMs > 1800) continue;
 
       // 2. Find systolic peak within cycle
       const systolicPeak = this.findSystolicPeak(buffer, onset, nextOnset);
@@ -432,21 +432,21 @@ export class PPGFeatureExtractor {
   ): number {
     let q = 0;
 
-    // Amplitude should be meaningful
-    if (amplitude > 0.5) q += 0.2;
-    if (amplitude > 2) q += 0.1;
+    // Amplitude should be meaningful and not noise-like
+    if (amplitude > 0.8) q += 0.2;
+    if (amplitude > 2.2) q += 0.1;
 
-    // SUT in physiological range (50-300ms)
-    if (sutMs > 50 && sutMs < 300) q += 0.2;
+    // SUT in robust physiological range
+    if (sutMs > 60 && sutMs < 280) q += 0.2;
 
-    // Diastolic time should be longer than systolic
-    if (diastolicTimeMs > sutMs) q += 0.15;
+    // Diastolic time should be meaningfully longer than systolic in clean PPG
+    if (diastolicTimeMs > sutMs * 0.9) q += 0.15;
 
     // PW50 in range
-    if (pw50Ms > 100 && pw50Ms < 800) q += 0.15;
+    if (pw50Ms > 120 && pw50Ms < 700) q += 0.1;
 
-    // Dicrotic notch detection adds quality
-    if (hasDicroticNotch) q += 0.2;
+    // Dicrotic notch detection adds strong confidence
+    if (hasDicroticNotch) q += 0.25;
 
     return Math.min(1, q);
   }

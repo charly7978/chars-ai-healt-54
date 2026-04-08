@@ -458,23 +458,60 @@ const Index = () => {
     if (!lastSignal || !isMonitoring) return;
     
     const signalValue = lastSignal.filteredValue;
+    const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
+    const stableHumanSignal =
+      contactState === 'STABLE_CONTACT' &&
+      !lastSignal.motionArtifact &&
+      (lastSignal.quality || 0) >= 35 &&
+      (lastSignal.perfusionIndex || 0) >= 0.05 &&
+      Boolean(lastSignal.diagnostics?.hasPulsatility);
 
-    // Procesar latidos — pasar contactState en vez de fingerDetected booleano
     const heartBeatResult = processHeartBeat(
       signalValue,
-      (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT'),
+      contactState,
       lastSignal.timestamp
     );
-    
-    // === QUALITY GATE: only show BPM when confidence is real ===
-    const showBPM = heartBeatResult.confidence > 0.3 && heartBeatResult.bpm > 0;
-    setHeartRate(showBPM ? heartBeatResult.bpm : 0);
-    setHeartbeatSignal(heartBeatResult.filteredValue);
-    
+
+    setHeartRate(stableHumanSignal ? heartBeatResult.bpm : 0);
+    setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
+
+    if (!stableHumanSignal) {
+      vitalSignsFrameCounter.current = 0;
+      setBeatMarker(0);
+      setRRIntervals([]);
+      setArrhythmiaCount("--");
+      if (arrhythmiaDetectedRef.current) {
+        arrhythmiaDetectedRef.current = false;
+        setArrhythmiaState(false);
+      }
+      setVitalSigns(prev => (
+        prev.measurementConfidence === 'INVALID' &&
+        prev.spo2 === 0 &&
+        prev.glucose === 0 &&
+        prev.hemoglobin === 0 &&
+        prev.pressure.systolic === 0 &&
+        prev.pressure.diastolic === 0
+          ? prev
+          : {
+              ...prev,
+              spo2: 0,
+              glucose: 0,
+              hemoglobin: 0,
+              pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
+              arrhythmiaCount: 0,
+              arrhythmiaStatus: "SIN ARRITMIAS|0",
+              lipids: { totalCholesterol: 0, triglycerides: 0 },
+              lastArrhythmiaData: undefined,
+              signalQuality: 0,
+              measurementConfidence: 'INVALID'
+            }
+      ));
+      return;
+    }
+
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 300);
-      // Contar latidos para resumen
       totalBeatsRef.current++;
       const currentArrCount = vitalSigns.arrhythmiaCount || 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
@@ -482,23 +519,18 @@ const Index = () => {
         lastArrhythmiaCountForBeatsRef.current = currentArrCount;
       }
     }
-    
+
     if (heartBeatResult.rrData?.intervals) {
       setRRIntervals(heartBeatResult.rrData.intervals.slice(-5));
     }
-    
-    // Throttle signos vitales
+
     vitalSignsFrameCounter.current++;
-    
+
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
-      
-      // INTEGRACIÓN DE DATOS RGB REALES DESDE PPGSignalProcessor
-      // Usar getRGBStats() para obtener AC/DC calculados con precisión
       const rgbStats = getRGBStats();
-      
+
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
-        // Usar valores calculados con ventana de 4 segundos (más precisos)
         setRGBData({
           redAC: rgbStats.redAC,
           redDC: rgbStats.redDC,
@@ -506,42 +538,39 @@ const Index = () => {
           greenDC: rgbStats.greenDC
         });
       }
-      
-      // === QUALITY GATE: only process vitals when signal is real ===
-      const signalQualityOK = (lastSignal.quality || 0) > 25;
-      const confidenceOK = heartBeatResult.confidence > 0.2;
-      
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3 && signalQualityOK && confidenceOK) {
-        const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
-          
-        if (vitals) {
-          setVitalSigns(vitals);
-          
-          // Actualizar estado de arritmia
-          const arrhythmiaStatus = vitals.arrhythmiaStatus;
-          if (arrhythmiaStatus) {
-            lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
-            const parts = arrhythmiaStatus.split('|');
-            const count = parts.length > 1 ? parts[1] : "0";
-            setArrhythmiaCount(count);
-            
-            const isArrhythmiaDetected = arrhythmiaStatus.includes("ARRITMIA DETECTADA");
-            if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-              arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-              setArrhythmiaState(isArrhythmiaDetected);
-              
-              if (isArrhythmiaDetected) {
-                // Vibración fuerte para arritmia
-                if (navigator.vibrate) {
-                  navigator.vibrate([200, 100, 200]);
-                }
-                toast({ 
-                  title: "⚠️ Arritmia detectada", 
-                  description: `Latido irregular #${vitals.arrhythmiaCount}`, 
-                  variant: "destructive", 
-                  duration: 4000 
-                });
+
+      const vitals = processVitalSigns(
+        lastSignal.filteredValue,
+        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3 && heartBeatResult.confidence > 0.25
+          ? heartBeatResult.rrData
+          : undefined
+      );
+
+      setVitalSigns(vitals);
+
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3 && heartBeatResult.confidence > 0.25 && vitals.measurementConfidence !== 'INVALID') {
+        const arrhythmiaStatus = vitals.arrhythmiaStatus;
+        if (arrhythmiaStatus) {
+          lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
+          const parts = arrhythmiaStatus.split('|');
+          const count = parts.length > 1 ? parts[1] : "0";
+          setArrhythmiaCount(count);
+
+          const isArrhythmiaDetected = arrhythmiaStatus.includes("ARRITMIA DETECTADA");
+          if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+            arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+            setArrhythmiaState(isArrhythmiaDetected);
+
+            if (isArrhythmiaDetected) {
+              if (navigator.vibrate) {
+                navigator.vibrate([200, 100, 200]);
               }
+              toast({
+                title: "⚠️ Arritmia detectada",
+                description: `Latido irregular #${vitals.arrhythmiaCount}`,
+                variant: "destructive",
+                duration: 4000
+              });
             }
           }
         }
