@@ -629,7 +629,7 @@ const PPGSignalMeter = ({
       }
       
       // === HISTORIAL DE LATIDOS (últimos 20) ===
-      const history = beatHistoryRef.current;
+      const beatHistory = beatHistoryRef.current;
       if (history.length > 0) {
         const histX = plot.x;
         const histY = plot.y + plot.height + 30;
