@@ -473,13 +473,13 @@ export class VitalSignsProcessor {
   private calculateHemoglobinAdvanced(f: MedianCycleFeatures): number {
     const { redAC, redDC, greenAC, greenDC } = this.rgbData;
     
-    // Validación estricta: necesitamos señal AC y DC en ambos canales
-    if (redDC < 10 || greenDC < 10 || redAC < 0.1 || greenAC < 0.1) return 0;
+    // Validación: necesitamos señal AC y DC en ambos canales
+    if (redDC < 8 || greenDC < 8 || redAC < 0.05 || greenAC < 0.05) return 0;
     
-    // Perfusion check: solo calcular con señal pulsátil real
+    // Perfusion check — lowered for weak but real signals
     const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
-    if (piRed < 0.1 || piGreen < 0.1) return 0;
+    if (piRed < 0.06 || piGreen < 0.06) return 0;
     
     // Beer-Lambert: Logarithmic attenuation por canal
     const logAttRed = Math.log(redAC / redDC);
@@ -656,7 +656,7 @@ export class VitalSignsProcessor {
    * MEJORA: Detecta cambios bruscos y ajusta alpha dinámicamente
    */
   private smoothValue(current: number, newVal: number, type: 'stable' | 'dynamic' = 'stable'): number {
-    if (current === 0 || isNaN(current) || !isFinite(current)) return newVal;
+    if (current === 0 || isNaN(current) || !isFinite(current)) return newVal; // Fast initial lock
     if (isNaN(newVal) || !isFinite(newVal)) return current;
     
     const baseAlpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
