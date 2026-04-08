@@ -523,10 +523,10 @@ const PPGSignalMeter = ({
           prevY = y;
         }
         
-      // === MARCAR PICOS DESDE HeartBeatProcessor (isPeak prop) ===
-        // Los picos ya fueron registrados en beatHistoryRef cuando isPeak=true
-        // Usamos esos timestamps para posicionar marcadores exactos
+      // === MARCAR PICOS Y VALLES DESDE HeartBeatProcessor ===
         const history = beatHistoryRef.current;
+        const visibleBeats: { time: number; x: number; y: number; isArrhythmia: boolean }[] = [];
+        
         for (const beat of history) {
           const age = now - beat.time;
           if (age > WINDOW_MS || age < 0) continue;
@@ -534,21 +534,40 @@ const PPGSignalMeter = ({
           const x = plot.x + plot.width - (age * plot.width / WINDOW_MS);
           if (x < plot.x || x > plot.x + plot.width) continue;
           
-          // Buscar el punto más cercano en el buffer para obtener la Y
           let closestPt: PPGDataPoint | null = null;
           let minDist = Infinity;
           for (const pt of points) {
             const dist = Math.abs(pt.time - beat.time);
-            if (dist < minDist) {
-              minDist = dist;
-              closestPt = pt;
-            }
+            if (dist < minDist) { minDist = dist; closestPt = pt; }
           }
           
           if (closestPt && minDist < 200) {
             const normalizedY = (stats.max - closestPt.value) / stats.range;
             const y = plot.y + normalizedY * plot.height;
             peaks.push({ x, y, isArrhythmia: beat.isArrhythmia });
+            visibleBeats.push({ time: beat.time, x, y, isArrhythmia: beat.isArrhythmia });
+          }
+        }
+        
+        // Derive valleys: find minimum buffer point between consecutive peaks
+        for (let b = 0; b < visibleBeats.length - 1; b++) {
+          const t0 = visibleBeats[b].time;
+          const t1 = visibleBeats[b + 1].time;
+          let minVal = Infinity;
+          let minPt: PPGDataPoint | null = null;
+          for (const pt of points) {
+            if (pt.time > t0 && pt.time < t1 && pt.value < minVal) {
+              minVal = pt.value;
+              minPt = pt;
+            }
+          }
+          if (minPt) {
+            const age = now - minPt.time;
+            const vx = plot.x + plot.width - (age * plot.width / WINDOW_MS);
+            const vy = plot.y + ((stats.max - minPt.value) / stats.range) * plot.height;
+            if (vx >= plot.x && vx <= plot.x + plot.width) {
+              valleys.push({ x: vx, y: vy });
+            }
           }
         }
         
@@ -610,13 +629,13 @@ const PPGSignalMeter = ({
       }
       
       // === HISTORIAL DE LATIDOS (últimos 20) ===
-      const history = beatHistoryRef.current;
-      if (history.length > 0) {
+      const beatHistory = beatHistoryRef.current;
+      if (beatHistory.length > 0) {
         const histX = plot.x;
         const histY = plot.y + plot.height + 30;
         const dotRadius = 7;
         const dotSpacing = 18;
-        const totalWidth = history.length * dotSpacing;
+        const totalWidth = beatHistory.length * dotSpacing;
         const startX = histX + (plot.width - totalWidth) / 2;
         
         // Fondo del panel
@@ -634,7 +653,7 @@ const PPGSignalMeter = ({
         ctx.fillText('HISTORIAL DE LATIDOS', startX + totalWidth / 2, histY - dotRadius - 1);
         
         // Puntos
-        history.forEach((beat, i) => {
+        beatHistory.forEach((beat, i) => {
           const cx = startX + i * dotSpacing + dotSpacing / 2;
           const cy = histY + 6;
           
