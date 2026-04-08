@@ -466,7 +466,9 @@ const Index = () => {
       lastSignal.timestamp
     );
     
-    setHeartRate(heartBeatResult.bpm);
+    // === QUALITY GATE: only show BPM when confidence is real ===
+    const showBPM = heartBeatResult.confidence > 0.3 && heartBeatResult.bpm > 0;
+    setHeartRate(showBPM ? heartBeatResult.bpm : 0);
     setHeartbeatSignal(heartBeatResult.filteredValue);
     
     if (heartBeatResult.isPeak) {
@@ -505,7 +507,11 @@ const Index = () => {
         });
       }
       
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3) {
+      // === QUALITY GATE: only process vitals when signal is real ===
+      const signalQualityOK = (lastSignal.quality || 0) > 25;
+      const confidenceOK = heartBeatResult.confidence > 0.2;
+      
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3 && signalQualityOK && confidenceOK) {
         const vitals = processVitalSigns(lastSignal.filteredValue, heartBeatResult.rrData);
           
         if (vitals) {
