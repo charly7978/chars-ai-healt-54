@@ -69,7 +69,7 @@ const DBP_COEFFICIENTS = {
 
 export class BloodPressureProcessor {
   private cycleBuffer: CycleFeatures[] = [];
-  private readonly MIN_CYCLES = 5;
+  private readonly MIN_CYCLES = 2;
   private readonly MAX_CYCLES = 15;
   private calibration: CalibrationData | null = null;
   private lastRawSBP: number = 0;
@@ -94,7 +94,7 @@ export class BloodPressureProcessor {
       confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
     };
 
-    if (signalBuffer.length < 60 || rrIntervals.length < 3) {
+    if (signalBuffer.length < 40 || rrIntervals.length < 2) {
       return insufficient;
     }
 
@@ -112,7 +112,7 @@ export class BloodPressureProcessor {
       const features = PPGFeatureExtractor.extractCycleFeatures(
         signalBuffer, cycle, sampleRate
       );
-      if (features && features.quality > 0.4) {
+      if (features && features.quality > 0.25) {
         validCycles.push(features);
       }
     }
