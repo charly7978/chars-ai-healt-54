@@ -84,20 +84,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastAcceleration = { x: 0, y: 0, z: 0 };
   private readonly MOTION_THRESHOLD = 0.6;
 
-  // === MULTI-SOURCE RANKING ===
+  // === MULTI-SOURCE RANKING (CHROM eliminado — amplifica ruido sin dedo) ===
   private sourceBuffers: { [key: string]: number[] } = {};
   private activeSource: string = 'RG';
   private sourceScores: { [key: string]: number } = {};
   private lastSourceSwitch = 0;
-  private readonly SOURCE_HYSTERESIS_MS = 2000; // No cambiar canal en <2s
+  private readonly SOURCE_HYSTERESIS_MS = 2000;
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
-    this.sourceBuffers = { R: [], G: [], RG: [], CHROM: [] };
-    this.sourceScores = { R: 0, G: 0, RG: 0, CHROM: 0 };
+    this.sourceBuffers = { R: [], G: [], RG: [] };
+    this.sourceScores = { R: 0, G: 0, RG: 0 };
   }
 
   async initialize(): Promise<void> {
@@ -238,7 +238,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       if (this.fingerConfidenceCount >= this.FINGER_CONFIRM_FRAMES) {
         this.fingerDetected = true;
-        this.contactState = this.stableContactCount >= this.STABLE_THRESHOLD
+        // Require real perfusion for STABLE — not just visual contact
+        const perfusion = this.calculatePerfusionIndex();
+        this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > 0.01)
           ? 'STABLE_CONTACT'
           : 'UNSTABLE_CONTACT';
       }
@@ -248,11 +250,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.stableContactCount = Math.max(0, this.stableContactCount - 1);
 
       if (this.fingerDetected) {
-        // Soft hold: mantener contacto con gracia
+        // Soft hold: mantener contacto con gracia — stricter thresholds
         const softHold =
-          this.smoothedCoverage > 0.08 &&
-          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 3 &&
-          this.smoothedFingerScore > 0.15;
+          this.smoothedCoverage > 0.15 &&
+          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 8 &&
+          this.smoothedFingerScore > 0.20 &&
+          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.05;
 
         if (softHold || this.fingerLostCount < this.FINGER_LOST_FRAMES) {
           this.contactState = 'UNSTABLE_CONTACT';
@@ -303,24 +306,32 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const totalIntensity = r + g + b;
     const redDominance = r - (g + b) / 2;
     const rgRatio = r / Math.max(1, g);
-    const rbRatio = r / Math.max(1, b);
     const notBlownOut = !(r > 253 && g > 252 && b > 252);
 
-    let score = 0;
-    if (r > 25) score += 1;
-    if (rgRatio > 0.8 && rgRatio < 6) score += 1;
-    if (rbRatio > 0.9) score += 1;
-    if (totalIntensity > 60 && totalIntensity < 760) score += 1;
-    if (redDominance > 5) score += 1;
-    if (this.smoothedCoverage > 0.15) score += 2;
-    if (this.smoothedFingerScore > 0.28) score += 2;
-    if (this.motionScore < 1.5) score += 1;
-
-    // Hysteresis: easier to keep than to acquire
-    const required = this.fingerDetected ? 3 : 5;
-    const contactLikely = r > 25 && rgRatio > 0.82 && redDominance > 5 && this.smoothedCoverage > 0.12;
-
-    return notBlownOut && (contactLikely || score >= required);
+    // === HEMOGLOBIN SIGNATURE: red MUST dominate when finger+flash ===
+    if (this.fingerDetected) {
+      // MAINTAIN contact — slightly relaxed thresholds
+      const maintainContact =
+        r > 50 &&
+        rgRatio > 1.1 &&
+        redDominance > 12 &&
+        this.smoothedCoverage > 0.20 &&
+        this.smoothedFingerScore > 0.20 &&
+        notBlownOut;
+      return maintainContact;
+    } else {
+      // ACQUIRE contact — strict hemoglobin thresholds
+      const acquireContact =
+        r > 80 &&
+        rgRatio > 1.2 &&
+        redDominance > 20 &&
+        totalIntensity > 120 && totalIntensity < 760 &&
+        this.smoothedCoverage > 0.35 &&
+        this.smoothedFingerScore > 0.40 &&
+        this.motionScore < 1.5 &&
+        notBlownOut;
+      return acquireContact;
+    }
   }
 
   private updateSampleRate(timestamp: number): void {
@@ -473,12 +484,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const rPulse = clamp(rNorm);
     const gPulse = clamp(gNorm);
 
-    // Source candidates
+    // Source candidates (CHROM removed — amplifies noise without finger)
     const sources: { [key: string]: number } = {
       R: rPulse * 3200,
       G: gPulse * 3200,
       RG: this.blendRG(rPulse, gPulse, rawRed, rawGreen, motionArtifact) * 3200,
-      CHROM: (3 * rPulse - 2 * gPulse) * 3200 / 3, // CHROM-like: 3R - 2G
     };
 
     // Update per-source buffers
@@ -633,6 +643,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.filteredBuffer.length < 24) return 0;
     if (this.contactState === 'NO_CONTACT') return 0;
 
+    const perfusionIndex = this.calculatePerfusionIndex();
+    const redDominance = this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2;
+
+    // Gate: no perfusion = no real signal
+    if (perfusionIndex < 0.005) return Math.min(15, this.smoothedCoverage * 20);
+    // Gate: red must dominate (hemoglobin signature)
+    if (redDominance < 15) return 0;
+
     const recent = this.filteredBuffer.slice(-90);
     const sorted = [...recent].sort((a, b) => a - b);
     const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
@@ -647,15 +665,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const snr = range / (stdDev + 0.15);
 
     const snrScore = Math.min(35, snr * 11);
-    const perfusionScore = Math.min(25, this.calculatePerfusionIndex() * 12);
+    const perfusionScore = Math.min(25, perfusionIndex * 12);
     const coverageScore = Math.min(18, this.smoothedCoverage * 30);
     const fingerScore = Math.min(18, this.smoothedFingerScore * 26);
     const motionPenalty = Math.min(20, this.motionScore * 16);
 
-    // Bonus for stable contact
+    // Bonus for stable contact + pulsatility evidence
     const stabilityBonus = this.contactState === 'STABLE_CONTACT' ? 5 : 0;
+    const pulsatilityBonus = (this.redAC > 0 || this.greenAC > 0) ? 4 : 0;
 
-    return this.clamp(snrScore + perfusionScore + coverageScore + fingerScore - motionPenalty + stabilityBonus, 0, 100);
+    return this.clamp(snrScore + perfusionScore + coverageScore + fingerScore - motionPenalty + stabilityBonus + pulsatilityBonus, 0, 100);
   }
 
   private calculatePerfusionIndex(): number {
@@ -681,7 +700,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.redDC = 0; this.redAC = 0;
     this.greenDC = 0; this.greenAC = 0;
     this.blueDC = 0; this.blueAC = 0;
-    this.sourceBuffers = { R: [], G: [], RG: [], CHROM: [] };
+    this.sourceBuffers = { R: [], G: [], RG: [] };
     this.bandpassFilter.reset();
   }
 
@@ -715,8 +734,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.blueDC = 0; this.blueAC = 0;
     this.motionScore = 0;
     this.lastAcceleration = { x: 0, y: 0, z: 0 };
-    this.sourceBuffers = { R: [], G: [], RG: [], CHROM: [] };
-    this.sourceScores = { R: 0, G: 0, RG: 0, CHROM: 0 };
+    this.sourceBuffers = { R: [], G: [], RG: [] };
+    this.sourceScores = { R: 0, G: 0, RG: 0 };
     this.activeSource = 'RG';
     this.lastSourceSwitch = 0;
     this.resetBaselines();
