@@ -630,12 +630,12 @@ const PPGSignalMeter = ({
       
       // === HISTORIAL DE LATIDOS (últimos 20) ===
       const beatHistory = beatHistoryRef.current;
-      if (history.length > 0) {
+      if (beatHistory.length > 0) {
         const histX = plot.x;
         const histY = plot.y + plot.height + 30;
         const dotRadius = 7;
         const dotSpacing = 18;
-        const totalWidth = history.length * dotSpacing;
+        const totalWidth = beatHistory.length * dotSpacing;
         const startX = histX + (plot.width - totalWidth) / 2;
         
         // Fondo del panel
