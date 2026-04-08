@@ -365,30 +365,21 @@ export class VitalSignsProcessor {
   private calculateSpO2Raw(): number {
     const { redAC, redDC, greenAC, greenDC } = this.rgbData;
     
-    if (redDC < 20 || greenDC < 20) {
-      return 0;
-    }
+    if (redDC < 15 || greenDC < 15) return 0;
     
-    if (redAC < 0.15 || greenAC < 0.15) {
-      return 0;
-    }
+    // Lowered AC thresholds — real pulsatility can be very small
+    if (redAC < 0.08 || greenAC < 0.08) return 0;
     
     const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
-    if (piRed < 0.15 || piGreen < 0.15) {
-      return 0;
-    }
+    if (piRed < 0.08 || piGreen < 0.08) return 0;
     
     const ratioRed = redAC / redDC;
     const ratioGreen = greenAC / greenDC;
-    if (!isFinite(ratioRed) || !isFinite(ratioGreen) || ratioRed <= 0 || ratioGreen <= 0) {
-      return 0;
-    }
+    if (!isFinite(ratioRed) || !isFinite(ratioGreen) || ratioRed <= 0 || ratioGreen <= 0) return 0;
     
     const R = ratioRed / ratioGreen;
-    if (R < 0.25 || R > 1.8) {
-      return 0;
-    }
+    if (R < 0.2 || R > 2.0) return 0;
     
     const spo2 = 109.5 - 24.5 * R;
     return Number.isFinite(spo2) ? spo2 : 0;

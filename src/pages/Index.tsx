@@ -455,7 +455,7 @@ const Index = () => {
 
   // === PROCESAR SEÑAL PPG ===
   const vitalSignsFrameCounter = useRef<number>(0);
-  const VITALS_PROCESS_EVERY_N_FRAMES = 5;
+  const VITALS_PROCESS_EVERY_N_FRAMES = 3; // Process vitals more often
   
   useEffect(() => {
     if (!lastSignal || !isMonitoring) return;
@@ -464,8 +464,8 @@ const Index = () => {
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
     const stableHumanSignal =
       contactState === 'STABLE_CONTACT' &&
-      (lastSignal.quality || 0) >= 20 &&
-      (lastSignal.perfusionIndex || 0) >= 0.01;
+      (lastSignal.quality || 0) >= 12 &&
+      (lastSignal.perfusionIndex || 0) >= 0.005;
 
     const heartBeatResult = processHeartBeat(
       signalValue,
@@ -542,14 +542,14 @@ const Index = () => {
 
       const vitals = processVitalSigns(
         lastSignal.filteredValue,
-        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3 && heartBeatResult.confidence > 0.25
+        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18
           ? heartBeatResult.rrData
           : undefined
       );
 
       setVitalSigns(vitals);
 
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 3 && heartBeatResult.confidence > 0.25 && vitals.measurementConfidence !== 'INVALID') {
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18 && vitals.measurementConfidence !== 'INVALID') {
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
         if (arrhythmiaStatus) {
           lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
