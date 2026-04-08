@@ -163,11 +163,23 @@ export class VitalSignsProcessor {
     const hasRealPulse = this.validateRealPulse(rrData);
     
     if (!hasRealPulse) {
+      this.measurements.spo2 = 0;
+      this.measurements.glucose = 0;
+      this.measurements.hemoglobin = 0;
+      this.measurements.systolicPressure = 0;
+      this.measurements.diastolicPressure = 0;
+      this.measurements.totalCholesterol = 0;
+      this.measurements.triglycerides = 0;
+      this.measurements.arrhythmiaCount = 0;
+      this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
+      this.measurements.lastArrhythmiaData = null;
+      this.lastBPConfidence = 'INSUFFICIENT';
+      this.lastBPFeatureQuality = 0;
       return this.getFormattedResult();
     }
 
-    // Calcular signos vitales solo con pulso confirmado
-    if (this.signalHistory.length >= 30 && rrData && rrData.intervals.length >= 3) {
+    // Calcular signos vitales solo con pulso humano confirmado
+    if (this.signalHistory.length >= 45 && rrData && rrData.intervals.length >= 5) {
       this.calculateVitalSigns(signalValue, rrData);
     }
 
@@ -175,25 +187,36 @@ export class VitalSignsProcessor {
   }
 
   private validateRealPulse(rrData?: { intervals: number[], lastPeakTime: number | null }): boolean {
-    if (!rrData || !rrData.intervals || rrData.intervals.length === 0) {
+    if (!rrData || !rrData.intervals || rrData.intervals.length < 3) {
       this.validPulseCount = 0;
       return false;
     }
     
-    // SIN FILTROS FISIOLÓGICOS - Solo filtro técnico mínimo
-    // Intervalos de 100ms a 5000ms permiten desde 12 BPM hasta 600 BPM (cubre cualquier señal real)
+    // Ventana humana conservadora: evita ruido no fisiológico sin forzar rangos clínicos “bonitos”
     const validIntervals = rrData.intervals.filter(interval => 
-      interval >= 100 && interval <= 5000
+      interval >= 280 && interval <= 2200
     );
     
-    // Requerir menos pulsos para iniciar el procesamiento
-    if (validIntervals.length < 2) {
+    if (validIntervals.length < 3) {
+      this.validPulseCount = 0;
+      return false;
+    }
+
+    const recent = validIntervals.slice(-5);
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const maxJump = recent.slice(1).reduce((max, value, index) => {
+      return Math.max(max, Math.abs(value - recent[index]));
+    }, 0);
+
+    if (mean < 300 || mean > 2000 || maxJump > 900) {
+      this.validPulseCount = 0;
       return false;
     }
     
     if (rrData.lastPeakTime) {
       const timeSinceLastPeak = Date.now() - rrData.lastPeakTime;
-      if (timeSinceLastPeak > 5000) {
+      if (timeSinceLastPeak > 2500) {
+        this.validPulseCount = 0;
         return false;
       }
     }
@@ -203,29 +226,32 @@ export class VitalSignsProcessor {
   }
 
   private calculateSignalQuality(): number {
-    if (this.signalHistory.length < 30) return 0;
+    if (this.signalHistory.length < 45) return 0;
     
     const recent = this.signalHistory.slice(-60);
-    const max = Math.max(...recent);
-    const min = Math.min(...recent);
-    const range = max - min;
+    const sorted = [...recent].sort((a, b) => a - b);
+    const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
+    const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
+    const range = p90 - p10;
     
-    if (range < 0.5) return 5;
+    if (range < 0.8) return 0;
     
-    // Variabilidad
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
+    const snr = range / (stdDev + 0.05);
+    const snrScore = Math.min(70, snr * 14);
+    const amplitudeScore = Math.min(20, range * 4);
+    const stabilityPenalty = stdDev > range * 0.85 ? 15 : 0;
     
-    const snr = range / (stdDev + 0.01);
-    return Math.min(100, Math.max(0, snr * 12));
+    return Math.min(100, Math.max(0, snrScore + amplitudeScore - stabilityPenalty));
   }
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
-    if (sq >= 70 && this.validPulseCount >= 5) return 'HIGH';
-    if (sq >= 40 && this.validPulseCount >= 3) return 'MEDIUM';
-    if (sq >= 20 && this.validPulseCount >= 2) return 'LOW';
+    if (sq >= 75 && this.validPulseCount >= 6) return 'HIGH';
+    if (sq >= 55 && this.validPulseCount >= 5) return 'MEDIUM';
+    if (sq >= 35 && this.validPulseCount >= 3) return 'LOW';
     return 'INVALID';
   }
 
@@ -240,37 +266,24 @@ export class VitalSignsProcessor {
    */
   private getFormattedResult(): VitalSignsResult {
     return {
-      // SpO2: entero (sin decimales)
       spo2: Math.round(this.measurements.spo2),
-      
-      // Glucosa: entero (sin decimales)
       glucose: Math.round(this.measurements.glucose),
-      
-      // Hemoglobina: 1 decimal
       hemoglobin: Math.round(this.measurements.hemoglobin * 10) / 10,
-      
-      // Presión arterial: enteros + confianza
       pressure: {
         systolic: Math.round(this.measurements.systolicPressure),
         diastolic: Math.round(this.measurements.diastolicPressure),
         confidence: this.lastBPConfidence,
         featureQuality: this.lastBPFeatureQuality,
       },
-      
       arrhythmiaCount: this.measurements.arrhythmiaCount,
       arrhythmiaStatus: this.measurements.arrhythmiaStatus,
-      
-      // Lípidos: enteros
       lipids: {
         totalCholesterol: Math.round(this.measurements.totalCholesterol),
         triglycerides: Math.round(this.measurements.triglycerides)
       },
-      
       isCalibrating: this.isCalibrating,
       calibrationProgress: Math.min(100, Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100)),
       lastArrhythmiaData: this.measurements.lastArrhythmiaData ?? undefined,
-      
-      // Calidad: entero
       signalQuality: Math.round(this.measurements.signalQuality),
       measurementConfidence: this.getMeasurementConfidence()
     };
@@ -285,68 +298,59 @@ export class VitalSignsProcessor {
     signalValue: number, 
     rrData: { intervals: number[], lastPeakTime: number | null }
   ): void {
-    // Validar calidad de señal mínima antes de calcular
-    const minQualityForCalculation = 15;
+    const minQualityForCalculation = 35;
     if (this.measurements.signalQuality < minQualityForCalculation) {
       return;
     }
     
-    // 1. SpO2 - Fórmula estándar TI - suavizado estable
     const spo2 = this.calculateSpO2Raw();
-    if (spo2 !== 0 && spo2 > 50 && spo2 < 105) {
+    if (spo2 !== 0 && spo2 > 70 && spo2 < 100) {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
       this.updateHistory('spo2', spo2);
     }
 
-    // 2. Extraer cycle features para BP, glucosa, hemoglobina, lípidos
     const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, 30);
     const validCycleFeatures: import('./PPGFeatureExtractor').CycleFeatures[] = [];
     
     for (const cycle of cycles) {
       const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality > 0.4) {
+      if (features && features.quality >= 0.65) {
         validCycleFeatures.push(features);
       }
     }
 
-    // HR y HRV
-    const validRR = rrData.intervals.filter(i => i > 200 && i < 2000);
+    const validRR = rrData.intervals.filter(i => i >= 280 && i <= 2200);
     const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
     const hr = avgRR > 0 ? 60000 / avgRR : 0;
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
 
-    // 3. Presión arterial - Desde BloodPressureProcessor avanzado
     const bpEstimate = this.bloodPressureProcessor.estimate(
-      this.signalHistory, rrData.intervals, 30
+      this.signalHistory, validRR, 30
     );
     this.lastBPConfidence = bpEstimate.confidence;
     this.lastBPFeatureQuality = bpEstimate.featureQuality;
-    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT' && bpEstimate.featureQuality >= 45) {
       this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
       this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
       this.updateHistory('systolic', bpEstimate.systolic);
       this.updateHistory('diastolic', bpEstimate.diastolic);
     }
 
-    // 4-6: Solo calcular con suficientes ciclos válidos
-    if (validCycleFeatures.length >= 3 && hr > 0) {
+    if (validCycleFeatures.length >= 5 && hr >= 40 && hr <= 180 && this.measurements.signalQuality >= 55) {
       const medianF = this.medianCycleFeatures(validCycleFeatures);
       
-      // 4. Glucosa - Modelo multivariable (Islam et al. 2021, Satter et al. 2024)
       const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
       if (glucose > 40 && glucose < 400) {
         this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
         this.updateHistory('glucose', glucose);
       }
 
-      // 5. Hemoglobina - Beer-Lambert multichannel
       const hemoglobin = this.calculateHemoglobinAdvanced(medianF);
       if (hemoglobin > 5 && hemoglobin < 25) {
         this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin, 'stable');
         this.updateHistory('hemoglobin', hemoglobin);
       }
 
-      // 6. Lípidos - Rigidez arterial (Ferizoli et al. 2024, Arguello-Prada 2025)
       const lipids = this.calculateLipidsAdvanced(medianF, hr, rrVar);
       if (lipids.totalCholesterol > 80 && lipids.totalCholesterol < 400) {
         this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipids.totalCholesterol, 'dynamic');
@@ -354,9 +358,8 @@ export class VitalSignsProcessor {
       }
     }
 
-    // 7. Arritmias
-    if (rrData.intervals.length >= 5) {
-      const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(rrData);
+    if (validRR.length >= 5 && this.measurements.signalQuality >= 45) {
+      const arrhythmiaResult = this.arrhythmiaProcessor.processRRData({ ...rrData, intervals: validRR });
       this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
       this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
       
@@ -380,54 +383,33 @@ export class VitalSignsProcessor {
   private calculateSpO2Raw(): number {
     const { redAC, redDC, greenAC, greenDC } = this.rgbData;
     
-    // Validar señal mínima (DC debe ser suficiente para medición)
-    if (redDC < 10 || greenDC < 10) {
+    if (redDC < 20 || greenDC < 20) {
       return 0;
     }
     
-    // Validar que hay componente AC (pulsátil)
-    if (redAC < 0.1 || greenAC < 0.1) {
+    if (redAC < 0.15 || greenAC < 0.15) {
       return 0;
     }
     
-    // Calcular Perfusion Index para cada canal
-    const piRed = (redAC / redDC) * 100;  // Porcentaje
+    const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
-    
-    // PI típico: 0.1% - 20%. Si está fuera, señal sospechosa
-    if (piRed < 0.05 || piGreen < 0.05) {
+    if (piRed < 0.15 || piGreen < 0.15) {
       return 0;
     }
     
-    // Calcular ratios individuales
     const ratioRed = redAC / redDC;
     const ratioGreen = greenAC / greenDC;
+    if (!isFinite(ratioRed) || !isFinite(ratioGreen) || ratioRed <= 0 || ratioGreen <= 0) {
+      return 0;
+    }
     
-    // R = (AC_red/DC_red) / (AC_green/DC_green)
     const R = ratioRed / ratioGreen;
-    
-    // Validar R en rango físicamente posible
-    // R típico para SpO2 70-100%: aproximadamente 0.4 - 1.6
-    // Pero NO aplicamos clamp, solo validamos
-    if (R < 0.1 || R > 3.0) {
-      // Valor extremo, probablemente ruido - pero lo calculamos igual
-      if (this.signalHistory.length % 60 === 0) {
-        console.warn(`⚠️ SpO2 R extremo: ${R.toFixed(3)} - posible ruido`);
-      }
+    if (R < 0.25 || R > 1.8) {
+      return 0;
     }
     
-    // Fórmula empírica estándar (TI SLAA655)
-    // SpO2 = A - B * R
-    // A = 110, B = 25 (calibración estándar pulsioxímetros)
-    const spo2 = 110 - 25 * R;
-    
-    // Log periódico para debug
-    if (this.signalHistory.length % 45 === 0) {
-      console.log(`📊 SpO2: R=${R.toFixed(3)} → ${spo2.toFixed(1)}% | PI_R=${piRed.toFixed(2)}% PI_G=${piGreen.toFixed(2)}%`);
-    }
-    
-    // RETORNAR VALOR CRUDO - el historial y EMA manejarán estabilidad
-    return spo2;
+    const spo2 = 109.5 - 24.5 * R;
+    return Number.isFinite(spo2) ? spo2 : 0;
   }
 
   // Blood pressure is now handled by BloodPressureProcessor
