@@ -141,18 +141,20 @@ export class HeartBeatProcessor {
       this.consecutivePeaks = Math.max(0, this.consecutivePeaks - 1);
     }
 
-    // === FUSIÓN TIEMPO + FRECUENCIA ===
+    // === FUSIÓN TIEMPO + FRECUENCIA (conservadora) ===
     let displayBPM = this.smoothBPM;
 
     if (this.frequencyBPM > 0) {
-      if (displayBPM === 0) {
-        // Sin picos aún — usar frecuencia pura
+      if (displayBPM === 0 && this.consecutivePeaks === 0) {
+        // No publish frequency-only BPM until at least 1 peak confirmed
+        displayBPM = 0;
+      } else if (displayBPM === 0 && this.consecutivePeaks > 0) {
         displayBPM = this.frequencyBPM;
-      } else if (this.consecutivePeaks < 3 || this.signalQualityIndex < 30) {
-        // Señal débil — ponderar más la frecuencia
-        displayBPM = displayBPM * 0.5 + this.frequencyBPM * 0.5;
+      } else if (this.consecutivePeaks < 4 || this.signalQualityIndex < 35) {
+        // Señal débil — blend conservador
+        displayBPM = displayBPM * 0.65 + this.frequencyBPM * 0.35;
       } else {
-        // Señal fuerte — confiar más en picos
+        // Señal fuerte — confiar en picos
         displayBPM = displayBPM * 0.85 + this.frequencyBPM * 0.15;
       }
     }
