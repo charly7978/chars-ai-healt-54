@@ -1,205 +1,89 @@
 
-Objetivo: estabilizar de forma prioritaria la detección de dedo, fortalecer la señal PPG real y recuperar latidos confiables, eliminando lógica superpuesta que hoy se invalida entre sí.
 
-## Diagnóstico del código actual
+# Plan: Garantizar Lecturas PPG Reales — Eliminar Falsos Positivos
 
-Encontré varios problemas estructurales que explican la inestabilidad:
+## Problema Identificado
 
-1. Desincronización entre capas
-- `PPGSignalProcessor` tolera pérdida de contacto hasta 45 frames.
-- `useHeartBeatProcessor` resetea el detector tras solo 8 frames sin dedo.
-- Resultado: la capa de dedo dice “todavía hay contacto”, pero la capa de latidos ya destruyó su historial.
+Tras auditar el pipeline completo, hay **5 puntos críticos** donde señales falsas (ruido ambiental, luz, movimiento) pueden disparar reacciones en la app como si fueran señal real:
 
-2. Calidad duplicada y conflictiva
-- `PPGSignalProcessor` calcula su propio SQI.
-- `VitalSignsProcessor` vuelve a calcular otro SQI distinto sobre la señal ya filtrada.
-- Resultado: una capa considera la señal usable y otra la invalida.
+### 1. Detección de dedo demasiado permisiva
+- `detectFingerInstant()` acepta `r > 25` y `coverage > 0.12` — valores que ruido ambiental o luz de habitación pueden alcanzar
+- `softHold` mantiene contacto con `smoothedCoverage > 0.08` — prácticamente cualquier imagen
+- No valida la **firma espectral de hemoglobina** (rojo debe dominar significativamente sobre verde/azul cuando hay dedo con flash)
 
-3. Captura no alineada al video real
-- En `Index.tsx` la captura usa `requestAnimationFrame` + throttle manual a 30 fps.
-- Esto no garantiza sincronía con frames reales del sensor; mete jitter en timestamps y perjudica RR/PPG.
+### 2. HeartBeatProcessor acepta señal sin energía mínima
+- `normalizeSignal` usa `range < 0.15` como umbral mínimo — demasiado bajo, ruido normalizado puede parecer pulsátil
+- `minScore = 25` para primeros picos — alcanzable por ruido con cualquier cruce por cero
+- No hay **gate de perfusión**: acepta "latidos" incluso cuando AC/DC es cero
 
-4. Carga gráfica innecesaria durante medición
-- Hay dos videos activos: `CameraView` y `CameraPreview`.
-- `PPGSignalMeter` redibuja un canvas grande continuamente y además vuelve a detectar picos/vales solo para visualización.
-- Resultado: más CPU/GPU, más jitter, peor estabilidad temporal.
+### 3. Frecuencia espectral reemplaza picos sin validación
+- Cuando `smoothBPM === 0`, la autocorrelación (`frequencyBPM`) se muestra directamente
+- La autocorrelación puede encontrar "periodicidad" en ruido con `bestScore > 0.15` — umbral muy bajo
+- Resultado: BPM aparece antes de detectar un solo latido real
 
-5. Extracción de pulso todavía limitada
-- `PPGSignalProcessor` mezcla solo `R/G/RG`.
-- No aprovecha selección competitiva entre múltiples fuentes pulsátiles ni ranking temporal de canal.
-- Falta una estrategia más robusta tipo “winner channel / best source per window”.
+### 4. Signos vitales se calculan sin gate de calidad
+- `processVitalSigns` se llama cuando hay ≥3 RR intervals, sin verificar si la calidad es suficiente
+- SpO2, presión, etc. se calculan sobre señal potencialmente ruidosa
 
-6. Detección de dedo demasiado binaria
-- Aunque hay grilla 5x5, el sistema sigue terminando en un `fingerDetected` booleano con thresholds rígidos.
-- Falta separar claramente:
-  - contacto óptico,
-  - calidad de perfusión,
-  - contaminación por movimiento,
-  - saturación/clipping.
+### 5. Canal CHROM amplifica ruido
+- `CHROM: (3R - 2G)` amplifica diferencias R-G que pueden ser ruido óptico puro cuando no hay dedo
 
-## Lo que conviene cambiar primero
+## Cambios Propuestos
 
-### 1) Unificar el “estado de contacto” en una sola fuente de verdad
-Archivos:
-- `src/modules/signal-processing/PPGSignalProcessor.ts`
-- `src/hooks/useHeartBeatProcessor.ts`
-- `src/pages/Index.tsx`
+### A. `PPGSignalProcessor.ts` — Detección de dedo estricta
 
-Cambios:
-- Definir 3 estados en vez de solo booleano:
-  - `NO_CONTACT`
-  - `UNSTABLE_CONTACT`
-  - `STABLE_CONTACT`
-- El `HeartBeatProcessor` debe resetearse solo cuando `NO_CONTACT` sea sostenido, no ante microcortes.
-- `useHeartBeatProcessor` debe heredar la misma histéresis del detector de dedo, no usar su umbral separado de 8 frames.
+**Umbrales de hemoglobina reales:**
+- `rawRed > 80` (no 25) — con flash y dedo, el rojo siempre supera 80
+- `rgRatio > 1.2` (no 0.8) — la hemoglobina absorbe verde/azul, rojo SIEMPRE domina
+- `redDominance > 20` (no 5) — diferencia real dedo vs ambiente
+- `coverage > 0.35` (no 0.12) — dedo cubre significativamente el sensor
+- `fingerScore > 0.4` (no 0.28)
+- Para mantener contacto: `coverage > 0.20`, `redDominance > 12`, `rgRatio > 1.1`
 
-Impacto:
-- Evita perder el historial justo cuando el dedo tiembla o se desplaza mínimamente.
+**Nuevo requisito de perfusión mínima para STABLE_CONTACT:**
+- Solo transicionar a STABLE cuando `perfusionIndex > 0.01` (hay pulsatilidad real AC/DC)
+- Si hay contacto pero perfusión = 0, mantener en UNSTABLE
 
-### 2) Reemplazar el loop de captura por frames reales del video
-Archivo:
-- `src/pages/Index.tsx`
+**Eliminar canal CHROM del ranking** — es redundante y amplifica ruido sin dedo
 
-Cambios:
-- Migrar de `requestAnimationFrame + throttle` a `HTMLVideoElement.requestVideoFrameCallback` con fallback.
-- Usar timestamps reales del frame para toda la cadena.
-- Mantener un sampler estable y desacoplado del render UI.
+### B. `HeartBeatProcessor.ts` — Gate de señal real
 
-Impacto:
-- Mejora mucho la estabilidad de BPM, RR y periodicidad.
+**Antes de detectar cualquier pico:**
+- Nuevo parámetro `minimumSignalRange = 0.8` — si el rango normalizado de la ventana es < 0.8, rechazar (ruido puro tiene rango bajo post-filtro)
+- `minScore = 40` siempre (no 25 para señal débil) — un latido real siempre tiene prominencia + morfología
+- `energy < 2000` en `estimatePeriodicity` en vez de 800 — evita que ruido de baja energía genere BPM espectral
 
-### 3) Refactorizar extracción PPG a selección competitiva de señal
-Archivo:
-- `src/modules/signal-processing/PPGSignalProcessor.ts`
+**Bloquear frequencyBPM sin validación cruzada:**
+- No mostrar `frequencyBPM` como displayBPM hasta que haya al menos 1 pico confirmado en tiempo
+- `periodicityScore` mínimo de 0.35 (no 0.15) para aceptar estimación espectral
 
-Cambios:
-- Evaluar en paralelo varias fuentes:
-  - R norm
-  - G norm
-  - B norm opcional
-  - R-G
-  - G-B
-  - CHROM-like / combinación cromática estable para contacto
-- Rankear cada ventana corta por:
-  - perfusión AC/DC,
-  - SNR,
-  - periodicidad,
-  - clipping,
-  - estabilidad temporal.
-- Elegir la mejor fuente activa por ventana con histéresis para no saltar de canal en cada frame.
+**Aumentar prominencia mínima:**
+- `prominence > 3.0` para aceptar pico (no cualquier valor > 0)
+- Pico debe tener `risingSlope > 1.0` Y `fallingSlope > 0.5` — morfología PPG real tiene subida rápida y bajada gradual
 
-Impacto:
-- Permite rescatar señal real cuando el canal verde se satura o el rojo cae por presión/cobertura.
+### C. `Index.tsx` — Gate de calidad para signos vitales
 
-### 4) Separar “contacto” de “calidad útil”
-Archivo:
-- `src/modules/signal-processing/PPGSignalProcessor.ts`
+- Solo llamar `processVitalSigns` cuando `signalQuality > 25` Y `heartBeatResult.confidence > 0.2`
+- No mostrar BPM hasta `confidence > 0.3` y al menos 3 picos consecutivos
 
-Cambios:
-- No invalidar toda la medición cuando hay movimiento moderado.
-- Exponer métricas separadas:
-  - `contactScore`
-  - `perfusionScore`
-  - `motionScore`
-  - `clipScore`
-  - `sourceLabel`
-  - `signalQuality`
-- `fingerDetected` debe derivarse de contacto estable, no de la calidad total.
+### D. `PPGSignalProcessor.ts` — SQI más estricto
 
-Impacto:
-- El usuario puede seguir teniendo contacto aunque la calidad baje temporalmente; eso evita cortes artificiales.
+- Si `perfusionIndex < 0.005`, SQI máximo = 15 (insuficiente para medición)
+- Si `redDominance < 15` en smoothed values, SQI = 0
+- Bonificar solo cuando hay evidencia de pulsatilidad real (AC > 0 en al menos un canal)
 
-### 5) Fortalecer detector de latidos con fusión tiempo + frecuencia
-Archivo:
-- `src/modules/HeartBeatProcessor.ts`
+## Archivos a Modificar
 
-Cambios:
-- Mantener el detector de picos, pero agregar una fusión explícita:
-  - modo pico dominante cuando hay buena morfología,
-  - modo espectral dominante cuando la onda es débil,
-  - transición suave entre ambos.
-- Añadir “peak candidate scoring” por prominencia, pendiente, consistencia con RR esperado y SQI de ventana.
-- No usar una sola normalización global; usar ventanas más cortas para señales débiles y más largas para señales estables.
+| Archivo | Cambio |
+|---------|--------|
+| `src/modules/signal-processing/PPGSignalProcessor.ts` | Umbrales dedo estrictos, eliminar CHROM, gate perfusión, SQI estricto |
+| `src/modules/HeartBeatProcessor.ts` | Gate energía mínima, prominencia mínima, bloquear freq sin picos |
+| `src/pages/Index.tsx` | Gate calidad para vitals, no mostrar BPM sin confianza |
 
-Impacto:
-- Más detección de pulso real en señales bajas, menos silencios prolongados.
+## Resultado
 
-### 6) Eliminar duplicación de SQI y validación
-Archivos:
-- `src/modules/signal-processing/PPGSignalProcessor.ts`
-- `src/modules/vital-signs/VitalSignsProcessor.ts`
+- **Sin dedo** → la app NO muestra BPM, NO detecta latidos, NO calcula vitales
+- **Con dedo pero sin pulso detectable** → muestra "buscando señal" sin inventar valores
+- **Con dedo y pulso real** → detecta y muestra datos reales con confianza
+- Filosofía: "sin lectura antes que lectura falsa"
 
-Cambios:
-- Convertir `PPGSignalProcessor` en la única fuente de SQI de captura.
-- `VitalSignsProcessor` debe consumir esa calidad, no recalcular otra incompatible.
-- Mantener validaciones fisiológicas aparte, pero no otro SQI paralelo.
-
-Impacto:
-- Evita que una capa apruebe y otra rechace la misma ventana.
-
-### 7) Reducir carga visual durante medición
-Archivos:
-- `src/components/CameraPreview.tsx`
-- `src/components/PPGSignalMeter.tsx`
-- `src/pages/Index.tsx`
-
-Cambios:
-- Evitar doble reproducción simultánea de video si no aporta al procesamiento.
-- Simplificar el monitor en tiempo real durante captura:
-  - menos redibujado,
-  - menos re-detección gráfica de picos/vales en canvas,
-  - usar marcadores ya calculados por la capa cardiaca.
-- Mantener la visualización avanzada solo si no compromete el loop de señal.
-
-Impacto:
-- Menos jitter y mejor señal útil.
-
-## Estrategias web recientes a aplicar
-
-Basado en literatura/prácticas recientes:
-- Acceso y calibración de cámara para PPG móvil con control consistente de exposición/flash.
-- SQI óptimo y desacople entre contacto, movimiento y calidad usable.
-- Análisis PPG más estandarizado por ventanas/ciclos tipo pyPPG.
-- Entornos reproducibles y sensor-aware para no confiar en fps nominal sino real.
-
-## Limpieza de código obsoleto/superpuesto
-
-Eliminar o consolidar:
-- Reset corto de 8 frames en `useHeartBeatProcessor`.
-- SQI duplicado en `VitalSignsProcessor`.
-- Lógica redundante de detección visual de picos en `PPGSignalMeter` cuando ya existen picos reales detectados.
-- Cualquier dependencia de render UI para temporización de captura.
-
-## Orden de implementación recomendado
-
-1. Unificar estados de contacto y reset.
-2. Cambiar captura a `requestVideoFrameCallback`.
-3. Refactorizar `PPGSignalProcessor` a multi-source ranking.
-4. Simplificar `HeartBeatProcessor` con fusión tiempo/frecuencia.
-5. Eliminar SQI duplicado.
-6. Reducir carga visual/cámara duplicada.
-7. Exponer diagnóstico claro en UI del monitor:
-   - contacto,
-   - perfusión,
-   - movimiento,
-   - canal activo,
-   - calidad real.
-
-## Archivos principales afectados
-
-- `src/pages/Index.tsx`
-- `src/modules/signal-processing/PPGSignalProcessor.ts`
-- `src/modules/HeartBeatProcessor.ts`
-- `src/hooks/useHeartBeatProcessor.ts`
-- `src/components/PPGSignalMeter.tsx`
-- `src/components/CameraPreview.tsx`
-- `src/modules/vital-signs/VitalSignsProcessor.ts`
-- `src/types/signal.d.ts`
-
-## Resultado esperado
-
-- Detección de dedo mucho más tolerante a temblores y microdesplazamientos.
-- Señal PPG más fuerte y continua.
-- Recuperación de latidos incluso en señales débiles.
-- Menos reinicios falsos y menos “caídas” de medición.
-- Pipeline más limpio, sin capas superpuestas invalidándose entre sí.
