@@ -76,15 +76,15 @@ export class VitalSignsProcessor {
   
   // Historial de señal
   private signalHistory: number[] = [];
-  private readonly HISTORY_SIZE = 90; // 3 segundos @ 30fps
+  private readonly HISTORY_SIZE = 90;
   
   // RGB para SpO2
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   
   // Suavizado adaptativo para estabilidad SIN perder respuesta
   // Alpha más bajo = más suavizado = lecturas más estables
-  private readonly EMA_ALPHA_STABLE = 0.15;  // Para valores que cambian lento (SpO2, PA)
-  private readonly EMA_ALPHA_DYNAMIC = 0.25; // Para valores más variables (Glucosa, HRV)
+  private readonly EMA_ALPHA_STABLE = 0.20;
+  private readonly EMA_ALPHA_DYNAMIC = 0.30;
   
   // Historial para validación de tendencias
   private measurementHistory: { [key: string]: number[] } = {
@@ -98,7 +98,7 @@ export class VitalSignsProcessor {
   
   // Contador de pulsos válidos
   private validPulseCount: number = 0;
-  private readonly MIN_PULSES_REQUIRED = 2; // Reducido para inicio más rápido
+  private readonly MIN_PULSES_REQUIRED = 2;
   
   constructor() {
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
@@ -163,23 +163,13 @@ export class VitalSignsProcessor {
     const hasRealPulse = this.validateRealPulse(rrData);
     
     if (!hasRealPulse) {
-      this.measurements.spo2 = 0;
-      this.measurements.glucose = 0;
-      this.measurements.hemoglobin = 0;
-      this.measurements.systolicPressure = 0;
-      this.measurements.diastolicPressure = 0;
-      this.measurements.totalCholesterol = 0;
-      this.measurements.triglycerides = 0;
-      this.measurements.arrhythmiaCount = 0;
-      this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
-      this.measurements.lastArrhythmiaData = null;
-      this.lastBPConfidence = 'INSUFFICIENT';
-      this.lastBPFeatureQuality = 0;
+      // Don't zero-out values that are already accumulated — just stop updating
+      // This prevents flicker when signal dips momentarily
       return this.getFormattedResult();
     }
 
-    // Calcular signos vitales solo con pulso humano confirmado
-    if (this.signalHistory.length >= 30 && rrData && rrData.intervals.length >= 3) {
+    // Calcular signos vitales — lowered from 30 to 20 samples, 3 to 2 intervals
+    if (this.signalHistory.length >= 20 && rrData && rrData.intervals.length >= 2) {
       this.calculateVitalSigns(signalValue, rrData);
     }
 
@@ -215,7 +205,7 @@ export class VitalSignsProcessor {
   }
 
   private calculateSignalQuality(): number {
-    if (this.signalHistory.length < 30) return 0;
+    if (this.signalHistory.length < 20) return 0;
     
     const recent = this.signalHistory.slice(-60);
     const sorted = [...recent].sort((a, b) => a - b);
@@ -223,21 +213,21 @@ export class VitalSignsProcessor {
     const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
     const range = p90 - p10;
     
-    if (range < 0.3) return 3;
+    if (range < 0.2) return 2;
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
     const snr = range / (stdDev + 0.05);
     
-    return Math.min(100, Math.max(0, snr * 14));
+    return Math.min(100, Math.max(0, snr * 16));
   }
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
-    if (sq >= 65 && this.validPulseCount >= 5) return 'HIGH';
-    if (sq >= 40 && this.validPulseCount >= 3) return 'MEDIUM';
-    if (sq >= 20 && this.validPulseCount >= 2) return 'LOW';
+    if (sq >= 55 && this.validPulseCount >= 4) return 'HIGH';
+    if (sq >= 30 && this.validPulseCount >= 3) return 'MEDIUM';
+    if (sq >= 12 && this.validPulseCount >= 2) return 'LOW';
     return 'INVALID';
   }
 
@@ -284,11 +274,12 @@ export class VitalSignsProcessor {
     signalValue: number, 
     rrData: { intervals: number[], lastPeakTime: number | null }
   ): void {
-    const minQualityForCalculation = 15;
+    const minQualityForCalculation = 10;
     if (this.measurements.signalQuality < minQualityForCalculation) {
       return;
     }
     
+    // SpO2 — lowest gate, always try first
     const spo2 = this.calculateSpO2Raw();
     if (spo2 !== 0 && spo2 > 70 && spo2 < 100) {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
@@ -300,7 +291,7 @@ export class VitalSignsProcessor {
     
     for (const cycle of cycles) {
       const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality >= 0.45) {
+      if (features && features.quality >= 0.30) {  // lowered from 0.45
         validCycleFeatures.push(features);
       }
     }
@@ -310,19 +301,23 @@ export class VitalSignsProcessor {
     const hr = avgRR > 0 ? 60000 / avgRR : 0;
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
 
-    const bpEstimate = this.bloodPressureProcessor.estimate(
-      this.signalHistory, validRR, 30
-    );
-    this.lastBPConfidence = bpEstimate.confidence;
-    this.lastBPFeatureQuality = bpEstimate.featureQuality;
-    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
-      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
-      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
-      this.updateHistory('systolic', bpEstimate.systolic);
-      this.updateHistory('diastolic', bpEstimate.diastolic);
+    // BP — try with 2+ valid RR
+    if (validRR.length >= 2) {
+      const bpEstimate = this.bloodPressureProcessor.estimate(
+        this.signalHistory, validRR, 30
+      );
+      this.lastBPConfidence = bpEstimate.confidence;
+      this.lastBPFeatureQuality = bpEstimate.featureQuality;
+      if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+        this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
+        this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
+        this.updateHistory('systolic', bpEstimate.systolic);
+        this.updateHistory('diastolic', bpEstimate.diastolic);
+      }
     }
 
-    if (validCycleFeatures.length >= 3 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 25) {
+    // Glucose, Hemoglobin, Lipids — need cycle features
+    if (validCycleFeatures.length >= 2 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 15) {
       const medianF = this.medianCycleFeatures(validCycleFeatures);
       
       const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
@@ -344,7 +339,8 @@ export class VitalSignsProcessor {
       }
     }
 
-    if (validRR.length >= 4 && this.measurements.signalQuality >= 20) {
+    // Arrhythmia — need 3+ valid RR
+    if (validRR.length >= 3 && this.measurements.signalQuality >= 15) {
       const arrhythmiaResult = this.arrhythmiaProcessor.processRRData({ ...rrData, intervals: validRR });
       this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
       this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
@@ -369,30 +365,21 @@ export class VitalSignsProcessor {
   private calculateSpO2Raw(): number {
     const { redAC, redDC, greenAC, greenDC } = this.rgbData;
     
-    if (redDC < 20 || greenDC < 20) {
-      return 0;
-    }
+    if (redDC < 15 || greenDC < 15) return 0;
     
-    if (redAC < 0.15 || greenAC < 0.15) {
-      return 0;
-    }
+    // Lowered AC thresholds — real pulsatility can be very small
+    if (redAC < 0.08 || greenAC < 0.08) return 0;
     
     const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
-    if (piRed < 0.15 || piGreen < 0.15) {
-      return 0;
-    }
+    if (piRed < 0.08 || piGreen < 0.08) return 0;
     
     const ratioRed = redAC / redDC;
     const ratioGreen = greenAC / greenDC;
-    if (!isFinite(ratioRed) || !isFinite(ratioGreen) || ratioRed <= 0 || ratioGreen <= 0) {
-      return 0;
-    }
+    if (!isFinite(ratioRed) || !isFinite(ratioGreen) || ratioRed <= 0 || ratioGreen <= 0) return 0;
     
     const R = ratioRed / ratioGreen;
-    if (R < 0.25 || R > 1.8) {
-      return 0;
-    }
+    if (R < 0.2 || R > 2.0) return 0;
     
     const spo2 = 109.5 - 24.5 * R;
     return Number.isFinite(spo2) ? spo2 : 0;
@@ -486,13 +473,13 @@ export class VitalSignsProcessor {
   private calculateHemoglobinAdvanced(f: MedianCycleFeatures): number {
     const { redAC, redDC, greenAC, greenDC } = this.rgbData;
     
-    // Validación estricta: necesitamos señal AC y DC en ambos canales
-    if (redDC < 10 || greenDC < 10 || redAC < 0.1 || greenAC < 0.1) return 0;
+    // Validación: necesitamos señal AC y DC en ambos canales
+    if (redDC < 8 || greenDC < 8 || redAC < 0.05 || greenAC < 0.05) return 0;
     
-    // Perfusion check: solo calcular con señal pulsátil real
+    // Perfusion check — lowered for weak but real signals
     const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
-    if (piRed < 0.1 || piGreen < 0.1) return 0;
+    if (piRed < 0.06 || piGreen < 0.06) return 0;
     
     // Beer-Lambert: Logarithmic attenuation por canal
     const logAttRed = Math.log(redAC / redDC);
@@ -669,7 +656,7 @@ export class VitalSignsProcessor {
    * MEJORA: Detecta cambios bruscos y ajusta alpha dinámicamente
    */
   private smoothValue(current: number, newVal: number, type: 'stable' | 'dynamic' = 'stable'): number {
-    if (current === 0 || isNaN(current) || !isFinite(current)) return newVal;
+    if (current === 0 || isNaN(current) || !isFinite(current)) return newVal; // Fast initial lock
     if (isNaN(newVal) || !isFinite(newVal)) return current;
     
     const baseAlpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;

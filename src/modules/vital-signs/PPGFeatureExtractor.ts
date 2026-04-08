@@ -432,20 +432,21 @@ export class PPGFeatureExtractor {
   ): number {
     let q = 0;
 
-    // Amplitude should be meaningful and not noise-like
-    if (amplitude > 0.8) q += 0.2;
-    if (amplitude > 2.2) q += 0.1;
+    // Amplitude — lower threshold for weak but real signals
+    if (amplitude > 0.3) q += 0.15;
+    if (amplitude > 1.0) q += 0.1;
+    if (amplitude > 2.5) q += 0.05;
 
-    // SUT in robust physiological range
-    if (sutMs > 60 && sutMs < 280) q += 0.2;
+    // SUT in physiological range (wider)
+    if (sutMs > 40 && sutMs < 350) q += 0.2;
 
-    // Diastolic time should be meaningfully longer than systolic in clean PPG
-    if (diastolicTimeMs > sutMs * 0.9) q += 0.15;
+    // Diastolic time
+    if (diastolicTimeMs > sutMs * 0.7) q += 0.15;
 
-    // PW50 in range
-    if (pw50Ms > 120 && pw50Ms < 700) q += 0.1;
+    // PW50 in range (wider)
+    if (pw50Ms > 80 && pw50Ms < 800) q += 0.1;
 
-    // Dicrotic notch detection adds strong confidence
+    // Dicrotic notch bonus
     if (hasDicroticNotch) q += 0.25;
 
     return Math.min(1, q);
@@ -467,7 +468,7 @@ export class PPGFeatureExtractor {
   }
 
   static extractRRVariability(intervals: number[]): { sdnn: number; rmssd: number; cv: number } {
-    if (intervals.length < 3) return { sdnn: 0, rmssd: 0, cv: 0 };
+    if (intervals.length < 2) return { sdnn: 0, rmssd: 0, cv: 0 };
     const valid = intervals.filter(i => i > 100 && i < 5000);
     if (valid.length < 2) return { sdnn: 0, rmssd: 0, cv: 0 };
     

@@ -192,9 +192,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const adjustedQuality = motionArtifact
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
-    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05
+    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
       ? adjustedQuality
-      : Math.min(12, adjustedQuality * 0.35);
+      : Math.min(18, adjustedQuality * 0.45);
 
     const now = Date.now();
     if (now - this.lastLogTime >= 2000) {
@@ -243,7 +243,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.fingerDetected = true;
         // Require real perfusion for STABLE — not just visual contact
         const perfusion = this.calculatePerfusionIndex();
-        this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > 0.01)
+        this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > 0.003)
           ? 'STABLE_CONTACT'
           : 'UNSTABLE_CONTACT';
       }
@@ -623,7 +623,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redPI = this.redAC / this.redDC;
     const greenPI = this.greenAC / this.greenDC;
 
-    if (redPI < 0.0002 || greenPI < 0.0002) {
+    if (redPI < 0.0001 || greenPI < 0.0001) {
       this.redAC = 0;
       this.greenAC = 0;
     }
