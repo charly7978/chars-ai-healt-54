@@ -87,8 +87,7 @@ export class HeartBeatProcessor {
     const recentForGate = this.signalBuffer.slice(-60);
     const gSorted = [...recentForGate].sort((a, b) => a - b);
     const gRange = (gSorted[Math.floor(gSorted.length * 0.9)] ?? 0) - (gSorted[Math.floor(gSorted.length * 0.1)] ?? 0);
-    if (gRange < 0.8) {
-      // Signal too weak — noise-level, don't detect anything
+    if (gRange < 0.3) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
@@ -234,7 +233,7 @@ export class HeartBeatProcessor {
     const centered = recentSignal.map((v) => v - mean);
     const energy = centered.reduce((s, v) => s + v * v, 0);
 
-    if (energy < 2000) return { bpm: 0, score: 0 };
+    if (energy < 1200) return { bpm: 0, score: 0 };
 
     const minLag = Math.max(5, Math.round((sampleRate * 60) / 200));
     const maxLag = Math.min(centered.length - 8, Math.round((sampleRate * 60) / 38));
@@ -265,7 +264,7 @@ export class HeartBeatProcessor {
       }
     }
 
-    if (bestLag === 0 || bestScore < 0.35) return { bpm: 0, score: Math.max(0, bestScore) };
+    if (bestLag === 0 || bestScore < 0.2) return { bpm: 0, score: Math.max(0, bestScore) };
     return { bpm: (60 * sampleRate) / bestLag, score: this.clamp(bestScore, 0, 1) };
   }
 
@@ -340,27 +339,24 @@ export class HeartBeatProcessor {
     // === CANDIDATE SCORING ===
     let score = 0;
 
-    // Prominence gate: real PPG peaks have significant prominence
-    if (prominence < 3.0) return false;
+    // Prominence gate: reject flat noise but accept real PPG
+    if (prominence < 1.2) return false;
 
-    // Morphology gate: real PPG has fast rise, gradual fall
-    if (risingSlope < 1.0 || fallingSlope < 0.5) return false;
+    // Morphology gate: PPG has rising edge; be lenient for weak signals
+    if (risingSlope < 0.4) return false;
 
     // Prominence (0-30 points)
-    score += Math.min(30, prominence * 2);
+    score += Math.min(30, prominence * 3);
 
     // Morphology: rising + falling slope (0-20 points)
-    score += Math.min(10, risingSlope * 1.5);
-    score += Math.min(10, fallingSlope * 1.2);
-
-    // Zero crossing derivative is mandatory for real pulse morphology
-    if (!zeroCrossing) return false;
-
-    // Early peaks need explicit periodic support to avoid noise-triggered BPM
-    if (this.consecutivePeaks === 0 && this.periodicityScore < 0.4) return false;
+    score += Math.min(10, risingSlope * 2.5);
+    score += Math.min(10, fallingSlope * 2.0);
 
     // Zero crossing derivative (0-15 points)
-    score += 15;
+    if (zeroCrossing) score += 15;
+
+    // First peak: need some periodic support but not too strict (chicken-and-egg)
+    if (this.consecutivePeaks === 0 && this.periodicityScore < 0.2 && !zeroCrossing) return false;
 
     // Rhythm consistency (0-20 points)
     if (nearExpected) score += 20;
@@ -368,9 +364,9 @@ export class HeartBeatProcessor {
     // Periodicity boost (0-15 points)
     score += this.periodicityScore * 15;
 
-    // Threshold: always require minimum score of 40
-    const minScore = 40;
-    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.7 : 1.0) || prominence > Math.max(3.0, this.peakThreshold * 0.65);
+    // Threshold: require minimum score scaled by consecutive peaks
+    const minScore = this.consecutivePeaks < 2 ? 28 : 35;
+    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.6 : 0.85) || prominence > Math.max(1.5, this.peakThreshold * 0.5);
 
     const amplitudeValid = this.lastPeakValue > 0
       ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.05 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 12
