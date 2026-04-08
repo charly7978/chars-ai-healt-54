@@ -76,15 +76,15 @@ export class VitalSignsProcessor {
   
   // Historial de señal
   private signalHistory: number[] = [];
-  private readonly HISTORY_SIZE = 90; // 3 segundos @ 30fps
+  private readonly HISTORY_SIZE = 90;
   
   // RGB para SpO2
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   
   // Suavizado adaptativo para estabilidad SIN perder respuesta
   // Alpha más bajo = más suavizado = lecturas más estables
-  private readonly EMA_ALPHA_STABLE = 0.15;  // Para valores que cambian lento (SpO2, PA)
-  private readonly EMA_ALPHA_DYNAMIC = 0.25; // Para valores más variables (Glucosa, HRV)
+  private readonly EMA_ALPHA_STABLE = 0.20;
+  private readonly EMA_ALPHA_DYNAMIC = 0.30;
   
   // Historial para validación de tendencias
   private measurementHistory: { [key: string]: number[] } = {
@@ -98,7 +98,7 @@ export class VitalSignsProcessor {
   
   // Contador de pulsos válidos
   private validPulseCount: number = 0;
-  private readonly MIN_PULSES_REQUIRED = 2; // Reducido para inicio más rápido
+  private readonly MIN_PULSES_REQUIRED = 2;
   
   constructor() {
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
@@ -163,23 +163,13 @@ export class VitalSignsProcessor {
     const hasRealPulse = this.validateRealPulse(rrData);
     
     if (!hasRealPulse) {
-      this.measurements.spo2 = 0;
-      this.measurements.glucose = 0;
-      this.measurements.hemoglobin = 0;
-      this.measurements.systolicPressure = 0;
-      this.measurements.diastolicPressure = 0;
-      this.measurements.totalCholesterol = 0;
-      this.measurements.triglycerides = 0;
-      this.measurements.arrhythmiaCount = 0;
-      this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
-      this.measurements.lastArrhythmiaData = null;
-      this.lastBPConfidence = 'INSUFFICIENT';
-      this.lastBPFeatureQuality = 0;
+      // Don't zero-out values that are already accumulated — just stop updating
+      // This prevents flicker when signal dips momentarily
       return this.getFormattedResult();
     }
 
-    // Calcular signos vitales solo con pulso humano confirmado
-    if (this.signalHistory.length >= 30 && rrData && rrData.intervals.length >= 3) {
+    // Calcular signos vitales — lowered from 30 to 20 samples, 3 to 2 intervals
+    if (this.signalHistory.length >= 20 && rrData && rrData.intervals.length >= 2) {
       this.calculateVitalSigns(signalValue, rrData);
     }
 
@@ -215,7 +205,7 @@ export class VitalSignsProcessor {
   }
 
   private calculateSignalQuality(): number {
-    if (this.signalHistory.length < 30) return 0;
+    if (this.signalHistory.length < 20) return 0;
     
     const recent = this.signalHistory.slice(-60);
     const sorted = [...recent].sort((a, b) => a - b);
@@ -223,21 +213,21 @@ export class VitalSignsProcessor {
     const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
     const range = p90 - p10;
     
-    if (range < 0.3) return 3;
+    if (range < 0.2) return 2;
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
     const snr = range / (stdDev + 0.05);
     
-    return Math.min(100, Math.max(0, snr * 14));
+    return Math.min(100, Math.max(0, snr * 16));
   }
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
-    if (sq >= 65 && this.validPulseCount >= 5) return 'HIGH';
-    if (sq >= 40 && this.validPulseCount >= 3) return 'MEDIUM';
-    if (sq >= 20 && this.validPulseCount >= 2) return 'LOW';
+    if (sq >= 55 && this.validPulseCount >= 4) return 'HIGH';
+    if (sq >= 30 && this.validPulseCount >= 3) return 'MEDIUM';
+    if (sq >= 12 && this.validPulseCount >= 2) return 'LOW';
     return 'INVALID';
   }
 
