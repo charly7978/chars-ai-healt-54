@@ -62,7 +62,7 @@ const CONFIG = {
     DICHROTIC_NOTCH: '#a78bfa',
     IBI_TEXT: '#67e8f9',
   }
-} as const;
+};
 
 const PPGSignalMeter = ({ 
   value, 
