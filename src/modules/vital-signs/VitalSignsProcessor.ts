@@ -274,11 +274,12 @@ export class VitalSignsProcessor {
     signalValue: number, 
     rrData: { intervals: number[], lastPeakTime: number | null }
   ): void {
-    const minQualityForCalculation = 15;
+    const minQualityForCalculation = 10;
     if (this.measurements.signalQuality < minQualityForCalculation) {
       return;
     }
     
+    // SpO2 — lowest gate, always try first
     const spo2 = this.calculateSpO2Raw();
     if (spo2 !== 0 && spo2 > 70 && spo2 < 100) {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
@@ -290,7 +291,7 @@ export class VitalSignsProcessor {
     
     for (const cycle of cycles) {
       const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality >= 0.45) {
+      if (features && features.quality >= 0.30) {  // lowered from 0.45
         validCycleFeatures.push(features);
       }
     }
@@ -300,19 +301,23 @@ export class VitalSignsProcessor {
     const hr = avgRR > 0 ? 60000 / avgRR : 0;
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
 
-    const bpEstimate = this.bloodPressureProcessor.estimate(
-      this.signalHistory, validRR, 30
-    );
-    this.lastBPConfidence = bpEstimate.confidence;
-    this.lastBPFeatureQuality = bpEstimate.featureQuality;
-    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
-      this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
-      this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
-      this.updateHistory('systolic', bpEstimate.systolic);
-      this.updateHistory('diastolic', bpEstimate.diastolic);
+    // BP — try with 2+ valid RR
+    if (validRR.length >= 2) {
+      const bpEstimate = this.bloodPressureProcessor.estimate(
+        this.signalHistory, validRR, 30
+      );
+      this.lastBPConfidence = bpEstimate.confidence;
+      this.lastBPFeatureQuality = bpEstimate.featureQuality;
+      if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+        this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
+        this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
+        this.updateHistory('systolic', bpEstimate.systolic);
+        this.updateHistory('diastolic', bpEstimate.diastolic);
+      }
     }
 
-    if (validCycleFeatures.length >= 3 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 25) {
+    // Glucose, Hemoglobin, Lipids — need cycle features
+    if (validCycleFeatures.length >= 2 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 15) {
       const medianF = this.medianCycleFeatures(validCycleFeatures);
       
       const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
@@ -334,7 +339,8 @@ export class VitalSignsProcessor {
       }
     }
 
-    if (validRR.length >= 4 && this.measurements.signalQuality >= 20) {
+    // Arrhythmia — need 3+ valid RR
+    if (validRR.length >= 3 && this.measurements.signalQuality >= 15) {
       const arrhythmiaResult = this.arrhythmiaProcessor.processRRData({ ...rrData, intervals: validRR });
       this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
       this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
