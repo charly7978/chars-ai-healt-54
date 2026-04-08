@@ -339,17 +339,21 @@ export class VitalSignsProcessor {
       }
     }
 
-    // Arrhythmia — need 3+ valid RR
-    if (validRR.length >= 3 && this.measurements.signalQuality >= 15) {
-      const arrhythmiaResult = this.arrhythmiaProcessor.processRRData({ ...rrData, intervals: validRR });
-      this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
-      this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
-      
-      const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
-      if (parts.length > 1) {
-        this.measurements.arrhythmiaCount = parseInt(parts[1]) || 0;
-      }
-    }
+    // Arrhythmia — solo con RR robustos y SQI suficiente
+    const arrhythmiaRR = validRR.slice(-10);
+    const arrhythmiaInput = (
+      arrhythmiaRR.length >= 5 &&
+      this.measurements.signalQuality >= 25 &&
+      hr >= 35 &&
+      hr <= 180
+    ) ? { ...rrData, intervals: arrhythmiaRR } : undefined;
+
+    const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(arrhythmiaInput);
+    this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
+    this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
+    
+    const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
+    this.measurements.arrhythmiaCount = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
   }
 
   /**
@@ -693,6 +697,10 @@ export class VitalSignsProcessor {
     const result = this.getFormattedResult();
     this.signalHistory = [];
     this.validPulseCount = 0;
+    this.arrhythmiaProcessor.reset();
+    this.measurements.arrhythmiaCount = 0;
+    this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
+    this.measurements.lastArrhythmiaData = null;
     return result.spo2 !== 0 ? result : null;
   }
 
