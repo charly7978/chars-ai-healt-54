@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2 } from "lucide-react";
+import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2, Brain, Loader2 } from "lucide-react";
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
@@ -7,6 +7,7 @@ import { useSignalProcessor } from "@/hooks/useSignalProcessor";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
+import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
@@ -93,6 +94,8 @@ const Index = () => {
   } = useVitalSignsProcessor();
   
   const { saveMeasurement } = useSaveMeasurement();
+  const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
+  const [showAIAnalysis, setShowAIAnalysis] = useState(false);
   const [isCalibrated, setIsCalibrated] = useState(false);
 
   // AUTO-CARGAR CALIBRACIÓN GUARDADA AL INICIAR
@@ -863,11 +866,62 @@ const Index = () => {
                         </div>
                       </div>
                     </div>
+                    {/* Botón Análisis AI */}
+                    <button
+                      onClick={() => {
+                        analyzeVitals({ heartRate, vitalSigns, quality: lastSignal?.quality || 0 });
+                        setShowAIAnalysis(true);
+                      }}
+                      disabled={isAnalyzing}
+                      className="w-full mt-2 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold text-sm transition-all disabled:opacity-50"
+                    >
+                      {isAnalyzing ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> Analizando...</>
+                      ) : (
+                        <><Brain className="w-4 h-4" /> Análisis AI de Salud</>
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>
             );
           })()}
+
+          {/* MODAL ANÁLISIS AI */}
+          {showAIAnalysis && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
+              <div className="bg-slate-950 border border-slate-700/50 rounded-2xl max-w-sm w-[92%] max-h-[80vh] shadow-2xl overflow-hidden flex flex-col">
+                <div className="px-4 py-3 bg-purple-500/10 border-b border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Brain className="w-5 h-5 text-purple-400" />
+                    <h3 className="text-white text-sm font-bold">Análisis AI de Salud</h3>
+                  </div>
+                  <button
+                    onClick={() => { setShowAIAnalysis(false); clearAnalysis(); }}
+                    className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors"
+                  >
+                    <X className="w-4 h-4 text-slate-400" />
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4">
+                  {isAnalyzing ? (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3">
+                      <Loader2 className="w-8 h-8 text-purple-400 animate-spin" />
+                      <p className="text-slate-400 text-sm">Analizando tus signos vitales...</p>
+                    </div>
+                  ) : analysis ? (
+                    <div className="text-slate-300 text-xs leading-relaxed whitespace-pre-wrap">
+                      {analysis}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 gap-3">
+                      <p className="text-slate-500 text-sm">No se pudo generar el análisis.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
