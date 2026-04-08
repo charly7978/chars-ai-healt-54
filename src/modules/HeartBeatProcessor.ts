@@ -9,8 +9,8 @@
  * 4. Ventanas adaptativas: cortas para señal débil, largas para estable
  */
 export class HeartBeatProcessor {
-  private readonly MIN_PEAK_INTERVAL_MS = 280;
-  private readonly MAX_PEAK_INTERVAL_MS = 2200;
+  private readonly MIN_PEAK_INTERVAL_MS = 330;
+  private readonly MAX_PEAK_INTERVAL_MS = 2000;
 
   private signalBuffer: number[] = [];
   private derivativeBuffer: number[] = [];
@@ -128,10 +128,10 @@ export class HeartBeatProcessor {
             this.smoothBPM = instantBPM;
           } else {
             const relativeDiff = Math.abs(instantBPM - this.smoothBPM) / Math.max(1, this.smoothBPM);
-            let alpha = 0.3;
-            if (relativeDiff > 0.35) alpha = 0.12;
-            else if (relativeDiff > 0.2) alpha = 0.2;
-            if (this.consecutivePeaks < 4) alpha = Math.max(0.1, alpha - 0.06);
+            let alpha = 0.25;
+            if (relativeDiff > 0.30) alpha = 0.08;
+            else if (relativeDiff > 0.18) alpha = 0.15;
+            if (this.consecutivePeaks < 5) alpha = Math.max(0.06, alpha - 0.08);
 
             this.smoothBPM = this.smoothBPM * (1 - alpha) + instantBPM * alpha;
           }
@@ -153,13 +153,13 @@ export class HeartBeatProcessor {
     // BLOCK: never show frequency-only BPM without at least 1 confirmed time-domain peak
     let displayBPM = this.smoothBPM;
 
-    if (this.frequencyBPM > 0 && this.consecutivePeaks >= 1) {
-      if (this.consecutivePeaks < 3 || this.signalQualityIndex < 30) {
-        // Weak signal — blend equally
-        displayBPM = displayBPM * 0.5 + this.frequencyBPM * 0.5;
+    if (this.frequencyBPM > 0 && this.consecutivePeaks >= 3) {
+      if (this.consecutivePeaks < 5 || this.signalQualityIndex < 35) {
+        // Weak signal — blend with caution
+        displayBPM = displayBPM * 0.65 + this.frequencyBPM * 0.35;
       } else {
         // Strong signal — trust peaks more
-        displayBPM = displayBPM * 0.85 + this.frequencyBPM * 0.15;
+        displayBPM = displayBPM * 0.88 + this.frequencyBPM * 0.12;
       }
     }
     // If no peaks confirmed yet, displayBPM stays 0 — no guessing
@@ -333,30 +333,30 @@ export class HeartBeatProcessor {
     const fallingSlope = center - recentNormalized[8];
     const expectedRR = this.getExpectedRR();
     const nearExpected = expectedRR > 0 &&
-      timeSinceLastPeak >= expectedRR * 0.45 &&
-      timeSinceLastPeak <= expectedRR * 1.6;
+      timeSinceLastPeak >= expectedRR * 0.55 &&
+      timeSinceLastPeak <= expectedRR * 1.45;
 
     // === CANDIDATE SCORING ===
     let score = 0;
 
     // Prominence gate: reject flat noise but accept real PPG
-    if (prominence < 1.8) return false;
+    if (prominence < 2.2) return false;
 
-    // Morphology gate: PPG has rising edge; be lenient for weak signals
-    if (risingSlope < 0.6) return false;
+    // Morphology gate: PPG has rising edge
+    if (risingSlope < 0.8) return false;
 
     // Prominence (0-30 points)
-    score += Math.min(30, prominence * 3);
+    score += Math.min(30, prominence * 2.5);
 
     // Morphology: rising + falling slope (0-20 points)
-    score += Math.min(10, risingSlope * 2.5);
-    score += Math.min(10, fallingSlope * 2.0);
+    score += Math.min(10, risingSlope * 2.0);
+    score += Math.min(10, fallingSlope * 1.8);
 
     // Zero crossing derivative (0-15 points)
     if (zeroCrossing) score += 15;
 
-    // First peak: need some periodic support but not too strict (chicken-and-egg)
-    if (this.consecutivePeaks === 0 && this.periodicityScore < 0.2 && !zeroCrossing) return false;
+    // First peak: need periodic support (chicken-and-egg)
+    if (this.consecutivePeaks === 0 && this.periodicityScore < 0.25 && !zeroCrossing) return false;
 
     // Rhythm consistency (0-20 points)
     if (nearExpected) score += 20;
@@ -365,11 +365,11 @@ export class HeartBeatProcessor {
     score += this.periodicityScore * 15;
 
     // Threshold: require minimum score scaled by consecutive peaks
-    const minScore = this.consecutivePeaks < 2 ? 32 : 38;
-    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.6 : 0.85) || prominence > Math.max(1.5, this.peakThreshold * 0.5);
+    const minScore = this.consecutivePeaks < 3 ? 36 : 42;
+    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.65 : 0.9) || prominence > Math.max(2.0, this.peakThreshold * 0.55);
 
     // Falling slope must also be positive for real PPG morphology
-    if (fallingSlope < 0.2) return false;
+    if (fallingSlope < 0.35) return false;
 
     const amplitudeValid = this.lastPeakValue > 0
       ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.08 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 8
