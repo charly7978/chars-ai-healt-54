@@ -118,7 +118,7 @@ export const useHeartBeatProcessor = () => {
 
     setSignalQuality(roundedSQI);
 
-    if (result.bpm > 0 && result.confidence >= 0.25 && result.sqi >= 30) {
+    if (result.bpm > 0 && (result.confidence >= 0.15 || result.sqi >= 40)) {
       setCurrentBPM(Math.round(result.bpm));
       setConfidence(result.confidence);
     } else if (result.confidence > 0) {

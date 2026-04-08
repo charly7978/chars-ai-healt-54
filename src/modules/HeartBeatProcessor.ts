@@ -141,20 +141,18 @@ export class HeartBeatProcessor {
       this.consecutivePeaks = Math.max(0, this.consecutivePeaks - 1);
     }
 
-    // === FUSIÓN TIEMPO + FRECUENCIA (conservadora) ===
+    // === FUSIÓN TIEMPO + FRECUENCIA ===
     let displayBPM = this.smoothBPM;
 
     if (this.frequencyBPM > 0) {
-      if (displayBPM === 0 && this.consecutivePeaks === 0) {
-        // No publish frequency-only BPM until at least 1 peak confirmed
-        displayBPM = 0;
-      } else if (displayBPM === 0 && this.consecutivePeaks > 0) {
+      if (displayBPM === 0) {
+        // Sin picos aún — usar frecuencia pura
         displayBPM = this.frequencyBPM;
-      } else if (this.consecutivePeaks < 4 || this.signalQualityIndex < 35) {
-        // Señal débil — blend conservador
-        displayBPM = displayBPM * 0.65 + this.frequencyBPM * 0.35;
+      } else if (this.consecutivePeaks < 3 || this.signalQualityIndex < 30) {
+        // Señal débil — ponderar más la frecuencia
+        displayBPM = displayBPM * 0.5 + this.frequencyBPM * 0.5;
       } else {
-        // Señal fuerte — confiar en picos
+        // Señal fuerte — confiar más en picos
         displayBPM = displayBPM * 0.85 + this.frequencyBPM * 0.15;
       }
     }
@@ -309,8 +307,7 @@ export class HeartBeatProcessor {
     if (n < 11 || dn < 6) return false;
 
     const deriv = this.derivativeBuffer.slice(-6);
-    // Require clear zero-crossing (positive → negative derivative)
-    const zeroCrossing = (deriv[2] > 0.3 && deriv[4] <= 0) || (deriv[3] > 0.3 && deriv[5] <= 0);
+    const zeroCrossing = (deriv[2] > 0 && deriv[3] <= 0) || (deriv[3] > 0 && deriv[4] <= 0);
 
     const windowLen = this.consecutivePeaks < 3 ? 90 : 150;
     const recentNormalized = this.normalizeWindow(this.signalBuffer.slice(-11), windowLen);
@@ -319,38 +316,28 @@ export class HeartBeatProcessor {
     const neighborhoodMin = Math.min(...recentNormalized);
     const prominence = center - neighborhoodMin;
 
-    // Strict local maximum: must be strictly greater than both immediate neighbors
     const isLocalMax =
-      center > recentNormalized[4] &&
+      center >= recentNormalized[4] &&
       center > recentNormalized[6] &&
       center >= recentNormalized[3] &&
       center >= recentNormalized[7];
 
     const risingSlope = center - recentNormalized[2];
     const fallingSlope = center - recentNormalized[8];
-    
-    // Both slopes must be positive (true peak morphology)
-    if (risingSlope <= 0.5 || fallingSlope <= 0.2) return false;
-
     const expectedRR = this.getExpectedRR();
     const nearExpected = expectedRR > 0 &&
-      timeSinceLastPeak >= expectedRR * 0.55 &&
-      timeSinceLastPeak <= expectedRR * 1.5;
+      timeSinceLastPeak >= expectedRR * 0.45 &&
+      timeSinceLastPeak <= expectedRR * 1.6;
 
-    // Physiological guard: reject if interval implies BPM outside 35-220
-    const impliedBPM = 60000 / timeSinceLastPeak;
-    if (this.lastPeakTime > 0 && (impliedBPM < 35 || impliedBPM > 220)) return false;
-
-    // === CANDIDATE SCORING (conservative) ===
+    // === CANDIDATE SCORING ===
     let score = 0;
 
-    // Prominence (0-25 points) — require meaningful prominence
-    if (prominence < 1.5) return false; // Hard minimum
-    score += Math.min(25, prominence * 1.5);
+    // Prominence (0-30 points)
+    score += Math.min(30, prominence * 2);
 
     // Morphology: rising + falling slope (0-20 points)
-    score += Math.min(10, risingSlope * 1.2);
-    score += Math.min(10, fallingSlope * 1.0);
+    score += Math.min(10, risingSlope * 1.5);
+    score += Math.min(10, fallingSlope * 1.2);
 
     // Zero crossing derivative (0-15 points)
     if (zeroCrossing) score += 15;
@@ -358,23 +345,18 @@ export class HeartBeatProcessor {
     // Rhythm consistency (0-20 points)
     if (nearExpected) score += 20;
 
-    // Periodicity boost (0-10 points) — reduced weight
-    score += this.periodicityScore * 10;
+    // Periodicity boost (0-15 points)
+    score += this.periodicityScore * 15;
 
-    // Conservative thresholds
-    const minScore = this.consecutivePeaks < 3 ? 35 : 40;
-    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.75 : 1.0) ||
-      prominence > Math.max(2.0, this.peakThreshold * 0.7);
+    // Thresholds: lower for weak signals
+    const minScore = this.consecutivePeaks < 2 ? 25 : 35;
+    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.7 : 1.0) || prominence > Math.max(1.0, this.peakThreshold * 0.65);
 
-    // Amplitude consistency with previous peak
     const amplitudeValid = this.lastPeakValue > 0
-      ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.12 &&
-        (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 8
+      ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.05 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 12
       : true;
 
-    const isPeak = isLocalMax && amplitudeValid &&
-      timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS &&
-      score >= minScore && thresholdCheck;
+    const isPeak = isLocalMax && amplitudeValid && timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS && score >= minScore && thresholdCheck;
 
     if (isPeak) {
       this.lastPeakValue = center;
