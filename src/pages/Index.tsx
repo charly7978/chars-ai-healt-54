@@ -94,6 +94,8 @@ const Index = () => {
   } = useVitalSignsProcessor();
   
   const { saveMeasurement } = useSaveMeasurement();
+  const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
+  const [showAIAnalysis, setShowAIAnalysis] = useState(false);
   const [isCalibrated, setIsCalibrated] = useState(false);
 
   // AUTO-CARGAR CALIBRACIÓN GUARDADA AL INICIAR
