@@ -653,7 +653,7 @@ const PPGSignalMeter = ({
         ctx.fillText('HISTORIAL DE LATIDOS', startX + totalWidth / 2, histY - dotRadius - 1);
         
         // Puntos
-        history.forEach((beat, i) => {
+        beatHistory.forEach((beat, i) => {
           const cx = startX + i * dotSpacing + dotSpacing / 2;
           const cy = histY + 6;
           
