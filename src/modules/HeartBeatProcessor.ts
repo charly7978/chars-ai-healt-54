@@ -87,7 +87,7 @@ export class HeartBeatProcessor {
     const recentForGate = this.signalBuffer.slice(-60);
     const gSorted = [...recentForGate].sort((a, b) => a - b);
     const gRange = (gSorted[Math.floor(gSorted.length * 0.9)] ?? 0) - (gSorted[Math.floor(gSorted.length * 0.1)] ?? 0);
-    if (gRange < 0.3) {
+    if (gRange < 0.5) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
@@ -233,7 +233,7 @@ export class HeartBeatProcessor {
     const centered = recentSignal.map((v) => v - mean);
     const energy = centered.reduce((s, v) => s + v * v, 0);
 
-    if (energy < 1200) return { bpm: 0, score: 0 };
+    if (energy < 1800) return { bpm: 0, score: 0 };
 
     const minLag = Math.max(5, Math.round((sampleRate * 60) / 200));
     const maxLag = Math.min(centered.length - 8, Math.round((sampleRate * 60) / 38));
@@ -340,10 +340,10 @@ export class HeartBeatProcessor {
     let score = 0;
 
     // Prominence gate: reject flat noise but accept real PPG
-    if (prominence < 1.2) return false;
+    if (prominence < 1.8) return false;
 
     // Morphology gate: PPG has rising edge; be lenient for weak signals
-    if (risingSlope < 0.4) return false;
+    if (risingSlope < 0.6) return false;
 
     // Prominence (0-30 points)
     score += Math.min(30, prominence * 3);
@@ -365,11 +365,14 @@ export class HeartBeatProcessor {
     score += this.periodicityScore * 15;
 
     // Threshold: require minimum score scaled by consecutive peaks
-    const minScore = this.consecutivePeaks < 2 ? 28 : 35;
+    const minScore = this.consecutivePeaks < 2 ? 32 : 38;
     const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.6 : 0.85) || prominence > Math.max(1.5, this.peakThreshold * 0.5);
 
+    // Falling slope must also be positive for real PPG morphology
+    if (fallingSlope < 0.2) return false;
+
     const amplitudeValid = this.lastPeakValue > 0
-      ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.05 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 12
+      ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.08 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 8
       : true;
 
     const isPeak = isLocalMax && amplitudeValid && timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS && score >= minScore && thresholdCheck;
