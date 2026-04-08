@@ -36,6 +36,19 @@ export class CircularBuffer {
     return this.buffer.length;
   }
 
+  /**
+   * Marca retroactivamente como arritmia todos los puntos
+   * desde hace `durationMs` milisegundos hasta el presente.
+   * Esto permite colorear el latido completo (subida + pico).
+   */
+  markArrhythmiaBack(durationMs: number): void {
+    const cutoff = Date.now() - durationMs;
+    for (let i = this.buffer.length - 1; i >= 0; i--) {
+      if (this.buffer[i].time < cutoff) break;
+      this.buffer[i].isArrhythmia = true;
+    }
+  }
+
   clear(): void {
     this.buffer = [];
   }
