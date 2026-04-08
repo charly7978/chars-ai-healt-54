@@ -117,27 +117,24 @@ export const useHeartBeatProcessor = () => {
     const lastPeakTime = processorRef.current.getLastPeakTime();
     const rrData = { intervals: rrIntervals, lastPeakTime: lastPeakTime || null };
     const roundedSQI = Math.round(result.sqi);
-    const publishableSignal = contactState === 'STABLE_CONTACT' && roundedSQI >= 20;
-    const publishableBPM = publishableSignal && result.confidence >= 0.25 && rrIntervals.length >= 2 && result.bpm > 0;
 
-    if (publishableBPM) {
+    setSignalQuality(roundedSQI);
+
+    if (result.bpm > 0 && result.confidence >= 0.15) {
       setCurrentBPM(Math.round(result.bpm));
       setConfidence(result.confidence);
-      setSignalQuality(roundedSQI);
-    } else {
-      if (currentBPMRef.current !== 0) setCurrentBPM(0);
-      setConfidence(publishableSignal ? result.confidence : 0);
-      setSignalQuality(publishableSignal ? roundedSQI : 0);
+    } else if (result.confidence > 0) {
+      setConfidence(result.confidence);
     }
 
     return {
-      bpm: publishableBPM ? Math.round(result.bpm) : 0,
-      confidence: publishableSignal ? result.confidence : 0,
-      isPeak: publishableBPM ? result.isPeak : false,
-      filteredValue: publishableSignal ? result.filteredValue : 0,
-      arrhythmiaCount: publishableSignal ? result.arrhythmiaCount : 0,
-      signalQuality: publishableSignal ? roundedSQI : 0,
-      rrData: publishableSignal ? rrData : { intervals: [], lastPeakTime: null },
+      bpm: Math.round(result.bpm),
+      confidence: result.confidence,
+      isPeak: result.isPeak,
+      filteredValue: result.filteredValue,
+      arrhythmiaCount: result.arrhythmiaCount,
+      signalQuality: roundedSQI,
+      rrData,
     };
   }, []);
 

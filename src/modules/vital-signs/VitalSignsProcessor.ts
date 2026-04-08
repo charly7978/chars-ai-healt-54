@@ -234,24 +234,21 @@ export class VitalSignsProcessor {
     const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
     const range = p90 - p10;
     
-    if (range < 0.8) return 0;
+    if (range < 0.3) return 3;
     
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
     const stdDev = Math.sqrt(variance);
     const snr = range / (stdDev + 0.05);
-    const snrScore = Math.min(70, snr * 14);
-    const amplitudeScore = Math.min(20, range * 4);
-    const stabilityPenalty = stdDev > range * 0.85 ? 15 : 0;
     
-    return Math.min(100, Math.max(0, snrScore + amplitudeScore - stabilityPenalty));
+    return Math.min(100, Math.max(0, snr * 14));
   }
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
-    if (sq >= 75 && this.validPulseCount >= 6) return 'HIGH';
-    if (sq >= 55 && this.validPulseCount >= 5) return 'MEDIUM';
-    if (sq >= 35 && this.validPulseCount >= 3) return 'LOW';
+    if (sq >= 65 && this.validPulseCount >= 5) return 'HIGH';
+    if (sq >= 40 && this.validPulseCount >= 3) return 'MEDIUM';
+    if (sq >= 20 && this.validPulseCount >= 2) return 'LOW';
     return 'INVALID';
   }
 
@@ -298,7 +295,7 @@ export class VitalSignsProcessor {
     signalValue: number, 
     rrData: { intervals: number[], lastPeakTime: number | null }
   ): void {
-    const minQualityForCalculation = 35;
+    const minQualityForCalculation = 15;
     if (this.measurements.signalQuality < minQualityForCalculation) {
       return;
     }
@@ -314,12 +311,12 @@ export class VitalSignsProcessor {
     
     for (const cycle of cycles) {
       const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality >= 0.65) {
+      if (features && features.quality >= 0.45) {
         validCycleFeatures.push(features);
       }
     }
 
-    const validRR = rrData.intervals.filter(i => i >= 280 && i <= 2200);
+    const validRR = rrData.intervals.filter(i => i >= 270 && i <= 2200);
     const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
     const hr = avgRR > 0 ? 60000 / avgRR : 0;
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
@@ -329,14 +326,14 @@ export class VitalSignsProcessor {
     );
     this.lastBPConfidence = bpEstimate.confidence;
     this.lastBPFeatureQuality = bpEstimate.featureQuality;
-    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT' && bpEstimate.featureQuality >= 45) {
+    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
       this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
       this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
       this.updateHistory('systolic', bpEstimate.systolic);
       this.updateHistory('diastolic', bpEstimate.diastolic);
     }
 
-    if (validCycleFeatures.length >= 5 && hr >= 40 && hr <= 180 && this.measurements.signalQuality >= 55) {
+    if (validCycleFeatures.length >= 3 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 25) {
       const medianF = this.medianCycleFeatures(validCycleFeatures);
       
       const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
@@ -358,7 +355,7 @@ export class VitalSignsProcessor {
       }
     }
 
-    if (validRR.length >= 5 && this.measurements.signalQuality >= 45) {
+    if (validRR.length >= 4 && this.measurements.signalQuality >= 20) {
       const arrhythmiaResult = this.arrhythmiaProcessor.processRRData({ ...rrData, intervals: validRR });
       this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
       this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
