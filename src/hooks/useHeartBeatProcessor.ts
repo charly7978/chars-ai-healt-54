@@ -77,22 +77,11 @@ export const useHeartBeatProcessor = () => {
 
     const currentTime = timestamp ?? Date.now();
 
-    // Throttle to ~80fps max
-    if (currentTime - lastProcessTimeRef.current < 12) {
-      return {
-        bpm: currentBPMRef.current, confidence: confidenceRef.current,
-        isPeak: false, filteredValue: 0, arrhythmiaCount: 0,
-        signalQuality: signalQualityRef.current,
-        rrData: { intervals: [], lastPeakTime: null },
-      };
-    }
-    lastProcessTimeRef.current = currentTime;
-
     // === CONTACT STATE HANDLING ===
+    // NO_CONTACT must bypass throttle so stale BPM cannot leak into the UI
     if (contactState === 'NO_CONTACT') {
       noContactFramesRef.current += 1;
 
-      // Only reset after sustained NO_CONTACT (aligned with PPGSignalProcessor)
       if (noContactFramesRef.current >= NO_CONTACT_RESET_THRESHOLD) {
         processorRef.current.reset();
       }
@@ -107,6 +96,17 @@ export const useHeartBeatProcessor = () => {
         rrData: { intervals: [], lastPeakTime: null },
       };
     }
+
+    // Throttle to ~80fps max
+    if (currentTime - lastProcessTimeRef.current < 12) {
+      return {
+        bpm: currentBPMRef.current, confidence: confidenceRef.current,
+        isPeak: false, filteredValue: 0, arrhythmiaCount: 0,
+        signalQuality: signalQualityRef.current,
+        rrData: { intervals: [], lastPeakTime: null },
+      };
+    }
+    lastProcessTimeRef.current = currentTime;
 
     // UNSTABLE_CONTACT or STABLE_CONTACT — process normally
     noContactFramesRef.current = 0;

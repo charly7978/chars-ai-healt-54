@@ -66,8 +66,16 @@ export const useVitalSignsProcessor = () => {
     
     const result = processorRef.current.processSignal(value, rrData);
     
-    // Guardar resultados válidos
-    if (result.spo2 > 0 || result.arrhythmiaCount > 0) {
+    // Guardar la última ventana realmente válida para cierre/exportación
+    if (
+      result.measurementConfidence !== 'INVALID' ||
+      result.pressure.confidence !== 'INSUFFICIENT' ||
+      result.spo2 > 0 ||
+      result.glucose > 0 ||
+      result.hemoglobin > 0 ||
+      result.lipids.totalCholesterol > 0 ||
+      result.arrhythmiaCount > 0
+    ) {
       setLastValidResults(result);
     }
     
@@ -75,13 +83,14 @@ export const useVitalSignsProcessor = () => {
   }, []);
 
   const reset = useCallback(() => {
-    if (!processorRef.current) return null;
+    if (!processorRef.current) return lastValidResults;
     const savedResults = processorRef.current.reset();
-    if (savedResults) {
-      setLastValidResults(savedResults);
+    const resultToReturn = savedResults ?? lastValidResults;
+    if (resultToReturn) {
+      setLastValidResults(resultToReturn);
     }
-    return savedResults;
-  }, []);
+    return resultToReturn;
+  }, [lastValidResults]);
   
   const calibrateBP = useCallback((systolic: number, diastolic: number) => {
     processorRef.current?.calibrateBP(systolic, diastolic);

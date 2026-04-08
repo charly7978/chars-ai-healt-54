@@ -94,7 +94,7 @@ export class BloodPressureProcessor {
       confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
     };
 
-    if (signalBuffer.length < 60 || rrIntervals.length < 3) {
+    if (signalBuffer.length < 90 || rrIntervals.length < 5) {
       return insufficient;
     }
 
