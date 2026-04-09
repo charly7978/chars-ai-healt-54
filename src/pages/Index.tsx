@@ -561,17 +561,16 @@ const Index = () => {
         });
       }
 
+      const hasReliableRR = heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.08;
       const vitals = processVitalSigns(
         lastSignal.filteredValue,
-        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.15
-          ? heartBeatResult.rrData
-          : undefined,
+        hasReliableRR ? heartBeatResult.rrData : undefined,
         masterQuality
       );
 
       setVitalSigns(vitals);
 
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.15 && vitals.measurementConfidence !== 'INVALID') {
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.08 && vitals.measurementConfidence !== 'INVALID') {
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
         if (arrhythmiaStatus) {
           lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;

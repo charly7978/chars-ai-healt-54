@@ -249,7 +249,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             if (caps?.exposureCompensation) {
               const minExp = caps.exposureCompensation.min ?? -2;
               const maxExp = caps.exposureCompensation.max ?? 2;
-              const targetExp = Math.max(minExp, Math.min(maxExp, -0.35));
+              const targetExp = Math.max(minExp, Math.min(maxExp, -0.15));
               lockConstraints.push({ exposureCompensation: targetExp });
               console.log(`📷 Exposición compensada: ${targetExp}`);
             }
@@ -261,7 +261,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             if (caps?.iso) {
               const minISO = caps.iso.min ?? 50;
               const maxISO = caps.iso.max ?? 400;
-              const targetISO = Math.max(minISO, Math.min(maxISO, 140));
+              const targetISO = Math.max(minISO, Math.min(maxISO, 180));
               lockConstraints.push({ iso: targetISO });
               console.log(`📷 ISO fijado: ${targetISO}`);
             }
