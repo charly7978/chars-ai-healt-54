@@ -196,8 +196,8 @@ export class HeartBeatProcessor {
     // === CONFIDENCE ===
     const confidence = this.computeConfidence();
 
-    // Only output BPM after sufficient confirmed peaks
-    const displayBPM = this.consecutiveValidPeaks >= 2 ? this.smoothBPM : 0;
+    // Show BPM after first confirmed RR interval
+    const displayBPM = this.rrIntervals.length >= 1 && this.smoothBPM > 0 ? this.smoothBPM : 0;
 
     return {
       bpm: displayBPM,
