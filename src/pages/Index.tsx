@@ -473,7 +473,8 @@ const Index = () => {
     const heartBeatResult = processHeartBeat(
       signalValue,
       contactState,
-      lastSignal.timestamp
+      lastSignal.timestamp,
+      lastSignal.quality || 0
     );
 
     setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
