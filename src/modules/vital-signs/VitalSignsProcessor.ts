@@ -139,7 +139,8 @@ export class VitalSignsProcessor {
 
   processSignal(
     signalValue: number, 
-    rrData?: { intervals: number[], lastPeakTime: number | null }
+    rrData?: { intervals: number[], lastPeakTime: number | null },
+    masterQuality?: number
   ): VitalSignsResult {
     
     // Actualizar historial
@@ -156,8 +157,8 @@ export class VitalSignsProcessor {
       }
     }
 
-    // SQI viene del PPGSignalProcessor maestro (via quality del signal)
-    // No recalcular aquí — evitar gates duplicados
+    // SQI maestro viene del PPGSignalProcessor — no recalcular aquí
+    this.measurements.signalQuality = masterQuality ?? 0;
 
     // Validar pulso real — solo verifica que los RR intervals sean fisiológicos
     const hasRealPulse = this.validateRealPulse(rrData);
