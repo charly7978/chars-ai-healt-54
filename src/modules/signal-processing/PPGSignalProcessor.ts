@@ -664,7 +664,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redDominance = this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2;
 
     // Gate: no perfusion = no real signal
-    if (perfusionIndex < 0.005) return Math.min(15, this.smoothedCoverage * 20);
+    if (perfusionIndex < this.MIN_HUMAN_PI) return Math.min(10, this.smoothedCoverage * 15);
     // Gate: red must dominate (hemoglobin signature)
     if (redDominance < 15) return 0;
 
@@ -681,17 +681,85 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const stdDev = Math.sqrt(variance);
     const snr = range / (stdDev + 0.15);
 
-    const snrScore = Math.min(35, snr * 11);
-    const perfusionScore = Math.min(25, perfusionIndex * 12);
-    const coverageScore = Math.min(18, this.smoothedCoverage * 30);
-    const fingerScore = Math.min(18, this.smoothedFingerScore * 26);
+    // === AUTOCORRELATION — detect real cardiac periodicity ===
+    const periodicityScore = this.computeAutocorrelationPeriodicity(recent, mean);
+
+    const snrScore = Math.min(30, snr * 10);
+    const perfusionScore = Math.min(20, perfusionIndex * 10);
+    const coverageScore = Math.min(12, this.smoothedCoverage * 20);
+    const fingerScore = Math.min(12, this.smoothedFingerScore * 18);
     const motionPenalty = Math.min(20, this.motionScore * 16);
+    // Periodicity is now the most important factor (up to 26 pts)
+    const periodicityPts = Math.min(26, periodicityScore * 26);
 
-    // Bonus for stable contact + pulsatility evidence
-    const stabilityBonus = this.contactState === 'STABLE_CONTACT' ? 5 : 0;
-    const pulsatilityBonus = (this.redAC > 0 || this.greenAC > 0) ? 4 : 0;
+    const stabilityBonus = this.contactState === 'STABLE_CONTACT' ? 3 : 0;
 
-    return this.clamp(snrScore + perfusionScore + coverageScore + fingerScore - motionPenalty + stabilityBonus + pulsatilityBonus, 0, 100);
+    return this.clamp(
+      snrScore + perfusionScore + coverageScore + fingerScore + periodicityPts - motionPenalty + stabilityBonus,
+      0, 100
+    );
+  }
+
+  /**
+   * AUTOCORRELATION-BASED PERIODICITY DETECTOR
+   * Checks if the filtered PPG signal has a dominant periodic component
+   * in the human cardiac range (0.5–3.5 Hz = 30–210 BPM).
+   * Returns 0–1 where 1 = strong periodic cardiac signal.
+   */
+  private computeAutocorrelationPeriodicity(signal: number[], mean: number): number {
+    const n = signal.length;
+    if (n < 45) return 0; // need ~1.5s of data minimum
+
+    // Compute autocorrelation for lags corresponding to 30–210 BPM
+    const fs = this.estimatedSampleRate;
+    const minLag = Math.max(2, Math.floor(fs * 60 / 210)); // 210 BPM
+    const maxLag = Math.min(Math.floor(n * 0.6), Math.floor(fs * 60 / 30)); // 30 BPM
+
+    if (minLag >= maxLag || maxLag >= n) return 0;
+
+    // Variance (denominator for normalized autocorrelation)
+    let variance = 0;
+    for (let i = 0; i < n; i++) {
+      variance += (signal[i] - mean) ** 2;
+    }
+    if (variance < 1e-6) return 0;
+
+    let bestCorrelation = 0;
+    let bestLag = 0;
+
+    // Search for the strongest peak in the autocorrelation function
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let sum = 0;
+      for (let i = 0; i < n - lag; i++) {
+        sum += (signal[i] - mean) * (signal[i + lag] - mean);
+      }
+      const r = sum / variance;
+      if (r > bestCorrelation) {
+        bestCorrelation = r;
+        bestLag = lag;
+      }
+    }
+
+    // Check for harmonic confirmation (2nd peak at ~2x lag)
+    let harmonicBonus = 0;
+    if (bestLag > 0 && bestCorrelation > 0.15) {
+      const doubleLag = bestLag * 2;
+      if (doubleLag < n) {
+        let sum2 = 0;
+        for (let i = 0; i < n - doubleLag; i++) {
+          sum2 += (signal[i] - mean) * (signal[i + doubleLag] - mean);
+        }
+        const r2 = sum2 / variance;
+        if (r2 > 0.1) {
+          harmonicBonus = 0.15; // harmonic confirms real periodicity
+        }
+      }
+    }
+
+    // Threshold: real cardiac signal typically has autocorrelation > 0.25
+    const raw = this.clamp(bestCorrelation + harmonicBonus, 0, 1);
+    // Map [0.15, 0.7] → [0, 1] with soft knee
+    return this.clamp((raw - 0.15) / 0.55, 0, 1);
   }
 
   private calculatePerfusionIndex(): number {
