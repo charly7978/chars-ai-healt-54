@@ -673,9 +673,7 @@ const Index = () => {
               isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
-              onOpenCalibration={() => setShowCalibrationWizard(true)}
               isMonitoring={isMonitoring}
-              isCalibrated={isCalibrated}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
@@ -938,19 +936,6 @@ const Index = () => {
 
         </div>
       </div>
-      {/* WIZARD DE CALIBRACIÓN BP */}
-      <BPCalibrationWizard
-        isOpen={showCalibrationWizard}
-        onClose={() => setShowCalibrationWizard(false)}
-        onCalibrate={(sys, dia) => {
-          if (!hasValidPressureEstimate() && !(vitalSigns.pressure?.systolic > 0 && vitalSigns.pressure?.diastolic > 0)) {
-            return false;
-          }
-          calibrateBP(sys, dia);
-          setIsCalibrated(true);
-          return true;
-        }}
-      />
     </div>
   );
 };
