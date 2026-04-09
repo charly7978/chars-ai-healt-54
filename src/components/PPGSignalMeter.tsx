@@ -898,19 +898,7 @@ const PPGSignalMeter = ({
         <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
       </div>
 
-      <button
-        onClick={onOpenCalibration}
-        className={`absolute top-2 right-2 z-10 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold backdrop-blur-sm transition-colors ${
-          isCalibrated
-            ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-300'
-            : 'border-sky-500/40 bg-sky-500/20 text-sky-200'
-        }`}
-      >
-        <Shield className="h-3.5 w-3.5" />
-        {isCalibrated ? 'CALIBRADA' : 'CALIBRAR PA'}
-      </button>
-
-      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-3 z-10">
+      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button 
           onClick={onStartMeasurement}
           className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${
@@ -920,16 +908,6 @@ const PPGSignalMeter = ({
           }`}
         >
           {isMonitoring ? 'DETENER' : 'INICIAR'}
-        </button>
-        <button 
-          onClick={onOpenCalibration}
-          className={`border-t border-r border-slate-700/50 font-semibold text-sm transition-colors ${
-            isCalibrated
-              ? 'bg-emerald-500/15 hover:bg-emerald-500/25 active:bg-emerald-500/30 text-emerald-300'
-              : 'bg-sky-500/15 hover:bg-sky-500/25 active:bg-sky-500/30 text-sky-200'
-          }`}
-        >
-          {isCalibrated ? 'RECALIBRAR' : 'CALIBRAR'}
         </button>
         <button 
           onClick={handleReset}
