@@ -154,11 +154,12 @@ export class HeartBeatProcessor {
 
     // === PEAK DETECTION: downward crossover after upswing ===
     if (wasInUpswing && !this.inUpswing && timeSinceLastPeak >= this.refractoryMs) {
-      // Validate the peak candidate
       const peakValue = this.upswingPeakValue;
       const peakTime = this.upswingPeakTime;
+      const upswingDuration = peakTime - this.upswingStartTime;
 
-      if (this.validatePeak(peakValue, timeSinceLastPeak)) {
+      // Reject noise spikes: real cardiac upswing lasts at least ~40ms
+      if (upswingDuration >= 35 && this.validatePeak(peakValue, timeSinceLastPeak)) {
         isPeak = true;
         const peakInterval = this.lastPeakTime > 0 ? peakTime - this.lastPeakTime : 0;
         
@@ -184,6 +185,7 @@ export class HeartBeatProcessor {
     if (!wasInUpswing && this.inUpswing) {
       this.upswingPeakValue = clampedValue;
       this.upswingPeakTime = now;
+      this.upswingStartTime = now;
     }
 
     // === Decay consecutive peaks if no peak for too long ===
