@@ -38,6 +38,7 @@ export class HeartBeatProcessor {
   private inUpswing = false;        // fast > slow
   private upswingPeakValue = -Infinity;
   private upswingPeakTime = 0;
+  private upswingStartTime = 0;    // track upswing duration to reject noise spikes
   private refractoryMs = 330;       // adaptive refractory period
 
   // === RR INTERVAL TRACKING ===
