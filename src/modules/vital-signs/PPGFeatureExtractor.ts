@@ -484,11 +484,7 @@ export class PPGFeatureExtractor {
     
     return { sdnn, rmssd, cv };
   }
-
-  /**
-   * Legacy: extract all features (used by glucose, hemoglobin, lipids)
-   */
-  static extractAllFeatures(buffer: number[], rrIntervals?: number[]) {
+}
     const acdc = this.extractACDCRatio(buffer);
     const rrVar = rrIntervals ? this.extractRRVariability(rrIntervals) : { sdnn: 0, rmssd: 0, cv: 0 };
 
