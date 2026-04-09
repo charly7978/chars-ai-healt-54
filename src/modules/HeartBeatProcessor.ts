@@ -214,36 +214,39 @@ export class HeartBeatProcessor {
    */
   private validatePeak(peakValue: number, timeSinceLastPeak: number): boolean {
     // 1. Minimum amplitude: peak must be above 25th percentile + margin
+    //    Relaxed during early acquisition (fewer consecutive peaks)
     const amplitudeRange = this.amplitudeP75 - this.amplitudeP25;
-    const minAmplitude = this.amplitudeP25 + amplitudeRange * 0.35;
+    const earlyAcquisition = this.consecutiveValidPeaks < 3;
+    const marginFactor = earlyAcquisition ? 0.20 : 0.30;
+    const minAmplitude = this.amplitudeP25 + amplitudeRange * marginFactor;
     if (peakValue < minAmplitude) return false;
 
     // 2. Prominence: peak must stand out from slow EMA — adaptive threshold
     const prominence = peakValue - this.emaSlow;
-    // Lower prominence for weak signals (small amplitude range), stricter for strong
-    const minProminence = amplitudeRange > 20 
-      ? Math.max(2.5, amplitudeRange * 0.12) 
-      : Math.max(1.5, amplitudeRange * 0.08);
+    const minProminence = earlyAcquisition
+      ? Math.max(1.0, amplitudeRange * 0.06)
+      : amplitudeRange > 20 
+        ? Math.max(2.0, amplitudeRange * 0.10) 
+        : Math.max(1.2, amplitudeRange * 0.07);
     if (prominence < minProminence) return false;
 
     // 3. Amplitude consistency: if we have a previous peak, check ratio
     if (this.lastPeakAmplitude > 0) {
       const ratio = peakValue / this.lastPeakAmplitude;
-      if (ratio < 0.15 || ratio > 6) return false; // extreme amplitude change = artifact
+      const ratioLimit = earlyAcquisition ? 8 : 6;
+      if (ratio < 0.12 || ratio > ratioLimit) return false;
     }
 
-    // 4. RR consistency check — conservative but not acquisition-blocking
-    if (this.rrIntervals.length >= 3) {
+    // 4. RR consistency check — only after solid baseline established
+    if (this.rrIntervals.length >= 4 && this.consecutiveValidPeaks >= 4) {
       const medianRR = this.getMedianRR();
-      if (timeSinceLastPeak < medianRR * 0.45 || timeSinceLastPeak > medianRR * 1.8) {
-        if (this.rrIntervals.length >= 5 && this.consecutiveValidPeaks >= 4) {
-          return false;
-        }
+      if (timeSinceLastPeak < medianRR * 0.40 || timeSinceLastPeak > medianRR * 2.0) {
+        return false;
       }
     }
 
     // 5. RR coherence: only reject strong randomness after enough history
-    if (this.rrIntervals.length >= 6) {
+    if (this.rrIntervals.length >= 8) {
       const recent = this.rrIntervals.slice(-8);
       const meanRR = recent.reduce((a, b) => a + b, 0) / recent.length;
       const varRR = recent.reduce((a, rr) => a + (rr - meanRR) ** 2, 0) / recent.length;
