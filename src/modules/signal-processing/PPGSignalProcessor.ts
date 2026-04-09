@@ -93,9 +93,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private worker: Worker | null = null;
   private workerReady = false;
   private pendingROI: ROIMetrics | null = null;
+  private latestROI: ROIMetrics | null = null;
   private lastAutocorrScore = 0;
   private autocorrRequestPending = false;
   private rankRequestPending = false;
+  private roiRequestPending = false;
   private workerMsgId = 0;
 
   constructor(
@@ -118,44 +120,61 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.worker.onerror = () => { this.workerReady = false; };
       this.workerReady = true;
     } catch {
-      // Fallback: run inline if Worker not supported
       this.workerReady = false;
     }
   }
 
   private handleWorkerMessage(msg: any): void {
     switch (msg.type) {
-      case 'roiResult':
-        this.pendingROI = {
+      case 'roiResult': {
+        const roi = {
           rawRed: msg.rawRed,
           rawGreen: msg.rawGreen,
           rawBlue: msg.rawBlue,
           coverageRatio: msg.coverageRatio,
           fingerScore: msg.fingerScore,
         };
+        this.pendingROI = roi;
+        this.latestROI = roi;
+        this.roiRequestPending = false;
         if (msg.updatedTileConfidence) {
           this.tileConfidence = msg.updatedTileConfidence;
         }
         break;
+      }
       case 'autocorrResult':
         this.lastAutocorrScore = msg.score;
         this.autocorrRequestPending = false;
         break;
-      case 'rankResult':
+      case 'rankResult': {
         this.rankRequestPending = false;
-        if (msg.bestSource !== this.activeSource) {
-          this.activeSource = msg.bestSource;
-          this.lastSourceSwitch = Date.now();
-        }
         if (msg.scores) {
           this.sourceScores = msg.scores;
         }
+        const now = Date.now();
+        const bestScore = msg.scores?.[msg.bestSource] ?? 0;
+        const currentScore = msg.scores?.[this.activeSource] ?? this.sourceScores[this.activeSource] ?? 0;
+        if (
+          msg.bestSource !== this.activeSource &&
+          now - this.lastSourceSwitch >= this.SOURCE_HYSTERESIS_MS &&
+          bestScore > currentScore * 1.12
+        ) {
+          this.activeSource = msg.bestSource;
+          this.lastSourceSwitch = now;
+        }
         break;
+      }
     }
   }
 
   async initialize(): Promise<void> {
     this.reset();
+    this.pendingROI = null;
+    this.latestROI = null;
+    this.lastAutocorrScore = 0;
+    this.autocorrRequestPending = false;
+    this.rankRequestPending = false;
+    this.roiRequestPending = false;
   }
 
   start(): void {
@@ -181,10 +200,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const timestamp = frameTimestamp ?? Date.now();
     this.updateSampleRate(timestamp);
 
-    // Dispatch ROI to worker or compute inline
     const roi = this.extractROIFast(imageData);
     this.dispatchROIToWorker(imageData);
-
     this.updateContactState(roi);
 
     const motionArtifact = this.motionScore > this.MOTION_THRESHOLD;
@@ -238,7 +255,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     this.calculateDerivatives();
 
-    // Dispatch autocorrelation to worker every ~60 frames (~2s)
     if (this.frameCount % 60 === 0 && this.filteredBuffer.length >= 45 && !this.autocorrRequestPending) {
       this.dispatchAutocorrelation();
     }
@@ -246,7 +262,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.signalQuality = this.calculateSignalQuality();
 
     const gatedQuality = motionArtifact
-      ? Math.max(0, this.signalQuality * 0.80)  // less penalty (was 0.75)
+      ? Math.max(0, this.signalQuality * 0.85)
       : this.signalQuality;
 
     const pi = this.calculatePerfusionIndex();
@@ -279,22 +295,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           `${this.contactState}${motionArtifact ? ' MOV' : ''}`,
         hasPulsatility:
           (this.contactState === 'STABLE_CONTACT' || this.contactState === 'UNSTABLE_CONTACT') &&
-          gatedQuality >= 6 &&             // LOWER threshold (was 10)
-          pulseSource.strength > 0.3,      // LOWER threshold (was 0.5)
+          gatedQuality >= 6 &&
+          pulseSource.strength > 0.3,
         pulsatilityValue: Math.max(pi, pulseSource.strength * 0.02),
       },
     });
   }
 
-  // === FAST ROI (main thread — lightweight version using worker result or inline) ===
   private extractROIFast(imageData: ImageData): ROIMetrics {
-    // Use worker result if available
-    if (this.pendingROI) {
-      const roi = this.pendingROI;
-      this.pendingROI = null;
-      return roi;
+    if (this.latestROI) {
+      return this.latestROI;
     }
-    // Fallback: ultra-fast center sampling (no tiles, just center 50%)
     return this.extractROICenterFast(imageData);
   }
 
@@ -302,16 +313,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const data = imageData.data;
     const w = imageData.width;
     const h = imageData.height;
-    const cx = w >> 1, cy = h >> 1;
-    const sz = Math.min(w, h) * 0.4;
+    const cx = w >> 1;
+    const cy = h >> 1;
+    const sz = Math.min(w, h) * 0.5;
     const x0 = Math.floor(cx - sz / 2);
     const y0 = Math.floor(cy - sz / 2);
     const x1 = Math.floor(cx + sz / 2);
     const y1 = Math.floor(cy + sz / 2);
 
-    let rSum = 0, gSum = 0, bSum = 0, count = 0;
-    for (let y = y0; y < y1; y += 4) {
-      for (let x = x0; x < x1; x += 4) {
+    let rSum = 0;
+    let gSum = 0;
+    let bSum = 0;
+    let count = 0;
+
+    for (let y = y0; y < y1; y += 3) {
+      for (let x = x0; x < x1; x += 3) {
         const i = (y * w + x) * 4;
         rSum += data[i];
         gSum += data[i + 1];
@@ -320,29 +336,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
     }
 
-    if (count === 0) return { rawRed: 0, rawGreen: 0, rawBlue: 0, coverageRatio: 0, fingerScore: 0 };
+    if (count === 0) {
+      return { rawRed: 0, rawGreen: 0, rawBlue: 0, coverageRatio: 0, fingerScore: 0 };
+    }
 
     const r = rSum / count;
     const g = gSum / count;
     const b = bSum / count;
     const redDom = r - (g + b) / 2;
     const rgRatio = r / Math.max(1, g);
-    const isFinger = r > 50 && redDom > 5 && rgRatio > 1.05;
+    const isFinger = r > 45 && redDom > 4 && rgRatio > 1.04;
 
     return {
       rawRed: r,
       rawGreen: g,
       rawBlue: b,
-      coverageRatio: isFinger ? 0.7 : 0.1,
-      fingerScore: isFinger ? Math.min(1, (redDom - 5) / 40) : 0,
+      coverageRatio: isFinger ? 0.55 : 0.08,
+      fingerScore: isFinger ? this.clamp((redDom - 4) / 36, 0, 1) : 0,
     };
   }
 
   private dispatchROIToWorker(imageData: ImageData): void {
-    if (!this.workerReady || !this.worker) return;
-    // Only dispatch every 2nd frame to reduce worker pressure
-    if (this.frameCount % 2 !== 0) return;
+    if (!this.workerReady || !this.worker || this.roiRequestPending) return;
 
+    this.roiRequestPending = true;
     const pixels = imageData.data;
     this.worker.postMessage({
       type: 'extractROI',
@@ -351,17 +368,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       width: imageData.width,
       height: imageData.height,
       tileConfidence: this.tileConfidence,
-    });
+    }, [pixels.buffer]);
   }
 
   private dispatchAutocorrelation(): void {
     if (!this.workerReady || !this.worker) {
-      // Inline fallback
       const recent = this.filteredBuffer.slice(-90);
       const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
       this.lastAutocorrScore = this.computeAutocorrelationInline(recent, mean);
       return;
     }
+
     this.autocorrRequestPending = true;
     const recent = this.filteredBuffer.slice(-90);
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
@@ -381,7 +398,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     if (instantDetected) {
       this.fingerLostCount = 0;
-      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1.5, 100); // Faster ramp (was +1)
+      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1.5, 100);
       this.stableContactCount++;
 
       if (this.fingerConfidenceCount >= this.FINGER_CONFIRM_FRAMES) {
@@ -392,9 +409,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           : 'UNSTABLE_CONTACT';
       }
     } else {
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.3); // Slower decay (was 0.5)
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.3);
       this.fingerLostCount++;
-      this.stableContactCount = Math.max(0, this.stableContactCount - 0.2); // Slower decay (was 0.3)
+      this.stableContactCount = Math.max(0, this.stableContactCount - 0.2);
 
       if (this.fingerDetected) {
         const softHold =
@@ -452,24 +469,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const notBlownOut = !(r > 253 && g > 252 && b > 252);
 
     if (this.fingerDetected) {
-      // MAINTAIN — very relaxed
       return r > 40 &&
         rgRatio > 1.05 &&
         redDominance > 5 &&
         this.smoothedCoverage > 0.10 &&
         this.smoothedFingerScore > 0.10 &&
         notBlownOut;
-    } else {
-      // ACQUIRE — relaxed for faster detection
-      return r > 60 &&
-        rgRatio > 1.12 &&
-        redDominance > 12 &&
-        totalIntensity > 100 && totalIntensity < 760 &&
-        this.smoothedCoverage > 0.20 &&
-        this.smoothedFingerScore > 0.25 &&
-        this.motionScore < 2.0 &&
-        notBlownOut;
     }
+
+    return r > 60 &&
+      rgRatio > 1.12 &&
+      redDominance > 12 &&
+      totalIntensity > 100 && totalIntensity < 760 &&
+      this.smoothedCoverage > 0.20 &&
+      this.smoothedFingerScore > 0.25 &&
+      this.motionScore < 2.0 &&
+      notBlownOut;
   }
 
   private updateSampleRate(timestamp: number): void {
@@ -502,7 +517,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       return;
     }
 
-    const alpha = motionArtifact ? 0.008 : this.contactState === 'STABLE_CONTACT' ? 0.02 : 0.04;
+    const alpha = motionArtifact ? 0.006 : this.contactState === 'STABLE_CONTACT' ? 0.010 : 0.018;
     this.redBaseline = this.redBaseline * (1 - alpha) + rawRed * alpha;
     this.greenBaseline = this.greenBaseline * (1 - alpha) + rawGreen * alpha;
     this.blueBaseline = this.blueBaseline * (1 - alpha) + rawBlue * alpha;
@@ -515,11 +530,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const rNorm = this.redBaseline > 0 ? (this.redBaseline - rawRed) / this.redBaseline : 0;
     const gNorm = this.greenBaseline > 0 ? (this.greenBaseline - rawGreen) / this.greenBaseline : 0;
 
-    const clamp = (v: number) => this.clamp(v, -0.08, 0.08); // Wider clamp (was 0.07)
+    const clamp = (v: number) => this.clamp(v, -0.08, 0.08);
     const rPulse = clamp(rNorm);
     const gPulse = clamp(gNorm);
 
-    // More aggressive adaptive gain for weak signals
     const pulseEnergy = Math.max(Math.abs(rPulse), Math.abs(gPulse));
     const adaptiveGain = pulseEnergy < 0.003 ? 6000 : pulseEnergy < 0.008 ? 5000 : pulseEnergy < 0.015 ? 4200 : 3200;
 
@@ -534,18 +548,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       if (this.sourceBuffers[key].length > 120) this.sourceBuffers[key].shift();
     }
 
-    // Dispatch ranking to worker every ~30 frames
     if (this.frameCount % 30 === 0 && this.redBuffer.length >= 50 && !this.rankRequestPending) {
       this.dispatchSourceRanking();
     }
 
-    const value = this.clamp(sources[this.activeSource] ?? sources['RG'], -100, 100);
+    const value = this.clamp(sources[this.activeSource] ?? sources.RG, -100, 100);
     const strength = Math.max(Math.abs(rPulse), Math.abs(gPulse)) * 1000;
 
     return { value, label: this.activeSource, strength };
   }
 
   private dispatchSourceRanking(): void {
+    const now = Date.now();
+    if (now - this.lastSourceSwitch < this.SOURCE_HYSTERESIS_MS) return;
+
     if (this.workerReady && this.worker) {
       this.rankRequestPending = true;
       this.worker.postMessage({
@@ -555,9 +571,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         activeSource: this.activeSource,
         currentScore: this.sourceScores[this.activeSource] ?? 0,
       });
-    } else {
-      this.rankSourcesInline();
+      return;
     }
+
+    this.rankSourcesInline();
   }
 
   private rankSourcesInline(): void {
@@ -575,17 +592,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const p10 = sorted[Math.floor(sorted.length * 0.1)] ?? 0;
       const p90 = sorted[Math.floor(sorted.length * 0.9)] ?? 0;
       const range = p90 - p10;
-      if (range < 0.08) { this.sourceScores[key] = 0; continue; }
+      if (range < 0.08) {
+        this.sourceScores[key] = 0;
+        continue;
+      }
       const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
       const variance = recent.reduce((a, v) => a + (v - mean) ** 2, 0) / recent.length;
       const snr = range / (Math.sqrt(variance) + 0.1);
       const clipped = recent.filter(v => Math.abs(v) > 70).length / recent.length;
       this.sourceScores[key] = Math.max(0, snr * 15 - clipped * 30);
-      if (this.sourceScores[key] > bestScore) { bestScore = this.sourceScores[key]; bestSource = key; }
+      if (this.sourceScores[key] > bestScore) {
+        bestScore = this.sourceScores[key];
+        bestSource = key;
+      }
     }
 
     const currentScore = this.sourceScores[this.activeSource] ?? 0;
-    if (bestSource !== this.activeSource && bestScore > currentScore * 1.2) {
+    if (bestSource !== this.activeSource && bestScore > currentScore * 1.12) {
       this.activeSource = bestSource;
       this.lastSourceSwitch = now;
     }
