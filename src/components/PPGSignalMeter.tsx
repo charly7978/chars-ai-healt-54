@@ -547,14 +547,14 @@ const PPGSignalMeter = ({
         }
         
         if (pathCoords.length > 2) {
-          // === PHOSPHOR DECAY TRAIL (older signal fades) ===
+          // === PHOSPHOR DECAY TRAIL (older signal fades with wider glow) ===
           ctx.save();
           for (let i = 1; i < pathCoords.length; i++) {
             const prev = pathCoords[i - 1];
             const curr = pathCoords[i];
             const age = now - curr.time;
             const ageFactor = 1 - (age / WINDOW_MS);
-            const alpha = Math.max(0.03, ageFactor * 0.12);
+            const alpha = Math.max(0.05, ageFactor * 0.2);
             
             ctx.beginPath();
             ctx.moveTo(prev.x, prev.y);
@@ -562,7 +562,7 @@ const PPGSignalMeter = ({
             ctx.strokeStyle = curr.isArr 
               ? `rgba(255, 45, 45, ${alpha})` 
               : `rgba(0, 255, 100, ${alpha})`;
-            ctx.lineWidth = 8;
+            ctx.lineWidth = 12;
             ctx.stroke();
           }
           ctx.restore();
