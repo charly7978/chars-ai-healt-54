@@ -112,13 +112,13 @@ export const useSignalProcessor = () => {
   }, []);
 
   // PROCESAMIENTO DE FRAME ÚNICO
-  const processFrame = useCallback((imageData: ImageData, frameTimestamp?: number) => {
+  const processFrame = useCallback((imageData: ImageData) => {
     if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
       return;
     }
     
     try {
-      processorRef.current.processFrame(imageData, frameTimestamp);
+      processorRef.current.processFrame(imageData);
     } catch (error) {
       // Error silenciado para rendimiento
     }

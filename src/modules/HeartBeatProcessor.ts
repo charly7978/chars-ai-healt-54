@@ -23,6 +23,7 @@ export class HeartBeatProcessor {
   // === SIGNAL BUFFERS ===
   private readonly BUFFER_SIZE = 512;
   private signalBuffer: number[] = [];
+  private timestampBuffer: number[] = [];
 
   // === DUAL EMA (SRMAC core) ===
   private emaFast = 0;
@@ -81,7 +82,7 @@ export class HeartBeatProcessor {
     document.addEventListener('click', unlock, { passive: true });
   }
 
-  processSignal(filteredValue: number, timestamp?: number, masterSQI: number = 0): {
+  processSignal(filteredValue: number, timestamp?: number): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
@@ -94,22 +95,24 @@ export class HeartBeatProcessor {
 
     // Buffer management
     this.signalBuffer.push(filteredValue);
+    this.timestampBuffer.push(now);
     if (this.signalBuffer.length > this.BUFFER_SIZE) {
       this.signalBuffer.shift();
+      this.timestampBuffer.shift();
     }
 
-    // Need minimum samples (reduced from 15 to 10)
-    if (this.signalBuffer.length < 10) {
+    // Need minimum samples
+    if (this.signalBuffer.length < 15) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
-    // === SIGNAL ENERGY GATE — more permissive ===
+    // === SIGNAL ENERGY GATE ===
     const recent60 = this.signalBuffer.slice(-60);
     const sorted60 = [...recent60].sort((a, b) => a - b);
     const p10 = sorted60[Math.floor(sorted60.length * 0.1)] ?? 0;
     const p90 = sorted60[Math.floor(sorted60.length * 0.9)] ?? 0;
     const dynamicRange = p90 - p10;
-    if (dynamicRange < 0.05) {  // Much lower threshold (was 0.12)
+    if (dynamicRange < 0.12) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
@@ -155,8 +158,8 @@ export class HeartBeatProcessor {
       const peakTime = this.upswingPeakTime;
       const upswingDuration = peakTime - this.upswingStartTime;
 
-      // Reject noise spikes: real cardiac upswing lasts at least ~25ms (was 35)
-      if (upswingDuration >= 22 && this.validatePeak(peakValue, timeSinceLastPeak)) {
+      // Reject noise spikes: real cardiac upswing lasts at least ~40ms
+      if (upswingDuration >= 35 && this.validatePeak(peakValue, timeSinceLastPeak)) {
         isPeak = true;
         const peakInterval = this.lastPeakTime > 0 ? peakTime - this.lastPeakTime : 0;
         
@@ -190,8 +193,8 @@ export class HeartBeatProcessor {
       this.consecutiveValidPeaks = Math.max(0, this.consecutiveValidPeaks - 1);
     }
 
-    // === USE MASTER SQI from PPGSignalProcessor ===
-    this.signalQualityIndex = masterSQI;
+    // === SIGNAL QUALITY INDEX ===
+    this.signalQualityIndex = this.computeSQI(dynamicRange);
 
     // === CONFIDENCE ===
     const confidence = this.computeConfidence();
@@ -214,46 +217,34 @@ export class HeartBeatProcessor {
    */
   private validatePeak(peakValue: number, timeSinceLastPeak: number): boolean {
     // 1. Minimum amplitude: peak must be above 25th percentile + margin
-    //    Relaxed during early acquisition (fewer consecutive peaks)
     const amplitudeRange = this.amplitudeP75 - this.amplitudeP25;
-    const earlyAcquisition = this.consecutiveValidPeaks < 4;  // Extended early phase (was 3)
-    const marginFactor = earlyAcquisition ? 0.10 : 0.22;     // Much lower (was 0.20/0.30)
-    const minAmplitude = this.amplitudeP25 + amplitudeRange * marginFactor;
+    const minAmplitude = this.amplitudeP25 + amplitudeRange * 0.35;
     if (peakValue < minAmplitude) return false;
 
-    // 2. Prominence: peak must stand out from slow EMA — relaxed
+    // 2. Prominence: peak must stand out from slow EMA — adaptive threshold
     const prominence = peakValue - this.emaSlow;
-    const minProminence = earlyAcquisition
-      ? Math.max(0.5, amplitudeRange * 0.03)   // Much lower (was 1.0, 0.06)
-      : amplitudeRange > 20 
-        ? Math.max(1.2, amplitudeRange * 0.06)  // Lower (was 2.0, 0.10)
-        : Math.max(0.8, amplitudeRange * 0.04); // Lower (was 1.2, 0.07)
+    // Lower prominence for weak signals (small amplitude range), stricter for strong
+    const minProminence = amplitudeRange > 20 
+      ? Math.max(2.5, amplitudeRange * 0.12) 
+      : Math.max(1.5, amplitudeRange * 0.08);
     if (prominence < minProminence) return false;
 
     // 3. Amplitude consistency: if we have a previous peak, check ratio
     if (this.lastPeakAmplitude > 0) {
       const ratio = peakValue / this.lastPeakAmplitude;
-      const ratioLimit = earlyAcquisition ? 8 : 6;
-      if (ratio < 0.12 || ratio > ratioLimit) return false;
+      if (ratio < 0.15 || ratio > 6) return false; // extreme amplitude change = artifact
     }
 
-    // 4. RR consistency check — only after solid baseline established
-    if (this.rrIntervals.length >= 4 && this.consecutiveValidPeaks >= 4) {
+    // 4. RR consistency check (if we have history)
+    if (this.rrIntervals.length >= 3) {
       const medianRR = this.getMedianRR();
-      if (timeSinceLastPeak < medianRR * 0.40 || timeSinceLastPeak > medianRR * 2.0) {
-        return false;
-      }
-    }
-
-    // 5. RR coherence: only reject strong randomness after enough history
-    if (this.rrIntervals.length >= 8) {
-      const recent = this.rrIntervals.slice(-8);
-      const meanRR = recent.reduce((a, b) => a + b, 0) / recent.length;
-      const varRR = recent.reduce((a, rr) => a + (rr - meanRR) ** 2, 0) / recent.length;
-      const cvRR = Math.sqrt(varRR) / Math.max(1, meanRR);
-      if (cvRR > 0.55) {
-        this.consecutiveValidPeaks = Math.max(0, this.consecutiveValidPeaks - 1);
-        return false;
+      const expectedRR = medianRR;
+      // Allow 50-170% of expected RR (wide enough for real variability, tight enough for artifacts)
+      if (timeSinceLastPeak < expectedRR * 0.45 || timeSinceLastPeak > expectedRR * 1.8) {
+        // Only reject if we have strong RR history (≥5 intervals)
+        if (this.rrIntervals.length >= 5 && this.consecutiveValidPeaks >= 4) {
+          return false;
+        }
       }
     }
 
@@ -319,6 +310,46 @@ export class HeartBeatProcessor {
     const recent = this.rrIntervals.slice(-8);
     const sorted = [...recent].sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length / 2)] ?? 800;
+  }
+
+  /**
+   * Signal Quality Index — multi-factor assessment
+   */
+  private computeSQI(dynamicRange: number): number {
+    // Factor 1: signal range (0-25 pts)
+    const rangeFactor = Math.min(1, dynamicRange / 5) * 25;
+
+    // Factor 2: RR interval regularity (0-30 pts)
+    let rrFactor = 0;
+    if (this.rrIntervals.length >= 3) {
+      const recent = this.rrIntervals.slice(-8);
+      const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+      const variance = recent.reduce((a, rr) => a + (rr - mean) ** 2, 0) / recent.length;
+      const cv = Math.sqrt(variance) / Math.max(1, mean);
+      rrFactor = Math.max(0, 1 - cv * 2.5) * 30;
+    }
+
+    // Factor 3: consecutive valid peaks (0-25 pts)
+    const peakFactor = Math.min(1, this.consecutiveValidPeaks / 6) * 25;
+
+    // Factor 4: sample rate consistency (0-20 pts)
+    let sampleFactor = 0;
+    if (this.timestampBuffer.length >= 10) {
+      const recent = this.timestampBuffer.slice(-30);
+      const intervals: number[] = [];
+      for (let i = 1; i < recent.length; i++) {
+        const d = recent[i] - recent[i - 1];
+        if (d > 5 && d < 150) intervals.push(d);
+      }
+      if (intervals.length >= 5) {
+        const meanDt = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+        const dtVar = intervals.reduce((a, d) => a + (d - meanDt) ** 2, 0) / intervals.length;
+        const dtCV = Math.sqrt(dtVar) / Math.max(1, meanDt);
+        sampleFactor = Math.max(0, 1 - dtCV * 3) * 20;
+      }
+    }
+
+    return this.clamp(rangeFactor + rrFactor + peakFactor + sampleFactor, 0, 100);
   }
 
   /**
@@ -388,6 +419,7 @@ export class HeartBeatProcessor {
 
   reset(): void {
     this.signalBuffer = [];
+    this.timestampBuffer = [];
     this.amplitudeWindow = [];
     this.rrIntervals = [];
     this.smoothBPM = 0;

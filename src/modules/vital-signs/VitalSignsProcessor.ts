@@ -139,8 +139,7 @@ export class VitalSignsProcessor {
 
   processSignal(
     signalValue: number, 
-    rrData?: { intervals: number[], lastPeakTime: number | null },
-    masterQuality?: number
+    rrData?: { intervals: number[], lastPeakTime: number | null }
   ): VitalSignsResult {
     
     // Actualizar historial
@@ -157,13 +156,15 @@ export class VitalSignsProcessor {
       }
     }
 
-    // SQI maestro viene del PPGSignalProcessor — no recalcular aquí
-    this.measurements.signalQuality = masterQuality ?? 0;
+    // Calcular SQI propio para control de calidad de signos vitales
+    this.measurements.signalQuality = this.calculateSignalQuality();
 
-    // Validar pulso real — solo verifica que los RR intervals sean fisiológicos
+    // Validar pulso real
     const hasRealPulse = this.validateRealPulse(rrData);
     
     if (!hasRealPulse) {
+      // Don't zero-out values that are already accumulated — just stop updating
+      // This prevents flicker when signal dips momentarily
       return this.getFormattedResult();
     }
 
@@ -180,25 +181,15 @@ export class VitalSignsProcessor {
       this.validPulseCount = 0;
       return false;
     }
-
-    const validIntervals = rrData.intervals.filter(interval =>
-      interval >= 273 && interval <= 2200
+    
+    // Ventana humana conservadora: evita ruido no fisiológico sin forzar rangos clínicos “bonitos”
+    const validIntervals = rrData.intervals.filter(interval => 
+      interval >= 270 && interval <= 2200
     );
-
+    
     if (validIntervals.length < 2) {
       this.validPulseCount = 0;
       return false;
-    }
-
-    // RR coherence only after enough history; early acquisition must stay possible
-    if (validIntervals.length >= 3) {
-      const meanRR = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
-      const varRR = validIntervals.reduce((a, rr) => a + (rr - meanRR) ** 2, 0) / validIntervals.length;
-      const cvRR = Math.sqrt(varRR) / Math.max(1, meanRR);
-      if (cvRR > 0.50) {
-        this.validPulseCount = Math.max(0, this.validPulseCount - 1);
-        return false;
-      }
     }
 
     if (rrData.lastPeakTime) {
@@ -208,13 +199,29 @@ export class VitalSignsProcessor {
         return false;
       }
     }
-
+    
     this.validPulseCount = validIntervals.length;
     return true;
   }
 
-  // calculateSignalQuality ELIMINADO — SQI maestro vive en PPGSignalProcessor
-  // VitalSignsProcessor confía en que Index.tsx solo le envía señal ya validada
+  private calculateSignalQuality(): number {
+    if (this.signalHistory.length < 20) return 0;
+    
+    const recent = this.signalHistory.slice(-60);
+    const sorted = [...recent].sort((a, b) => a - b);
+    const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
+    const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
+    const range = p90 - p10;
+    
+    if (range < 0.2) return 2;
+    
+    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
+    const stdDev = Math.sqrt(variance);
+    const snr = range / (stdDev + 0.05);
+    
+    return Math.min(100, Math.max(0, snr * 16));
+  }
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;

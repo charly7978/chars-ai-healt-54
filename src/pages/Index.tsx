@@ -221,18 +221,17 @@ const Index = () => {
       return;
     }
 
-    const captureOneFrame = (frameTimestampMs?: number) => {
+    const captureOneFrame = () => {
       if (!isProcessingRef.current) return;
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.timeOrigin + performance.now()));
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
         return;
       }
-      const effectiveTimestamp = frameTimestampMs ?? (performance.timeOrigin + performance.now());
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        processFrame(imageData, effectiveTimestamp);
+        processFrame(imageData);
       } catch {}
       scheduleNext(video);
     };
@@ -240,14 +239,14 @@ const Index = () => {
     const scheduleNext = (video: HTMLVideoElement) => {
       if (!isProcessingRef.current) return;
       if ('requestVideoFrameCallback' in video) {
-        (video as any).requestVideoFrameCallback((now: number) => captureOneFrame(performance.timeOrigin + now));
+        (video as any).requestVideoFrameCallback(() => captureOneFrame());
       } else {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.timeOrigin + performance.now()));
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
       }
     };
     
     console.log('🎬 Captura iniciada (requestVideoFrameCallback)');
-    captureOneFrame(performance.timeOrigin + performance.now());
+    captureOneFrame();
   }, [processFrame]);
 
   const stopFrameLoop = useCallback(() => {
@@ -466,25 +465,20 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
-    const masterQuality = lastSignal.quality || 0;
-    // GATING MAESTRO: quality >= 5 para procesar latidos (was 8)
-    // quality >= 12 para signos vitales completos (was 15)
-    const hasContact = contactState === 'STABLE_CONTACT' || contactState === 'UNSTABLE_CONTACT';
-    const signalUsable = hasContact && masterQuality >= 5;
-    const signalStable = contactState === 'STABLE_CONTACT' && masterQuality >= 12;
+    const stableHumanSignal =
+      contactState === 'STABLE_CONTACT' &&
+      (lastSignal.quality || 0) >= 12 &&
+      (lastSignal.perfusionIndex || 0) >= 0.005;
 
-    // SIEMPRE procesar heartbeat si hay contacto — el HeartBeatProcessor tiene sus propios gates internos
     const heartBeatResult = processHeartBeat(
       signalValue,
       contactState,
-      lastSignal.timestamp,
-      masterQuality
+      lastSignal.timestamp
     );
 
-    // Mostrar waveform si la señal es usable (no solo cuando es stable)
-    setHeartbeatSignal(signalUsable ? heartBeatResult.filteredValue : 0);
+    setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
 
-    if (!signalUsable) {
+    if (!stableHumanSignal) {
       unstableFrameCounter.current++;
       
       // Solo borrar vitales después de señal mala SOSTENIDA
@@ -525,10 +519,8 @@ const Index = () => {
       return;
     }
 
-    // Señal usable — resetear contador de inestabilidad
+    // Señal estable — resetear contador de inestabilidad
     unstableFrameCounter.current = 0;
-    
-    // BPM siempre se muestra si el heartbeat lo reporta (signalUsable ya confirmó contacto+calidad)
     setHeartRate(heartBeatResult.bpm);
 
     if (heartBeatResult.isPeak) {
@@ -548,7 +540,7 @@ const Index = () => {
 
     vitalSignsFrameCounter.current++;
 
-    if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES && signalStable) {
+    if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       const rgbStats = getRGBStats();
 
@@ -561,16 +553,16 @@ const Index = () => {
         });
       }
 
-      const hasReliableRR = heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.08;
       const vitals = processVitalSigns(
         lastSignal.filteredValue,
-        hasReliableRR ? heartBeatResult.rrData : undefined,
-        masterQuality
+        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18
+          ? heartBeatResult.rrData
+          : undefined
       );
 
       setVitalSigns(vitals);
 
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.08 && vitals.measurementConfidence !== 'INVALID') {
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18 && vitals.measurementConfidence !== 'INVALID') {
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
         if (arrhythmiaStatus) {
           lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
