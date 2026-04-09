@@ -656,17 +656,6 @@ const PPGSignalMeter = ({
             ctx.restore();
           }
         }
-            ctx.lineWidth = 4;
-          } else {
-            ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
-            ctx.shadowColor = COLORS.SIGNAL_GLOW;
-            ctx.shadowBlur = 12;
-            ctx.lineWidth = 2.5;
-          }
-          
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-        }
         
         // === PEAKS & VALLEYS ===
         const peaks: { x: number; y: number; isArrhythmia: boolean; time: number }[] = [];
