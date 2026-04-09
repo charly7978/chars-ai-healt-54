@@ -192,9 +192,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const adjustedQuality = motionArtifact
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
-    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
+    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.006 && adjustedQuality >= 18
       ? adjustedQuality
-      : Math.min(18, adjustedQuality * 0.45);
+      : Math.min(16, adjustedQuality * 0.4);
 
     const now = Date.now();
     if (now - this.lastLogTime >= 2000) {
