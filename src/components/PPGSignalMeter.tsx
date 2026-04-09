@@ -163,12 +163,17 @@ const PPGSignalMeter = ({
     const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
     const plot = getPlotArea();
     
+    // Pure black background like real monitor
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0, 0, W, H);
     
-    ctx.fillStyle = 'rgba(0, 20, 10, 0.3)';
-    ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
+    // Subtle scanline effect
+    for (let y = 0; y < H; y += 4) {
+      ctx.fillStyle = 'rgba(0, 20, 0, 0.15)';
+      ctx.fillRect(0, y, W, 1);
+    }
     
+    // Minor grid - very subtle
     ctx.strokeStyle = COLORS.GRID_MINOR;
     ctx.lineWidth = 0.5;
     ctx.beginPath();
@@ -182,8 +187,9 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     
+    // Major grid
     ctx.strokeStyle = COLORS.GRID_MAJOR;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
     for (let x = plot.x; x <= plot.x + plot.width; x += 100) {
       ctx.moveTo(x, plot.y);
@@ -195,16 +201,18 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     
+    // Baseline - solid thin
     ctx.strokeStyle = COLORS.BASELINE;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([8, 4]);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 3]);
     ctx.beginPath();
     ctx.moveTo(plot.x, plot.centerY);
     ctx.lineTo(plot.x + plot.width, plot.centerY);
     ctx.stroke();
     ctx.setLineDash([]);
     
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
+    // Plot border
+    ctx.strokeStyle = 'rgba(0, 255, 100, 0.2)';
     ctx.lineWidth = 1;
     ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
   }, [getPlotArea]);
