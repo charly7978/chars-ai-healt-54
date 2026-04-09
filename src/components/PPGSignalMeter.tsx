@@ -280,156 +280,173 @@ const PPGSignalMeter = ({
     const { CANVAS_WIDTH: W, COLORS } = CONFIG;
     const { bpm, spo2, arrhythmiaStatus, quality, rrIntervals, rawArrhythmiaData } = propsRef.current;
     
-    const panelH = 95;
-    const panelW = 160;
-    const panelY = 2;
+    const panelH = 110;
+    const panelW = 190;
+    const panelY = 8;
+    const gap = 8;
     const fontSize = {
-      label: 'bold 14px "SF Mono", Consolas, monospace',
-      value: 'bold 48px "SF Mono", Consolas, monospace',
-      unit: '16px "SF Mono", Consolas, monospace',
-      class: '11px "SF Mono", Consolas, monospace',
-      small: '10px "SF Mono", Consolas, monospace',
+      label: 'bold 15px "SF Mono", Consolas, monospace',
+      value: 'bold 56px "SF Mono", Consolas, monospace',
+      unit: 'bold 18px "SF Mono", Consolas, monospace',
+      class: 'bold 12px "SF Mono", Consolas, monospace',
+      small: '11px "SF Mono", Consolas, monospace',
+    };
+
+    // Helper to draw a panel with glow border
+    const drawPanel = (x: number, y: number, w: number, h: number, borderColor: string) => {
+      ctx.fillStyle = COLORS.PANEL_BG;
+      ctx.fillRect(x, y, w, h);
+      ctx.shadowColor = borderColor;
+      ctx.shadowBlur = 6;
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x, y, w, h);
+      ctx.shadowBlur = 0;
     };
     
     // === BPM PANEL (top-left) ===
-    ctx.fillStyle = 'rgba(0, 30, 15, 0.9)';
-    ctx.fillRect(3, panelY, panelW, panelH);
-    ctx.strokeStyle = COLORS.TEXT_PRIMARY;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(3, panelY, panelW, panelH);
+    drawPanel(3, panelY, panelW, panelH, bpm > 100 ? COLORS.TEXT_WARNING : COLORS.PANEL_BORDER);
     
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.fillStyle = COLORS.PANEL_LABEL;
     ctx.textAlign = 'left';
-    ctx.fillText('♥ FRECUENCIA', 10, panelY + 18);
+    ctx.fillText('♥ FRECUENCIA', 12, panelY + 22);
     
     ctx.font = fontSize.value;
-    ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
-    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 66);
+    ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : '#334155';
+    ctx.shadowColor = bpm > 0 ? 'rgba(0,255,136,0.4)' : 'transparent';
+    ctx.shadowBlur = bpm > 0 ? 10 : 0;
+    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 12, panelY + 78);
+    ctx.shadowBlur = 0;
     
     ctx.font = fontSize.unit;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('BPM', panelW - 40, panelY + 66);
+    ctx.fillStyle = COLORS.PANEL_LABEL;
+    ctx.fillText('BPM', panelW - 40, panelY + 78);
     
     if (bpm > 0) {
       ctx.font = fontSize.class;
-      let hrLabel = '';
-      let hrColor = COLORS.TEXT_PRIMARY;
+      let hrLabel = '', hrColor = COLORS.TEXT_PRIMARY;
       if (bpm < 60) { hrLabel = 'BRADICARDIA'; hrColor = COLORS.TEXT_WARNING; }
       else if (bpm <= 100) { hrLabel = 'NORMAL'; hrColor = COLORS.TEXT_PRIMARY; }
       else { hrLabel = 'TAQUICARDIA'; hrColor = COLORS.TEXT_WARNING; }
       ctx.fillStyle = hrColor;
-      ctx.fillText(hrLabel, 10, panelY + 86);
+      ctx.fillText(hrLabel, 12, panelY + 100);
     }
     
     // === SpO2 PANEL (top-right) ===
-    ctx.fillStyle = 'rgba(0, 15, 30, 0.9)';
-    ctx.fillRect(W - panelW - 3, panelY, panelW, panelH);
-    const spo2Border = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.strokeStyle = spo2Border;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(W - panelW - 3, panelY, panelW, panelH);
+    const spo2Border = spo2 >= 95 ? COLORS.PANEL_BORDER : spo2 >= 90 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
+    drawPanel(W - panelW - 3, panelY, panelW, panelH, spo2Border);
     
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.fillStyle = COLORS.PANEL_LABEL;
     ctx.textAlign = 'left';
-    ctx.fillText('O₂ SATURACIÓN', W - panelW + 4, panelY + 18);
+    ctx.fillText('O₂ SATURACIÓN', W - panelW + 6, panelY + 22);
     
     ctx.font = fontSize.value;
-    const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
+    const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : '#334155';
     ctx.fillStyle = spo2Color;
-    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 66);
+    ctx.shadowColor = spo2 > 0 ? (spo2 >= 95 ? 'rgba(0,255,136,0.4)' : 'rgba(255,200,0,0.4)') : 'transparent';
+    ctx.shadowBlur = spo2 > 0 ? 10 : 0;
+    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 6, panelY + 78);
+    ctx.shadowBlur = 0;
     
     ctx.font = fontSize.unit;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('%', W - 20, panelY + 66);
+    ctx.fillStyle = COLORS.PANEL_LABEL;
+    ctx.fillText('%', W - 22, panelY + 78);
     
     if (spo2 > 0) {
       ctx.font = fontSize.class;
-      let spLabel = '';
-      let spColor = COLORS.TEXT_PRIMARY;
+      let spLabel = '', spColor = COLORS.TEXT_PRIMARY;
       if (spo2 >= 95) { spLabel = 'NORMAL'; spColor = COLORS.TEXT_PRIMARY; }
       else if (spo2 >= 90) { spLabel = 'HIPOXEMIA LEVE'; spColor = COLORS.TEXT_WARNING; }
       else { spLabel = 'HIPOXEMIA'; spColor = COLORS.TEXT_DANGER; }
       ctx.fillStyle = spColor;
-      ctx.fillText(spLabel, W - panelW + 4, panelY + 86);
+      ctx.fillText(spLabel, W - panelW + 6, panelY + 100);
     }
     
-    // === CENTER TOP: Quality + IBI + HRV ===
+    // === CENTER: Quality + HRV ===
     const centerX = W / 2;
-    const centerW = 260;
-    ctx.fillStyle = 'rgba(20, 20, 30, 0.9)';
-    ctx.fillRect(centerX - centerW / 2, panelY, centerW, panelH);
-    ctx.strokeStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(centerX - centerW / 2, panelY, centerW, panelH);
+    const centerW = W - panelW * 2 - gap * 4 - 6;
+    drawPanel(panelW + gap + 3, panelY, centerW, panelH, quality > 60 ? COLORS.PANEL_BORDER : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER);
     
-    ctx.font = '12px "SF Mono", Consolas, monospace';
+    const cLeft = panelW + gap + 3;
+    ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('CALIDAD SEÑAL', centerX, panelY + 18);
+    ctx.fillStyle = COLORS.PANEL_LABEL;
+    ctx.fillText('CALIDAD SEÑAL', cLeft + centerW / 2, panelY + 20);
     
-    const barWidth = 220;
-    const barHeight = 10;
-    const barX = centerX - barWidth / 2;
-    const barY = panelY + 24;
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    // Quality bar
+    const barWidth = centerW - 20;
+    const barHeight = 12;
+    const barX = cLeft + 10;
+    const barY = panelY + 28;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
     ctx.fillRect(barX, barY, barWidth, barHeight);
     
     const qGrad = ctx.createLinearGradient(barX, 0, barX + (quality / 100) * barWidth, 0);
-    if (quality > 60) { qGrad.addColorStop(0, '#166534'); qGrad.addColorStop(1, '#22c55e'); }
-    else if (quality > 30) { qGrad.addColorStop(0, '#854d0e'); qGrad.addColorStop(1, '#f59e0b'); }
-    else { qGrad.addColorStop(0, '#991b1b'); qGrad.addColorStop(1, '#ef4444'); }
+    if (quality > 60) { qGrad.addColorStop(0, '#003d1f'); qGrad.addColorStop(1, '#00ff88'); }
+    else if (quality > 30) { qGrad.addColorStop(0, '#553a00'); qGrad.addColorStop(1, '#fbbf24'); }
+    else { qGrad.addColorStop(0, '#550000'); qGrad.addColorStop(1, '#ff3333'); }
     ctx.fillStyle = qGrad;
     ctx.fillRect(barX, barY, (quality / 100) * barWidth, barHeight);
     
-    ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
+    ctx.font = 'bold 16px "SF Mono", Consolas, monospace';
     ctx.fillStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.fillText(`${quality.toFixed(0)}%`, centerX, panelY + 52);
+    ctx.fillText(`${quality.toFixed(0)}%`, cLeft + centerW / 2, panelY + 60);
     
-    // IBI & HRV row
+    // HRV data
     const ibi = ibiDisplayRef.current;
     const hrv = hrvDisplayRef.current;
     ctx.font = fontSize.small;
     ctx.textAlign = 'left';
     
     ctx.fillStyle = COLORS.IBI_TEXT;
-    ctx.fillText(`IBI: ${ibi > 0 ? ibi + 'ms' : '--'}`, centerX - centerW / 2 + 8, panelY + 68);
+    ctx.fillText(`IBI: ${ibi > 0 ? ibi + 'ms' : '--'}`, cLeft + 8, panelY + 78);
     
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText(`SDNN: ${hrv.sdnn > 0 ? hrv.sdnn + 'ms' : '--'}`, centerX - centerW / 2 + 8, panelY + 84);
-    
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText(`RMSSD: ${hrv.rmssd > 0 ? hrv.rmssd + 'ms' : '--'}`, centerX + 20, panelY + 84);
+    ctx.fillStyle = '#7dd3fc';
+    ctx.fillText(`SDNN: ${hrv.sdnn > 0 ? hrv.sdnn + 'ms' : '--'}`, cLeft + 8, panelY + 94);
+    ctx.fillText(`RMSSD: ${hrv.rmssd > 0 ? hrv.rmssd + 'ms' : '--'}`, cLeft + centerW / 2 - 10, panelY + 94);
     
     if (rrIntervals && rrIntervals.length > 0) {
       const lastRR = rrIntervals[rrIntervals.length - 1];
       ctx.fillStyle = COLORS.IBI_TEXT;
       ctx.textAlign = 'right';
-      ctx.fillText(`RR: ${lastRR.toFixed(0)}ms`, centerX + centerW / 2 - 8, panelY + 68);
+      ctx.fillText(`RR: ${lastRR.toFixed(0)}ms`, cLeft + centerW - 8, panelY + 78);
     }
+    
+    // === SECOND ROW: Monitor label ===
+    const row2Y = panelY + panelH + 6;
+    ctx.font = '10px "SF Mono", Consolas, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#4a6741';
+    ctx.fillText('ECG-PPG MONITOR', 3, row2Y + 12);
+    ctx.textAlign = 'right';
+    ctx.fillText('25mm/s • 10mm/mV', W - 3, row2Y + 12);
     
     // === ARRHYTHMIA ALERT ===
     if (arrhythmiaStatus?.includes('ARRITMIA')) {
       const parts = arrhythmiaStatus.split('|');
       const count = parts.length > 1 ? parseInt(parts[1]) : 0;
       
-      const pulse = (Math.sin(now / 100) + 1) / 2;
-      ctx.fillStyle = `rgba(239, 68, 68, ${0.3 + pulse * 0.4})`;
-      ctx.fillRect(W - panelW - 3, panelY + panelH + 4, panelW, 30);
+      const pulse = (Math.sin(now / 80) + 1) / 2;
+      ctx.fillStyle = `rgba(255, 30, 30, ${0.25 + pulse * 0.35})`;
+      ctx.fillRect(W - panelW - 3, panelY + panelH + 4, panelW, 34);
       ctx.strokeStyle = COLORS.TEXT_DANGER;
       ctx.lineWidth = 2;
-      ctx.strokeRect(W - panelW - 3, panelY + panelH + 4, panelW, 30);
+      ctx.strokeRect(W - panelW - 3, panelY + panelH + 4, panelW, 34);
       
-      ctx.font = 'bold 14px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = COLORS.TEXT_DANGER;
+      ctx.font = 'bold 15px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#ff4444';
+      ctx.shadowColor = 'rgba(255,50,50,0.6)';
+      ctx.shadowBlur = 8;
       ctx.textAlign = 'center';
-      ctx.fillText(`⚠ ARRITMIA x${count}`, W - panelW / 2 - 3, panelY + panelH + 22);
+      ctx.fillText(`⚠ ARRITMIA x${count}`, W - panelW / 2 - 3, panelY + panelH + 26);
+      ctx.shadowBlur = 0;
       
       if (rawArrhythmiaData && rawArrhythmiaData.rmssd > 0) {
         ctx.font = '10px "SF Mono", Consolas, monospace';
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
-        ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms`, W - panelW / 2 - 3, panelY + panelH + 42);
+        ctx.fillStyle = 'rgba(255, 80, 80, 0.9)';
+        ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms`, W - panelW / 2 - 3, panelY + panelH + 44);
       }
     }
   }, []);
