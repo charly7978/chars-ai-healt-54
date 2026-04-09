@@ -11,7 +11,7 @@ import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
-import BPCalibrationWizard from "@/components/BPCalibrationWizard";
+
 import { supabase } from "@/integrations/supabase/client";
 
 const Index = () => {
@@ -43,7 +43,7 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [showCalibrationWizard, setShowCalibrationWizard] = useState(false);
+  
   const [measurementSummary, setMeasurementSummary] = useState<{
     totalBeats: number;
     arrhythmiaBeats: number;
