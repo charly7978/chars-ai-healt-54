@@ -28,8 +28,8 @@ export class HeartBeatProcessor {
   // === DUAL EMA (SRMAC core) ===
   private emaFast = 0;
   private emaSlow = 0;
-  private readonly ALPHA_FAST = 0.28;  // ~3-4 sample window
-  private readonly ALPHA_SLOW = 0.06;  // ~16 sample window
+  private readonly ALPHA_FAST = 0.25;  // slightly smoother to reduce noise-triggered crossovers
+  private readonly ALPHA_SLOW = 0.055; // slightly smoother baseline
   private emaInitialized = false;
 
   // === PEAK STATE ===
@@ -38,6 +38,7 @@ export class HeartBeatProcessor {
   private inUpswing = false;        // fast > slow
   private upswingPeakValue = -Infinity;
   private upswingPeakTime = 0;
+  private upswingStartTime = 0;    // track upswing duration to reject noise spikes
   private refractoryMs = 330;       // adaptive refractory period
 
   // === RR INTERVAL TRACKING ===
@@ -111,7 +112,7 @@ export class HeartBeatProcessor {
     const p10 = sorted60[Math.floor(sorted60.length * 0.1)] ?? 0;
     const p90 = sorted60[Math.floor(sorted60.length * 0.9)] ?? 0;
     const dynamicRange = p90 - p10;
-    if (dynamicRange < 0.3) {
+    if (dynamicRange < 0.12) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
@@ -153,11 +154,12 @@ export class HeartBeatProcessor {
 
     // === PEAK DETECTION: downward crossover after upswing ===
     if (wasInUpswing && !this.inUpswing && timeSinceLastPeak >= this.refractoryMs) {
-      // Validate the peak candidate
       const peakValue = this.upswingPeakValue;
       const peakTime = this.upswingPeakTime;
+      const upswingDuration = peakTime - this.upswingStartTime;
 
-      if (this.validatePeak(peakValue, timeSinceLastPeak)) {
+      // Reject noise spikes: real cardiac upswing lasts at least ~40ms
+      if (upswingDuration >= 35 && this.validatePeak(peakValue, timeSinceLastPeak)) {
         isPeak = true;
         const peakInterval = this.lastPeakTime > 0 ? peakTime - this.lastPeakTime : 0;
         
@@ -183,6 +185,7 @@ export class HeartBeatProcessor {
     if (!wasInUpswing && this.inUpswing) {
       this.upswingPeakValue = clampedValue;
       this.upswingPeakTime = now;
+      this.upswingStartTime = now;
     }
 
     // === Decay consecutive peaks if no peak for too long ===
@@ -218,15 +221,18 @@ export class HeartBeatProcessor {
     const minAmplitude = this.amplitudeP25 + amplitudeRange * 0.35;
     if (peakValue < minAmplitude) return false;
 
-    // 2. Prominence: peak must stand out from slow EMA
+    // 2. Prominence: peak must stand out from slow EMA — adaptive threshold
     const prominence = peakValue - this.emaSlow;
-    const minProminence = Math.max(3, amplitudeRange * 0.15);
+    // Lower prominence for weak signals (small amplitude range), stricter for strong
+    const minProminence = amplitudeRange > 20 
+      ? Math.max(2.5, amplitudeRange * 0.12) 
+      : Math.max(1.5, amplitudeRange * 0.08);
     if (prominence < minProminence) return false;
 
     // 3. Amplitude consistency: if we have a previous peak, check ratio
     if (this.lastPeakAmplitude > 0) {
       const ratio = peakValue / this.lastPeakAmplitude;
-      if (ratio < 0.12 || ratio > 8) return false; // extreme amplitude change = artifact
+      if (ratio < 0.15 || ratio > 6) return false; // extreme amplitude change = artifact
     }
 
     // 4. RR consistency check (if we have history)
@@ -425,6 +431,7 @@ export class HeartBeatProcessor {
     this.inUpswing = false;
     this.upswingPeakValue = -Infinity;
     this.upswingPeakTime = 0;
+    this.upswingStartTime = 0;
     this.refractoryMs = 330;
     this.consecutiveValidPeaks = 0;
     this.signalQualityIndex = 0;

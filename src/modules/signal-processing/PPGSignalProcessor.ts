@@ -490,15 +490,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const gNorm = this.greenBaseline > 0 ? (this.greenBaseline - rawGreen) / this.greenBaseline : 0;
     const bNorm = this.blueBaseline > 0 ? (this.blueBaseline - rawBlue) / this.blueBaseline : 0;
 
-    const clamp = (v: number) => this.clamp(v, -0.04, 0.04);
+    // Wider clamp to preserve weak pulsatile signals
+    const clamp = (v: number) => this.clamp(v, -0.07, 0.07);
     const rPulse = clamp(rNorm);
     const gPulse = clamp(gNorm);
 
-    // Source candidates (CHROM removed — amplifies noise without finger)
+    // Adaptive gain: boost weak signals, attenuate strong ones
+    const pulseEnergy = Math.max(Math.abs(rPulse), Math.abs(gPulse));
+    const adaptiveGain = pulseEnergy < 0.005 ? 4800 : pulseEnergy < 0.015 ? 3800 : 3200;
+
+    // Source candidates
     const sources: { [key: string]: number } = {
-      R: rPulse * 3200,
-      G: gPulse * 3200,
-      RG: this.blendRG(rPulse, gPulse, rawRed, rawGreen, motionArtifact) * 3200,
+      R: rPulse * adaptiveGain,
+      G: gPulse * adaptiveGain,
+      RG: this.blendRG(rPulse, gPulse, rawRed, rawGreen, motionArtifact) * adaptiveGain,
     };
 
     // Update per-source buffers
@@ -578,7 +583,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const p10 = sorted[Math.floor(sorted.length * 0.1)] ?? 0;
     const p90 = sorted[Math.floor(sorted.length * 0.9)] ?? 0;
     const range = p90 - p10;
-    if (range < 0.3) return 0;
+    if (range < 0.12) return 0;
 
     const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length;
     const variance = buffer.reduce((a, v) => a + (v - mean) ** 2, 0) / buffer.length;
