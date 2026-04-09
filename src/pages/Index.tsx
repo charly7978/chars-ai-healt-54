@@ -428,6 +428,7 @@ const Index = () => {
     totalBeatsRef.current = 0;
     arrhythmiaBeatsRef.current = 0;
     lastArrhythmiaCountForBeatsRef.current = 0;
+    unstableFrameCounter.current = 0;
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setRRIntervals([]);
@@ -455,7 +456,9 @@ const Index = () => {
 
   // === PROCESAR SEÑAL PPG ===
   const vitalSignsFrameCounter = useRef<number>(0);
-  const VITALS_PROCESS_EVERY_N_FRAMES = 3; // Process vitals more often
+  const unstableFrameCounter = useRef<number>(0);
+  const UNSTABLE_ZERO_THRESHOLD = 15; // ~0.5s de señal mala antes de borrar vitales
+  const VITALS_PROCESS_EVERY_N_FRAMES = 3;
   
   useEffect(() => {
     if (!lastSignal || !isMonitoring) return;
@@ -473,42 +476,52 @@ const Index = () => {
       lastSignal.timestamp
     );
 
-    setHeartRate(stableHumanSignal ? heartBeatResult.bpm : 0);
     setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
 
     if (!stableHumanSignal) {
-      vitalSignsFrameCounter.current = 0;
-      setBeatMarker(0);
-      setRRIntervals([]);
-      setArrhythmiaCount("--");
-      if (arrhythmiaDetectedRef.current) {
-        arrhythmiaDetectedRef.current = false;
-        setArrhythmiaState(false);
+      unstableFrameCounter.current++;
+      
+      // Solo borrar vitales después de señal mala SOSTENIDA
+      if (unstableFrameCounter.current >= UNSTABLE_ZERO_THRESHOLD) {
+        setHeartRate(0);
+        vitalSignsFrameCounter.current = 0;
+        setBeatMarker(0);
+        setRRIntervals([]);
+        setArrhythmiaCount("--");
+        if (arrhythmiaDetectedRef.current) {
+          arrhythmiaDetectedRef.current = false;
+          setArrhythmiaState(false);
+        }
+        setVitalSigns(prev => (
+          prev.measurementConfidence === 'INVALID' &&
+          prev.spo2 === 0 &&
+          prev.glucose === 0 &&
+          prev.hemoglobin === 0 &&
+          prev.pressure.systolic === 0 &&
+          prev.pressure.diastolic === 0
+            ? prev
+            : {
+                ...prev,
+                spo2: 0,
+                glucose: 0,
+                hemoglobin: 0,
+                pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
+                arrhythmiaCount: 0,
+                arrhythmiaStatus: "SIN ARRITMIAS|0",
+                lipids: { totalCholesterol: 0, triglycerides: 0 },
+                lastArrhythmiaData: undefined,
+                signalQuality: 0,
+                measurementConfidence: 'INVALID'
+              }
+        ));
       }
-      setVitalSigns(prev => (
-        prev.measurementConfidence === 'INVALID' &&
-        prev.spo2 === 0 &&
-        prev.glucose === 0 &&
-        prev.hemoglobin === 0 &&
-        prev.pressure.systolic === 0 &&
-        prev.pressure.diastolic === 0
-          ? prev
-          : {
-              ...prev,
-              spo2: 0,
-              glucose: 0,
-              hemoglobin: 0,
-              pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
-              arrhythmiaCount: 0,
-              arrhythmiaStatus: "SIN ARRITMIAS|0",
-              lipids: { totalCholesterol: 0, triglycerides: 0 },
-              lastArrhythmiaData: undefined,
-              signalQuality: 0,
-              measurementConfidence: 'INVALID'
-            }
-      ));
+      // Durante los primeros frames inestables, mantener último valor válido (no borrar)
       return;
     }
+
+    // Señal estable — resetear contador de inestabilidad
+    unstableFrameCounter.current = 0;
+    setHeartRate(heartBeatResult.bpm);
 
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
