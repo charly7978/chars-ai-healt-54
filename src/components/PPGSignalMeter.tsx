@@ -164,27 +164,31 @@ const PPGSignalMeter = ({
     const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
     const plot = getPlotArea();
     
+    // Pure black background
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0, 0, W, H);
     
-    ctx.fillStyle = 'rgba(0, 20, 10, 0.3)';
+    // Subtle scanline effect
+    for (let y = 0; y < H; y += 4) {
+      ctx.fillStyle = 'rgba(0, 255, 100, 0.008)';
+      ctx.fillRect(0, y, W, 1);
+    }
+    
+    // Plot area with very faint phosphor tint
+    ctx.fillStyle = 'rgba(0, 20, 8, 0.4)';
     ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
     
-    ctx.strokeStyle = COLORS.GRID_MINOR;
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
+    // Minor grid - fine dots style
+    ctx.fillStyle = COLORS.GRID_MINOR;
     for (let x = plot.x; x <= plot.x + plot.width; x += 20) {
-      ctx.moveTo(x, plot.y);
-      ctx.lineTo(x, plot.y + plot.height);
+      for (let y = plot.y; y <= plot.y + plot.height; y += 20) {
+        ctx.fillRect(x, y, 1, 1);
+      }
     }
-    for (let y = plot.y; y <= plot.y + plot.height; y += 20) {
-      ctx.moveTo(plot.x, y);
-      ctx.lineTo(plot.x + plot.width, y);
-    }
-    ctx.stroke();
     
+    // Major grid lines
     ctx.strokeStyle = COLORS.GRID_MAJOR;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
     for (let x = plot.x; x <= plot.x + plot.width; x += 100) {
       ctx.moveTo(x, plot.y);
@@ -196,18 +200,23 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     
+    // Baseline
     ctx.strokeStyle = COLORS.BASELINE;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([8, 4]);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 6]);
     ctx.beginPath();
     ctx.moveTo(plot.x, plot.centerY);
     ctx.lineTo(plot.x + plot.width, plot.centerY);
     ctx.stroke();
     ctx.setLineDash([]);
     
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
-    ctx.lineWidth = 1;
+    // Plot border with glow
+    ctx.shadowColor = 'rgba(0, 255, 136, 0.15)';
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = COLORS.PANEL_BORDER;
+    ctx.lineWidth = 1.5;
     ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
+    ctx.shadowBlur = 0;
   }, [getPlotArea]);
 
   const drawAmplitudeScale = useCallback((ctx: CanvasRenderingContext2D) => {
