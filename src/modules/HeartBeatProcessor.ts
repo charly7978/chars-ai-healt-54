@@ -434,8 +434,6 @@ export class HeartBeatProcessor {
   getSQI(): number { return this.signalQualityIndex; }
   getDerivativeBuffer(): number[] { return [...this.derivativeBuffer]; }
 
-  setArrhythmiaDetected(_isDetected: boolean): void {}
-  setFingerDetected(_detected: boolean): void {}
 
   reset(): void {
     this.signalBuffer = [];
