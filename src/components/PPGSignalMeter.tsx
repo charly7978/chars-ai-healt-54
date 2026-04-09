@@ -484,7 +484,7 @@ const PPGSignalMeter = ({
       }
       
       // === SIGNAL PROCESSING ===
-      const scaledValue = signalValue * 2;
+      const scaledValue = signalValue * 3;
       
       if (peak) {
         const currentCount = arrStatus ? parseInt(arrStatus.split('|')[1] || '0') : 0;
