@@ -485,7 +485,6 @@ export class PPGFeatureExtractor {
     return { sdnn, rmssd, cv };
   }
 }
-    const acdc = this.extractACDCRatio(buffer);
     const rrVar = rrIntervals ? this.extractRRVariability(rrIntervals) : { sdnn: 0, rmssd: 0, cv: 0 };
 
     // Quick morphological features from buffer tail
