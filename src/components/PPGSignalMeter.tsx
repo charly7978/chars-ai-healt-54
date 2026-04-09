@@ -924,28 +924,13 @@ const PPGSignalMeter = ({
   }, [onReset]);
 
   return (
-    <div className="fixed inset-0 bg-slate-950">
+    <div className="fixed inset-0" style={{ backgroundColor: '#000000' }}>
       <canvas
         ref={canvasRef}
         width={CONFIG.CANVAS_WIDTH}
         height={CONFIG.CANVAS_HEIGHT}
         className="w-full h-full absolute inset-0"
       />
-
-      <div className="absolute top-0 left-0 p-2 z-10 flex items-center gap-2" style={{ top: '6px', left: '140px' }}>
-        <div className={`p-1.5 rounded-full transition-all duration-100 ${
-          showPulse ? 'bg-red-500/30 scale-110' : 'bg-emerald-500/20'
-        }`}>
-          <Heart 
-            className={`w-4 h-4 transition-all duration-100 ${
-              showPulse ? 'text-red-400 scale-110' : 'text-emerald-400'
-            }`}
-            fill={showPulse ? 'currentColor' : 'none'}
-          />
-        </div>
-        <Activity className="w-3.5 h-3.5 text-emerald-400" />
-        <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
-      </div>
 
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button 
