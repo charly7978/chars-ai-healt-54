@@ -225,7 +225,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           `${pulseSource.label}:${pulseSource.strength.toFixed(1)} ` +
           `PI:${perfusionIndex.toFixed(2)} C:${(this.smoothedCoverage * 100).toFixed(0)} ` +
           `${this.contactState}${motionArtifact ? ' MOV' : ''}`,
-        hasPulsatility: this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05 && pulseSource.strength > 1.5,
+        hasPulsatility:
+          this.contactState === 'STABLE_CONTACT' &&
+          this.signalQuality >= 14 &&
+          pulseSource.strength > 0.8,
         pulsatilityValue: this.contactState === 'STABLE_CONTACT' ? Math.max(perfusionIndex, pulseSource.strength * 0.02) : 0,
       },
     });
@@ -763,9 +766,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   private calculatePerfusionIndex(): number {
-    if (this.greenDC > 0) return (this.greenAC / this.greenDC) * 100;
-    if (this.redDC > 0) return (this.redAC / this.redDC) * 100;
-    return 0;
+    const greenPI = this.greenDC > 30 ? (this.greenAC / this.greenDC) * 100 : 0;
+    const redPI = this.redDC > 30 ? (this.redAC / this.redDC) * 100 : 0;
+    const candidate = greenPI > 0 ? greenPI : redPI;
+
+    if (!isFinite(candidate) || candidate <= 0) return 0;
+
+    // Internal normalization for SQI/diagnostics to avoid runaway ratios from weak DC
+    return this.clamp(candidate, 0, 20);
   }
 
   private resetBaselines(): void {
