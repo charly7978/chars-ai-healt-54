@@ -64,19 +64,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
   private stableContactCount = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 3;
-  private readonly FINGER_LOST_FRAMES = 60; // ~2s tolerancia
-  private readonly STABLE_THRESHOLD = 15; // ~0.5s para STABLE
-  private readonly UNSTABLE_GRACE = 90; // ~3s antes de NO_CONTACT total
+  private readonly FINGER_CONFIRM_FRAMES = 8;   // ~270ms @ 30fps — más estable
+  private readonly FINGER_LOST_FRAMES = 90;     // ~3s tolerancia antes de degradar
+  private readonly STABLE_THRESHOLD = 30;       // ~1s para STABLE — evitar parpadeo
+  private readonly UNSTABLE_GRACE = 120;        // ~4s antes de NO_CONTACT total
 
-  // Suavizado temporal
+  // Suavizado temporal — más lentos = más estable
   private smoothedRed = 0;
   private smoothedGreen = 0;
   private smoothedBlue = 0;
   private smoothedCoverage = 0;
   private smoothedFingerScore = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.10;
-  private readonly COVERAGE_SMOOTH_ALPHA = 0.12;
+  private readonly RGB_SMOOTH_ALPHA = 0.05;       // era 0.10 — más suave
+  private readonly COVERAGE_SMOOTH_ALPHA = 0.06;  // era 0.12 — más suave
 
   // IMU / Motion
   private motionScore = 0;
@@ -248,9 +248,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           : 'UNSTABLE_CONTACT';
       }
     } else {
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 1);
+      // Decremento lento — no perder confianza por un solo frame malo
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.5);
       this.fingerLostCount++;
-      this.stableContactCount = Math.max(0, this.stableContactCount - 1);
+      // stableContactCount decrementa lento para no perder STABLE por glitches
+      this.stableContactCount = Math.max(0, this.stableContactCount - 0.3);
 
       if (this.fingerDetected) {
         // Soft hold: mantener contacto con gracia — stricter thresholds
