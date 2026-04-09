@@ -431,6 +431,7 @@ export class HeartBeatProcessor {
     this.inUpswing = false;
     this.upswingPeakValue = -Infinity;
     this.upswingPeakTime = 0;
+    this.upswingStartTime = 0;
     this.refractoryMs = 330;
     this.consecutiveValidPeaks = 0;
     this.signalQualityIndex = 0;
