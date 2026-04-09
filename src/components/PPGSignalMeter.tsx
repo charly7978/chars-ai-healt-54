@@ -567,34 +567,8 @@ const PPGSignalMeter = ({
           }
           ctx.restore();
           
-          // === MAIN SIGNAL — sharp, electric, high-contrast ===
-          // Outer glow pass
-          for (let i = 1; i < pathCoords.length; i++) {
-            const prev = pathCoords[i - 1];
-            const curr = pathCoords[i];
-            const age = now - curr.time;
-            const ageFactor = Math.max(0.4, 1 - (age / WINDOW_MS) * 0.6);
-            
-            ctx.beginPath();
-            ctx.moveTo(prev.x, prev.y);
-            ctx.lineTo(curr.x, curr.y);
-            
-            if (curr.isArr) {
-              ctx.strokeStyle = `rgba(255, 45, 45, ${0.5 * ageFactor})`;
-              ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
-              ctx.shadowBlur = 20;
-              ctx.lineWidth = 6;
-            } else {
-              ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 * ageFactor})`;
-              ctx.shadowColor = COLORS.SIGNAL_GLOW;
-              ctx.shadowBlur = 16;
-              ctx.lineWidth = 5;
-            }
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-          }
-          
-          // Core line — crisp and bright
+          // === MAIN SIGNAL — ELECTRIC, sharp, high-contrast ===
+          // Wide outer glow (electric aura)
           for (let i = 1; i < pathCoords.length; i++) {
             const prev = pathCoords[i - 1];
             const curr = pathCoords[i];
@@ -606,29 +580,81 @@ const PPGSignalMeter = ({
             ctx.lineTo(curr.x, curr.y);
             
             if (curr.isArr) {
-              ctx.strokeStyle = `rgba(255, 60, 60, ${ageFactor})`;
-              ctx.lineWidth = 2.5;
+              ctx.strokeStyle = `rgba(255, 45, 45, ${0.6 * ageFactor})`;
+              ctx.shadowColor = '#ff2d2d';
+              ctx.shadowBlur = 30;
+              ctx.lineWidth = 8;
             } else {
-              ctx.strokeStyle = `rgba(0, 255, 100, ${ageFactor})`;
-              ctx.lineWidth = 2;
+              ctx.strokeStyle = `rgba(0, 255, 100, ${0.5 * ageFactor})`;
+              ctx.shadowColor = '#00ff64';
+              ctx.shadowBlur = 25;
+              ctx.lineWidth = 7;
             }
             ctx.stroke();
+            ctx.shadowBlur = 0;
           }
           
-          // === Inner bright core (phosphor hotspot) ===
+          // Mid glow layer
           for (let i = 1; i < pathCoords.length; i++) {
             const prev = pathCoords[i - 1];
             const curr = pathCoords[i];
             const age = now - curr.time;
-            const ageFactor = Math.max(0.2, 1 - (age / WINDOW_MS) * 0.8);
+            const ageFactor = Math.max(0.6, 1 - (age / WINDOW_MS) * 0.4);
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            
+            if (curr.isArr) {
+              ctx.strokeStyle = `rgba(255, 80, 80, ${0.8 * ageFactor})`;
+              ctx.shadowColor = '#ff4444';
+              ctx.shadowBlur = 15;
+              ctx.lineWidth = 4;
+            } else {
+              ctx.strokeStyle = `rgba(0, 255, 120, ${0.7 * ageFactor})`;
+              ctx.shadowColor = '#00ff80';
+              ctx.shadowBlur = 12;
+              ctx.lineWidth = 3.5;
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          }
+          
+          // Core line — crisp, bright, electric
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = Math.max(0.7, 1 - (age / WINDOW_MS) * 0.3);
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            
+            if (curr.isArr) {
+              ctx.strokeStyle = `rgba(255, 100, 100, ${ageFactor})`;
+              ctx.lineWidth = 2.5;
+            } else {
+              ctx.strokeStyle = `rgba(50, 255, 140, ${ageFactor})`;
+              ctx.lineWidth = 2.2;
+            }
+            ctx.stroke();
+          }
+          
+          // === White-hot inner core (phosphor hotspot) ===
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = Math.max(0.3, 1 - (age / WINDOW_MS) * 0.7);
             
             ctx.beginPath();
             ctx.moveTo(prev.x, prev.y);
             ctx.lineTo(curr.x, curr.y);
             ctx.strokeStyle = curr.isArr 
-              ? `rgba(255, 180, 180, ${0.4 * ageFactor})`
-              : `rgba(180, 255, 200, ${0.35 * ageFactor})`;
-            ctx.lineWidth = 0.8;
+              ? `rgba(255, 200, 200, ${0.5 * ageFactor})`
+              : `rgba(200, 255, 220, ${0.45 * ageFactor})`;
+            ctx.lineWidth = 1;
             ctx.stroke();
           }
           
