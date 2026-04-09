@@ -467,11 +467,11 @@ const Index = () => {
     const signalValue = lastSignal.filteredValue;
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
     const masterQuality = lastSignal.quality || 0;
-    // GATING MAESTRO: quality >= 8 es suficiente para procesar latidos
-    // quality >= 15 para signos vitales completos
+    // GATING MAESTRO: quality >= 5 para procesar latidos (was 8)
+    // quality >= 12 para signos vitales completos (was 15)
     const hasContact = contactState === 'STABLE_CONTACT' || contactState === 'UNSTABLE_CONTACT';
-    const signalUsable = hasContact && masterQuality >= 8;
-    const signalStable = contactState === 'STABLE_CONTACT' && masterQuality >= 15;
+    const signalUsable = hasContact && masterQuality >= 5;
+    const signalStable = contactState === 'STABLE_CONTACT' && masterQuality >= 12;
 
     // SIEMPRE procesar heartbeat si hay contacto — el HeartBeatProcessor tiene sus propios gates internos
     const heartBeatResult = processHeartBeat(
