@@ -154,10 +154,8 @@ export const useHeartBeatProcessor = () => {
     processingStateRef.current = 'ACTIVE';
   }, []);
 
-  const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
-    if (processorRef.current && processingStateRef.current === 'ACTIVE') {
-      processorRef.current.setArrhythmiaDetected(isArrhythmiaDetected);
-    }
+  const setArrhythmiaState = useCallback((_isArrhythmiaDetected: boolean) => {
+    // No-op: arrhythmia state is managed by ArrhythmiaProcessor directly
   }, []);
 
   return {
