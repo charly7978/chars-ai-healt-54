@@ -466,21 +466,25 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
-    // GATING MAESTRO: confiar en quality del PPGSignalProcessor (ya incluye contacto, PI, SNR, periodicidad)
-    const signalQualityOk = (lastSignal.quality || 0) >= 12;
-    const stableHumanSignal = contactState === 'STABLE_CONTACT' && signalQualityOk;
+    const masterQuality = lastSignal.quality || 0;
+    // GATING MAESTRO: quality >= 8 es suficiente para procesar latidos
+    // quality >= 15 para signos vitales completos
+    const hasContact = contactState === 'STABLE_CONTACT' || contactState === 'UNSTABLE_CONTACT';
+    const signalUsable = hasContact && masterQuality >= 8;
+    const signalStable = contactState === 'STABLE_CONTACT' && masterQuality >= 15;
 
     // SIEMPRE procesar heartbeat si hay contacto — el HeartBeatProcessor tiene sus propios gates internos
     const heartBeatResult = processHeartBeat(
       signalValue,
       contactState,
       lastSignal.timestamp,
-      lastSignal.quality || 0
+      masterQuality
     );
 
-    setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
+    // Mostrar waveform si la señal es usable (no solo cuando es stable)
+    setHeartbeatSignal(signalUsable ? heartBeatResult.filteredValue : 0);
 
-    if (!stableHumanSignal) {
+    if (!signalUsable) {
       unstableFrameCounter.current++;
       
       // Solo borrar vitales después de señal mala SOSTENIDA
@@ -521,8 +525,10 @@ const Index = () => {
       return;
     }
 
-    // Señal estable — resetear contador de inestabilidad
+    // Señal usable — resetear contador de inestabilidad
     unstableFrameCounter.current = 0;
+    
+    // BPM siempre se muestra si el heartbeat lo reporta (signalUsable ya confirmó contacto+calidad)
     setHeartRate(heartBeatResult.bpm);
 
     if (heartBeatResult.isPeak) {
@@ -542,7 +548,7 @@ const Index = () => {
 
     vitalSignsFrameCounter.current++;
 
-    if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
+    if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES && signalStable) {
       vitalSignsFrameCounter.current = 0;
       const rgbStats = getRGBStats();
 
@@ -557,15 +563,15 @@ const Index = () => {
 
       const vitals = processVitalSigns(
         lastSignal.filteredValue,
-        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18
+        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.15
           ? heartBeatResult.rrData
           : undefined,
-        lastSignal.quality || 0
+        masterQuality
       );
 
       setVitalSigns(vitals);
 
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18 && vitals.measurementConfidence !== 'INVALID') {
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.15 && vitals.measurementConfidence !== 'INVALID') {
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
         if (arrhythmiaStatus) {
           lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
