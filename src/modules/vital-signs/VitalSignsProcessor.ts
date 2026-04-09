@@ -212,24 +212,8 @@ export class VitalSignsProcessor {
     return true;
   }
 
-  private calculateSignalQuality(): number {
-    if (this.signalHistory.length < 20) return 0;
-    
-    const recent = this.signalHistory.slice(-60);
-    const sorted = [...recent].sort((a, b) => a - b);
-    const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
-    const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
-    const range = p90 - p10;
-    
-    if (range < 0.2) return 2;
-    
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
-    const stdDev = Math.sqrt(variance);
-    const snr = range / (stdDev + 0.05);
-    
-    return Math.min(100, Math.max(0, snr * 16));
-  }
+  // calculateSignalQuality ELIMINADO — SQI maestro vive en PPGSignalProcessor
+  // VitalSignsProcessor confía en que Index.tsx solo le envía señal ya validada
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
