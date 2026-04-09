@@ -226,9 +226,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           `PI:${pi.toFixed(2)} C:${(this.smoothedCoverage * 100).toFixed(0)} ` +
           `${this.contactState}${motionArtifact ? ' MOV' : ''}`,
         hasPulsatility:
-          this.contactState === 'STABLE_CONTACT' &&
-          gatedQuality >= 14 &&
-          pulseSource.strength > 0.8,
+          (this.contactState === 'STABLE_CONTACT' || this.contactState === 'UNSTABLE_CONTACT') &&
+          gatedQuality >= 10 &&
+          pulseSource.strength > 0.5,
         pulsatilityValue: this.contactState === 'STABLE_CONTACT' ? Math.max(pi, pulseSource.strength * 0.02) : 0,
       },
     });
@@ -665,10 +665,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const perfusionIndex = this.calculatePerfusionIndex();
     const redDominance = this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2;
 
-    // Gate: no perfusion = no real signal
-    if (perfusionIndex < this.MIN_HUMAN_PI) return Math.min(10, this.smoothedCoverage * 15);
-    // Gate: red must dominate (hemoglobin signature)
-    if (redDominance < 15) return 0;
+    // Gate suave: sin perfusión mínima, dar puntos parciales por cobertura
+    if (perfusionIndex < 0.04) return Math.min(8, this.smoothedCoverage * 12);
+    // Gate suave: red debe dominar pero con margen menor para no bloquear adquisición
+    if (redDominance < 8) return Math.min(6, perfusionIndex * 3);
 
     const recent = this.filteredBuffer.slice(-90);
     const sorted = [...recent].sort((a, b) => a - b);
@@ -676,7 +676,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
     const range = p90 - p10;
 
-    if (range < 0.3) return 5;
+    if (range < 0.2) return 5;
 
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((a, v) => a + (v - mean) ** 2, 0) / recent.length;
@@ -686,15 +686,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // === AUTOCORRELATION — detect real cardiac periodicity ===
     const periodicityScore = this.computeAutocorrelationPeriodicity(recent, mean);
 
-    const snrScore = Math.min(30, snr * 10);
-    const perfusionScore = Math.min(20, perfusionIndex * 10);
-    const coverageScore = Math.min(12, this.smoothedCoverage * 20);
-    const fingerScore = Math.min(12, this.smoothedFingerScore * 18);
+    const snrScore = Math.min(30, snr * 12);
+    const perfusionScore = Math.min(20, perfusionIndex * 12);
+    const coverageScore = Math.min(10, this.smoothedCoverage * 18);
+    const fingerScore = Math.min(10, this.smoothedFingerScore * 16);
     const motionPenalty = Math.min(20, this.motionScore * 16);
-    // Periodicity is now the most important factor (up to 26 pts)
+    // Periodicity is the most important factor (up to 26 pts)
     const periodicityPts = Math.min(26, periodicityScore * 26);
 
-    const stabilityBonus = this.contactState === 'STABLE_CONTACT' ? 3 : 0;
+    const stabilityBonus = this.contactState === 'STABLE_CONTACT' ? 4 : 0;
 
     return this.clamp(
       snrScore + perfusionScore + coverageScore + fingerScore + periodicityPts - motionPenalty + stabilityBonus,
