@@ -190,13 +190,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.calculateDerivatives();
     this.signalQuality = this.calculateSignalQuality();
 
-    const perfusionIndex = this.calculatePerfusionIndex();
-    const adjustedQuality = motionArtifact
+    // === GATING MAESTRO ÚNICO ===
+    // quality ya incluye: contacto, hemoglobina, perfusión, SNR, periodicidad, movimiento
+    // No duplicar gates downstream — este es el único punto de decisión
+    const gatedQuality = motionArtifact
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
-    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.006 && adjustedQuality >= 18
-      ? adjustedQuality
-      : Math.min(16, adjustedQuality * 0.4);
 
     const now = Date.now();
     if (now - this.lastLogTime >= 2000) {
@@ -217,7 +216,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       contactState: this.contactState,
       motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
-      perfusionIndex,
+      perfusionIndex: this.calculatePerfusionIndex(),
       rawRed: roi.rawRed,
       rawGreen: roi.rawGreen,
       diagnostics: {
