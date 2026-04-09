@@ -27,9 +27,9 @@ interface PPGSignalMeterProps {
 const CONFIG = {
   CANVAS_WIDTH: 1400,
   CANVAS_HEIGHT: 2800,
-  WINDOW_MS: 2800,
+  WINDOW_MS: 3200,
   TARGET_FPS: 30,
-  BUFFER_SIZE: 400,
+  BUFFER_SIZE: 500,
   PLOT_AREA: {
     LEFT: 80,
     RIGHT: 80,
@@ -37,29 +37,30 @@ const CONFIG = {
     BOTTOM: 60
   },
   COLORS: {
-    BG: '#0a0f1a',
-    GRID_MAJOR: 'rgba(34, 197, 94, 0.25)',
-    GRID_MINOR: 'rgba(34, 197, 94, 0.1)',
-    BASELINE: 'rgba(34, 197, 94, 0.4)',
-    SIGNAL_NORMAL: '#22c55e',
-    SIGNAL_GLOW: 'rgba(34, 197, 94, 0.5)',
-    SIGNAL_ARRHYTHMIA: '#ef4444',
-    ARRHYTHMIA_GLOW: 'rgba(239, 68, 68, 0.5)',
-    PEAK_NORMAL: '#3b82f6',
-    PEAK_ARRHYTHMIA: '#ef4444',
-    VALLEY_COLOR: '#64748b',
-    TEXT_PRIMARY: '#22c55e',
-    TEXT_SECONDARY: '#94a3b8',
-    TEXT_WARNING: '#f59e0b',
-    TEXT_DANGER: '#ef4444',
-    SCALE_TEXT: '#6b7280',
-    // New professional colors
-    SIGNAL_FILL_NORMAL: 'rgba(34, 197, 94, 0.08)',
-    SIGNAL_FILL_ARR: 'rgba(239, 68, 68, 0.08)',
-    SYSTOLIC_MARKER: '#60a5fa',
+    BG: '#000000',
+    GRID_MAJOR: 'rgba(0, 255, 100, 0.18)',
+    GRID_MINOR: 'rgba(0, 255, 100, 0.06)',
+    BASELINE: 'rgba(0, 255, 100, 0.3)',
+    SIGNAL_NORMAL: '#00ff64',
+    SIGNAL_GLOW: 'rgba(0, 255, 100, 0.7)',
+    SIGNAL_ARRHYTHMIA: '#ff2d2d',
+    ARRHYTHMIA_GLOW: 'rgba(255, 45, 45, 0.8)',
+    PEAK_NORMAL: '#00ccff',
+    PEAK_ARRHYTHMIA: '#ff2d2d',
+    VALLEY_COLOR: '#4a6a8a',
+    TEXT_PRIMARY: '#00ff64',
+    TEXT_SECONDARY: '#7a9ab0',
+    TEXT_WARNING: '#ffaa00',
+    TEXT_DANGER: '#ff3333',
+    SCALE_TEXT: '#4a6a8a',
+    SIGNAL_FILL_NORMAL: 'rgba(0, 255, 100, 0.04)',
+    SIGNAL_FILL_ARR: 'rgba(255, 45, 45, 0.06)',
+    SYSTOLIC_MARKER: '#00ccff',
     DIASTOLIC_MARKER: '#818cf8',
     DICHROTIC_NOTCH: '#a78bfa',
-    IBI_TEXT: '#67e8f9',
+    IBI_TEXT: '#00e5ff',
+    SWEEP_LINE: 'rgba(0, 255, 100, 0.9)',
+    PHOSPHOR_DECAY: 'rgba(0, 255, 100, 0.15)',
   }
 };
 
@@ -162,12 +163,17 @@ const PPGSignalMeter = ({
     const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
     const plot = getPlotArea();
     
+    // Pure black background like real monitor
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0, 0, W, H);
     
-    ctx.fillStyle = 'rgba(0, 20, 10, 0.3)';
-    ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
+    // Subtle scanline effect
+    for (let y = 0; y < H; y += 4) {
+      ctx.fillStyle = 'rgba(0, 20, 0, 0.15)';
+      ctx.fillRect(0, y, W, 1);
+    }
     
+    // Minor grid - very subtle
     ctx.strokeStyle = COLORS.GRID_MINOR;
     ctx.lineWidth = 0.5;
     ctx.beginPath();
@@ -181,8 +187,9 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     
+    // Major grid
     ctx.strokeStyle = COLORS.GRID_MAJOR;
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 0.8;
     ctx.beginPath();
     for (let x = plot.x; x <= plot.x + plot.width; x += 100) {
       ctx.moveTo(x, plot.y);
@@ -194,16 +201,18 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     
+    // Baseline - solid thin
     ctx.strokeStyle = COLORS.BASELINE;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([8, 4]);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 3]);
     ctx.beginPath();
     ctx.moveTo(plot.x, plot.centerY);
     ctx.lineTo(plot.x + plot.width, plot.centerY);
     ctx.stroke();
     ctx.setLineDash([]);
     
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
+    // Plot border
+    ctx.strokeStyle = 'rgba(0, 255, 100, 0.2)';
     ctx.lineWidth = 1;
     ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
   }, [getPlotArea]);
@@ -516,13 +525,13 @@ const PPGSignalMeter = ({
       
       const stats = amplitudeStatsRef.current;
       
-      // === DRAW PPG SIGNAL ===
+      // === DRAW PPG SIGNAL — PROFESSIONAL MONITOR ===
       if (points.length > 2) {
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
+        ctx.lineJoin = 'miter';
+        ctx.lineCap = 'butt';
         
-        // Build path coordinates first for fill
-        const pathCoords: { x: number; y: number; isArr: boolean }[] = [];
+        // Build path coordinates
+        const pathCoords: { x: number; y: number; isArr: boolean; val: number; time: number }[] = [];
         
         for (let i = 0; i < points.length; i++) {
           const pt = points[i];
@@ -534,89 +543,126 @@ const PPGSignalMeter = ({
           const y = plot.y + normalizedY * plot.height;
           
           if (x < plot.x || x > plot.x + plot.width) continue;
-          pathCoords.push({ x, y, isArr: pt.isArrhythmia });
+          pathCoords.push({ x, y, isArr: pt.isArrhythmia, val: pt.value, time: pt.time });
         }
         
-        // === GRADIENT FILL under the waveform ===
         if (pathCoords.length > 2) {
-          // Normal fill
+          // === PHOSPHOR DECAY TRAIL (older signal fades) ===
           ctx.save();
-          ctx.beginPath();
-          ctx.moveTo(pathCoords[0].x, plot.centerY);
-          for (const c of pathCoords) {
-            ctx.lineTo(c.x, c.y);
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = 1 - (age / WINDOW_MS);
+            const alpha = Math.max(0.03, ageFactor * 0.12);
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            ctx.strokeStyle = curr.isArr 
+              ? `rgba(255, 45, 45, ${alpha})` 
+              : `rgba(0, 255, 100, ${alpha})`;
+            ctx.lineWidth = 8;
+            ctx.stroke();
           }
-          ctx.lineTo(pathCoords[pathCoords.length - 1].x, plot.centerY);
-          ctx.closePath();
-          
-          const fillGrad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-          fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
-          fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
-          fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
-          ctx.fillStyle = fillGrad;
-          ctx.fill();
           ctx.restore();
           
-          // Arrhythmia fill overlay for arrhythmia segments
-          const arrSegments: { x: number; y: number }[][] = [];
-          let currentSeg: { x: number; y: number }[] = [];
-          for (const c of pathCoords) {
-            if (c.isArr) {
-              currentSeg.push(c);
-            } else {
-              if (currentSeg.length > 1) arrSegments.push(currentSeg);
-              currentSeg = [];
-            }
-          }
-          if (currentSeg.length > 1) arrSegments.push(currentSeg);
-          
-          for (const seg of arrSegments) {
-            ctx.save();
+          // === MAIN SIGNAL — sharp, electric, high-contrast ===
+          // Outer glow pass
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = Math.max(0.4, 1 - (age / WINDOW_MS) * 0.6);
+            
             ctx.beginPath();
-            ctx.moveTo(seg[0].x, plot.centerY);
-            for (const c of seg) ctx.lineTo(c.x, c.y);
-            ctx.lineTo(seg[seg.length - 1].x, plot.centerY);
-            ctx.closePath();
-            const arrFill = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-            arrFill.addColorStop(0, 'rgba(239, 68, 68, 0.15)');
-            arrFill.addColorStop(0.5, 'rgba(239, 68, 68, 0.05)');
-            arrFill.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
-            ctx.fillStyle = arrFill;
-            ctx.fill();
-            ctx.restore();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            
+            if (curr.isArr) {
+              ctx.strokeStyle = `rgba(255, 45, 45, ${0.5 * ageFactor})`;
+              ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
+              ctx.shadowBlur = 20;
+              ctx.lineWidth = 6;
+            } else {
+              ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 * ageFactor})`;
+              ctx.shadowColor = COLORS.SIGNAL_GLOW;
+              ctx.shadowBlur = 16;
+              ctx.lineWidth = 5;
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
           }
-        }
-        
-        // === DRAW LINE SEGMENTS ===
-        for (let i = 1; i < pathCoords.length; i++) {
-          const prev = pathCoords[i - 1];
-          const curr = pathCoords[i];
           
-          ctx.beginPath();
-          ctx.moveTo(prev.x, prev.y);
-          ctx.lineTo(curr.x, curr.y);
+          // Core line — crisp and bright
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = Math.max(0.5, 1 - (age / WINDOW_MS) * 0.5);
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            
+            if (curr.isArr) {
+              ctx.strokeStyle = `rgba(255, 60, 60, ${ageFactor})`;
+              ctx.lineWidth = 2.5;
+            } else {
+              ctx.strokeStyle = `rgba(0, 255, 100, ${ageFactor})`;
+              ctx.lineWidth = 2;
+            }
+            ctx.stroke();
+          }
           
-          if (curr.isArr) {
-            ctx.strokeStyle = COLORS.SIGNAL_ARRHYTHMIA;
-            ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
-            ctx.shadowBlur = 18;
-            ctx.lineWidth = 4;
-          } else {
-            ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
+          // === Inner bright core (phosphor hotspot) ===
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = Math.max(0.2, 1 - (age / WINDOW_MS) * 0.8);
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            ctx.strokeStyle = curr.isArr 
+              ? `rgba(255, 180, 180, ${0.4 * ageFactor})`
+              : `rgba(180, 255, 200, ${0.35 * ageFactor})`;
+            ctx.lineWidth = 0.8;
+            ctx.stroke();
+          }
+          
+          // === SWEEP LINE (vertical cursor at newest point) ===
+          if (pathCoords.length > 0) {
+            const newestX = pathCoords[pathCoords.length - 1].x;
+            const sweepWidth = 30;
+            
+            // Erase zone ahead of sweep
+            const eraseGrad = ctx.createLinearGradient(newestX, 0, newestX + sweepWidth, 0);
+            eraseGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+            eraseGrad.addColorStop(0.3, 'rgba(0, 0, 0, 0.7)');
+            eraseGrad.addColorStop(1, 'rgba(0, 0, 0, 0.95)');
+            ctx.fillStyle = eraseGrad;
+            ctx.fillRect(newestX, plot.y + 1, sweepWidth, plot.height - 2);
+            
+            // Bright sweep cursor line
+            ctx.strokeStyle = COLORS.SWEEP_LINE;
+            ctx.lineWidth = 1.5;
             ctx.shadowColor = COLORS.SIGNAL_GLOW;
-            ctx.shadowBlur = 12;
-            ctx.lineWidth = 2.5;
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.moveTo(newestX, plot.y);
+            ctx.lineTo(newestX, plot.y + plot.height);
+            ctx.stroke();
+            ctx.shadowBlur = 0;
           }
-          
-          ctx.stroke();
-          ctx.shadowBlur = 0;
         }
         
         // === PEAKS & VALLEYS ===
-        const peaks: { x: number; y: number; isArrhythmia: boolean; time: number }[] = [];
-        const valleys: { x: number; y: number }[] = [];
+        const peaks: { x: number; y: number; isArrhythmia: boolean; time: number; val: number }[] = [];
+        const valleys: { x: number; y: number; val: number }[] = [];
         const history = beatHistoryRef.current;
-        const visibleBeats: { time: number; x: number; y: number; isArrhythmia: boolean }[] = [];
+        const visibleBeats: { time: number; x: number; y: number; isArrhythmia: boolean; val: number }[] = [];
         
         for (const beat of history) {
           const age = now - beat.time;
@@ -635,8 +681,8 @@ const PPGSignalMeter = ({
           if (closestPt && minDist < 200) {
             const normalizedY = (stats.max - closestPt.value) / stats.range;
             const y = plot.y + normalizedY * plot.height;
-            peaks.push({ x, y, isArrhythmia: beat.isArrhythmia, time: beat.time });
-            visibleBeats.push({ time: beat.time, x, y, isArrhythmia: beat.isArrhythmia });
+            peaks.push({ x, y, isArrhythmia: beat.isArrhythmia, time: beat.time, val: closestPt.value });
+            visibleBeats.push({ time: beat.time, x, y, isArrhythmia: beat.isArrhythmia, val: closestPt.value });
           }
         }
         
@@ -657,7 +703,7 @@ const PPGSignalMeter = ({
             const vx = plot.x + plot.width - (age2 * plot.width / WINDOW_MS);
             const vy = plot.y + ((stats.max - minPt.value) / stats.range) * plot.height;
             if (vx >= plot.x && vx <= plot.x + plot.width) {
-              valleys.push({ x: vx, y: vy });
+              valleys.push({ x: vx, y: vy, val: minPt.value });
             }
           }
         }
@@ -669,10 +715,10 @@ const PPGSignalMeter = ({
           const ibiMs = Math.abs(p1.time - p2.time);
           if (ibiMs > 0 && ibiMs < 3000) {
             const midX = (p1.x + p2.x) / 2;
-            const topY = Math.min(p1.y, p2.y) - 28;
+            const topY = Math.min(p1.y, p2.y) - 32;
             
             // Bracket line
-            ctx.strokeStyle = 'rgba(103, 232, 249, 0.4)';
+            ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.moveTo(p1.x, topY + 8);
@@ -682,79 +728,137 @@ const PPGSignalMeter = ({
             ctx.stroke();
             
             // IBI value
-            ctx.font = '9px "SF Mono", Consolas, monospace';
+            ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
             ctx.fillStyle = COLORS.IBI_TEXT;
             ctx.textAlign = 'center';
-            ctx.fillText(`${ibiMs}ms`, midX, topY - 3);
+            ctx.fillText(`${ibiMs}ms`, midX, topY - 4);
+            
+            // Instant HR from this interval
+            const instantHR = Math.round(60000 / ibiMs);
+            ctx.font = '8px "SF Mono", Consolas, monospace';
+            ctx.fillStyle = 'rgba(0, 229, 255, 0.5)';
+            ctx.fillText(`${instantHR}bpm`, midX, topY - 16);
           }
         }
         
-        // Draw peak markers with vertical reference lines
+        // Draw peak markers with amplitude values
         peaks.forEach(p => {
-          const color = p.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.SIGNAL_NORMAL;
+          const color = p.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
           
-          // Vertical reference line
+          // Vertical reference line — thinner, subtler
           ctx.save();
-          ctx.strokeStyle = p.isArrhythmia ? 'rgba(239, 68, 68, 0.35)' : 'rgba(34, 197, 94, 0.25)';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = p.isArrhythmia ? 'rgba(255, 45, 45, 0.25)' : 'rgba(0, 204, 255, 0.2)';
+          ctx.lineWidth = 0.8;
+          ctx.setLineDash([3, 5]);
           ctx.beginPath();
           ctx.moveTo(p.x, plot.y);
           ctx.lineTo(p.x, plot.y + plot.height);
           ctx.stroke();
           ctx.restore();
           
-          // Peak circle with ring
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.isArrhythmia ? 8 : 6, 0, Math.PI * 2);
+          // Peak diamond marker (more professional than circle)
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate(Math.PI / 4);
+          const markerSize = p.isArrhythmia ? 5 : 4;
           ctx.fillStyle = color;
-          ctx.fill();
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 8;
+          ctx.fillRect(-markerSize, -markerSize, markerSize * 2, markerSize * 2);
+          ctx.shadowBlur = 0;
+          // White center
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(-1.5, -1.5, 3, 3);
+          ctx.restore();
           
-          // White inner dot
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
-          ctx.fillStyle = '#fff';
-          ctx.fill();
-          
-          // Label
-          ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
-          ctx.fillStyle = p.isArrhythmia ? COLORS.TEXT_DANGER : COLORS.SIGNAL_NORMAL;
+          // Peak amplitude value annotation
+          const peakAmplitude = p.val.toFixed(1);
+          ctx.font = 'bold 9px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = p.isArrhythmia ? COLORS.TEXT_DANGER : COLORS.PEAK_NORMAL;
           ctx.textAlign = 'center';
-          ctx.fillText(p.isArrhythmia ? 'A' : 'N', p.x, p.y - 16);
+          ctx.fillText(`${peakAmplitude}μV`, p.x, p.y - 20);
+          
+          // Beat label
+          ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = p.isArrhythmia ? COLORS.TEXT_DANGER : COLORS.SIGNAL_NORMAL;
+          ctx.fillText(p.isArrhythmia ? '▲A' : '▲N', p.x, p.y - 10);
           
           // Pulsating halo for arrhythmia
           if (p.isArrhythmia) {
-            const alpha = (Math.sin(now / 80) + 1) / 2;
+            const alpha = (Math.sin(now / 60) + 1) / 2;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(239, 68, 68, ${0.3 + alpha * 0.5})`;
-            ctx.lineWidth = 2.5;
+            ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 45, 45, ${0.4 + alpha * 0.5})`;
+            ctx.lineWidth = 2;
             ctx.stroke();
             
-            // Second outer ring
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 22, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(239, 68, 68, ${0.1 + alpha * 0.2})`;
-            ctx.lineWidth = 1.5;
+            ctx.arc(p.x, p.y, 20, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255, 45, 45, ${0.1 + alpha * 0.2})`;
+            ctx.lineWidth = 1;
             ctx.stroke();
           }
         });
         
-        // Draw valley markers
+        // Draw valley markers with values
         valleys.forEach(v => {
+          // Small inverted triangle
           ctx.beginPath();
           ctx.moveTo(v.x, v.y + 3);
-          ctx.lineTo(v.x - 4, v.y + 10);
-          ctx.lineTo(v.x + 4, v.y + 10);
+          ctx.lineTo(v.x - 3, v.y + 9);
+          ctx.lineTo(v.x + 3, v.y + 9);
           ctx.closePath();
           ctx.fillStyle = COLORS.VALLEY_COLOR;
           ctx.fill();
           
+          // Valley amplitude value
           ctx.font = '8px "SF Mono", Consolas, monospace';
           ctx.fillStyle = COLORS.VALLEY_COLOR;
           ctx.textAlign = 'center';
-          ctx.fillText('V', v.x, v.y + 22);
+          ctx.fillText(`${v.val.toFixed(1)}`, v.x, v.y + 20);
         });
+        
+        // === Peak-to-valley amplitude delta ===
+        for (let i = 0; i < peaks.length && i < valleys.length; i++) {
+          const pk = peaks[i];
+          const vl = valleys[i];
+          const delta = Math.abs(pk.val - vl.val);
+          if (delta > 0) {
+            const midY = (pk.y + vl.y) / 2;
+            const sideX = Math.min(pk.x, vl.x) - 18;
+            if (sideX > plot.x) {
+              // Vertical amplitude line
+              ctx.strokeStyle = 'rgba(0, 229, 255, 0.25)';
+              ctx.lineWidth = 0.8;
+              ctx.beginPath();
+              ctx.moveTo(sideX, pk.y);
+              ctx.lineTo(sideX, vl.y);
+              ctx.stroke();
+              
+              // Arrow tips
+              ctx.beginPath();
+              ctx.moveTo(sideX - 2, pk.y + 4);
+              ctx.lineTo(sideX, pk.y);
+              ctx.lineTo(sideX + 2, pk.y + 4);
+              ctx.stroke();
+              ctx.beginPath();
+              ctx.moveTo(sideX - 2, vl.y - 4);
+              ctx.lineTo(sideX, vl.y);
+              ctx.lineTo(sideX + 2, vl.y - 4);
+              ctx.stroke();
+              
+              // Delta value
+              ctx.font = '7px "SF Mono", Consolas, monospace';
+              ctx.fillStyle = COLORS.IBI_TEXT;
+              ctx.textAlign = 'center';
+              ctx.save();
+              ctx.translate(sideX - 8, midY);
+              ctx.rotate(-Math.PI / 2);
+              ctx.fillText(`Δ${delta.toFixed(1)}`, 0, 0);
+              ctx.restore();
+            }
+          }
+        }
       }
       
       // === BEAT HISTORY (last 20) ===
@@ -762,41 +866,41 @@ const PPGSignalMeter = ({
       if (beatHistory.length > 0) {
         const histX = plot.x;
         const histY = plot.y + plot.height + 30;
-        const dotRadius = 7;
-        const dotSpacing = 18;
+        const dotRadius = 6;
+        const dotSpacing = 16;
         const totalWidth = beatHistory.length * dotSpacing;
         const startX = histX + (plot.width - totalWidth) / 2;
         
-        ctx.fillStyle = 'rgba(10, 15, 30, 0.85)';
-        const panelPad = 8;
-        ctx.fillRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 14);
-        ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 14);
+        ctx.fillStyle = 'rgba(0, 5, 0, 0.9)';
+        const panelPad = 6;
+        ctx.fillRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 12);
+        ctx.strokeStyle = 'rgba(0, 255, 100, 0.15)';
+        ctx.lineWidth = 0.8;
+        ctx.strokeRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 12);
         
-        ctx.font = '8px "SF Mono", Consolas, monospace';
+        ctx.font = '7px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_SECONDARY;
         ctx.textAlign = 'center';
-        ctx.fillText('HISTORIAL DE LATIDOS', startX + totalWidth / 2, histY - dotRadius - 1);
+        ctx.fillText('BEAT HISTORY', startX + totalWidth / 2, histY - dotRadius - 1);
         
-        // Count arrhythmias in history
         const arrCount = beatHistory.filter(b => b.isArrhythmia).length;
         const normalCount = beatHistory.length - arrCount;
         ctx.textAlign = 'right';
         ctx.fillStyle = COLORS.SIGNAL_NORMAL;
         ctx.fillText(`N:${normalCount}`, startX + totalWidth + panelPad - 2, histY - dotRadius - 1);
         ctx.fillStyle = arrCount > 0 ? COLORS.SIGNAL_ARRHYTHMIA : COLORS.TEXT_SECONDARY;
-        ctx.fillText(`A:${arrCount}`, startX - 2, histY - dotRadius - 1);
+        ctx.textAlign = 'left';
+        ctx.fillText(`A:${arrCount}`, startX - panelPad + 2, histY - dotRadius - 1);
         ctx.textAlign = 'center';
         
         beatHistory.forEach((beat, i) => {
           const cx = startX + i * dotSpacing + dotSpacing / 2;
-          const cy = histY + 6;
+          const cy = histY + 5;
           
           if (beat.isArrhythmia) {
             ctx.beginPath();
-            ctx.arc(cx, cy, dotRadius + 3, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+            ctx.arc(cx, cy, dotRadius + 2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 45, 45, 0.2)';
             ctx.fill();
           }
           
@@ -805,57 +909,53 @@ const PPGSignalMeter = ({
           ctx.fillStyle = beat.isArrhythmia ? COLORS.SIGNAL_ARRHYTHMIA : COLORS.SIGNAL_NORMAL;
           ctx.fill();
           
-          ctx.font = 'bold 7px "SF Mono", Consolas, monospace';
-          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 6px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = '#000';
           ctx.textAlign = 'center';
-          ctx.fillText(`${i + 1}`, cx, cy + 3);
+          ctx.fillText(`${i + 1}`, cx, cy + 2.5);
         });
       }
       
       // === LEGEND ===
       const legendY = CONFIG.CANVAS_HEIGHT - 15;
-      ctx.font = '9px "SF Mono", Consolas, monospace';
+      ctx.font = '8px "SF Mono", Consolas, monospace';
       ctx.textAlign = 'left';
       const lx = CONFIG.PLOT_AREA.LEFT;
       
       ctx.fillStyle = COLORS.SIGNAL_NORMAL;
-      ctx.fillRect(lx, legendY - 6, 15, 3);
-      ctx.beginPath();
-      ctx.arc(lx + 22, legendY - 4, 3, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(lx, legendY - 5, 12, 2);
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Normal (N)', lx + 30, legendY);
+      ctx.fillText('Normal', lx + 16, legendY);
       
       ctx.fillStyle = COLORS.SIGNAL_ARRHYTHMIA;
-      ctx.fillRect(lx + 110, legendY - 6, 15, 3);
-      ctx.beginPath();
-      ctx.arc(lx + 132, legendY - 4, 3, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.fillRect(lx + 65, legendY - 5, 12, 2);
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Arritmia (A)', lx + 140, legendY);
+      ctx.fillText('Arritmia', lx + 81, legendY);
       
-      ctx.beginPath();
-      ctx.arc(lx + 230, legendY - 4, 4, 0, Math.PI * 2);
+      // Peak marker in legend
+      ctx.save();
+      ctx.translate(lx + 140, legendY - 3);
+      ctx.rotate(Math.PI / 4);
       ctx.fillStyle = COLORS.PEAK_NORMAL;
-      ctx.fill();
+      ctx.fillRect(-2, -2, 4, 4);
+      ctx.restore();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Pico', lx + 240, legendY);
+      ctx.fillText('Pico', lx + 148, legendY);
       
-      ctx.beginPath();
-      ctx.moveTo(lx + 275, legendY - 6);
-      ctx.lineTo(lx + 271, legendY);
-      ctx.lineTo(lx + 279, legendY);
-      ctx.closePath();
       ctx.fillStyle = COLORS.VALLEY_COLOR;
+      ctx.beginPath();
+      ctx.moveTo(lx + 185, legendY - 5);
+      ctx.lineTo(lx + 182, legendY);
+      ctx.lineTo(lx + 188, legendY);
+      ctx.closePath();
       ctx.fill();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Valle', lx + 285, legendY);
+      ctx.fillText('Valle', lx + 192, legendY);
       
-      // IBI legend
       ctx.fillStyle = COLORS.IBI_TEXT;
-      ctx.fillRect(lx + 320, legendY - 5, 12, 2);
+      ctx.fillRect(lx + 228, legendY - 4, 10, 1.5);
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('IBI', lx + 338, legendY);
+      ctx.fillText('IBI', lx + 242, legendY);
       
       animationRef.current = requestAnimationFrame(render);
     };
