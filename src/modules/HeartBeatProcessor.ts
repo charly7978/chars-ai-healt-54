@@ -101,17 +101,17 @@ export class HeartBeatProcessor {
     }
 
     // Need minimum samples
-    if (this.signalBuffer.length < 15) {
+    if (this.signalBuffer.length < 10) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
-    // === SIGNAL ENERGY GATE ===
+    // === SIGNAL ENERGY GATE — lowered threshold for faster detection ===
     const recent60 = this.signalBuffer.slice(-60);
     const sorted60 = [...recent60].sort((a, b) => a - b);
     const p10 = sorted60[Math.floor(sorted60.length * 0.1)] ?? 0;
     const p90 = sorted60[Math.floor(sorted60.length * 0.9)] ?? 0;
     const dynamicRange = p90 - p10;
-    if (dynamicRange < 0.3) {
+    if (dynamicRange < 0.15) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
@@ -213,14 +213,14 @@ export class HeartBeatProcessor {
    * PEAK VALIDATION — Aboy++ inspired amplitude + morphology check
    */
   private validatePeak(peakValue: number, timeSinceLastPeak: number): boolean {
-    // 1. Minimum amplitude: peak must be above 25th percentile + margin
+    // 1. Minimum amplitude: peak must be above 25th percentile + smaller margin
     const amplitudeRange = this.amplitudeP75 - this.amplitudeP25;
-    const minAmplitude = this.amplitudeP25 + amplitudeRange * 0.35;
+    const minAmplitude = this.amplitudeP25 + amplitudeRange * 0.25;
     if (peakValue < minAmplitude) return false;
 
-    // 2. Prominence: peak must stand out from slow EMA
+    // 2. Prominence: peak must stand out from slow EMA (lower threshold)
     const prominence = peakValue - this.emaSlow;
-    const minProminence = Math.max(3, amplitudeRange * 0.15);
+    const minProminence = Math.max(2, amplitudeRange * 0.10);
     if (prominence < minProminence) return false;
 
     // 3. Amplitude consistency: if we have a previous peak, check ratio
