@@ -26,7 +26,7 @@ interface PPGSignalMeterProps {
 
 const CONFIG = {
   CANVAS_WIDTH: 1400,
-  CANVAS_HEIGHT: 2800,
+  CANVAS_HEIGHT: 2400,
   WINDOW_MS: 3200,
   TARGET_FPS: 30,
   BUFFER_SIZE: 500,
@@ -278,15 +278,15 @@ const PPGSignalMeter = ({
     const { CANVAS_WIDTH: W, COLORS } = CONFIG;
     const { bpm, spo2, arrhythmiaStatus, quality, rrIntervals, rawArrhythmiaData } = propsRef.current;
     
-    const panelH = 95;
-    const panelW = 160;
+    const panelH = 100;
+    const panelW = 180;
     const panelY = 2;
     const fontSize = {
-      label: 'bold 14px "SF Mono", Consolas, monospace',
-      value: 'bold 48px "SF Mono", Consolas, monospace',
-      unit: '16px "SF Mono", Consolas, monospace',
-      class: '11px "SF Mono", Consolas, monospace',
-      small: '10px "SF Mono", Consolas, monospace',
+      label: 'bold 16px "SF Mono", Consolas, monospace',
+      value: 'bold 56px "SF Mono", Consolas, monospace',
+      unit: '18px "SF Mono", Consolas, monospace',
+      class: '12px "SF Mono", Consolas, monospace',
+      small: '11px "SF Mono", Consolas, monospace',
     };
     
     // === BPM PANEL (top-left) ===
@@ -303,7 +303,10 @@ const PPGSignalMeter = ({
     
     ctx.font = fontSize.value;
     ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
-    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 66);
+    ctx.shadowColor = bpm > 0 ? '#00ff64' : 'transparent';
+    ctx.shadowBlur = bpm > 0 ? 12 : 0;
+    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 70);
+    ctx.shadowBlur = 0;
     
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
@@ -336,7 +339,10 @@ const PPGSignalMeter = ({
     ctx.font = fontSize.value;
     const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
     ctx.fillStyle = spo2Color;
-    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 66);
+    ctx.shadowColor = spo2 > 0 ? spo2Color : 'transparent';
+    ctx.shadowBlur = spo2 > 0 ? 12 : 0;
+    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 70);
+    ctx.shadowBlur = 0;
     
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
@@ -547,14 +553,14 @@ const PPGSignalMeter = ({
         }
         
         if (pathCoords.length > 2) {
-          // === PHOSPHOR DECAY TRAIL (older signal fades) ===
+          // === PHOSPHOR DECAY TRAIL (older signal fades with wider glow) ===
           ctx.save();
           for (let i = 1; i < pathCoords.length; i++) {
             const prev = pathCoords[i - 1];
             const curr = pathCoords[i];
             const age = now - curr.time;
             const ageFactor = 1 - (age / WINDOW_MS);
-            const alpha = Math.max(0.03, ageFactor * 0.12);
+            const alpha = Math.max(0.05, ageFactor * 0.2);
             
             ctx.beginPath();
             ctx.moveTo(prev.x, prev.y);
@@ -562,39 +568,13 @@ const PPGSignalMeter = ({
             ctx.strokeStyle = curr.isArr 
               ? `rgba(255, 45, 45, ${alpha})` 
               : `rgba(0, 255, 100, ${alpha})`;
-            ctx.lineWidth = 8;
+            ctx.lineWidth = 12;
             ctx.stroke();
           }
           ctx.restore();
           
-          // === MAIN SIGNAL — sharp, electric, high-contrast ===
-          // Outer glow pass
-          for (let i = 1; i < pathCoords.length; i++) {
-            const prev = pathCoords[i - 1];
-            const curr = pathCoords[i];
-            const age = now - curr.time;
-            const ageFactor = Math.max(0.4, 1 - (age / WINDOW_MS) * 0.6);
-            
-            ctx.beginPath();
-            ctx.moveTo(prev.x, prev.y);
-            ctx.lineTo(curr.x, curr.y);
-            
-            if (curr.isArr) {
-              ctx.strokeStyle = `rgba(255, 45, 45, ${0.5 * ageFactor})`;
-              ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
-              ctx.shadowBlur = 20;
-              ctx.lineWidth = 6;
-            } else {
-              ctx.strokeStyle = `rgba(0, 255, 100, ${0.4 * ageFactor})`;
-              ctx.shadowColor = COLORS.SIGNAL_GLOW;
-              ctx.shadowBlur = 16;
-              ctx.lineWidth = 5;
-            }
-            ctx.stroke();
-            ctx.shadowBlur = 0;
-          }
-          
-          // Core line — crisp and bright
+          // === MAIN SIGNAL — ELECTRIC, sharp, high-contrast ===
+          // Wide outer glow (electric aura)
           for (let i = 1; i < pathCoords.length; i++) {
             const prev = pathCoords[i - 1];
             const curr = pathCoords[i];
@@ -606,29 +586,81 @@ const PPGSignalMeter = ({
             ctx.lineTo(curr.x, curr.y);
             
             if (curr.isArr) {
-              ctx.strokeStyle = `rgba(255, 60, 60, ${ageFactor})`;
-              ctx.lineWidth = 2.5;
+              ctx.strokeStyle = `rgba(255, 45, 45, ${0.6 * ageFactor})`;
+              ctx.shadowColor = '#ff2d2d';
+              ctx.shadowBlur = 30;
+              ctx.lineWidth = 8;
             } else {
-              ctx.strokeStyle = `rgba(0, 255, 100, ${ageFactor})`;
-              ctx.lineWidth = 2;
+              ctx.strokeStyle = `rgba(0, 255, 100, ${0.5 * ageFactor})`;
+              ctx.shadowColor = '#00ff64';
+              ctx.shadowBlur = 25;
+              ctx.lineWidth = 7;
             }
             ctx.stroke();
+            ctx.shadowBlur = 0;
           }
           
-          // === Inner bright core (phosphor hotspot) ===
+          // Mid glow layer
           for (let i = 1; i < pathCoords.length; i++) {
             const prev = pathCoords[i - 1];
             const curr = pathCoords[i];
             const age = now - curr.time;
-            const ageFactor = Math.max(0.2, 1 - (age / WINDOW_MS) * 0.8);
+            const ageFactor = Math.max(0.6, 1 - (age / WINDOW_MS) * 0.4);
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            
+            if (curr.isArr) {
+              ctx.strokeStyle = `rgba(255, 80, 80, ${0.8 * ageFactor})`;
+              ctx.shadowColor = '#ff4444';
+              ctx.shadowBlur = 15;
+              ctx.lineWidth = 4;
+            } else {
+              ctx.strokeStyle = `rgba(0, 255, 120, ${0.7 * ageFactor})`;
+              ctx.shadowColor = '#00ff80';
+              ctx.shadowBlur = 12;
+              ctx.lineWidth = 3.5;
+            }
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          }
+          
+          // Core line — crisp, bright, electric
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = Math.max(0.7, 1 - (age / WINDOW_MS) * 0.3);
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            
+            if (curr.isArr) {
+              ctx.strokeStyle = `rgba(255, 100, 100, ${ageFactor})`;
+              ctx.lineWidth = 2.5;
+            } else {
+              ctx.strokeStyle = `rgba(50, 255, 140, ${ageFactor})`;
+              ctx.lineWidth = 2.2;
+            }
+            ctx.stroke();
+          }
+          
+          // === White-hot inner core (phosphor hotspot) ===
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            const age = now - curr.time;
+            const ageFactor = Math.max(0.3, 1 - (age / WINDOW_MS) * 0.7);
             
             ctx.beginPath();
             ctx.moveTo(prev.x, prev.y);
             ctx.lineTo(curr.x, curr.y);
             ctx.strokeStyle = curr.isArr 
-              ? `rgba(255, 180, 180, ${0.4 * ageFactor})`
-              : `rgba(180, 255, 200, ${0.35 * ageFactor})`;
-            ctx.lineWidth = 0.8;
+              ? `rgba(255, 200, 200, ${0.5 * ageFactor})`
+              : `rgba(200, 255, 220, ${0.45 * ageFactor})`;
+            ctx.lineWidth = 1;
             ctx.stroke();
           }
           
