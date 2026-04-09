@@ -177,7 +177,7 @@ export class VitalSignsProcessor {
   }
 
   private validateRealPulse(rrData?: { intervals: number[], lastPeakTime: number | null }): boolean {
-    if (!rrData || !rrData.intervals || rrData.intervals.length < 3) {
+    if (!rrData || !rrData.intervals || rrData.intervals.length < 2) {
       this.validPulseCount = 0;
       return false;
     }
@@ -186,23 +186,25 @@ export class VitalSignsProcessor {
       interval >= 273 && interval <= 2200
     );
 
-    if (validIntervals.length < 3) {
+    if (validIntervals.length < 2) {
       this.validPulseCount = 0;
       return false;
     }
 
-    // RR coherence: reject if intervals are too random (noise masquerading as beats)
-    const meanRR = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
-    const varRR = validIntervals.reduce((a, rr) => a + (rr - meanRR) ** 2, 0) / validIntervals.length;
-    const cvRR = Math.sqrt(varRR) / Math.max(1, meanRR);
-    if (cvRR > 0.40) {
-      this.validPulseCount = Math.max(0, this.validPulseCount - 1);
-      return false;
+    // RR coherence only after enough history; early acquisition must stay possible
+    if (validIntervals.length >= 3) {
+      const meanRR = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
+      const varRR = validIntervals.reduce((a, rr) => a + (rr - meanRR) ** 2, 0) / validIntervals.length;
+      const cvRR = Math.sqrt(varRR) / Math.max(1, meanRR);
+      if (cvRR > 0.50) {
+        this.validPulseCount = Math.max(0, this.validPulseCount - 1);
+        return false;
+      }
     }
 
     if (rrData.lastPeakTime) {
       const timeSinceLastPeak = Date.now() - rrData.lastPeakTime;
-      if (timeSinceLastPeak > 3500) {
+      if (timeSinceLastPeak > 4000) {
         this.validPulseCount = 0;
         return false;
       }
