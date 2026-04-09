@@ -98,18 +98,18 @@ export class HeartBeatProcessor {
       this.signalBuffer.shift();
     }
 
-    // Need minimum samples
-    if (this.signalBuffer.length < 15) {
+    // Need minimum samples (reduced from 15 to 10)
+    if (this.signalBuffer.length < 10) {
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
-    // === SIGNAL ENERGY GATE ===
+    // === SIGNAL ENERGY GATE — more permissive ===
     const recent60 = this.signalBuffer.slice(-60);
     const sorted60 = [...recent60].sort((a, b) => a - b);
     const p10 = sorted60[Math.floor(sorted60.length * 0.1)] ?? 0;
     const p90 = sorted60[Math.floor(sorted60.length * 0.9)] ?? 0;
     const dynamicRange = p90 - p10;
-    if (dynamicRange < 0.12) {
+    if (dynamicRange < 0.05) {  // Much lower threshold (was 0.12)
       return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
     }
 
@@ -155,8 +155,8 @@ export class HeartBeatProcessor {
       const peakTime = this.upswingPeakTime;
       const upswingDuration = peakTime - this.upswingStartTime;
 
-      // Reject noise spikes: real cardiac upswing lasts at least ~40ms
-      if (upswingDuration >= 35 && this.validatePeak(peakValue, timeSinceLastPeak)) {
+      // Reject noise spikes: real cardiac upswing lasts at least ~25ms (was 35)
+      if (upswingDuration >= 22 && this.validatePeak(peakValue, timeSinceLastPeak)) {
         isPeak = true;
         const peakInterval = this.lastPeakTime > 0 ? peakTime - this.lastPeakTime : 0;
         
@@ -216,18 +216,18 @@ export class HeartBeatProcessor {
     // 1. Minimum amplitude: peak must be above 25th percentile + margin
     //    Relaxed during early acquisition (fewer consecutive peaks)
     const amplitudeRange = this.amplitudeP75 - this.amplitudeP25;
-    const earlyAcquisition = this.consecutiveValidPeaks < 3;
-    const marginFactor = earlyAcquisition ? 0.20 : 0.30;
+    const earlyAcquisition = this.consecutiveValidPeaks < 4;  // Extended early phase (was 3)
+    const marginFactor = earlyAcquisition ? 0.10 : 0.22;     // Much lower (was 0.20/0.30)
     const minAmplitude = this.amplitudeP25 + amplitudeRange * marginFactor;
     if (peakValue < minAmplitude) return false;
 
-    // 2. Prominence: peak must stand out from slow EMA — adaptive threshold
+    // 2. Prominence: peak must stand out from slow EMA — relaxed
     const prominence = peakValue - this.emaSlow;
     const minProminence = earlyAcquisition
-      ? Math.max(1.0, amplitudeRange * 0.06)
+      ? Math.max(0.5, amplitudeRange * 0.03)   // Much lower (was 1.0, 0.06)
       : amplitudeRange > 20 
-        ? Math.max(2.0, amplitudeRange * 0.10) 
-        : Math.max(1.2, amplitudeRange * 0.07);
+        ? Math.max(1.2, amplitudeRange * 0.06)  // Lower (was 2.0, 0.10)
+        : Math.max(0.8, amplitudeRange * 0.04); // Lower (was 1.2, 0.07)
     if (prominence < minProminence) return false;
 
     // 3. Amplitude consistency: if we have a previous peak, check ratio
