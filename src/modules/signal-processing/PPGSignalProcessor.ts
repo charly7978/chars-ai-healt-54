@@ -281,7 +281,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           (this.contactState === 'STABLE_CONTACT' || this.contactState === 'UNSTABLE_CONTACT') &&
           gatedQuality >= 6 &&             // LOWER threshold (was 10)
           pulseSource.strength > 0.3,      // LOWER threshold (was 0.5)
-        pulsatilityValue: this.contactState !== 'NO_CONTACT' ? Math.max(pi, pulseSource.strength * 0.02) : 0,
+        pulsatilityValue: Math.max(pi, pulseSource.strength * 0.02),
       },
     });
   }
