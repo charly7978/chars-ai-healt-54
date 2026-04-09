@@ -1,101 +1,253 @@
-
 /**
- * Advanced Arrhythmia Processor based on peer-reviewed cardiac research
+ * ARRHYTHMIA PROCESSOR — Evidence-Based Multi-Metric Detection
+ *
+ * Detection approach based on published AF screening literature:
+ * 1. RMSSD (Root Mean Square of Successive Differences) — time-domain HRV
+ * 2. pNN50 (% of successive RR intervals differing >50ms) — irregularity marker
+ * 3. Shannon Entropy of RR histogram — complexity measure
+ * 4. Turning Point Ratio — randomness test for RR sequence
+ * 5. Coefficient of Variation — overall variability
+ *
+ * Requires ALL of:
+ *   - Learning period complete (baseline established)
+ *   - Sufficient valid RR intervals (≥8)
+ *   - Fresh rhythm data (last peak <2.5s ago)
+ *   - At least 3 of 5 metrics exceed thresholds simultaneously
+ *
+ * This approach minimizes false positives by requiring multi-metric consensus.
  */
 export class ArrhythmiaProcessor {
-  // Configuration based on Harvard Medical School research on HRV - AJUSTADA PARA MAYOR ESPECIFICIDAD
-  private readonly RR_WINDOW_SIZE = 10;
-  private readonly RMSSD_THRESHOLD = 55;
-  private readonly ARRHYTHMIA_LEARNING_PERIOD = 9000;
-  private readonly SD1_THRESHOLD = 35;
-  private readonly PERFUSION_INDEX_MIN = 0.30;
-  
-  // Advanced detection parameters - AJUSTADOS PARA MENOS FALSOS POSITIVOS
-  private readonly PNNX_THRESHOLD = 0.30;
-  private readonly SHANNON_ENTROPY_THRESHOLD = 1.85;
-  private readonly SAMPLE_ENTROPY_THRESHOLD = 1.35;
-  
-  // Minimum time between arrhythmias to reduce false positives
-  private readonly MIN_ARRHYTHMIA_INTERVAL = 3500;
-  private readonly MIN_VALID_RR_MS = 330;
-  private readonly MAX_VALID_RR_MS = 1800;
+  // === CONFIGURATION ===
+  private readonly RR_WINDOW_SIZE = 12;
+  private readonly LEARNING_PERIOD_MS = 8000;
+  private readonly MIN_VALID_RR_MS = 280;
+  private readonly MAX_VALID_RR_MS = 2000;
+  private readonly MIN_ARRHYTHMIA_INTERVAL_MS = 4000;
+  private readonly FRESHNESS_TIMEOUT_MS = 2500;
 
-  // State variables
+  // === METRIC THRESHOLDS (tuned for specificity over sensitivity) ===
+  private readonly RMSSD_THRESHOLD = 60;          // ms, elevated = irregular
+  private readonly PNN50_THRESHOLD = 0.30;         // 30%+ successive diffs >50ms
+  private readonly SHANNON_ENTROPY_THRESHOLD = 2.0; // bits, high = chaotic
+  private readonly TURNING_POINT_RATIO_LOW = 0.50;  // below = too regular (artifact)
+  private readonly TURNING_POINT_RATIO_HIGH = 0.85; // above = too random (AF-like)
+  private readonly CV_THRESHOLD = 0.12;             // coefficient of variation
+
+  // === STATE ===
   private rrIntervals: number[] = [];
-  private rrDifferences: number[] = [];
   private lastPeakTime: number | null = null;
-  private isLearningPhase = true;
-  private hasDetectedFirstArrhythmia = false;
+  private isLearning = true;
+  private measurementStartTime = Date.now();
   private arrhythmiaDetected = false;
   private arrhythmiaCount = 0;
-  private lastRMSSD: number = 0;
-  private lastRRVariation: number = 0;
-  private lastArrhythmiaTime: number = 0;
-  private measurementStartTime: number = Date.now();
-  
-  // Advanced metrics
-  private shannonEntropy: number = 0;
-  private sampleEntropy: number = 0;
-  private pnnX: number = 0;
+  private lastArrhythmiaTime = 0;
 
-  // Callback para notificar estados de arritmia
+  // === COMPUTED METRICS (exposed for UI) ===
+  private lastRMSSD = 0;
+  private lastRRVariation = 0;
+  private lastPNN50 = 0;
+  private lastEntropy = 0;
+  private lastTPR = 0;
+
+  // === BASELINE (learned during calibration) ===
+  private baselineRMSSD = 0;
+  private baselineSamples = 0;
+
   private onArrhythmiaDetection?: (isDetected: boolean) => void;
 
-  /**
-   * Define una función de callback para notificar cuando se detecta una arritmia
-   */
   public setArrhythmiaDetectionCallback(callback: (isDetected: boolean) => void): void {
     this.onArrhythmiaDetection = callback;
-    console.log("ArrhythmiaProcessor: Callback de detección establecido");
+  }
+
+  public processRRData(rrData?: { intervals: number[]; lastPeakTime: number | null }): {
+    arrhythmiaStatus: string;
+    lastArrhythmiaData: { timestamp: number; rmssd: number; rrVariation: number } | null;
+  } {
+    const now = Date.now();
+
+    // Update learning phase
+    if (now - this.measurementStartTime > this.LEARNING_PERIOD_MS) {
+      this.isLearning = false;
+    }
+
+    // No data → no detection
+    if (!rrData?.intervals || rrData.intervals.length === 0) {
+      this.arrhythmiaDetected = false;
+      return this.buildResult(now);
+    }
+
+    // Filter valid RR intervals
+    this.rrIntervals = rrData.intervals
+      .filter(rr => rr >= this.MIN_VALID_RR_MS && rr <= this.MAX_VALID_RR_MS)
+      .slice(-this.RR_WINDOW_SIZE);
+    this.lastPeakTime = rrData.lastPeakTime;
+
+    // Check freshness
+    const timeSinceLastPeak = this.lastPeakTime ? now - this.lastPeakTime : Infinity;
+    if (timeSinceLastPeak > this.FRESHNESS_TIMEOUT_MS) {
+      this.arrhythmiaDetected = false;
+      return this.buildResult(now);
+    }
+
+    // Need minimum intervals
+    if (this.rrIntervals.length < 8) {
+      this.arrhythmiaDetected = false;
+      return this.buildResult(now);
+    }
+
+    // During learning: accumulate baseline RMSSD
+    if (this.isLearning) {
+      const rmssd = this.computeRMSSD(this.rrIntervals);
+      this.baselineRMSSD = (this.baselineRMSSD * this.baselineSamples + rmssd) / (this.baselineSamples + 1);
+      this.baselineSamples++;
+      this.arrhythmiaDetected = false;
+      return this.buildResult(now);
+    }
+
+    // === MULTI-METRIC DETECTION ===
+    this.runDetection(now);
+
+    return this.buildResult(now);
   }
 
   /**
-   * Procesa datos de latido cardíaco para detectar arritmias usando análisis avanzado de VRC
+   * Core detection: requires consensus of multiple metrics
    */
-  public processRRData(rrData?: { intervals: number[]; lastPeakTime: number | null }): {
+  private runDetection(now: number): void {
+    const rr = this.rrIntervals;
+
+    // Compute all metrics
+    const rmssd = this.computeRMSSD(rr);
+    const pnn50 = this.computePNN50(rr);
+    const entropy = this.computeShannonEntropy(rr);
+    const tpr = this.computeTurningPointRatio(rr);
+    const cv = this.computeCV(rr);
+    const lastRR = rr[rr.length - 1];
+    const medianRR = this.median(rr);
+    const rrVariation = Math.abs(lastRR - medianRR) / Math.max(1, medianRR);
+
+    // Store for UI/debug
+    this.lastRMSSD = rmssd;
+    this.lastPNN50 = pnn50;
+    this.lastEntropy = entropy;
+    this.lastTPR = tpr;
+    this.lastRRVariation = rrVariation;
+
+    // === VOTE SYSTEM: each metric casts a vote ===
+    let votes = 0;
+    const totalVoters = 5;
+
+    // Vote 1: RMSSD significantly above baseline (or absolute threshold)
+    const rmssdThreshold = this.baselineRMSSD > 10 
+      ? Math.max(this.RMSSD_THRESHOLD, this.baselineRMSSD * 1.8) 
+      : this.RMSSD_THRESHOLD;
+    if (rmssd > rmssdThreshold) votes++;
+
+    // Vote 2: pNN50 elevated
+    if (pnn50 > this.PNN50_THRESHOLD) votes++;
+
+    // Vote 3: Shannon entropy elevated (chaotic RR pattern)
+    if (entropy > this.SHANNON_ENTROPY_THRESHOLD) votes++;
+
+    // Vote 4: Turning point ratio indicates randomness
+    if (tpr > this.TURNING_POINT_RATIO_HIGH) votes++;
+
+    // Vote 5: Coefficient of variation elevated
+    if (cv > this.CV_THRESHOLD) votes++;
+
+    // Require at least 3 of 5 metrics to agree
+    const isArrhythmia = votes >= 3;
+
+    // Notify state change
+    if (isArrhythmia !== this.arrhythmiaDetected && this.onArrhythmiaDetection) {
+      this.onArrhythmiaDetection(isArrhythmia);
+    }
+
+    // Count events with minimum spacing
+    if (isArrhythmia && !this.arrhythmiaDetected && 
+        now - this.lastArrhythmiaTime >= this.MIN_ARRHYTHMIA_INTERVAL_MS) {
+      this.arrhythmiaCount++;
+      this.lastArrhythmiaTime = now;
+    }
+
+    this.arrhythmiaDetected = isArrhythmia;
+  }
+
+  // === METRIC COMPUTATIONS ===
+
+  private computeRMSSD(rr: number[]): number {
+    if (rr.length < 2) return 0;
+    let sumSqDiff = 0;
+    for (let i = 1; i < rr.length; i++) {
+      const diff = rr[i] - rr[i - 1];
+      sumSqDiff += diff * diff;
+    }
+    return Math.sqrt(sumSqDiff / (rr.length - 1));
+  }
+
+  private computePNN50(rr: number[]): number {
+    if (rr.length < 2) return 0;
+    let count = 0;
+    for (let i = 1; i < rr.length; i++) {
+      if (Math.abs(rr[i] - rr[i - 1]) > 50) count++;
+    }
+    return count / (rr.length - 1);
+  }
+
+  private computeShannonEntropy(rr: number[]): number {
+    if (rr.length < 3) return 0;
+    // Bin RR intervals into 25ms bins
+    const bins = new Map<number, number>();
+    for (const r of rr) {
+      const bin = Math.floor(r / 25);
+      bins.set(bin, (bins.get(bin) ?? 0) + 1);
+    }
+    let entropy = 0;
+    const n = rr.length;
+    for (const count of bins.values()) {
+      const p = count / n;
+      if (p > 0) entropy -= p * Math.log2(p);
+    }
+    return entropy;
+  }
+
+  /**
+   * Turning Point Ratio: fraction of RR[i] that are local extrema
+   * In a purely random sequence, TPR ≈ 2/3 ≈ 0.667
+   * Regular rhythm → TPR ≈ 0 (monotonic)
+   * Very irregular (AF) → TPR > 0.85
+   */
+  private computeTurningPointRatio(rr: number[]): number {
+    if (rr.length < 3) return 0;
+    let turningPoints = 0;
+    for (let i = 1; i < rr.length - 1; i++) {
+      const isMax = rr[i] > rr[i - 1] && rr[i] > rr[i + 1];
+      const isMin = rr[i] < rr[i - 1] && rr[i] < rr[i + 1];
+      if (isMax || isMin) turningPoints++;
+    }
+    return turningPoints / (rr.length - 2);
+  }
+
+  private computeCV(rr: number[]): number {
+    if (rr.length < 2) return 0;
+    const mean = rr.reduce((a, b) => a + b, 0) / rr.length;
+    const variance = rr.reduce((a, v) => a + (v - mean) ** 2, 0) / rr.length;
+    return Math.sqrt(variance) / Math.max(1, mean);
+  }
+
+  private median(arr: number[]): number {
+    const sorted = [...arr].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)] ?? 0;
+  }
+
+  // === OUTPUT ===
+
+  private buildResult(now: number): {
     arrhythmiaStatus: string;
-    lastArrhythmiaData: { timestamp: number; rmssd: number; rrVariation: number; } | null;
+    lastArrhythmiaData: { timestamp: number; rmssd: number; rrVariation: number } | null;
   } {
-    const currentTime = Date.now();
-
-    // Update RR intervals if available
-    if (rrData?.intervals && rrData.intervals.length > 0) {
-      this.rrIntervals = rrData.intervals
-        .filter((interval) => interval >= this.MIN_VALID_RR_MS && interval <= this.MAX_VALID_RR_MS)
-        .slice(-Math.max(this.RR_WINDOW_SIZE, 14));
-      this.lastPeakTime = rrData.lastPeakTime;
-      
-      // Compute RR differences for variability analysis
-      if (this.rrIntervals.length >= 2) {
-        this.rrDifferences = [];
-        for (let i = 1; i < this.rrIntervals.length; i++) {
-          this.rrDifferences.push(this.rrIntervals[i] - this.rrIntervals[i - 1]);
-        }
-      }
-
-      const timeSinceLastPeak = this.lastPeakTime ? currentTime - this.lastPeakTime : Number.MAX_SAFE_INTEGER;
-      const hasFreshRhythm = timeSinceLastPeak <= 2500;
-      
-      if (!this.isLearningPhase && hasFreshRhythm && this.rrIntervals.length >= this.RR_WINDOW_SIZE) {
-        this.detectArrhythmia();
-      } else {
-        this.arrhythmiaDetected = false;
-      }
-    } else {
-      this.arrhythmiaDetected = false;
-      this.lastPeakTime = null;
-      this.rrDifferences = [];
-    }
-
-    // Check if learning phase is complete
-    const timeSinceStart = currentTime - this.measurementStartTime;
-    if (timeSinceStart > this.ARRHYTHMIA_LEARNING_PERIOD) {
-      this.isLearningPhase = false;
-    }
-
-    // Determine arrhythmia status message using CURRENT detection state only
-    let arrhythmiaStatus;
-    if (this.isLearningPhase) {
+    let arrhythmiaStatus: string;
+    if (this.isLearning) {
       arrhythmiaStatus = "CALIBRANDO...";
     } else if (this.arrhythmiaDetected) {
       arrhythmiaStatus = `ARRITMIA DETECTADA|${this.arrhythmiaCount}`;
@@ -103,244 +255,28 @@ export class ArrhythmiaProcessor {
       arrhythmiaStatus = `SIN ARRITMIAS|${this.arrhythmiaCount}`;
     }
 
-    const lastArrhythmiaData = this.arrhythmiaDetected ? {
-      timestamp: currentTime,
-      rmssd: this.lastRMSSD,
-      rrVariation: this.lastRRVariation,
-    } : null;
+    const lastArrhythmiaData = this.arrhythmiaDetected
+      ? { timestamp: now, rmssd: this.lastRMSSD, rrVariation: this.lastRRVariation }
+      : null;
 
     return { arrhythmiaStatus, lastArrhythmiaData };
   }
 
-  /**
-   * Detecta arritmias usando múltiples métricas avanzadas de VRC - MODO CONSERVADOR
-   */
-  private detectArrhythmia(): void {
-    if (this.rrIntervals.length < this.RR_WINDOW_SIZE) {
-      this.arrhythmiaDetected = false;
-      return;
-    }
-
-    const currentTime = Date.now();
-    const recentRR = this.rrIntervals.slice(-this.RR_WINDOW_SIZE);
-    const validRRs = recentRR.filter((rr) => rr >= this.MIN_VALID_RR_MS && rr <= this.MAX_VALID_RR_MS);
-
-    if (validRRs.length < Math.max(6, Math.ceil(this.RR_WINDOW_SIZE * 0.8))) {
-      this.arrhythmiaDetected = false;
-      return;
-    }
-
-    const sortedRR = [...validRRs].sort((a, b) => a - b);
-    const medianRR = sortedRR[Math.floor(sortedRR.length / 2)] ?? 0;
-    if (medianRR <= 0) {
-      this.arrhythmiaDetected = false;
-      return;
-    }
-
-    let sumSquaredDiff = 0;
-    let abruptDiffCount = 0;
-
-    for (let i = 1; i < validRRs.length; i++) {
-      const diff = validRRs[i] - validRRs[i - 1];
-      sumSquaredDiff += diff * diff;
-      if (Math.abs(diff) > Math.max(100, medianRR * 0.12)) {
-        abruptDiffCount++;
-      }
-    }
-
-    const validIntervals = validRRs.length - 1;
-    if (validIntervals < 5) {
-      this.arrhythmiaDetected = false;
-      return;
-    }
-
-    const rmssd = Math.sqrt(sumSquaredDiff / validIntervals);
-    const avgRR = validRRs.reduce((a, b) => a + b, 0) / validRRs.length;
-    const lastRR = validRRs[validRRs.length - 1];
-
-    const rrStandardDeviation = Math.sqrt(
-      validRRs.reduce((sum, val) => sum + Math.pow(val - avgRR, 2), 0) / validRRs.length
-    );
-
-    const coefficientOfVariation = rrStandardDeviation / Math.max(1, medianRR);
-    const rrVariation = Math.abs(lastRR - medianRR) / Math.max(1, medianRR);
-    const outlierCount = validRRs.filter(
-      (rr) => Math.abs(rr - medianRR) / Math.max(1, medianRR) > 0.16
-    ).length;
-
-    this.calculateNonLinearMetrics(validRRs);
-
-    this.lastRMSSD = rmssd;
-    this.lastRRVariation = rrVariation;
-
-    // Evidence-based decision: require strong variability + sustained irregularity + secondary confirmation
-    const strongVariability = rmssd > this.RMSSD_THRESHOLD && coefficientOfVariation > 0.10 && rrVariation > 0.10;
-    const nonlinearSupport = this.shannonEntropy > this.SHANNON_ENTROPY_THRESHOLD && this.pnnX > this.PNNX_THRESHOLD;
-    const entropySupport = this.sampleEntropy > this.SAMPLE_ENTROPY_THRESHOLD && outlierCount >= 3;
-    const sustainedIrregularity = abruptDiffCount >= 3 || outlierCount >= 3 || this.detectIrregularSequence(validRRs.slice(-5));
-    const isolatedOutlierPattern = rrVariation > 0.22 && outlierCount >= 2;
-
-    const newArrhythmiaState = strongVariability && sustainedIrregularity && (
-      nonlinearSupport || entropySupport || isolatedOutlierPattern
-    );
-
-    // Notificar cambios en el estado de arritmia
-    if (newArrhythmiaState !== this.arrhythmiaDetected) {
-      if (this.onArrhythmiaDetection) {
-        this.onArrhythmiaDetection(newArrhythmiaState);
-        console.log(`ArrhythmiaProcessor: Notificando cambio de estado de arritmia a ${newArrhythmiaState}`);
-      }
-    }
-
-    // Contar eventos solo si son nuevos y suficientemente espaciados
-    if (newArrhythmiaState && currentTime - this.lastArrhythmiaTime >= this.MIN_ARRHYTHMIA_INTERVAL) {
-      this.arrhythmiaCount++;
-      this.lastArrhythmiaTime = currentTime;
-      this.hasDetectedFirstArrhythmia = true;
-
-      console.log('VitalSignsProcessor - Nueva arritmia detectada:', {
-        contador: this.arrhythmiaCount,
-        rmssd,
-        rrVariation,
-        shannonEntropy: this.shannonEntropy,
-        pnnX: this.pnnX,
-        coefficientOfVariation,
-        abruptDiffCount,
-        outlierCount,
-        timestamp: currentTime,
-      });
-    }
-
-    this.arrhythmiaDetected = newArrhythmiaState;
-  }
-  
-  /**
-   * Calculate advanced non-linear HRV metrics
-   * Based on cutting-edge HRV research from MIT and Stanford labs
-   */
-  private calculateNonLinearMetrics(rrIntervals: number[]): void {
-    // Calculate pNNx (percentage of successive RR intervals differing by more than x ms)
-    // Used by Mayo Clinic for arrhythmia analysis
-    let countAboveThreshold = 0;
-    for (let i = 1; i < rrIntervals.length; i++) {
-      if (Math.abs(rrIntervals[i] - rrIntervals[i-1]) > 50) {
-        countAboveThreshold++;
-      }
-    }
-    this.pnnX = countAboveThreshold / (rrIntervals.length - 1);
-    
-    // Calculate Shannon Entropy (information theory approach)
-    // Implementation based on "Information Theory Applications in Cardiac Monitoring"
-    this.calculateShannonEntropy(rrIntervals);
-    
-    // Sample Entropy calculation (simplified)
-    // Based on "Sample Entropy Analysis of Neonatal Heart Rate Variability"
-    this.sampleEntropy = this.estimateSampleEntropy(rrIntervals);
-  }
-  
-  /**
-   * Calculate Shannon Entropy for RR intervals
-   * Information theory approach from MIT research
-   */
-  private calculateShannonEntropy(intervals: number[]): void {
-    // Simplified histogram-based entropy calculation
-    const bins: {[key: string]: number} = {};
-    const binWidth = 25; // 25ms bin width
-    
-    intervals.forEach(interval => {
-      const binKey = Math.floor(interval / binWidth);
-      bins[binKey] = (bins[binKey] || 0) + 1;
-    });
-    
-    let entropy = 0;
-    const totalPoints = intervals.length;
-    
-    Object.values(bins).forEach(count => {
-      const probability = count / totalPoints;
-      entropy -= probability * Math.log2(probability);
-    });
-    
-    this.shannonEntropy = entropy;
-  }
-  
-  /**
-   * Estimate Sample Entropy (simplified implementation)
-   * Based on Massachusetts General Hospital research
-   */
-  private estimateSampleEntropy(intervals: number[]): number {
-    if (intervals.length < 4) return 0;
-    
-    // Simplified sample entropy estimation
-    // In a full implementation, this would use template matching
-    const normalizedIntervals = intervals.map(interval => 
-      (interval - intervals.reduce((a, b) => a + b, 0) / intervals.length) / 
-      Math.max(1, Math.sqrt(intervals.reduce((a, b) => a + Math.pow(b, 2), 0) / intervals.length))
-    );
-    
-    let sumCorr = 0;
-    for (let i = 0; i < normalizedIntervals.length - 1; i++) {
-      sumCorr += Math.abs(normalizedIntervals[i + 1] - normalizedIntervals[i]);
-    }
-    
-    // Convert to entropy-like measure
-    return -Math.log(sumCorr / (normalizedIntervals.length - 1));
-  }
-
-  /**
-   * Detecta secuencias irregulares en los últimos intervalos RR
-   */
-  private detectIrregularSequence(lastIntervals: number[]): boolean {
-    if (lastIntervals.length < 4) return false;
-    
-    const diffs: number[] = [];
-    for (let i = 1; i < lastIntervals.length; i++) {
-      diffs.push(Math.abs(lastIntervals[i] - lastIntervals[i - 1]));
-    }
-    
-    let consecutiveLargeDiffs = 0;
-    for (const diff of diffs) {
-      if (diff > 130) {
-        consecutiveLargeDiffs++;
-      } else {
-        consecutiveLargeDiffs = 0;
-      }
-      
-      if (consecutiveLargeDiffs >= 2) {
-        return true;
-      }
-    }
-    
-    const pattern1 = Math.abs(lastIntervals[0] - lastIntervals[2]);
-    const pattern2 = Math.abs(lastIntervals[1] - lastIntervals[3]);
-    if (pattern1 < 60 && pattern2 < 60 && Math.abs(lastIntervals[0] - lastIntervals[1]) > 180) {
-      return true;
-    }
-    
-    return false;
-  }
-
-  /**
-   * Reset the arrhythmia processor state
-   */
   public reset(): void {
     this.rrIntervals = [];
-    this.rrDifferences = [];
     this.lastPeakTime = null;
-    this.isLearningPhase = true;
-    this.hasDetectedFirstArrhythmia = false;
+    this.isLearning = true;
     this.arrhythmiaDetected = false;
     this.arrhythmiaCount = 0;
     this.measurementStartTime = Date.now();
     this.lastRMSSD = 0;
     this.lastRRVariation = 0;
+    this.lastPNN50 = 0;
+    this.lastEntropy = 0;
+    this.lastTPR = 0;
     this.lastArrhythmiaTime = 0;
-    this.shannonEntropy = 0;
-    this.sampleEntropy = 0;
-    this.pnnX = 0;
-    
-    // Notificar reset del estado de arritmia
-    if (this.onArrhythmiaDetection) {
-      this.onArrhythmiaDetection(false);
-    }
+    this.baselineRMSSD = 0;
+    this.baselineSamples = 0;
+    this.onArrhythmiaDetection?.(false);
   }
 }
