@@ -723,17 +723,20 @@ const PPGSignalMeter = ({
             ctx.lineTo(p2.x, topY + 8);
             ctx.stroke();
             
-            // IBI value
-            ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+            // IBI value — bigger, glowing
+            ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
+            ctx.shadowColor = '#00e5ff';
+            ctx.shadowBlur = 8;
             ctx.fillStyle = COLORS.IBI_TEXT;
             ctx.textAlign = 'center';
             ctx.fillText(`${ibiMs}ms`, midX, topY - 4);
+            ctx.shadowBlur = 0;
             
             // Instant HR from this interval
             const instantHR = Math.round(60000 / ibiMs);
-            ctx.font = '8px "SF Mono", Consolas, monospace';
-            ctx.fillStyle = 'rgba(0, 229, 255, 0.5)';
-            ctx.fillText(`${instantHR}bpm`, midX, topY - 16);
+            ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+            ctx.fillStyle = 'rgba(0, 229, 255, 0.7)';
+            ctx.fillText(`${instantHR}bpm`, midX, topY - 18);
           }
         }
         
