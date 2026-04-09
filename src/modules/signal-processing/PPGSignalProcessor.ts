@@ -68,6 +68,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private readonly FINGER_LOST_FRAMES = 90;     // ~3s tolerancia antes de degradar
   private readonly STABLE_THRESHOLD = 30;       // ~1s para STABLE — evitar parpadeo
   private readonly UNSTABLE_GRACE = 120;        // ~4s antes de NO_CONTACT total
+  private readonly MIN_HUMAN_PI = 0.08;         // perfusión útil mínima para aceptar pulso real
+  private readonly MIN_PPG_PERIODICITY = 0.22;  // periodicidad mínima esperada de pulso humano
 
   // Suavizado temporal — más lentos = más estable
   private smoothedRed = 0;
@@ -192,9 +194,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const adjustedQuality = motionArtifact
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
-    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
+    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.006 && adjustedQuality >= 18
       ? adjustedQuality
-      : Math.min(18, adjustedQuality * 0.45);
+      : Math.min(16, adjustedQuality * 0.4);
 
     const now = Date.now();
     if (now - this.lastLogTime >= 2000) {
