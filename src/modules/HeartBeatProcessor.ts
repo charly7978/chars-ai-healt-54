@@ -23,7 +23,6 @@ export class HeartBeatProcessor {
   // === SIGNAL BUFFERS ===
   private readonly BUFFER_SIZE = 512;
   private signalBuffer: number[] = [];
-  private timestampBuffer: number[] = [];
 
   // === DUAL EMA (SRMAC core) ===
   private emaFast = 0;
@@ -82,7 +81,7 @@ export class HeartBeatProcessor {
     document.addEventListener('click', unlock, { passive: true });
   }
 
-  processSignal(filteredValue: number, timestamp?: number): {
+  processSignal(filteredValue: number, timestamp?: number, masterSQI: number = 0): {
     bpm: number;
     confidence: number;
     isPeak: boolean;
@@ -95,10 +94,8 @@ export class HeartBeatProcessor {
 
     // Buffer management
     this.signalBuffer.push(filteredValue);
-    this.timestampBuffer.push(now);
     if (this.signalBuffer.length > this.BUFFER_SIZE) {
       this.signalBuffer.shift();
-      this.timestampBuffer.shift();
     }
 
     // Need minimum samples
@@ -193,8 +190,8 @@ export class HeartBeatProcessor {
       this.consecutiveValidPeaks = Math.max(0, this.consecutiveValidPeaks - 1);
     }
 
-    // === SIGNAL QUALITY INDEX ===
-    this.signalQualityIndex = this.computeSQI(dynamicRange);
+    // === USE MASTER SQI from PPGSignalProcessor ===
+    this.signalQualityIndex = masterSQI;
 
     // === CONFIDENCE ===
     const confidence = this.computeConfidence();
@@ -322,46 +319,6 @@ export class HeartBeatProcessor {
   }
 
   /**
-   * Signal Quality Index — multi-factor assessment
-   */
-  private computeSQI(dynamicRange: number): number {
-    // Factor 1: signal range (0-25 pts)
-    const rangeFactor = Math.min(1, dynamicRange / 5) * 25;
-
-    // Factor 2: RR interval regularity (0-30 pts)
-    let rrFactor = 0;
-    if (this.rrIntervals.length >= 3) {
-      const recent = this.rrIntervals.slice(-8);
-      const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-      const variance = recent.reduce((a, rr) => a + (rr - mean) ** 2, 0) / recent.length;
-      const cv = Math.sqrt(variance) / Math.max(1, mean);
-      rrFactor = Math.max(0, 1 - cv * 2.5) * 30;
-    }
-
-    // Factor 3: consecutive valid peaks (0-25 pts)
-    const peakFactor = Math.min(1, this.consecutiveValidPeaks / 6) * 25;
-
-    // Factor 4: sample rate consistency (0-20 pts)
-    let sampleFactor = 0;
-    if (this.timestampBuffer.length >= 10) {
-      const recent = this.timestampBuffer.slice(-30);
-      const intervals: number[] = [];
-      for (let i = 1; i < recent.length; i++) {
-        const d = recent[i] - recent[i - 1];
-        if (d > 5 && d < 150) intervals.push(d);
-      }
-      if (intervals.length >= 5) {
-        const meanDt = intervals.reduce((a, b) => a + b, 0) / intervals.length;
-        const dtVar = intervals.reduce((a, d) => a + (d - meanDt) ** 2, 0) / intervals.length;
-        const dtCV = Math.sqrt(dtVar) / Math.max(1, meanDt);
-        sampleFactor = Math.max(0, 1 - dtCV * 3) * 20;
-      }
-    }
-
-    return this.clamp(rangeFactor + rrFactor + peakFactor + sampleFactor, 0, 100);
-  }
-
-  /**
    * Confidence in current BPM estimate
    */
   private computeConfidence(): number {
@@ -428,7 +385,6 @@ export class HeartBeatProcessor {
 
   reset(): void {
     this.signalBuffer = [];
-    this.timestampBuffer = [];
     this.amplitudeWindow = [];
     this.rrIntervals = [];
     this.smoothBPM = 0;
