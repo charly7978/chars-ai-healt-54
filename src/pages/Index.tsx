@@ -465,11 +465,11 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
-    const stableHumanSignal =
-      contactState === 'STABLE_CONTACT' &&
-      (lastSignal.quality || 0) >= 14 &&
-      Boolean(lastSignal.diagnostics?.hasPulsatility);
+    // GATING MAESTRO: confiar en quality del PPGSignalProcessor (ya incluye contacto, PI, SNR, periodicidad)
+    const signalQualityOk = (lastSignal.quality || 0) >= 12;
+    const stableHumanSignal = contactState === 'STABLE_CONTACT' && signalQualityOk;
 
+    // SIEMPRE procesar heartbeat si hay contacto — el HeartBeatProcessor tiene sus propios gates internos
     const heartBeatResult = processHeartBeat(
       signalValue,
       contactState,
@@ -557,7 +557,8 @@ const Index = () => {
         lastSignal.filteredValue,
         heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18
           ? heartBeatResult.rrData
-          : undefined
+          : undefined,
+        lastSignal.quality || 0
       );
 
       setVitalSigns(vitals);
