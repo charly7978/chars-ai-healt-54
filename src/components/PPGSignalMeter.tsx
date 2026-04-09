@@ -303,7 +303,10 @@ const PPGSignalMeter = ({
     
     ctx.font = fontSize.value;
     ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
-    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 66);
+    ctx.shadowColor = bpm > 0 ? '#00ff64' : 'transparent';
+    ctx.shadowBlur = bpm > 0 ? 12 : 0;
+    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 70);
+    ctx.shadowBlur = 0;
     
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
@@ -336,7 +339,10 @@ const PPGSignalMeter = ({
     ctx.font = fontSize.value;
     const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
     ctx.fillStyle = spo2Color;
-    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 66);
+    ctx.shadowColor = spo2 > 0 ? spo2Color : 'transparent';
+    ctx.shadowBlur = spo2 > 0 ? 12 : 0;
+    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 70);
+    ctx.shadowBlur = 0;
     
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
