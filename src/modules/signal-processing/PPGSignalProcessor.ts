@@ -197,12 +197,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
 
+    const pi = this.calculatePerfusionIndex();
     const now = Date.now();
     if (now - this.lastLogTime >= 2000) {
       this.lastLogTime = now;
       console.log(
         `📷 PPG [${pulseSource.label}] Filt=${filtered.toFixed(3)} ` +
-        `Q=${gatedQuality.toFixed(0)}% PI=${perfusionIndex.toFixed(2)} ` +
+        `Q=${gatedQuality.toFixed(0)}% PI=${pi.toFixed(2)} ` +
         `Contact=${this.contactState} FPS=${this.estimatedSampleRate.toFixed(0)}`
       );
     }
@@ -216,19 +217,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       contactState: this.contactState,
       motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
-      perfusionIndex: this.calculatePerfusionIndex(),
+      perfusionIndex: pi,
       rawRed: roi.rawRed,
       rawGreen: roi.rawGreen,
       diagnostics: {
         message:
           `${pulseSource.label}:${pulseSource.strength.toFixed(1)} ` +
-          `PI:${perfusionIndex.toFixed(2)} C:${(this.smoothedCoverage * 100).toFixed(0)} ` +
+          `PI:${pi.toFixed(2)} C:${(this.smoothedCoverage * 100).toFixed(0)} ` +
           `${this.contactState}${motionArtifact ? ' MOV' : ''}`,
         hasPulsatility:
           this.contactState === 'STABLE_CONTACT' &&
-          this.signalQuality >= 14 &&
+          gatedQuality >= 14 &&
           pulseSource.strength > 0.8,
-        pulsatilityValue: this.contactState === 'STABLE_CONTACT' ? Math.max(perfusionIndex, pulseSource.strength * 0.02) : 0,
+        pulsatilityValue: this.contactState === 'STABLE_CONTACT' ? Math.max(pi, pulseSource.strength * 0.02) : 0,
       },
     });
   }
