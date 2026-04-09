@@ -278,15 +278,15 @@ const PPGSignalMeter = ({
     const { CANVAS_WIDTH: W, COLORS } = CONFIG;
     const { bpm, spo2, arrhythmiaStatus, quality, rrIntervals, rawArrhythmiaData } = propsRef.current;
     
-    const panelH = 95;
-    const panelW = 160;
+    const panelH = 100;
+    const panelW = 180;
     const panelY = 2;
     const fontSize = {
-      label: 'bold 14px "SF Mono", Consolas, monospace',
-      value: 'bold 48px "SF Mono", Consolas, monospace',
-      unit: '16px "SF Mono", Consolas, monospace',
-      class: '11px "SF Mono", Consolas, monospace',
-      small: '10px "SF Mono", Consolas, monospace',
+      label: 'bold 16px "SF Mono", Consolas, monospace',
+      value: 'bold 56px "SF Mono", Consolas, monospace',
+      unit: '18px "SF Mono", Consolas, monospace',
+      class: '12px "SF Mono", Consolas, monospace',
+      small: '11px "SF Mono", Consolas, monospace',
     };
     
     // === BPM PANEL (top-left) ===
