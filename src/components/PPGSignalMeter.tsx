@@ -33,7 +33,7 @@ const CONFIG = {
   PLOT_AREA: {
     LEFT: 80,
     RIGHT: 80,
-    TOP: 100,
+    TOP: 110,
     BOTTOM: 60
   },
   COLORS: {
