@@ -544,12 +544,11 @@ const PPGSignalMeter = ({
       
       const stats = amplitudeStatsRef.current;
       
-      // === DRAW PPG SIGNAL ===
+      // === DRAW PPG SIGNAL (Electric Oscilloscope Style) ===
       if (points.length > 2) {
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
+        ctx.lineJoin = 'miter';
+        ctx.lineCap = 'butt';
         
-        // Build path coordinates first for fill
         const pathCoords: { x: number; y: number; isArr: boolean }[] = [];
         
         for (let i = 0; i < points.length; i++) {
@@ -565,27 +564,73 @@ const PPGSignalMeter = ({
           pathCoords.push({ x, y, isArr: pt.isArrhythmia });
         }
         
-        // === GRADIENT FILL under the waveform ===
         if (pathCoords.length > 2) {
-          // Normal fill
+          // Layer 1: Wide diffuse phosphor glow
           ctx.save();
           ctx.beginPath();
-          ctx.moveTo(pathCoords[0].x, plot.centerY);
-          for (const c of pathCoords) {
-            ctx.lineTo(c.x, c.y);
+          ctx.moveTo(pathCoords[0].x, pathCoords[0].y);
+          for (let i = 1; i < pathCoords.length; i++) {
+            ctx.lineTo(pathCoords[i].x, pathCoords[i].y);
           }
-          ctx.lineTo(pathCoords[pathCoords.length - 1].x, plot.centerY);
-          ctx.closePath();
-          
-          const fillGrad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-          fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
-          fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
-          fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
-          ctx.fillStyle = fillGrad;
-          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 255, 136, 0.08)';
+          ctx.shadowColor = 'rgba(0, 255, 136, 0.3)';
+          ctx.shadowBlur = 30;
+          ctx.lineWidth = 12;
+          ctx.stroke();
           ctx.restore();
           
-          // Arrhythmia fill overlay for arrhythmia segments
+          // Layer 2: Medium glow
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(pathCoords[0].x, pathCoords[0].y);
+          for (let i = 1; i < pathCoords.length; i++) {
+            ctx.lineTo(pathCoords[i].x, pathCoords[i].y);
+          }
+          ctx.strokeStyle = 'rgba(0, 255, 136, 0.15)';
+          ctx.shadowColor = 'rgba(0, 255, 136, 0.5)';
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = 5;
+          ctx.stroke();
+          ctx.restore();
+          
+          // Layer 3: Sharp core line (per-segment for arrhythmia coloring)
+          for (let i = 1; i < pathCoords.length; i++) {
+            const prev = pathCoords[i - 1];
+            const curr = pathCoords[i];
+            
+            ctx.beginPath();
+            ctx.moveTo(prev.x, prev.y);
+            ctx.lineTo(curr.x, curr.y);
+            
+            if (curr.isArr) {
+              ctx.strokeStyle = '#ff4444';
+              ctx.shadowColor = 'rgba(255, 50, 50, 0.9)';
+              ctx.shadowBlur = 20;
+              ctx.lineWidth = 3.5;
+            } else {
+              ctx.strokeStyle = '#bbffdd';
+              ctx.shadowColor = 'rgba(0, 255, 136, 0.8)';
+              ctx.shadowBlur = 8;
+              ctx.lineWidth = 2.5;
+            }
+            
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+          }
+          
+          // Layer 4: White-hot core for peaks (brightest point)
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(pathCoords[0].x, pathCoords[0].y);
+          for (let i = 1; i < pathCoords.length; i++) {
+            ctx.lineTo(pathCoords[i].x, pathCoords[i].y);
+          }
+          ctx.strokeStyle = 'rgba(220, 255, 240, 0.35)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.restore();
+          
+          // Arrhythmia red glow overlay
           const arrSegments: { x: number; y: number }[][] = [];
           let currentSeg: { x: number; y: number }[] = [];
           for (const c of pathCoords) {
@@ -601,33 +646,16 @@ const PPGSignalMeter = ({
           for (const seg of arrSegments) {
             ctx.save();
             ctx.beginPath();
-            ctx.moveTo(seg[0].x, plot.centerY);
+            ctx.moveTo(seg[0].x, seg[0].y);
             for (const c of seg) ctx.lineTo(c.x, c.y);
-            ctx.lineTo(seg[seg.length - 1].x, plot.centerY);
-            ctx.closePath();
-            const arrFill = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-            arrFill.addColorStop(0, 'rgba(239, 68, 68, 0.15)');
-            arrFill.addColorStop(0.5, 'rgba(239, 68, 68, 0.05)');
-            arrFill.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
-            ctx.fillStyle = arrFill;
-            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 50, 50, 0.12)';
+            ctx.shadowColor = 'rgba(255, 30, 30, 0.4)';
+            ctx.shadowBlur = 25;
+            ctx.lineWidth = 10;
+            ctx.stroke();
             ctx.restore();
           }
         }
-        
-        // === DRAW LINE SEGMENTS ===
-        for (let i = 1; i < pathCoords.length; i++) {
-          const prev = pathCoords[i - 1];
-          const curr = pathCoords[i];
-          
-          ctx.beginPath();
-          ctx.moveTo(prev.x, prev.y);
-          ctx.lineTo(curr.x, curr.y);
-          
-          if (curr.isArr) {
-            ctx.strokeStyle = COLORS.SIGNAL_ARRHYTHMIA;
-            ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
-            ctx.shadowBlur = 18;
             ctx.lineWidth = 4;
           } else {
             ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
