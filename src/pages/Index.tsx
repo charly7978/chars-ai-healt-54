@@ -468,7 +468,7 @@ const Index = () => {
     const stableHumanSignal =
       contactState === 'STABLE_CONTACT' &&
       (lastSignal.quality || 0) >= 18 &&
-      (lastSignal.perfusionIndex || 0) >= 0.08;
+      (lastSignal.perfusionIndex || 0) >= 0.05;
 
     const heartBeatResult = processHeartBeat(
       signalValue,
