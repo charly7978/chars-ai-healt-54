@@ -11,7 +11,7 @@ import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
-import BPCalibrationWizard from "@/components/BPCalibrationWizard";
+
 import { supabase } from "@/integrations/supabase/client";
 
 const Index = () => {
@@ -43,7 +43,7 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [showCalibrationWizard, setShowCalibrationWizard] = useState(false);
+  
   const [measurementSummary, setMeasurementSummary] = useState<{
     totalBeats: number;
     arrhythmiaBeats: number;
@@ -673,9 +673,7 @@ const Index = () => {
               isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
-              onOpenCalibration={() => setShowCalibrationWizard(true)}
               isMonitoring={isMonitoring}
-              isCalibrated={isCalibrated}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
@@ -938,19 +936,6 @@ const Index = () => {
 
         </div>
       </div>
-      {/* WIZARD DE CALIBRACIÓN BP */}
-      <BPCalibrationWizard
-        isOpen={showCalibrationWizard}
-        onClose={() => setShowCalibrationWizard(false)}
-        onCalibrate={(sys, dia) => {
-          if (!hasValidPressureEstimate() && !(vitalSigns.pressure?.systolic > 0 && vitalSigns.pressure?.diastolic > 0)) {
-            return false;
-          }
-          calibrateBP(sys, dia);
-          setIsCalibrated(true);
-          return true;
-        }}
-      />
     </div>
   );
 };

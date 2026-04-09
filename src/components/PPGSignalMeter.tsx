@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Heart, Activity, Shield } from 'lucide-react';
+import { Heart, Activity } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 
 interface PPGSignalMeterProps {
@@ -8,9 +8,8 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
-  onOpenCalibration: () => void;
   isMonitoring?: boolean;
-  isCalibrated?: boolean;
+  
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
     timestamp: number;
@@ -70,9 +69,7 @@ const PPGSignalMeter = ({
   isFingerDetected,
   onStartMeasurement,
   onReset,
-  onOpenCalibration,
   isMonitoring = false,
-  isCalibrated = false,
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false,
@@ -272,93 +269,102 @@ const PPGSignalMeter = ({
     const { CANVAS_WIDTH: W, COLORS } = CONFIG;
     const { bpm, spo2, arrhythmiaStatus, quality, rrIntervals, rawArrhythmiaData } = propsRef.current;
     
-    // === BPM PANEL (top-left) ===
-    ctx.fillStyle = 'rgba(0, 30, 15, 0.85)';
-    ctx.fillRect(5, 5, 130, 85);
-    ctx.strokeStyle = COLORS.TEXT_PRIMARY;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(5, 5, 130, 85);
+    const panelH = 95;
+    const panelW = 160;
+    const panelY = 2;
+    const fontSize = {
+      label: 'bold 14px "SF Mono", Consolas, monospace',
+      value: 'bold 48px "SF Mono", Consolas, monospace',
+      unit: '16px "SF Mono", Consolas, monospace',
+      class: '11px "SF Mono", Consolas, monospace',
+      small: '10px "SF Mono", Consolas, monospace',
+    };
     
-    ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
+    // === BPM PANEL (top-left) ===
+    ctx.fillStyle = 'rgba(0, 30, 15, 0.9)';
+    ctx.fillRect(3, panelY, panelW, panelH);
+    ctx.strokeStyle = COLORS.TEXT_PRIMARY;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(3, panelY, panelW, panelH);
+    
+    ctx.font = fontSize.label;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.textAlign = 'left';
-    ctx.fillText('♥ FRECUENCIA', 12, 22);
+    ctx.fillText('♥ FRECUENCIA', 10, panelY + 18);
     
-    ctx.font = 'bold 42px "SF Mono", Consolas, monospace';
+    ctx.font = fontSize.value;
     ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
-    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 12, 65);
+    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 66);
     
-    ctx.font = '14px "SF Mono", Consolas, monospace';
+    ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('BPM', 100, 65);
+    ctx.fillText('BPM', panelW - 40, panelY + 66);
     
-    // HR classification
     if (bpm > 0) {
-      ctx.font = '9px "SF Mono", Consolas, monospace';
+      ctx.font = fontSize.class;
       let hrLabel = '';
       let hrColor = COLORS.TEXT_PRIMARY;
       if (bpm < 60) { hrLabel = 'BRADICARDIA'; hrColor = COLORS.TEXT_WARNING; }
       else if (bpm <= 100) { hrLabel = 'NORMAL'; hrColor = COLORS.TEXT_PRIMARY; }
       else { hrLabel = 'TAQUICARDIA'; hrColor = COLORS.TEXT_WARNING; }
       ctx.fillStyle = hrColor;
-      ctx.fillText(hrLabel, 12, 80);
+      ctx.fillText(hrLabel, 10, panelY + 86);
     }
     
     // === SpO2 PANEL (top-right) ===
-    ctx.fillStyle = 'rgba(0, 15, 30, 0.85)';
-    ctx.fillRect(W - 135, 5, 130, 85);
+    ctx.fillStyle = 'rgba(0, 15, 30, 0.9)';
+    ctx.fillRect(W - panelW - 3, panelY, panelW, panelH);
     const spo2Border = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
     ctx.strokeStyle = spo2Border;
-    ctx.strokeRect(W - 135, 5, 130, 85);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(W - panelW - 3, panelY, panelW, panelH);
     
-    ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
+    ctx.font = fontSize.label;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.textAlign = 'left';
-    ctx.fillText('O₂ SATURACIÓN', W - 128, 22);
+    ctx.fillText('O₂ SATURACIÓN', W - panelW + 4, panelY + 18);
     
-    ctx.font = 'bold 42px "SF Mono", Consolas, monospace';
+    ctx.font = fontSize.value;
     const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
     ctx.fillStyle = spo2Color;
-    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - 128, 65);
+    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 66);
     
-    ctx.font = '14px "SF Mono", Consolas, monospace';
+    ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('%', W - 35, 65);
+    ctx.fillText('%', W - 20, panelY + 66);
     
-    // SpO2 classification
     if (spo2 > 0) {
-      ctx.font = '9px "SF Mono", Consolas, monospace';
+      ctx.font = fontSize.class;
       let spLabel = '';
       let spColor = COLORS.TEXT_PRIMARY;
       if (spo2 >= 95) { spLabel = 'NORMAL'; spColor = COLORS.TEXT_PRIMARY; }
       else if (spo2 >= 90) { spLabel = 'HIPOXEMIA LEVE'; spColor = COLORS.TEXT_WARNING; }
       else { spLabel = 'HIPOXEMIA'; spColor = COLORS.TEXT_DANGER; }
       ctx.fillStyle = spColor;
-      ctx.fillText(spLabel, W - 128, 80);
+      ctx.fillText(spLabel, W - panelW + 4, panelY + 86);
     }
     
     // === CENTER TOP: Quality + IBI + HRV ===
     const centerX = W / 2;
-    ctx.fillStyle = 'rgba(20, 20, 30, 0.85)';
-    ctx.fillRect(centerX - 110, 5, 220, 85);
+    const centerW = 260;
+    ctx.fillStyle = 'rgba(20, 20, 30, 0.9)';
+    ctx.fillRect(centerX - centerW / 2, panelY, centerW, panelH);
     ctx.strokeStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(centerX - 110, 5, 220, 85);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(centerX - centerW / 2, panelY, centerW, panelH);
     
-    // Signal quality bar
-    ctx.font = '10px "SF Mono", Consolas, monospace';
+    ctx.font = '12px "SF Mono", Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('CALIDAD SEÑAL', centerX, 20);
+    ctx.fillText('CALIDAD SEÑAL', centerX, panelY + 18);
     
-    const barWidth = 180;
-    const barHeight = 8;
+    const barWidth = 220;
+    const barHeight = 10;
     const barX = centerX - barWidth / 2;
-    const barY = 26;
+    const barY = panelY + 24;
     ctx.fillStyle = 'rgba(255,255,255,0.1)';
     ctx.fillRect(barX, barY, barWidth, barHeight);
     
-    // Gradient quality bar
     const qGrad = ctx.createLinearGradient(barX, 0, barX + (quality / 100) * barWidth, 0);
     if (quality > 60) { qGrad.addColorStop(0, '#166534'); qGrad.addColorStop(1, '#22c55e'); }
     else if (quality > 30) { qGrad.addColorStop(0, '#854d0e'); qGrad.addColorStop(1, '#f59e0b'); }
@@ -366,34 +372,30 @@ const PPGSignalMeter = ({
     ctx.fillStyle = qGrad;
     ctx.fillRect(barX, barY, (quality / 100) * barWidth, barHeight);
     
-    ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+    ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
     ctx.fillStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.fillText(`${quality.toFixed(0)}%`, centerX, 48);
+    ctx.fillText(`${quality.toFixed(0)}%`, centerX, panelY + 52);
     
     // IBI & HRV row
     const ibi = ibiDisplayRef.current;
     const hrv = hrvDisplayRef.current;
-    ctx.font = '9px "SF Mono", Consolas, monospace';
+    ctx.font = fontSize.small;
     ctx.textAlign = 'left';
     
-    // IBI
     ctx.fillStyle = COLORS.IBI_TEXT;
-    ctx.fillText(`IBI: ${ibi > 0 ? ibi + 'ms' : '--'}`, centerX - 100, 64);
+    ctx.fillText(`IBI: ${ibi > 0 ? ibi + 'ms' : '--'}`, centerX - centerW / 2 + 8, panelY + 68);
     
-    // SDNN
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText(`SDNN: ${hrv.sdnn > 0 ? hrv.sdnn + 'ms' : '--'}`, centerX - 100, 78);
+    ctx.fillText(`SDNN: ${hrv.sdnn > 0 ? hrv.sdnn + 'ms' : '--'}`, centerX - centerW / 2 + 8, panelY + 84);
     
-    // RMSSD
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText(`RMSSD: ${hrv.rmssd > 0 ? hrv.rmssd + 'ms' : '--'}`, centerX + 10, 78);
+    ctx.fillText(`RMSSD: ${hrv.rmssd > 0 ? hrv.rmssd + 'ms' : '--'}`, centerX + 20, panelY + 84);
     
-    // Last RR
     if (rrIntervals && rrIntervals.length > 0) {
       const lastRR = rrIntervals[rrIntervals.length - 1];
       ctx.fillStyle = COLORS.IBI_TEXT;
       ctx.textAlign = 'right';
-      ctx.fillText(`RR: ${lastRR.toFixed(0)}ms`, centerX + 105, 64);
+      ctx.fillText(`RR: ${lastRR.toFixed(0)}ms`, centerX + centerW / 2 - 8, panelY + 68);
     }
     
     // === ARRHYTHMIA ALERT ===
@@ -403,21 +405,20 @@ const PPGSignalMeter = ({
       
       const pulse = (Math.sin(now / 100) + 1) / 2;
       ctx.fillStyle = `rgba(239, 68, 68, ${0.3 + pulse * 0.4})`;
-      ctx.fillRect(W - 135, 92, 130, 28);
+      ctx.fillRect(W - panelW - 3, panelY + panelH + 4, panelW, 30);
       ctx.strokeStyle = COLORS.TEXT_DANGER;
       ctx.lineWidth = 2;
-      ctx.strokeRect(W - 135, 92, 130, 28);
+      ctx.strokeRect(W - panelW - 3, panelY + panelH + 4, panelW, 30);
       
-      ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
+      ctx.font = 'bold 14px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_DANGER;
       ctx.textAlign = 'center';
-      ctx.fillText(`⚠ ARRITMIA x${count}`, W - 70, 110);
+      ctx.fillText(`⚠ ARRITMIA x${count}`, W - panelW / 2 - 3, panelY + panelH + 22);
       
-      // RMSSD from rawArrhythmiaData
       if (rawArrhythmiaData && rawArrhythmiaData.rmssd > 0) {
-        ctx.font = '9px "SF Mono", Consolas, monospace';
+        ctx.font = '10px "SF Mono", Consolas, monospace';
         ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
-        ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms`, W - 70, 132);
+        ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms`, W - panelW / 2 - 3, panelY + panelH + 42);
       }
     }
   }, []);
@@ -901,19 +902,7 @@ const PPGSignalMeter = ({
         <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
       </div>
 
-      <button
-        onClick={onOpenCalibration}
-        className={`absolute top-2 right-2 z-10 flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold backdrop-blur-sm transition-colors ${
-          isCalibrated
-            ? 'border-emerald-500/40 bg-emerald-500/20 text-emerald-300'
-            : 'border-sky-500/40 bg-sky-500/20 text-sky-200'
-        }`}
-      >
-        <Shield className="h-3.5 w-3.5" />
-        {isCalibrated ? 'CALIBRADA' : 'CALIBRAR PA'}
-      </button>
-
-      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-3 z-10">
+      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button 
           onClick={onStartMeasurement}
           className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${
@@ -923,16 +912,6 @@ const PPGSignalMeter = ({
           }`}
         >
           {isMonitoring ? 'DETENER' : 'INICIAR'}
-        </button>
-        <button 
-          onClick={onOpenCalibration}
-          className={`border-t border-r border-slate-700/50 font-semibold text-sm transition-colors ${
-            isCalibrated
-              ? 'bg-emerald-500/15 hover:bg-emerald-500/25 active:bg-emerald-500/30 text-emerald-300'
-              : 'bg-sky-500/15 hover:bg-sky-500/25 active:bg-sky-500/30 text-sky-200'
-          }`}
-        >
-          {isCalibrated ? 'RECALIBRAR' : 'CALIBRAR'}
         </button>
         <button 
           onClick={handleReset}
