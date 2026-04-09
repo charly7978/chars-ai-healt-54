@@ -557,7 +557,8 @@ const Index = () => {
         lastSignal.filteredValue,
         heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18
           ? heartBeatResult.rrData
-          : undefined
+          : undefined,
+        lastSignal.quality || 0
       );
 
       setVitalSigns(vitals);
