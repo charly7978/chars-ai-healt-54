@@ -8,9 +8,8 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
-  onOpenCalibration: () => void;
   isMonitoring?: boolean;
-  isCalibrated?: boolean;
+  
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
     timestamp: number;
@@ -70,9 +69,7 @@ const PPGSignalMeter = ({
   isFingerDetected,
   onStartMeasurement,
   onReset,
-  onOpenCalibration,
   isMonitoring = false,
-  isCalibrated = false,
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false,
