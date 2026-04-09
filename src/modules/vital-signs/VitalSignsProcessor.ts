@@ -156,15 +156,13 @@ export class VitalSignsProcessor {
       }
     }
 
-    // Calcular SQI propio para control de calidad de signos vitales
-    this.measurements.signalQuality = this.calculateSignalQuality();
+    // SQI viene del PPGSignalProcessor maestro (via quality del signal)
+    // No recalcular aquí — evitar gates duplicados
 
-    // Validar pulso real
+    // Validar pulso real — solo verifica que los RR intervals sean fisiológicos
     const hasRealPulse = this.validateRealPulse(rrData);
     
     if (!hasRealPulse) {
-      // Don't zero-out values that are already accumulated — just stop updating
-      // This prevents flicker when signal dips momentarily
       return this.getFormattedResult();
     }
 
