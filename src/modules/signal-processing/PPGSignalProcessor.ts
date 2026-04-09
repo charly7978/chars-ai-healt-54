@@ -68,6 +68,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private readonly FINGER_LOST_FRAMES = 90;     // ~3s tolerancia antes de degradar
   private readonly STABLE_THRESHOLD = 30;       // ~1s para STABLE — evitar parpadeo
   private readonly UNSTABLE_GRACE = 120;        // ~4s antes de NO_CONTACT total
+  private readonly MIN_HUMAN_PI = 0.08;         // perfusión útil mínima para aceptar pulso real
+  private readonly MIN_PPG_PERIODICITY = 0.22;  // periodicidad mínima esperada de pulso humano
 
   // Suavizado temporal — más lentos = más estable
   private smoothedRed = 0;
