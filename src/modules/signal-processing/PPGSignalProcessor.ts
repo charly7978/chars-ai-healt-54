@@ -122,11 +122,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return true;
   }
 
-  processFrame(imageData: ImageData): void {
+  processFrame(imageData: ImageData, frameTimestamp?: number): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
     this.frameCount++;
-    const timestamp = Date.now();
+    const timestamp = frameTimestamp ?? Date.now();
     this.updateSampleRate(timestamp);
 
     const roi = this.extractROI(imageData);
@@ -366,10 +366,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const median = sorted[Math.floor(sorted.length / 2)] ?? 33;
     const estimatedFps = this.clamp(1000 / median, 20, 40);
 
-    if (Math.abs(estimatedFps - this.estimatedSampleRate) > 2) {
-      this.estimatedSampleRate = estimatedFps;
-      this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
-    }
+    // Mantener estable el bandpass: no resetear el filtro por microvariaciones
+    // del FPS real del hardware, porque eso degrada la periodicidad y la detección RR.
+    this.estimatedSampleRate = this.estimatedSampleRate * 0.85 + estimatedFps * 0.15;
   }
 
   private extractROI(imageData: ImageData): ROIMetrics {
@@ -768,7 +767,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private calculatePerfusionIndex(): number {
     const greenPI = this.greenDC > 30 ? (this.greenAC / this.greenDC) * 100 : 0;
     const redPI = this.redDC > 30 ? (this.redAC / this.redDC) * 100 : 0;
-    const candidate = greenPI > 0 ? greenPI : redPI;
+    const candidate = Math.max(greenPI, redPI);
 
     if (!isFinite(candidate) || candidate <= 0) return 0;
 

@@ -221,17 +221,18 @@ const Index = () => {
       return;
     }
 
-    const captureOneFrame = () => {
+    const captureOneFrame = (frameTimestampMs?: number) => {
       if (!isProcessingRef.current) return;
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.timeOrigin + performance.now()));
         return;
       }
+      const effectiveTimestamp = frameTimestampMs ?? (performance.timeOrigin + performance.now());
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        processFrame(imageData);
+        processFrame(imageData, effectiveTimestamp);
       } catch {}
       scheduleNext(video);
     };
@@ -239,14 +240,14 @@ const Index = () => {
     const scheduleNext = (video: HTMLVideoElement) => {
       if (!isProcessingRef.current) return;
       if ('requestVideoFrameCallback' in video) {
-        (video as any).requestVideoFrameCallback(() => captureOneFrame());
+        (video as any).requestVideoFrameCallback((now: number) => captureOneFrame(performance.timeOrigin + now));
       } else {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.timeOrigin + performance.now()));
       }
     };
     
     console.log('🎬 Captura iniciada (requestVideoFrameCallback)');
-    captureOneFrame();
+    captureOneFrame(performance.timeOrigin + performance.now());
   }, [processFrame]);
 
   const stopFrameLoop = useCallback(() => {
