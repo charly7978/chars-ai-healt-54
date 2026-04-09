@@ -235,16 +235,28 @@ export class HeartBeatProcessor {
       if (ratio < 0.15 || ratio > 6) return false; // extreme amplitude change = artifact
     }
 
-    // 4. RR consistency check (if we have history)
+    // 4. RR consistency check — stricter with history
     if (this.rrIntervals.length >= 3) {
       const medianRR = this.getMedianRR();
-      const expectedRR = medianRR;
-      // Allow 50-170% of expected RR (wide enough for real variability, tight enough for artifacts)
-      if (timeSinceLastPeak < expectedRR * 0.45 || timeSinceLastPeak > expectedRR * 1.8) {
-        // Only reject if we have strong RR history (≥5 intervals)
-        if (this.rrIntervals.length >= 5 && this.consecutiveValidPeaks >= 4) {
+      // Tight window: 50-165% of expected RR
+      if (timeSinceLastPeak < medianRR * 0.50 || timeSinceLastPeak > medianRR * 1.65) {
+        // Reject if we have moderate RR history
+        if (this.rrIntervals.length >= 4 && this.consecutiveValidPeaks >= 3) {
           return false;
         }
+      }
+    }
+
+    // 5. RR coherence: if we have ≥5 intervals, check that CV is not too high (reject random noise)
+    if (this.rrIntervals.length >= 5) {
+      const recent = this.rrIntervals.slice(-8);
+      const meanRR = recent.reduce((a, b) => a + b, 0) / recent.length;
+      const varRR = recent.reduce((a, rr) => a + (rr - meanRR) ** 2, 0) / recent.length;
+      const cvRR = Math.sqrt(varRR) / Math.max(1, meanRR);
+      // CV > 0.45 means intervals are too random — likely noise, not heartbeat
+      if (cvRR > 0.45) {
+        this.consecutiveValidPeaks = Math.max(0, this.consecutiveValidPeaks - 2);
+        return false;
       }
     }
 

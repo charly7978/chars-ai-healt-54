@@ -177,29 +177,37 @@ export class VitalSignsProcessor {
   }
 
   private validateRealPulse(rrData?: { intervals: number[], lastPeakTime: number | null }): boolean {
-    if (!rrData || !rrData.intervals || rrData.intervals.length < 2) {
+    if (!rrData || !rrData.intervals || rrData.intervals.length < 3) {
       this.validPulseCount = 0;
       return false;
     }
-    
-    // Ventana humana conservadora: evita ruido no fisiológico sin forzar rangos clínicos “bonitos”
-    const validIntervals = rrData.intervals.filter(interval => 
-      interval >= 270 && interval <= 2200
+
+    const validIntervals = rrData.intervals.filter(interval =>
+      interval >= 273 && interval <= 2200
     );
-    
-    if (validIntervals.length < 2) {
+
+    if (validIntervals.length < 3) {
       this.validPulseCount = 0;
+      return false;
+    }
+
+    // RR coherence: reject if intervals are too random (noise masquerading as beats)
+    const meanRR = validIntervals.reduce((a, b) => a + b, 0) / validIntervals.length;
+    const varRR = validIntervals.reduce((a, rr) => a + (rr - meanRR) ** 2, 0) / validIntervals.length;
+    const cvRR = Math.sqrt(varRR) / Math.max(1, meanRR);
+    if (cvRR > 0.40) {
+      this.validPulseCount = Math.max(0, this.validPulseCount - 1);
       return false;
     }
 
     if (rrData.lastPeakTime) {
       const timeSinceLastPeak = Date.now() - rrData.lastPeakTime;
-      if (timeSinceLastPeak > 4000) {
+      if (timeSinceLastPeak > 3500) {
         this.validPulseCount = 0;
         return false;
       }
     }
-    
+
     this.validPulseCount = validIntervals.length;
     return true;
   }

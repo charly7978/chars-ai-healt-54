@@ -467,8 +467,8 @@ const Index = () => {
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
     const stableHumanSignal =
       contactState === 'STABLE_CONTACT' &&
-      (lastSignal.quality || 0) >= 12 &&
-      (lastSignal.perfusionIndex || 0) >= 0.005;
+      (lastSignal.quality || 0) >= 18 &&
+      (lastSignal.perfusionIndex || 0) >= 0.08;
 
     const heartBeatResult = processHeartBeat(
       signalValue,
