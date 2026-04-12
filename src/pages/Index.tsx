@@ -85,45 +85,12 @@ const Index = () => {
     setRGBData,
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
-    calibrateBP,
     hasValidPressureEstimate,
     lastValidResults,
     startCalibration,
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
-  
-  const { saveMeasurement } = useSaveMeasurement();
-  const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
-  const [showAIAnalysis, setShowAIAnalysis] = useState(false);
-  const [isCalibrated, setIsCalibrated] = useState(false);
-
-  // AUTO-CARGAR CALIBRACIÓN GUARDADA AL INICIAR
-  useEffect(() => {
-    const loadSavedCalibration = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        const { data } = await supabase
-          .from("calibration_settings")
-          .select("systolic_reference, diastolic_reference, is_active, status")
-          .eq("user_id", user.id)
-          .eq("is_active", true)
-          .eq("status", "completed")
-          .maybeSingle();
-
-        if (data?.systolic_reference && data?.diastolic_reference) {
-          calibrateBP(data.systolic_reference, data.diastolic_reference);
-          setIsCalibrated(true);
-          console.log(`✅ Calibración BP cargada: ${data.systolic_reference}/${data.diastolic_reference}`);
-        }
-      } catch (err) {
-        console.error("Error cargando calibración:", err);
-      }
-    };
-    loadSavedCalibration();
-  }, [calibrateBP]);
 
   // CANVAS PARA CAPTURA
   useEffect(() => {
