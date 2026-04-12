@@ -62,6 +62,20 @@ const Index = () => {
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
+
+  // ── EMA display smoothing (subtle, no simulation) ──
+  // Alpha ~0.3 = ~70% previous + 30% new → gentle stabilization
+  const EMA_ALPHA = 0.3;
+  const emaRef = useRef({
+    bpm: 0, spo2: 0, systolic: 0, diastolic: 0,
+    glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0,
+  });
+
+  const applyEMA = useCallback((prev: number, next: number): number => {
+    if (next === 0) return 0; // never smooth toward zero — show 0 instantly
+    if (prev === 0) return next; // first valid value — accept immediately
+    return Math.round(prev * (1 - EMA_ALPHA) + next * EMA_ALPHA);
+  }, []);
   
   // HOOKS DE PROCESAMIENTO
   const { 
@@ -382,6 +396,7 @@ const Index = () => {
     stopProcessing();
     fullResetVitalSigns();
     resetHeartBeat();
+    emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0 };
     
     setIsCameraOn(false);
     
@@ -492,7 +507,10 @@ const Index = () => {
 
     // Señal estable — resetear contador de inestabilidad
     unstableFrameCounter.current = 0;
-    setHeartRate(heartBeatResult.bpm);
+    // Subtle EMA smoothing on BPM display
+    const smoothedBPM = applyEMA(emaRef.current.bpm, heartBeatResult.bpm);
+    emaRef.current.bpm = smoothedBPM;
+    setHeartRate(smoothedBPM);
 
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
@@ -531,7 +549,33 @@ const Index = () => {
           : undefined
       );
 
-      setVitalSigns(vitals);
+      // Apply subtle EMA smoothing to display values (raw data preserved in vitals object)
+      const e = emaRef.current;
+      const smoothed: typeof vitals = {
+        ...vitals,
+        spo2: applyEMA(e.spo2, vitals.spo2),
+        glucose: applyEMA(e.glucose, vitals.glucose),
+        hemoglobin: applyEMA(e.hemoglobin, vitals.hemoglobin),
+        pressure: {
+          ...vitals.pressure,
+          systolic: applyEMA(e.systolic, vitals.pressure.systolic),
+          diastolic: applyEMA(e.diastolic, vitals.pressure.diastolic),
+        },
+        lipids: {
+          totalCholesterol: applyEMA(e.cholesterol, vitals.lipids.totalCholesterol),
+          triglycerides: applyEMA(e.triglycerides, vitals.lipids.triglycerides),
+        },
+      };
+      // Update EMA state
+      e.spo2 = smoothed.spo2;
+      e.glucose = smoothed.glucose;
+      e.hemoglobin = smoothed.hemoglobin;
+      e.systolic = smoothed.pressure.systolic;
+      e.diastolic = smoothed.pressure.diastolic;
+      e.cholesterol = smoothed.lipids.totalCholesterol;
+      e.triglycerides = smoothed.lipids.triglycerides;
+
+      setVitalSigns(smoothed);
 
       if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18 && vitals.measurementConfidence !== 'INVALID') {
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
