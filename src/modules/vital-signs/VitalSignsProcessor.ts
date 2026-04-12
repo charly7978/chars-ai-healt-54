@@ -704,12 +704,7 @@ export class VitalSignsProcessor {
     return result.spo2 !== 0 ? result : null;
   }
 
-  /**
-   * Calibrate BP with cuff reference values
-   */
-  calibrateBP(systolicRef: number, diastolicRef: number): void {
-    this.bloodPressureProcessor.calibrate(systolicRef, diastolicRef);
-  }
+  // Calibración eliminada — BP se calcula exclusivamente desde morfología PPG
 
   hasValidPressureEstimate(): boolean {
     return this.measurements.systolicPressure > 0 && this.measurements.diastolicPressure > 0;
