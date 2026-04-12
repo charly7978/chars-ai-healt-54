@@ -65,9 +65,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerLostCount = 0;
   private stableContactCount = 0;
   private readonly FINGER_CONFIRM_FRAMES = 5;   // ~170ms @ 30fps — balance velocidad/estabilidad
-  private readonly FINGER_LOST_FRAMES = 90;     // ~3s tolerancia antes de degradar
-  private readonly STABLE_THRESHOLD = 30;       // ~1s para STABLE — evitar parpadeo
-  private readonly UNSTABLE_GRACE = 120;        // ~4s antes de NO_CONTACT total
+  private readonly FINGER_LOST_FRAMES = 150;    // ~5s tolerancia antes de degradar
+  private readonly STABLE_THRESHOLD = 25;       // ~0.8s para STABLE
+  private readonly UNSTABLE_GRACE = 200;        // ~6.5s antes de NO_CONTACT total
 
   // Suavizado temporal — más lentos = más estable
   private smoothedRed = 0;
