@@ -64,10 +64,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
   private stableContactCount = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 5;   // ~170ms @ 30fps — balance velocidad/estabilidad
-  private readonly FINGER_LOST_FRAMES = 150;    // ~5s tolerancia antes de degradar
-  private readonly STABLE_THRESHOLD = 25;       // ~0.8s para STABLE
-  private readonly UNSTABLE_GRACE = 200;        // ~6.5s antes de NO_CONTACT total
+  private readonly FINGER_CONFIRM_FRAMES = 8;   // ~270ms — más estricto para evitar falsos positivos
+  private readonly FINGER_LOST_FRAMES = 120;    // ~4s tolerancia antes de degradar
+  private readonly STABLE_THRESHOLD = 35;       // ~1.2s para STABLE — requiere más estabilidad
+  private readonly UNSTABLE_GRACE = 160;        // ~5.3s antes de NO_CONTACT total
 
   // Suavizado temporal — más lentos = más estable
   private smoothedRed = 0;
@@ -75,8 +75,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private smoothedBlue = 0;
   private smoothedCoverage = 0;
   private smoothedFingerScore = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.05;       // era 0.10 — más suave
-  private readonly COVERAGE_SMOOTH_ALPHA = 0.06;  // era 0.12 — más suave
+  private readonly RGB_SMOOTH_ALPHA = 0.04;       // más lento = más estable
+  private readonly COVERAGE_SMOOTH_ALPHA = 0.05;  // más lento = más estable
 
   // === POSITION QUALITY & LOCK ===
   private positionLocked = false;
@@ -85,8 +85,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lockedCoverage = 0;
   private lockedFingerScore = 0;
   private positionStabilityCount = 0;
-  private readonly POSITION_LOCK_FRAMES = 45;    // ~1.5s of stable position to lock
-  private readonly POSITION_DRIFT_TOLERANCE = 0.18; // max 18% drift from locked baseline
+  private readonly POSITION_LOCK_FRAMES = 60;    // ~2s of stable position to lock
+  private readonly POSITION_DRIFT_TOLERANCE = 0.12; // max 12% drift — más estricto
+  private positionDrifting = false; // flag para gatear señal durante drift
   private spatialUniformity = 0;
   private centerCoverage = 0;
   private positionDrift = 0;
@@ -205,8 +206,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const adjustedQuality = motionArtifact
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
+    // GATE: suprimir calidad si el dedo se movió de la posición bloqueada
+    const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
     const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
-      ? adjustedQuality
+      ? adjustedQuality * driftPenalty
       : Math.min(18, adjustedQuality * 0.45);
 
     const now = Date.now();
@@ -328,25 +331,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // === HEMOGLOBIN SIGNATURE: red MUST dominate when finger+flash ===
     if (this.fingerDetected) {
-      // MAINTAIN contact — relaxed thresholds for stability
+      // MAINTAIN contact — moderately strict to prevent position changes
       const maintainContact =
-        r > 40 &&
-        rgRatio > 1.05 &&
-        redDominance > 8 &&
-        this.smoothedCoverage > 0.15 &&
-        this.smoothedFingerScore > 0.15 &&
+        r > 50 &&
+        rgRatio > 1.08 &&
+        redDominance > 10 &&
+        this.smoothedCoverage > 0.20 &&
+        this.smoothedFingerScore > 0.20 &&
         notBlownOut;
       return maintainContact;
     } else {
-      // ACQUIRE contact — strict hemoglobin thresholds
+      // ACQUIRE contact — VERY strict: only accept optimal finger placement
       const acquireContact =
-        r > 80 &&
-        rgRatio > 1.2 &&
-        redDominance > 20 &&
-        totalIntensity > 120 && totalIntensity < 760 &&
-        this.smoothedCoverage > 0.35 &&
-        this.smoothedFingerScore > 0.40 &&
-        this.motionScore < 1.5 &&
+        r > 90 &&
+        rgRatio > 1.25 &&
+        redDominance > 25 &&
+        totalIntensity > 150 && totalIntensity < 720 &&
+        this.smoothedCoverage > 0.45 &&
+        this.smoothedFingerScore > 0.45 &&
+        this.motionScore < 1.0 &&
         notBlownOut;
       return acquireContact;
     }
@@ -510,13 +513,29 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.positionDrift = (redDrift + greenDrift + coverageDrift) / 3;
 
       if (this.positionDrift > this.POSITION_DRIFT_TOLERANCE) {
-        this.positionGuidance = 'REAJUSTE: VUELVA A LA POSICIÓN INICIAL';
+        this.positionDrifting = true;
+        this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA POSICIÓN INICIAL';
+        
+        // Si el drift es muy alto, desbloquear y forzar re-lock
+        if (this.positionDrift > this.POSITION_DRIFT_TOLERANCE * 2.5) {
+          this.positionLocked = false;
+          this.positionStabilityCount = 0;
+          this.positionDrifting = false;
+          this.positionGuidance = 'REPOSICIONE EL DEDO CORRECTAMENTE';
+        }
       } else {
+        this.positionDrifting = false;
+        // Actualizar baseline lentamente para adaptarse a cambios fisiológicos naturales
+        const adaptAlpha = 0.003;
+        this.lockedRedBaseline = this.lockedRedBaseline * (1 - adaptAlpha) + currentRed * adaptAlpha;
+        this.lockedGreenBaseline = this.lockedGreenBaseline * (1 - adaptAlpha) + currentGreen * adaptAlpha;
+        this.lockedCoverage = this.lockedCoverage * (1 - adaptAlpha) + coverageRatio * adaptAlpha;
         this.positionGuidance = 'POSICIÓN CORRECTA — NO MUEVA EL DEDO';
       }
     } else if (this.fingerDetected) {
-      // Try to lock position
-      if (this.positionQualityScore > 0.55 && coverageRatio > 0.5 && this.spatialUniformity > 0.4) {
+      this.positionDrifting = false;
+      // Try to lock position — STRICT requirements
+      if (this.positionQualityScore > 0.65 && coverageRatio > 0.55 && this.spatialUniformity > 0.50 && this.centerCoverage > 0.35) {
         this.positionStabilityCount++;
         if (this.positionStabilityCount >= this.POSITION_LOCK_FRAMES) {
           this.positionLocked = true;
@@ -529,20 +548,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POSITION_LOCK_FRAMES) * 100)}%`;
         }
       } else {
-        this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 2);
+        this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 3);
         // Specific guidance based on what's wrong
-        if (coverageRatio < 0.4) {
+        if (coverageRatio < 0.45) {
           this.positionGuidance = 'CUBRA TODA LA CÁMARA CON SU DEDO';
-        } else if (this.spatialUniformity < 0.35) {
+        } else if (this.spatialUniformity < 0.40) {
           this.positionGuidance = 'CENTRE EL DEDO SOBRE LA CÁMARA';
-        } else if (this.centerCoverage < 0.3) {
+        } else if (this.centerCoverage < 0.30) {
           this.positionGuidance = 'MUEVA EL DEDO HACIA EL CENTRO';
         } else {
-          this.positionGuidance = 'PRESIONE SUAVEMENTE Y NO MUEVA';
+          this.positionGuidance = 'PRESIONE SUAVEMENTE — FIRME Y SIN MOVER';
         }
       }
     } else {
       this.positionStabilityCount = 0;
+      this.positionDrifting = false;
       this.positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
     }
 
@@ -848,6 +868,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.spatialUniformity = 0;
     this.centerCoverage = 0;
     this.positionDrift = 0;
+    this.positionDrifting = false;
     this.positionQualityScore = 0;
     this.positionGuidance = 'COLOQUE SU DEDO';
   }
@@ -920,6 +941,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   getPositionQuality() {
     return {
       locked: this.positionLocked,
+      drifting: this.positionDrifting,
       spatialUniformity: this.spatialUniformity,
       centerCoverage: this.centerCoverage,
       positionDrift: this.positionDrift,
