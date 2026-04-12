@@ -506,7 +506,10 @@ const Index = () => {
 
     // Señal estable — resetear contador de inestabilidad
     unstableFrameCounter.current = 0;
-    setHeartRate(heartBeatResult.bpm);
+    // Subtle EMA smoothing on BPM display
+    const smoothedBPM = applyEMA(emaRef.current.bpm, heartBeatResult.bpm);
+    emaRef.current.bpm = smoothedBPM;
+    setHeartRate(smoothedBPM);
 
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
