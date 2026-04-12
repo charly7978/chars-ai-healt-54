@@ -941,6 +941,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   getPositionQuality() {
     return {
       locked: this.positionLocked,
+      drifting: this.positionDrifting,
       spatialUniformity: this.spatialUniformity,
       centerCoverage: this.centerCoverage,
       positionDrift: this.positionDrift,
