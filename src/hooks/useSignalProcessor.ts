@@ -139,6 +139,13 @@ export const useSignalProcessor = () => {
     return processorRef.current.getRGBStats();
   }, []);
 
+  const getPositionQuality = useCallback(() => {
+    if (!processorRef.current) {
+      return { locked: false, spatialUniformity: 0, centerCoverage: 0, positionDrift: 0, guidance: 'COLOQUE SU DEDO', qualityScore: 0 };
+    }
+    return processorRef.current.getPositionQuality();
+  }, []);
+
   return {
     isProcessing,
     lastSignal,
@@ -149,6 +156,7 @@ export const useSignalProcessor = () => {
     calibrate,
     processFrame,
     getRGBStats,
+    getPositionQuality,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,
