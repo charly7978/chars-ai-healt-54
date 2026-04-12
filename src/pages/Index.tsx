@@ -548,9 +548,33 @@ const Index = () => {
           : undefined
       );
 
-      setVitalSigns(vitals);
+      // Apply subtle EMA smoothing to display values (raw data preserved in vitals object)
+      const e = emaRef.current;
+      const smoothed: typeof vitals = {
+        ...vitals,
+        spo2: applyEMA(e.spo2, vitals.spo2),
+        glucose: applyEMA(e.glucose, vitals.glucose),
+        hemoglobin: applyEMA(e.hemoglobin, vitals.hemoglobin),
+        pressure: {
+          ...vitals.pressure,
+          systolic: applyEMA(e.systolic, vitals.pressure.systolic),
+          diastolic: applyEMA(e.diastolic, vitals.pressure.diastolic),
+        },
+        lipids: {
+          totalCholesterol: applyEMA(e.cholesterol, vitals.lipids.totalCholesterol),
+          triglycerides: applyEMA(e.triglycerides, vitals.lipids.triglycerides),
+        },
+      };
+      // Update EMA state
+      e.spo2 = smoothed.spo2;
+      e.glucose = smoothed.glucose;
+      e.hemoglobin = smoothed.hemoglobin;
+      e.systolic = smoothed.pressure.systolic;
+      e.diastolic = smoothed.pressure.diastolic;
+      e.cholesterol = smoothed.lipids.totalCholesterol;
+      e.triglycerides = smoothed.lipids.triglycerides;
 
-      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18 && vitals.measurementConfidence !== 'INVALID') {
+      setVitalSigns(smoothed);
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
         if (arrhythmiaStatus) {
           lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
