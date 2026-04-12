@@ -291,9 +291,15 @@ export class VitalSignsProcessor {
     
     for (const cycle of cycles) {
       const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality >= 0.30) {  // lowered from 0.45
+      if (features && features.quality >= 0.25) {
         validCycleFeatures.push(features);
       }
+    }
+
+    // Diagnostic log every ~3s
+    if (this.signalHistory.length % 60 === 0) {
+      const { redAC, redDC, greenAC, greenDC } = this.rgbData;
+      console.log(`🩺 Vitals diag: SpO2raw=${spo2.toFixed(1)} rAC=${redAC.toFixed(2)} rDC=${redDC.toFixed(0)} gAC=${greenAC.toFixed(2)} gDC=${greenDC.toFixed(0)} cycles=${cycles.length} validCF=${validCycleFeatures.length} hist=${this.signalHistory.length} SQ=${this.measurements.signalQuality.toFixed(0)}`);
     }
 
     const validRR = rrData.intervals.filter(i => i >= 270 && i <= 2200);
