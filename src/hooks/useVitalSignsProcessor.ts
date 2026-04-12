@@ -48,7 +48,6 @@ export const useVitalSignsProcessor = () => {
     const defaultResult: VitalSignsResult = {
       spo2: 0, 
       glucose: 0, 
-      hemoglobin: 0,
       pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
       arrhythmiaCount: 0, 
       arrhythmiaStatus: "SIN ARRITMIAS|0",
@@ -72,7 +71,6 @@ export const useVitalSignsProcessor = () => {
       result.pressure.confidence !== 'INSUFFICIENT' ||
       result.spo2 > 0 ||
       result.glucose > 0 ||
-      result.hemoglobin > 0 ||
       result.lipids.totalCholesterol > 0 ||
       result.arrhythmiaCount > 0
     ) {

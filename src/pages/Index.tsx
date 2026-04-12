@@ -21,7 +21,6 @@ const Index = () => {
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
     glucose: 0,
-    hemoglobin: 0,
     pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
@@ -68,7 +67,7 @@ const Index = () => {
   const EMA_ALPHA = 0.3;
   const emaRef = useRef({
     bpm: 0, spo2: 0, systolic: 0, diastolic: 0,
-    glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0,
+    glucose: 0, cholesterol: 0, triglycerides: 0,
   });
 
   const applyEMA = useCallback((prev: number, next: number): number => {
@@ -397,7 +396,7 @@ const Index = () => {
     stopProcessing();
     fullResetVitalSigns();
     resetHeartBeat();
-    emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0 };
+    emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, cholesterol: 0, triglycerides: 0 };
     
     setIsCameraOn(false);
     
@@ -422,7 +421,6 @@ const Index = () => {
     setVitalSigns({ 
       spo2: 0,
       glucose: 0,
-      hemoglobin: 0,
       pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",
@@ -483,7 +481,6 @@ const Index = () => {
           prev.measurementConfidence === 'INVALID' &&
           prev.spo2 === 0 &&
           prev.glucose === 0 &&
-          prev.hemoglobin === 0 &&
           prev.pressure.systolic === 0 &&
           prev.pressure.diastolic === 0
             ? prev
@@ -491,7 +488,6 @@ const Index = () => {
                 ...prev,
                 spo2: 0,
                 glucose: 0,
-                hemoglobin: 0,
                 pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
                 arrhythmiaCount: 0,
                 arrhythmiaStatus: "SIN ARRITMIAS|0",
@@ -556,7 +552,6 @@ const Index = () => {
         ...vitals,
         spo2: applyEMA(e.spo2, vitals.spo2),
         glucose: applyEMA(e.glucose, vitals.glucose),
-        hemoglobin: applyEMA(e.hemoglobin, vitals.hemoglobin),
         pressure: {
           ...vitals.pressure,
           systolic: applyEMA(e.systolic, vitals.pressure.systolic),
@@ -570,7 +565,6 @@ const Index = () => {
       // Update EMA state
       e.spo2 = smoothed.spo2;
       e.glucose = smoothed.glucose;
-      e.hemoglobin = smoothed.hemoglobin;
       e.systolic = smoothed.pressure.systolic;
       e.diastolic = smoothed.pressure.diastolic;
       e.cholesterol = smoothed.lipids.totalCholesterol;
@@ -755,12 +749,6 @@ const Index = () => {
                 highlighted={showResults}
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
-              />
-              <VitalSign 
-                label="HEMOGLOBINA (EST.)"
-                value={vitalSigns.hemoglobin > 0 ? vitalSigns.hemoglobin : "--"}
-                unit="g/dL"
-                highlighted={showResults}
               />
               <VitalSign 
                 label="GLUCOSA (EST.)"
