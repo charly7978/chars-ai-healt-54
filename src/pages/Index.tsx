@@ -91,6 +91,10 @@ const Index = () => {
     forceCalibrationCompletion,
     getCalibrationProgress
   } = useVitalSignsProcessor();
+  
+  const { saveMeasurement } = useSaveMeasurement();
+  const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
+  const [showAIAnalysis, setShowAIAnalysis] = useState(false);
 
   // CANVAS PARA CAPTURA
   useEffect(() => {
