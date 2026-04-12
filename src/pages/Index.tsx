@@ -21,7 +21,6 @@ const Index = () => {
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
     glucose: 0,
-    hemoglobin: 0,
     pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
     arrhythmiaCount: 0,
     arrhythmiaStatus: "SIN ARRITMIAS|0",
@@ -68,7 +67,7 @@ const Index = () => {
   const EMA_ALPHA = 0.3;
   const emaRef = useRef({
     bpm: 0, spo2: 0, systolic: 0, diastolic: 0,
-    glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0,
+    glucose: 0, cholesterol: 0, triglycerides: 0,
   });
 
   const applyEMA = useCallback((prev: number, next: number): number => {
@@ -397,7 +396,7 @@ const Index = () => {
     stopProcessing();
     fullResetVitalSigns();
     resetHeartBeat();
-    emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0 };
+    emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, cholesterol: 0, triglycerides: 0 };
     
     setIsCameraOn(false);
     
@@ -422,7 +421,6 @@ const Index = () => {
     setVitalSigns({ 
       spo2: 0,
       glucose: 0,
-      hemoglobin: 0,
       pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
       arrhythmiaCount: 0,
       arrhythmiaStatus: "SIN ARRITMIAS|0",
