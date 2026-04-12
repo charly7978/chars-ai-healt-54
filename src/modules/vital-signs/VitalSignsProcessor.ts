@@ -13,7 +13,6 @@ export interface VitalSignsResult {
   };
   arrhythmiaCount: number;
   arrhythmiaStatus: string;
-  hemoglobin: number;
   lipids: {
     totalCholesterol: number;
     triglycerides: number;
@@ -25,7 +24,6 @@ export interface VitalSignsResult {
     rmssd: number;
     rrVariation: number;
   };
-  // NUEVO: Indicadores de calidad
   signalQuality: number;
   measurementConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID';
 }
@@ -63,7 +61,6 @@ export class VitalSignsProcessor {
   private measurements = {
     spo2: 0,
     glucose: 0,
-    hemoglobin: 0,
     systolicPressure: 0,
     diastolicPressure: 0,
     arrhythmiaCount: 0,
@@ -91,8 +88,7 @@ export class VitalSignsProcessor {
     spo2: [],
     systolic: [],
     diastolic: [],
-    glucose: [],
-    hemoglobin: []
+    glucose: []
   };
   private readonly HISTORY_SIZE_VALIDATION = 10; // Últimas 10 mediciones
   
