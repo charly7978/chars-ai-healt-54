@@ -78,7 +78,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private readonly RGB_SMOOTH_ALPHA = 0.05;       // era 0.10 — más suave
   private readonly COVERAGE_SMOOTH_ALPHA = 0.06;  // era 0.12 — más suave
 
-  // IMU / Motion
+  // === POSITION QUALITY & LOCK ===
+  private positionLocked = false;
+  private lockedRedBaseline = 0;
+  private lockedGreenBaseline = 0;
+  private lockedCoverage = 0;
+  private lockedFingerScore = 0;
+  private positionStabilityCount = 0;
+  private readonly POSITION_LOCK_FRAMES = 45;    // ~1.5s of stable position to lock
+  private readonly POSITION_DRIFT_TOLERANCE = 0.18; // max 18% drift from locked baseline
+  private spatialUniformity = 0;
+  private centerCoverage = 0;
+  private positionDrift = 0;
+  private positionGuidance: string = 'COLOQUE SU DEDO';
+  private positionQualityScore = 0;
   private motionScore = 0;
   private motionListenerActive = false;
   private lastAcceleration = { x: 0, y: 0, z: 0 };
@@ -815,6 +828,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC)
         : 0,
+    };
+  }
+
+  getPositionQuality() {
+    return {
+      locked: this.positionLocked,
+      spatialUniformity: this.spatialUniformity,
+      centerCoverage: this.centerCoverage,
+      positionDrift: this.positionDrift,
+      guidance: this.positionGuidance,
+      qualityScore: this.positionQualityScore,
     };
   }
 }
