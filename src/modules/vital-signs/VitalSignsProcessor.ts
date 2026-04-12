@@ -111,7 +111,6 @@ export class VitalSignsProcessor {
     this.measurements = {
       spo2: 0,
       glucose: 0,
-      hemoglobin: 0,
       systolicPressure: 0,
       diastolicPressure: 0,
       arrhythmiaCount: 0,
@@ -240,7 +239,6 @@ export class VitalSignsProcessor {
     return {
       spo2: Math.round(this.measurements.spo2),
       glucose: Math.round(this.measurements.glucose),
-      hemoglobin: Math.round(this.measurements.hemoglobin * 10) / 10,
       pressure: {
         systolic: Math.round(this.measurements.systolicPressure),
         diastolic: Math.round(this.measurements.diastolicPressure),
@@ -326,12 +324,6 @@ export class VitalSignsProcessor {
       if (glucose > 40 && glucose < 400) {
         this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
         this.updateHistory('glucose', glucose);
-      }
-
-      const hemoglobin = this.calculateHemoglobinAdvanced(medianF);
-      if (hemoglobin > 5 && hemoglobin < 25) {
-        this.measurements.hemoglobin = this.smoothValue(this.measurements.hemoglobin, hemoglobin, 'stable');
-        this.updateHistory('hemoglobin', hemoglobin);
       }
 
       const lipids = this.calculateLipidsAdvanced(medianF, hr, rrVar);
@@ -718,7 +710,6 @@ export class VitalSignsProcessor {
     this.measurements = {
       spo2: 0,
       glucose: 0,
-      hemoglobin: 0,
       systolicPressure: 0,
       diastolicPressure: 0,
       arrhythmiaCount: 0,
