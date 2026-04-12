@@ -396,6 +396,7 @@ const Index = () => {
     stopProcessing();
     fullResetVitalSigns();
     resetHeartBeat();
+    emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0 };
     
     setIsCameraOn(false);
     
