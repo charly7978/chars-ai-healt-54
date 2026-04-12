@@ -92,9 +92,7 @@ export const useVitalSignsProcessor = () => {
     return resultToReturn;
   }, [lastValidResults]);
   
-  const calibrateBP = useCallback((systolic: number, diastolic: number) => {
-    processorRef.current?.calibrateBP(systolic, diastolic);
-  }, []);
+  // calibrateBP eliminado — BP se calcula exclusivamente desde morfología PPG
 
   const fullReset = useCallback(() => {
     processorRef.current?.fullReset();
@@ -111,7 +109,6 @@ export const useVitalSignsProcessor = () => {
     setRGBData,
     reset,
     fullReset,
-    calibrateBP,
     startCalibration,
     forceCalibrationCompletion,
     hasValidPressureEstimate,
