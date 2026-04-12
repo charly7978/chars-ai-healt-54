@@ -206,8 +206,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const adjustedQuality = motionArtifact
       ? Math.max(0, this.signalQuality * 0.75)
       : this.signalQuality;
+    // GATE: suprimir calidad si el dedo se movió de la posición bloqueada
+    const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
     const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
-      ? adjustedQuality
+      ? adjustedQuality * driftPenalty
       : Math.min(18, adjustedQuality * 0.45);
 
     const now = Date.now();
