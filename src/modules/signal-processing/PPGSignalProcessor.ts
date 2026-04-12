@@ -65,9 +65,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerLostCount = 0;
   private stableContactCount = 0;
   private readonly FINGER_CONFIRM_FRAMES = 5;   // ~170ms @ 30fps — balance velocidad/estabilidad
-  private readonly FINGER_LOST_FRAMES = 90;     // ~3s tolerancia antes de degradar
-  private readonly STABLE_THRESHOLD = 30;       // ~1s para STABLE — evitar parpadeo
-  private readonly UNSTABLE_GRACE = 120;        // ~4s antes de NO_CONTACT total
+  private readonly FINGER_LOST_FRAMES = 150;    // ~5s tolerancia antes de degradar
+  private readonly STABLE_THRESHOLD = 25;       // ~0.8s para STABLE
+  private readonly UNSTABLE_GRACE = 200;        // ~6.5s antes de NO_CONTACT total
 
   // Suavizado temporal — más lentos = más estable
   private smoothedRed = 0;
@@ -261,19 +261,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           : 'UNSTABLE_CONTACT';
       }
     } else {
-      // Decremento lento — no perder confianza por un solo frame malo
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.5);
+      // Decremento MUY lento — alta inercia para estabilidad
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.25);
       this.fingerLostCount++;
-      // stableContactCount decrementa lento para no perder STABLE por glitches
-      this.stableContactCount = Math.max(0, this.stableContactCount - 0.3);
+      // stableContactCount decrementa MUY lento — máxima estabilidad STABLE
+      this.stableContactCount = Math.max(0, this.stableContactCount - 0.15);
 
       if (this.fingerDetected) {
         // Soft hold: mantener contacto con gracia — stricter thresholds
         const softHold =
-          this.smoothedCoverage > 0.15 &&
-          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 8 &&
-          this.smoothedFingerScore > 0.20 &&
-          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.05;
+          this.smoothedCoverage > 0.12 &&
+          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 5 &&
+          this.smoothedFingerScore > 0.15 &&
+          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.03;
 
         if (softHold || this.fingerLostCount < this.FINGER_LOST_FRAMES) {
           this.contactState = 'UNSTABLE_CONTACT';
@@ -328,13 +328,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // === HEMOGLOBIN SIGNATURE: red MUST dominate when finger+flash ===
     if (this.fingerDetected) {
-      // MAINTAIN contact — slightly relaxed thresholds
+      // MAINTAIN contact — relaxed thresholds for stability
       const maintainContact =
-        r > 50 &&
-        rgRatio > 1.1 &&
-        redDominance > 12 &&
-        this.smoothedCoverage > 0.20 &&
-        this.smoothedFingerScore > 0.20 &&
+        r > 40 &&
+        rgRatio > 1.05 &&
+        redDominance > 8 &&
+        this.smoothedCoverage > 0.15 &&
+        this.smoothedFingerScore > 0.15 &&
         notBlownOut;
       return maintainContact;
     } else {

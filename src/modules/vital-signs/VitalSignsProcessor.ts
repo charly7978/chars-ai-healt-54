@@ -281,7 +281,7 @@ export class VitalSignsProcessor {
     
     // SpO2 — lowest gate, always try first
     const spo2 = this.calculateSpO2Raw();
-    if (spo2 !== 0 && spo2 > 70 && spo2 < 100) {
+    if (spo2 !== 0 && spo2 > 70 && spo2 <= 100) {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
       this.updateHistory('spo2', spo2);
     }
@@ -291,9 +291,15 @@ export class VitalSignsProcessor {
     
     for (const cycle of cycles) {
       const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality >= 0.30) {  // lowered from 0.45
+      if (features && features.quality >= 0.25) {
         validCycleFeatures.push(features);
       }
+    }
+
+    // Diagnostic log every ~3s
+    if (this.signalHistory.length % 60 === 0) {
+      const { redAC, redDC, greenAC, greenDC } = this.rgbData;
+      console.log(`🩺 Vitals diag: SpO2raw=${spo2.toFixed(1)} rAC=${redAC.toFixed(2)} rDC=${redDC.toFixed(0)} gAC=${greenAC.toFixed(2)} gDC=${greenDC.toFixed(0)} cycles=${cycles.length} validCF=${validCycleFeatures.length} hist=${this.signalHistory.length} SQ=${this.measurements.signalQuality.toFixed(0)}`);
     }
 
     const validRR = rrData.intervals.filter(i => i >= 270 && i <= 2200);
@@ -317,7 +323,7 @@ export class VitalSignsProcessor {
     }
 
     // Glucose, Hemoglobin, Lipids — need cycle features
-    if (validCycleFeatures.length >= 2 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 15) {
+    if (validCycleFeatures.length >= 1 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 12) {
       const medianF = this.medianCycleFeatures(validCycleFeatures);
       
       const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
