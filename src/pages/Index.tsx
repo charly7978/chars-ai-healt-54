@@ -681,6 +681,34 @@ const Index = () => {
           />
         </div>
 
+        {/* FINGER POSITION GUIDANCE OVERLAY */}
+        {isMonitoring && (() => {
+          const pq = getPositionQuality();
+          const showGuidance = !pq.locked || pq.positionDrift > 0.18;
+          const isLocked = pq.locked && pq.positionDrift <= 0.18;
+          
+          return showGuidance || isLocked ? (
+            <div className="absolute top-1 left-0 right-0 z-20 flex justify-center pointer-events-none">
+              <div className={`px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wider shadow-lg backdrop-blur-md border ${
+                isLocked 
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' 
+                  : pq.qualityScore > 0.4 
+                    ? 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+                    : 'bg-red-500/20 border-red-500/40 text-red-300'
+              }`}>
+                <span className="flex items-center gap-1.5">
+                  {isLocked ? (
+                    <Shield className="w-3 h-3" />
+                  ) : (
+                    <Activity className="w-3 h-3 animate-pulse" />
+                  )}
+                  {pq.guidance}
+                </span>
+              </div>
+            </div>
+          ) : null;
+        })()}
+
         <div className="relative z-10 h-full">
           <div className="flex-1 h-full">
             <PPGSignalMeter 
