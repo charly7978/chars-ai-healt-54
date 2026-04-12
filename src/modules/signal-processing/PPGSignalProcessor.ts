@@ -328,13 +328,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // === HEMOGLOBIN SIGNATURE: red MUST dominate when finger+flash ===
     if (this.fingerDetected) {
-      // MAINTAIN contact — slightly relaxed thresholds
+      // MAINTAIN contact — relaxed thresholds for stability
       const maintainContact =
-        r > 50 &&
-        rgRatio > 1.1 &&
-        redDominance > 12 &&
-        this.smoothedCoverage > 0.20 &&
-        this.smoothedFingerScore > 0.20 &&
+        r > 40 &&
+        rgRatio > 1.05 &&
+        redDominance > 8 &&
+        this.smoothedCoverage > 0.15 &&
+        this.smoothedFingerScore > 0.15 &&
         notBlownOut;
       return maintainContact;
     } else {
