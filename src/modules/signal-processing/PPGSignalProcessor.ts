@@ -78,7 +78,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private readonly RGB_SMOOTH_ALPHA = 0.05;       // era 0.10 — más suave
   private readonly COVERAGE_SMOOTH_ALPHA = 0.06;  // era 0.12 — más suave
 
-  // IMU / Motion
+  // === POSITION QUALITY & LOCK ===
+  private positionLocked = false;
+  private lockedRedBaseline = 0;
+  private lockedGreenBaseline = 0;
+  private lockedCoverage = 0;
+  private lockedFingerScore = 0;
+  private positionStabilityCount = 0;
+  private readonly POSITION_LOCK_FRAMES = 45;    // ~1.5s of stable position to lock
+  private readonly POSITION_DRIFT_TOLERANCE = 0.18; // max 18% drift from locked baseline
+  private spatialUniformity = 0;
+  private centerCoverage = 0;
+  private positionDrift = 0;
+  private positionGuidance: string = 'COLOQUE SU DEDO';
+  private positionQualityScore = 0;
   private motionScore = 0;
   private motionListenerActive = false;
   private lastAcceleration = { x: 0, y: 0, z: 0 };
@@ -459,6 +472,80 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ? fingerTiles.reduce((s, t) => s + t.combinedScore, 0) / fingerTiles.length
       : 0;
 
+    // === POSITION QUALITY ANALYSIS ===
+    // Spatial uniformity: how evenly distributed the finger tiles are
+    if (fingerTiles.length >= 3) {
+      const scores = fingerTiles.map(t => t.combinedScore);
+      const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+      const variance = scores.reduce((a, s) => a + (s - mean) ** 2, 0) / scores.length;
+      const cv = mean > 0 ? Math.sqrt(variance) / mean : 1; // coefficient of variation
+      this.spatialUniformity = this.clamp(1 - cv, 0, 1);
+    } else {
+      this.spatialUniformity = 0;
+    }
+
+    // Center coverage: how many center tiles (3x3 inner grid) have finger
+    const centerTileIndices = [6, 7, 8, 11, 12, 13, 16, 17, 18]; // 5x5 grid center 3x3
+    const centerFingerCount = fingerTiles.filter((_, i) => {
+      const origIdx = averagedTiles.indexOf(fingerTiles[i] as any);
+      // Check if this tile's original index is a center tile
+      return centerTileIndices.includes(origIdx);
+    }).length;
+    this.centerCoverage = centerFingerCount / centerTileIndices.length;
+
+    // Combined position quality score
+    this.positionQualityScore = coverageRatio * 0.35 + this.spatialUniformity * 0.35 + this.centerCoverage * 0.3;
+
+    // Position drift detection (once locked)
+    const currentRed = weightedAverage('red');
+    const currentGreen = weightedAverage('green');
+    
+    if (this.positionLocked) {
+      const redDrift = this.lockedRedBaseline > 0 
+        ? Math.abs(currentRed - this.lockedRedBaseline) / this.lockedRedBaseline : 0;
+      const greenDrift = this.lockedGreenBaseline > 0 
+        ? Math.abs(currentGreen - this.lockedGreenBaseline) / this.lockedGreenBaseline : 0;
+      const coverageDrift = this.lockedCoverage > 0 
+        ? Math.abs(coverageRatio - this.lockedCoverage) / this.lockedCoverage : 0;
+      this.positionDrift = (redDrift + greenDrift + coverageDrift) / 3;
+
+      if (this.positionDrift > this.POSITION_DRIFT_TOLERANCE) {
+        this.positionGuidance = 'REAJUSTE: VUELVA A LA POSICIÓN INICIAL';
+      } else {
+        this.positionGuidance = 'POSICIÓN CORRECTA — NO MUEVA EL DEDO';
+      }
+    } else if (this.fingerDetected) {
+      // Try to lock position
+      if (this.positionQualityScore > 0.55 && coverageRatio > 0.5 && this.spatialUniformity > 0.4) {
+        this.positionStabilityCount++;
+        if (this.positionStabilityCount >= this.POSITION_LOCK_FRAMES) {
+          this.positionLocked = true;
+          this.lockedRedBaseline = currentRed;
+          this.lockedGreenBaseline = currentGreen;
+          this.lockedCoverage = coverageRatio;
+          this.lockedFingerScore = avgFingerScore;
+          this.positionGuidance = 'POSICIÓN BLOQUEADA — MANTENGA ASÍ';
+        } else {
+          this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POSITION_LOCK_FRAMES) * 100)}%`;
+        }
+      } else {
+        this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 2);
+        // Specific guidance based on what's wrong
+        if (coverageRatio < 0.4) {
+          this.positionGuidance = 'CUBRA TODA LA CÁMARA CON SU DEDO';
+        } else if (this.spatialUniformity < 0.35) {
+          this.positionGuidance = 'CENTRE EL DEDO SOBRE LA CÁMARA';
+        } else if (this.centerCoverage < 0.3) {
+          this.positionGuidance = 'MUEVA EL DEDO HACIA EL CENTRO';
+        } else {
+          this.positionGuidance = 'PRESIONE SUAVEMENTE Y NO MUEVA';
+        }
+      }
+    } else {
+      this.positionStabilityCount = 0;
+      this.positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
+    }
+
     return {
       rawRed: weightedAverage('red'),
       rawGreen: weightedAverage('green'),
@@ -751,6 +838,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.resetBaselines();
     this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
     this.bandpassFilter.reset();
+    // Reset position lock
+    this.positionLocked = false;
+    this.lockedRedBaseline = 0;
+    this.lockedGreenBaseline = 0;
+    this.lockedCoverage = 0;
+    this.lockedFingerScore = 0;
+    this.positionStabilityCount = 0;
+    this.spatialUniformity = 0;
+    this.centerCoverage = 0;
+    this.positionDrift = 0;
+    this.positionQualityScore = 0;
+    this.positionGuidance = 'COLOQUE SU DEDO';
   }
 
   private handleMotionEvent = (event: DeviceMotionEvent) => {
@@ -815,6 +914,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC)
         : 0,
+    };
+  }
+
+  getPositionQuality() {
+    return {
+      locked: this.positionLocked,
+      spatialUniformity: this.spatialUniformity,
+      centerCoverage: this.centerCoverage,
+      positionDrift: this.positionDrift,
+      guidance: this.positionGuidance,
+      qualityScore: this.positionQualityScore,
     };
   }
 }
