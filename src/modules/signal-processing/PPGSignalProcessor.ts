@@ -838,6 +838,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.resetBaselines();
     this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
     this.bandpassFilter.reset();
+    // Reset position lock
+    this.positionLocked = false;
+    this.lockedRedBaseline = 0;
+    this.lockedGreenBaseline = 0;
+    this.lockedCoverage = 0;
+    this.lockedFingerScore = 0;
+    this.positionStabilityCount = 0;
+    this.spatialUniformity = 0;
+    this.centerCoverage = 0;
+    this.positionDrift = 0;
+    this.positionQualityScore = 0;
+    this.positionGuidance = 'COLOQUE SU DEDO';
   }
 
   private handleMotionEvent = (event: DeviceMotionEvent) => {
