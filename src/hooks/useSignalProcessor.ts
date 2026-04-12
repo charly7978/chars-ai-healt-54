@@ -141,7 +141,7 @@ export const useSignalProcessor = () => {
 
   const getPositionQuality = useCallback(() => {
     if (!processorRef.current) {
-      return { locked: false, spatialUniformity: 0, centerCoverage: 0, positionDrift: 0, guidance: 'COLOQUE SU DEDO', qualityScore: 0 };
+      return { locked: false, drifting: false, spatialUniformity: 0, centerCoverage: 0, positionDrift: 0, guidance: 'COLOQUE SU DEDO', qualityScore: 0 };
     }
     return processorRef.current.getPositionQuality();
   }, []);
