@@ -62,6 +62,20 @@ const Index = () => {
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
+
+  // ── EMA display smoothing (subtle, no simulation) ──
+  // Alpha ~0.3 = ~70% previous + 30% new → gentle stabilization
+  const EMA_ALPHA = 0.3;
+  const emaRef = useRef({
+    bpm: 0, spo2: 0, systolic: 0, diastolic: 0,
+    glucose: 0, hemoglobin: 0, cholesterol: 0, triglycerides: 0,
+  });
+
+  const applyEMA = useCallback((prev: number, next: number): number => {
+    if (next === 0) return 0; // never smooth toward zero — show 0 instantly
+    if (prev === 0) return next; // first valid value — accept immediately
+    return Math.round(prev * (1 - EMA_ALPHA) + next * EMA_ALPHA);
+  }, []);
   
   // HOOKS DE PROCESAMIENTO
   const { 
