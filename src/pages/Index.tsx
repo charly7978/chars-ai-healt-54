@@ -575,6 +575,8 @@ const Index = () => {
       e.triglycerides = smoothed.lipids.triglycerides;
 
       setVitalSigns(smoothed);
+
+      if (heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.confidence > 0.18 && vitals.measurementConfidence !== 'INVALID') {
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
         if (arrhythmiaStatus) {
           lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
