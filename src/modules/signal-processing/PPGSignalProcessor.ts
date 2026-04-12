@@ -868,6 +868,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.spatialUniformity = 0;
     this.centerCoverage = 0;
     this.positionDrift = 0;
+    this.positionDrifting = false;
     this.positionQualityScore = 0;
     this.positionGuidance = 'COLOQUE SU DEDO';
   }
