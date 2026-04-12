@@ -261,19 +261,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           : 'UNSTABLE_CONTACT';
       }
     } else {
-      // Decremento lento — no perder confianza por un solo frame malo
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.5);
+      // Decremento MUY lento — alta inercia para estabilidad
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.25);
       this.fingerLostCount++;
-      // stableContactCount decrementa lento para no perder STABLE por glitches
-      this.stableContactCount = Math.max(0, this.stableContactCount - 0.3);
+      // stableContactCount decrementa MUY lento — máxima estabilidad STABLE
+      this.stableContactCount = Math.max(0, this.stableContactCount - 0.15);
 
       if (this.fingerDetected) {
         // Soft hold: mantener contacto con gracia — stricter thresholds
         const softHold =
-          this.smoothedCoverage > 0.15 &&
-          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 8 &&
-          this.smoothedFingerScore > 0.20 &&
-          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.05;
+          this.smoothedCoverage > 0.12 &&
+          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 5 &&
+          this.smoothedFingerScore > 0.15 &&
+          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.03;
 
         if (softHold || this.fingerLostCount < this.FINGER_LOST_FRAMES) {
           this.contactState = 'UNSTABLE_CONTACT';

@@ -281,7 +281,7 @@ export class VitalSignsProcessor {
     
     // SpO2 — lowest gate, always try first
     const spo2 = this.calculateSpO2Raw();
-    if (spo2 !== 0 && spo2 > 70 && spo2 < 100) {
+    if (spo2 !== 0 && spo2 > 70 && spo2 <= 100) {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
       this.updateHistory('spo2', spo2);
     }
@@ -317,7 +317,7 @@ export class VitalSignsProcessor {
     }
 
     // Glucose, Hemoglobin, Lipids — need cycle features
-    if (validCycleFeatures.length >= 2 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 15) {
+    if (validCycleFeatures.length >= 1 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 12) {
       const medianF = this.medianCycleFeatures(validCycleFeatures);
       
       const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
