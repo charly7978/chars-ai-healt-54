@@ -77,6 +77,10 @@ export class VitalSignsProcessor {
   
   // RGB para SpO2
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
+
+  // Rolling R-ratio buffer for SpO2 stability (Sensors 2023 / van Gastel approach)
+  private rRatioBuffer: number[] = [];
+  private readonly R_RATIO_BUFFER_SIZE = 8;  // ~8 estimates → median filter
   
   // Suavizado adaptativo para estabilidad SIN perder respuesta
   // Alpha más bajo = más suavizado = lecturas más estables
