@@ -106,6 +106,17 @@ export const useSignalProcessor = () => {
     setFramesProcessed(0);
   }, []);
 
+  const setCameraControl = useCallback(
+    (engine: import('@/modules/signal-processing/CameraControlEngine').CameraControlEngine | null) => {
+      processorRef.current?.setCameraControl?.(engine);
+    },
+    []
+  );
+
+  const setPPGDebugMode = useCallback((enabled: boolean) => {
+    processorRef.current?.setPPGDebugMode?.(enabled);
+  }, []);
+
   const getLastSignal = useCallback((): ProcessedSignal | null => lastSignalRef.current, []);
 
   const getLastBeatResult = useCallback((): HeartBeatResult | null => lastBeatRef.current, []);
@@ -189,6 +200,8 @@ export const useSignalProcessor = () => {
     getRGBStats,
     getPositionQuality,
     getPPGDebugInfo,
+    setCameraControl,
+    setPPGDebugMode,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,

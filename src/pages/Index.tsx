@@ -127,8 +127,14 @@ const Index = () => {
     framesProcessed,
     getRGBStats,
     getPositionQuality,
+    getPPGDebugInfo,
     resetProcessingEngine,
+    setCameraControl,
+    setPPGDebugMode,
   } = useSignalProcessor();
+
+  const ppgDebug =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('ppgDebug');
 
   const processFrameRef = useRef(processFrame);
   processFrameRef.current = processFrame;
@@ -315,6 +321,13 @@ const Index = () => {
 
   const handleStreamReady = useCallback((_stream: MediaStream) => {
     console.log('📹 Stream recibido');
+    try {
+      const cc = cameraRef.current?.getCameraControl();
+      if (cc) setCameraControl(cc);
+    } catch {
+      /* noop */
+    }
+    setPPGDebugMode(ppgDebug);
     setTimeout(() => {
       const video = cameraRef.current?.getVideoElement();
       if (video && video.readyState >= 2) {
@@ -332,7 +345,7 @@ const Index = () => {
         setTimeout(() => clearInterval(checkReady), 5000);
       }
     }, 500);
-  }, []);
+  }, [startFrameLoop, setCameraControl, setPPGDebugMode, ppgDebug]);
 
   const finalizeMeasurement = useCallback(async () => {
     if (!isMonitoring) return;
@@ -746,6 +759,27 @@ const Index = () => {
         <div className="absolute inset-0">
           <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
         </div>
+        {ppgDebug && isMonitoring && (
+          <div
+            className="pointer-events-none absolute left-1 bottom-28 z-[40] max-w-[min(96vw,22rem)] rounded-md border border-lime-500/35 bg-black/75 px-2 py-1.5 font-mono text-[9px] leading-snug text-lime-100/95 shadow-lg"
+            aria-hidden
+          >
+            <div>
+              inFPS {lastSignal?.inputFps != null ? Math.round(lastSignal.inputFps) : '—'} | proc{' '}
+              {lastSignal?.processedFps != null ? Math.round(lastSignal.processedFps) : '—'} | drop{' '}
+              {lastSignal?.droppedFrames ?? 0}
+            </div>
+            <div>
+              lat {lastSignal?.frameLatencyMs != null ? lastSignal.frameLatencyMs.toFixed(1) : '—'}ms | Q{' '}
+              {lastSignal?.quality != null ? lastSignal.quality.toFixed(0) : '—'} |{' '}
+              {(lastSignal?.diagnostics?.message ?? '').slice(0, 72)}
+            </div>
+            <div>
+              {(getPPGDebugInfo()?.contactState as string) ?? '—'} | src {lastSignal?.activeSource ?? '—'} | ready{' '}
+              {lastSignal?.measurementReady ? '1' : '0'}
+            </div>
+          </div>
+        )}
         <div
           className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/50 via-transparent to-[#020617]/70"
           aria-hidden

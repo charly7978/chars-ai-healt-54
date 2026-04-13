@@ -189,12 +189,14 @@ export class ElitePPGProcessor {
     const startTime = performance.now();
     this.frameCount++;
     
-    // FASE 1: TRACKING DE DEDO
-    const fingerResult = this.fingerTracker.processFrame(imageData);
-    this.lastFingerResult = fingerResult;
-
-    // FASE 2: PROCESAMIENTO PPG (callback-based)
+    // FASE 1: PPG etapa 1 (ROI/contacto/extracción); modo sync: análisis del mismo frame disponible después
     this.ppgProcessor.processFrame(imageData, timestamp);
+
+    const pipelineSnap = this.ppgProcessor.getLastFrameAnalysis?.() ?? null;
+
+    // FASE 2: TRACKING DE DEDO (híbrido con métricas del pipeline)
+    const fingerResult = this.fingerTracker.processFrame(imageData, pipelineSnap);
+    this.lastFingerResult = fingerResult;
 
     const ppgSignal = this.lastSignal;
 
@@ -445,6 +447,14 @@ export class ElitePPGProcessor {
 
   async calibrate(): Promise<boolean> {
     return this.ppgProcessor.calibrate();
+  }
+
+  setCameraControl(engine: import('../signal-processing/CameraControlEngine').CameraControlEngine | null): void {
+    this.ppgProcessor.setCameraControl(engine);
+  }
+
+  setPPGDebugMode(enabled: boolean): void {
+    this.ppgProcessor.setDebugMode(enabled);
   }
 
   isActive(): boolean {

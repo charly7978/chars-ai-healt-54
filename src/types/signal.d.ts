@@ -52,6 +52,12 @@ export interface ProcessedSignal {
     hasPulsatility: boolean;
     pulsatilityValue: number;
   };
+  /** Telemetría etapa 1 (solo si debug activo en procesador) */
+  pipelineDebug?: import('../modules/signal-processing/DebugTelemetry').DebugTelemetry;
+  inputFps?: number;
+  processedFps?: number;
+  droppedFrames?: number;
+  frameLatencyMs?: number;
 }
 
 export interface ProcessingError {

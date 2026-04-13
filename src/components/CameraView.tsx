@@ -1,8 +1,14 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import {
+  CameraControlEngine,
+  type EffectiveCameraSettings,
+  type CameraCapabilitiesSnapshot,
+} from "@/modules/signal-processing/CameraControlEngine";
 
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
   getDiagnostics: () => CameraDiagnostics;
+  getCameraControl: () => CameraControlEngine;
 }
 
 export interface CameraDiagnostics {
@@ -16,6 +22,8 @@ export interface CameraDiagnostics {
   focusLocked: boolean;
   isoValue: number;
   supportedConstraints: string[];
+  effectiveSettings: EffectiveCameraSettings | null;
+  capabilities: CameraCapabilitiesSnapshot | null;
 }
 
 interface CameraViewProps {
@@ -53,17 +61,26 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     focusLocked: false,
     isoValue: 0,
     supportedConstraints: [],
+    effectiveSettings: null,
+    capabilities: null,
   });
+
+  const cameraEngineRef = useRef<CameraControlEngine | null>(null);
+  if (!cameraEngineRef.current) {
+    cameraEngineRef.current = new CameraControlEngine();
+  }
 
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current,
     getDiagnostics: () => ({ ...diagnosticsRef.current }),
+    getCameraControl: () => cameraEngineRef.current!,
   }), []);
 
   useEffect(() => {
     let mounted = true;
 
     const stopCamera = async () => {
+      cameraEngineRef.current?.attachTrack(null);
       if (streamRef.current) {
         for (const track of streamRef.current.getVideoTracks()) {
           try {
@@ -247,85 +264,39 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         };
         diagnosticsRef.current.realFrameRate = settings.frameRate || 30;
 
-        // PHASE 3: Activate torch
-        await new Promise(r => setTimeout(r, 400));
-        const caps = track.getCapabilities?.() as any;
-        diagnosticsRef.current.hasTorch = caps?.torch === true;
+        const engine = cameraEngineRef.current!;
+        engine.attachTrack(track);
+        await new Promise((r) => setTimeout(r, 400));
+        await engine.applyIdealConstraints();
 
-        if (caps?.torch) {
-          let torchOk = false;
-          for (let attempt = 0; attempt < 5 && !torchOk; attempt++) {
-            try {
-              await track.applyConstraints({ advanced: [{ torch: true } as any] });
-              torchOk = true;
-              diagnosticsRef.current.torchActive = true;
-              console.log('🔦 Torch ON');
-            } catch {
-              await new Promise(r => setTimeout(r, 250));
-            }
-          }
-          if (!torchOk) console.warn('⚠️ Torch failed after 5 attempts');
+        const capSnap = engine.getCapabilities();
+        diagnosticsRef.current.capabilities = capSnap;
+        diagnosticsRef.current.hasTorch = capSnap?.torch ?? false;
+
+        const eff = engine.getEffectiveSettings();
+        diagnosticsRef.current.effectiveSettings = eff;
+        if (eff) {
+          diagnosticsRef.current.resolution = { width: eff.width, height: eff.height };
+          diagnosticsRef.current.realFrameRate = eff.frameRate;
+          diagnosticsRef.current.torchActive = eff.torch;
+          diagnosticsRef.current.isoValue = eff.iso;
+          diagnosticsRef.current.exposureLocked = eff.exposureMode === 'manual';
+          diagnosticsRef.current.wbLocked = eff.whiteBalanceMode === 'manual';
+          diagnosticsRef.current.focusLocked = eff.focusMode === 'manual';
         }
 
-        // PHASE 4: Fine lock — apply each independently, log what succeeds
-        await new Promise(r => setTimeout(r, 300));
-        
-        const tryConstraint = async (name: string, value: any): Promise<boolean> => {
-          try {
-            await track.applyConstraints({ advanced: [{ [name]: value } as any] });
-            return true;
-          } catch {
-            return false;
-          }
-        };
-
-        // Frame rate lock
-        await tryConstraint('frameRate', 30);
-
-        // Exposure
-        if (caps?.exposureMode?.includes('manual')) {
-          diagnosticsRef.current.exposureLocked = await tryConstraint('exposureMode', 'manual');
-        } else if (caps?.exposureMode?.includes('continuous')) {
-          await tryConstraint('exposureMode', 'continuous');
-        }
-
-        if (caps?.exposureCompensation) {
-          const min = caps.exposureCompensation.min ?? -2;
-          const max = caps.exposureCompensation.max ?? 2;
-          const target = Math.max(min, Math.min(max, -0.35));
-          await tryConstraint('exposureCompensation', target);
-        }
-
-        // White balance
-        if (caps?.whiteBalanceMode?.includes('manual')) {
-          diagnosticsRef.current.wbLocked = await tryConstraint('whiteBalanceMode', 'manual');
-        }
-
-        // ISO
-        if (caps?.iso) {
-          const minISO = caps.iso.min ?? 50;
-          const maxISO = caps.iso.max ?? 400;
-          const targetISO = Math.max(minISO, Math.min(maxISO, 140));
-          if (await tryConstraint('iso', targetISO)) {
-            diagnosticsRef.current.isoValue = targetISO;
-          }
-        }
-
-        // Focus
-        if (caps?.focusMode?.includes('manual')) {
-          diagnosticsRef.current.focusLocked = await tryConstraint('focusMode', 'manual');
-        } else if (caps?.focusMode?.includes('continuous')) {
-          await tryConstraint('focusMode', 'continuous');
-        }
-
-        // Log final settings
-        const finalSettings = track.getSettings() as any;
-        console.log('📹 Camera ready:', finalSettings.width, 'x', finalSettings.height,
-          '@', finalSettings.frameRate, 'fps',
-          '| Torch:', diagnosticsRef.current.torchActive,
-          '| Exp:', diagnosticsRef.current.exposureLocked,
-          '| WB:', diagnosticsRef.current.wbLocked,
-          '| ISO:', diagnosticsRef.current.isoValue);
+        console.log(
+          '📹 CameraControlEngine ready:',
+          eff?.width,
+          'x',
+          eff?.height,
+          '@',
+          eff?.frameRate,
+          'torch=',
+          eff?.torch,
+          'ec=',
+          eff?.exposureCompensation
+        );
 
         onStreamReadyRef.current?.(stream);
         isStartingRef.current = false;
