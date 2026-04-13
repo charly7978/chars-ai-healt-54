@@ -27,10 +27,38 @@ export interface TileSnapshot {
   temporalStability: number;
   motionProxy: number;
   weight: number;
+  /** Coherencia con firma espectral tejido + flash (R domina G/B; hemoglobina atenúa azul) */
+  spectralTissueScore: number;
 }
 
 const CLIP_HI = 250;
 const CLIP_LO = 5;
+
+/**
+ * Firma dedo + flash trasero: rechazo explícito de fondo neutro / poca señal.
+ * Valores 0..1; 0 = no pasa gating duro.
+ */
+function tissueSpectralScore(meanR: number, meanG: number, meanB: number): number {
+  if (meanR < 26) return 0;
+  const rg = meanG > 0.85 ? meanR / meanG : 0;
+  if (rg < 1.02) return 0;
+  const redDom = meanR - (meanG + meanB) * 0.5;
+  if (redDom < -0.028) return 0;
+
+  let s = 1;
+  if (meanR < 50) s *= (meanR - 26) / 24;
+  if (rg < 1.16) s *= (rg - 1.02) / 0.14;
+  if (redDom < 0.1) s *= Math.max(0, Math.min(1, (redDom + 0.03) / 0.13));
+
+  const rb = meanB > 0.85 ? meanR / meanB : rg;
+  s *= Math.max(0.12, Math.min(1, (rb - 1.01) / 0.58));
+
+  const tot = meanR + meanG + meanB + 1e-6;
+  const redRatio = meanR / tot;
+  s *= Math.max(0.18, Math.min(1, (redRatio - 0.31) / 0.16));
+
+  return Math.max(0, Math.min(1, s));
+}
 
 export class TilePulsatilityMap {
   readonly cols: number;
@@ -175,6 +203,7 @@ export class TilePulsatilityMap {
       const sat = Math.max(clipHigh, clipLow);
 
       const rg = meanG > 1 ? meanR / meanG : 0;
+      const spectral = tissueSpectralScore(meanR, meanG, meanB);
       const acR = Math.sqrt(vr);
       const acG = Math.sqrt(vg);
       const perf = meanR > 8 ? acR / meanR : meanG > 8 ? acG / meanG : 0;
@@ -208,6 +237,10 @@ export class TilePulsatilityMap {
       if (meanR < 18 || meanR > 245) w *= 0.35;
       w *= Math.max(0.35, 1 - globalMotionHint);
 
+      /** Gating duro: sin firma tejido+flash el tile no aporta */
+      if (spectral < 0.035) w = 0;
+      else w *= spectral;
+
       this.emaWeight[ti] = this.emaWeight[ti] * 0.86 + w * 0.14;
       const weight = Math.max(0, this.emaWeight[ti]);
 
@@ -228,6 +261,7 @@ export class TilePulsatilityMap {
         temporalStability: temporalStab,
         motionProxy: globalMotionHint,
         weight,
+        spectralTissueScore: spectral,
       };
     }
   }
@@ -250,6 +284,7 @@ export class TilePulsatilityMap {
       temporalStability: 0,
       motionProxy: 0,
       weight: 0,
+      spectralTissueScore: 0,
     };
   }
 }

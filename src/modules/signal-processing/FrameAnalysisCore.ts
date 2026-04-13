@@ -161,6 +161,7 @@ export class FrameAnalysisEngine {
         temporalStability: 0,
         motionProxy: 0,
         weight: 0,
+        spectralTissueScore: 0,
       };
     }
 
