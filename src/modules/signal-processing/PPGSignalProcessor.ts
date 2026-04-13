@@ -1,122 +1,128 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface, ContactState } from '../../types/signal';
 import { BandpassFilter } from './BandpassFilter';
+import { RingBuffer } from './RingBuffer';
+import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
+import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
+import { SignalSourceRanker } from './SignalSourceRanker';
+import { computeGlobalSQI } from './SignalQualityEstimator';
 
-interface ROIMetrics {
-  rawRed: number;
-  rawGreen: number;
-  rawBlue: number;
-  coverageRatio: number;
-  fingerScore: number;
-}
+// Extended contact states
+type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
 
 /**
- * MULTI-SOURCE PPG SIGNAL PROCESSOR
+ * PPG SIGNAL PROCESSOR V2
  * 
- * Mejoras clave:
- * 1. Estado de contacto 3-niveles (NO_CONTACT / UNSTABLE / STABLE)
- * 2. Selección competitiva de canal (R, G, R-G, CHROM 3R-2G)
- * 3. SQI unificado — única fuente de verdad
- * 4. Histéresis fuerte para tolerancia a temblores
+ * Complete rewrite with:
+ * - AdaptiveROIMask (7x7 tiles, saturation exclusion, percentile thresholds)
+ * - PressureProxyEstimator (LOW/OPTIMAL/HIGH)
+ * - SignalSourceRanker (6 candidates, autocorrelation SQI, hysteresis)
+ * - RingBuffer (Float64Array, zero-alloc hot path)
+ * - Real frame timing from requestVideoFrameCallback metadata
+ * - Comprehensive SQI from SignalQualityEstimator
  */
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing = false;
 
+  // --- Sub-modules ---
   private bandpassFilter: BandpassFilter;
+  private roiMask = new AdaptiveROIMask();
+  private pressureEstimator = new PressureProxyEstimator();
+  private sourceRanker = new SignalSourceRanker();
 
-  private readonly BUFFER_SIZE = 300;
-  private readonly ACDC_WINDOW = 180;
-  private readonly TILE_COLUMNS = 5;
-  private readonly TILE_ROWS = 5;
+  // --- Ring buffers (zero-alloc) ---
+  private readonly BUF_SIZE = 300;
+  private redBuf = new RingBuffer(300);
+  private greenBuf = new RingBuffer(300);
+  private blueBuf = new RingBuffer(300);
+  private rawSignalBuf = new RingBuffer(300);
+  private filteredBuf = new RingBuffer(300);
+  private vpgBuf = new RingBuffer(300);
+  private apgBuf = new RingBuffer(300);
+  private frameTimeBuf = new RingBuffer(120);
 
-  // Buffers
-  private rawBuffer: number[] = [];
-  private filteredBuffer: number[] = [];
-  private redBuffer: number[] = [];
-  private greenBuffer: number[] = [];
-  private blueBuffer: number[] = [];
-  private vpgBuffer: number[] = [];
-  private apgBuffer: number[] = [];
-  private tileConfidence: number[] = new Array(25).fill(0);
-  private frameIntervalBuffer: number[] = [];
+  // --- AC/DC ---
+  private redDC = 0; private redAC = 0;
+  private greenDC = 0; private greenAC = 0;
+  private blueDC = 0; private blueAC = 0;
 
-  // AC/DC
-  private redDC = 0;
-  private redAC = 0;
-  private greenDC = 0;
-  private greenAC = 0;
-  private blueDC = 0;
-  private blueAC = 0;
-
-  // Baselines dinámicas
+  // --- Baselines ---
   private redBaseline = 0;
   private greenBaseline = 0;
   private blueBaseline = 0;
   private estimatedSampleRate = 30;
-  private lastFrameTimestamp = 0;
+  private lastFrameTime = 0; // performance.now() based
 
   private frameCount = 0;
   private lastLogTime = 0;
 
-  // === ESTADO DE CONTACTO UNIFICADO ===
-  private contactState: ContactState = 'NO_CONTACT';
+  // --- Contact state machine ---
+  private contactState: ExtendedContactState = 'NO_CONTACT';
+  private exportedContactState: ContactState = 'NO_CONTACT';
   private fingerDetected = false;
   private signalQuality = 0;
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
   private stableContactCount = 0;
-  private readonly FINGER_CONFIRM_FRAMES = 8;   // ~270ms — más estricto para evitar falsos positivos
-  private readonly FINGER_LOST_FRAMES = 120;    // ~4s tolerancia antes de degradar
-  private readonly STABLE_THRESHOLD = 35;       // ~1.2s para STABLE — requiere más estabilidad
-  private readonly UNSTABLE_GRACE = 160;        // ~5.3s antes de NO_CONTACT total
+  private readonly FINGER_CONFIRM = 10;   // ~333ms strict
+  private readonly FINGER_LOST = 120;     // ~4s tolerance
+  private readonly STABLE_THRESHOLD = 40; // ~1.3s for STABLE
+  private readonly UNSTABLE_GRACE = 160;
 
-  // Suavizado temporal — más lentos = más estable
+  // --- Smoothed metrics (EWMA) ---
   private smoothedRed = 0;
   private smoothedGreen = 0;
   private smoothedBlue = 0;
   private smoothedCoverage = 0;
   private smoothedFingerScore = 0;
-  private readonly RGB_SMOOTH_ALPHA = 0.04;       // más lento = más estable
-  private readonly COVERAGE_SMOOTH_ALPHA = 0.05;  // más lento = más estable
+  private readonly RGB_ALPHA = 0.04;
+  private readonly COV_ALPHA = 0.05;
 
-  // === POSITION QUALITY & LOCK ===
+  // --- Position lock ---
   private positionLocked = false;
-  private lockedRedBaseline = 0;
-  private lockedGreenBaseline = 0;
+  private lockedRedBase = 0;
+  private lockedGreenBase = 0;
   private lockedCoverage = 0;
-  private lockedFingerScore = 0;
   private positionStabilityCount = 0;
-  private readonly POSITION_LOCK_FRAMES = 60;    // ~2s of stable position to lock
-  private readonly POSITION_DRIFT_TOLERANCE = 0.12; // max 12% drift — más estricto
-  private positionDrifting = false; // flag para gatear señal durante drift
+  private readonly POS_LOCK_FRAMES = 60;
+  private readonly POS_DRIFT_TOL = 0.12;
+  private positionDrifting = false;
+  private positionDrift = 0;
+  private positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
+  private positionQualityScore = 0;
   private spatialUniformity = 0;
   private centerCoverage = 0;
-  private positionDrift = 0;
-  private positionGuidance: string = 'COLOQUE SU DEDO';
-  private positionQualityScore = 0;
+
+  // --- Pressure ---
+  private pressureState: PressureState = 'LOW_PRESSURE';
+  private pressurePenalty = 1.0;
+
+  // --- Motion ---
   private motionScore = 0;
   private motionListenerActive = false;
-  private lastAcceleration = { x: 0, y: 0, z: 0 };
-  private readonly MOTION_THRESHOLD = 0.6;
+  private lastAccel = { x: 0, y: 0, z: 0 };
+  private readonly MOTION_THRESH = 0.6;
 
-  // === MULTI-SOURCE RANKING (CHROM eliminado — amplifica ruido sin dedo) ===
-  private sourceBuffers: { [key: string]: number[] } = {};
-  private activeSource: string = 'RG';
-  private sourceScores: { [key: string]: number } = {};
-  private lastSourceSwitch = 0;
-  private readonly SOURCE_HYSTERESIS_MS = 2000;
+  // --- Debug / telemetry ---
+  private debugEnabled = false;
+  private lastROIResult: ROIMaskResult | null = null;
+  private activeSourceLabel = 'RG';
+  private allSourceSQI: Record<string, number> = {};
+  private clipHighRatio = 0;
+  private clipLowRatio = 0;
+  private processingTimeMs = 0;
+  private realFps = 0;
+  private sourceStability = 0;
+  private lastSourceLabel = 'RG';
+  private sourceStableFrames = 0;
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
-    this.sourceBuffers = { R: [], G: [], RG: [] };
-    this.sourceScores = { R: 0, G: 0, RG: 0 };
   }
 
-  async initialize(): Promise<void> {
-    this.reset();
-  }
+  async initialize(): Promise<void> { this.reset(); }
 
   start(): void {
     if (this.isProcessing) return;
@@ -130,23 +136,44 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.stopMotionListener();
   }
 
-  async calibrate(): Promise<boolean> {
-    return true;
-  }
+  async calibrate(): Promise<boolean> { return true; }
 
-  processFrame(imageData: ImageData): void {
+  /** Accept frame timestamp from requestVideoFrameCallback metadata */
+  processFrame(imageData: ImageData, frameTimestamp?: number): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
+    const t0 = performance.now();
     this.frameCount++;
-    const timestamp = Date.now();
+    const timestamp = frameTimestamp ?? performance.now();
     this.updateSampleRate(timestamp);
 
-    const roi = this.extractROI(imageData);
-    this.updateContactState(roi);
+    // --- ADAPTIVE ROI ---
+    const roi = this.roiMask.process(imageData);
+    this.lastROIResult = roi;
+    this.clipHighRatio = roi.clipHighRatio;
+    this.clipLowRatio = roi.clipLowRatio;
+    this.spatialUniformity = roi.spatialUniformity;
+    this.centerCoverage = roi.centerCoverage;
 
-    const motionArtifact = this.motionScore > this.MOTION_THRESHOLD;
+    // --- PRESSURE ESTIMATION ---
+    const pressure = this.pressureEstimator.estimate({
+      coverageRatio: roi.coverageRatio,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      perfusionIndex: this.calculatePerfusionIndex(),
+      spatialUniformity: roi.spatialUniformity,
+      brightness: roi.brightness,
+      brightnessVariance: roi.brightnessVariance,
+      baselineDrift: this.getBaselineDrift(),
+    });
+    this.pressureState = pressure.state;
+    this.pressurePenalty = pressure.penalty;
 
-    if (this.contactState === 'NO_CONTACT') {
+    // --- CONTACT STATE ---
+    this.updateContactState(roi, pressure);
+    const motionArtifact = this.motionScore > this.MOTION_THRESH;
+
+    if (this.exportedContactState === 'NO_CONTACT') {
       this.signalQuality = 0;
       this.onSignalReady({
         timestamp,
@@ -161,74 +188,112 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         rawRed: roi.rawRed,
         rawGreen: roi.rawGreen,
         diagnostics: {
-          message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}%`,
+          message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}% P:${pressure.state}`,
           hasPulsatility: false,
           pulsatilityValue: 0,
         },
       });
+      this.processingTimeMs = performance.now() - t0;
       return;
     }
 
-    // Tenemos contacto (UNSTABLE o STABLE)
-    this.updateChannelBaselines(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
+    // --- Contact detected: update baselines & buffers ---
+    this.updateBaselines(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
+    this.redBuf.push(roi.rawRed);
+    this.greenBuf.push(roi.rawGreen);
+    this.blueBuf.push(roi.rawBlue);
 
-    this.redBuffer.push(roi.rawRed);
-    this.greenBuffer.push(roi.rawGreen);
-    this.blueBuffer.push(roi.rawBlue);
-    if (this.redBuffer.length > this.BUFFER_SIZE) {
-      this.redBuffer.shift();
-      this.greenBuffer.shift();
-      this.blueBuffer.shift();
+    if (this.redBuf.length >= 36) {
+      this.calculateACDC();
     }
 
-    if (this.redBuffer.length >= 36) {
-      this.calculateACDCPrecise();
+    // --- MULTI-SOURCE EXTRACTION ---
+    const redPI = this.redDC > 0 ? this.redAC / this.redDC : 0;
+    const greenPI = this.greenDC > 0 ? this.greenAC / this.greenDC : 0;
+
+    const source = this.sourceRanker.update(
+      roi.rawRed, roi.rawGreen, roi.rawBlue,
+      this.redBaseline, this.greenBaseline, this.blueBaseline,
+      redPI, greenPI,
+      roi.clipHighRatio, motionArtifact
+    );
+    this.activeSourceLabel = source.label;
+    this.allSourceSQI = source.allSQI;
+
+    // Track source stability
+    if (source.label === this.lastSourceLabel) {
+      this.sourceStableFrames = Math.min(this.sourceStableFrames + 1, 300);
+    } else {
+      this.sourceStableFrames = 0;
+      this.lastSourceLabel = source.label;
+    }
+    this.sourceStability = Math.min(1, this.sourceStableFrames / 60);
+
+    // --- FILTERING ---
+    this.rawSignalBuf.push(source.value);
+    const filtered = this.bandpassFilter.filter(source.value);
+    this.filteredBuf.push(filtered);
+
+    // Derivatives for morphology analysis
+    if (this.filteredBuf.length >= 3) {
+      const n = this.filteredBuf.length;
+      this.vpgBuf.push((this.filteredBuf.get(n - 1) - this.filteredBuf.get(n - 3)) / 2);
+    }
+    if (this.vpgBuf.length >= 3) {
+      const n = this.vpgBuf.length;
+      this.apgBuf.push((this.vpgBuf.get(n - 1) - this.vpgBuf.get(n - 3)) / 2);
     }
 
-    // Multi-source extraction
-    const pulseSource = this.extractBestPulseSignal(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
-
-    this.rawBuffer.push(pulseSource.value);
-    if (this.rawBuffer.length > this.BUFFER_SIZE) {
-      this.rawBuffer.shift();
-    }
-
-    const filtered = this.bandpassFilter.filter(pulseSource.value);
-    this.filteredBuffer.push(filtered);
-    if (this.filteredBuffer.length > this.BUFFER_SIZE) {
-      this.filteredBuffer.shift();
-    }
-
-    this.calculateDerivatives();
-    this.signalQuality = this.calculateSignalQuality();
-
+    // --- GLOBAL SQI ---
     const perfusionIndex = this.calculatePerfusionIndex();
-    const adjustedQuality = motionArtifact
-      ? Math.max(0, this.signalQuality * 0.75)
-      : this.signalQuality;
-    // GATE: suprimir calidad si el dedo se movió de la posición bloqueada
-    const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
-    const gatedQuality = this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
-      ? adjustedQuality * driftPenalty
-      : Math.min(18, adjustedQuality * 0.45);
+    const signalRange = this.getSignalRange();
+    const redDominance = this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2;
 
-    const now = Date.now();
-    if (now - this.lastLogTime >= 2000) {
+    // Periodicity from source ranker autocorrelation
+    const periodicityScore = this.estimatePeriodicityFromFiltered();
+
+    this.signalQuality = computeGlobalSQI({
+      perfusionIndex,
+      periodicityScore,
+      coverageRatio: this.smoothedCoverage,
+      spatialUniformity: this.spatialUniformity,
+      pressurePenalty: this.pressurePenalty,
+      motionScore: this.motionScore,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      positionDrift: this.positionDrift,
+      signalRange,
+      redDominance,
+      contactState: this.exportedContactState,
+      sourceStability: this.sourceStability,
+    });
+
+    // Gate: drift penalty
+    const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
+    const gatedQuality = this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
+      ? this.signalQuality * driftPenalty
+      : Math.min(18, this.signalQuality * 0.45);
+
+    // --- LOGGING ---
+    const now = performance.now();
+    this.processingTimeMs = now - t0;
+    if (now - this.lastLogTime >= 3000) {
       this.lastLogTime = now;
       console.log(
-        `📷 PPG [${pulseSource.label}] Filt=${filtered.toFixed(3)} ` +
-        `Q=${gatedQuality.toFixed(0)}% PI=${perfusionIndex.toFixed(2)} ` +
-        `Contact=${this.contactState} FPS=${this.estimatedSampleRate.toFixed(0)}`
+        `📷 PPG [${source.label}] Q=${gatedQuality.toFixed(0)} PI=${perfusionIndex.toFixed(3)} ` +
+        `${this.exportedContactState} P:${this.pressureState} ` +
+        `FPS=${this.realFps.toFixed(0)} Clip:${(roi.clipHighRatio * 100).toFixed(1)}% ` +
+        `Cov:${(this.smoothedCoverage * 100).toFixed(0)}% Proc:${this.processingTimeMs.toFixed(1)}ms`
       );
     }
 
     this.onSignalReady({
       timestamp,
-      rawValue: pulseSource.value,
+      rawValue: source.value,
       filteredValue: filtered,
       quality: gatedQuality,
       fingerDetected: this.fingerDetected,
-      contactState: this.contactState,
+      contactState: this.exportedContactState,
       motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex,
@@ -236,58 +301,66 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rawGreen: roi.rawGreen,
       diagnostics: {
         message:
-          `${pulseSource.label}:${pulseSource.strength.toFixed(1)} ` +
-          `PI:${perfusionIndex.toFixed(2)} C:${(this.smoothedCoverage * 100).toFixed(0)} ` +
-          `${this.contactState}${motionArtifact ? ' MOV' : ''}`,
-        hasPulsatility: this.contactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05 && pulseSource.strength > 1.5,
-        pulsatilityValue: this.contactState === 'STABLE_CONTACT' ? Math.max(perfusionIndex, pulseSource.strength * 0.02) : 0,
+          `${source.label} PI:${perfusionIndex.toFixed(2)} P:${this.pressureState.charAt(0)} ` +
+          `C:${(this.smoothedCoverage * 100).toFixed(0)} ${this.exportedContactState}` +
+          `${motionArtifact ? ' MOV' : ''}`,
+        hasPulsatility: this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05,
+        pulsatilityValue: this.exportedContactState === 'STABLE_CONTACT' ? perfusionIndex : 0,
       },
     });
   }
 
-  // === ESTADO DE CONTACTO UNIFICADO ===
-  private updateContactState(roi: ROIMetrics): void {
-    const previousState = this.contactState;
-    const instantDetected = this.detectFingerInstant(roi);
+  // ══════════════════════════════════════════════════════
+  //  CONTACT STATE MACHINE V2
+  // ══════════════════════════════════════════════════════
 
-    if (instantDetected) {
+  private updateContactState(roi: ROIMaskResult, pressure: PressureEstimate): void {
+    const prev = this.contactState;
+    const instant = this.detectFingerInstant(roi);
+
+    if (instant) {
       this.fingerLostCount = 0;
-      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, 100);
+      this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, 200);
       this.stableContactCount++;
 
-      if (this.fingerConfidenceCount >= this.FINGER_CONFIRM_FRAMES) {
+      if (this.fingerConfidenceCount >= this.FINGER_CONFIRM) {
         this.fingerDetected = true;
-        // Require real perfusion for STABLE — not just visual contact
-        const perfusion = this.calculatePerfusionIndex();
-        this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > 0.003)
-          ? 'STABLE_CONTACT'
-          : 'UNSTABLE_CONTACT';
+
+        // Check for pressure-based state overrides
+        if (pressure.state === 'HIGH_PRESSURE' && roi.clipHighRatio > 0.15) {
+          this.contactState = 'EXCESSIVE_PRESSURE';
+        } else if (roi.clipHighRatio > 0.3) {
+          this.contactState = 'SATURATED_CONTACT';
+        } else {
+          const perfusion = this.calculatePerfusionIndex();
+          this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > 0.003 && pressure.state !== 'HIGH_PRESSURE')
+            ? 'STABLE_CONTACT'
+            : 'UNSTABLE_CONTACT';
+        }
+      } else {
+        this.contactState = 'ACQUIRING_CONTACT';
       }
     } else {
-      // Decremento MUY lento — alta inercia para estabilidad
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.25);
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.3);
       this.fingerLostCount++;
-      // stableContactCount decrementa MUY lento — máxima estabilidad STABLE
-      this.stableContactCount = Math.max(0, this.stableContactCount - 0.15);
+      this.stableContactCount = Math.max(0, this.stableContactCount - 0.2);
 
       if (this.fingerDetected) {
-        // Soft hold: mantener contacto con gracia — stricter thresholds
         const softHold =
-          this.smoothedCoverage > 0.12 &&
+          this.smoothedCoverage > 0.10 &&
           (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 5 &&
-          this.smoothedFingerScore > 0.15 &&
+          this.smoothedFingerScore > 0.12 &&
           (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.03;
 
-        if (softHold || this.fingerLostCount < this.FINGER_LOST_FRAMES) {
+        if (softHold || this.fingerLostCount < this.FINGER_LOST) {
           this.contactState = 'UNSTABLE_CONTACT';
         } else if (this.fingerLostCount < this.UNSTABLE_GRACE) {
           this.contactState = 'UNSTABLE_CONTACT';
-          // Don't reset buffers yet
         } else {
           this.contactState = 'NO_CONTACT';
           this.fingerDetected = false;
           this.stableContactCount = 0;
-          this.resetSignalTrackingBuffers();
+          this.resetSignalBuffers();
           this.resetBaselines();
         }
       } else {
@@ -295,267 +368,125 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
     }
 
-    // Resetear buffers solo al entrar en contacto desde NO_CONTACT
-    if (previousState === 'NO_CONTACT' && this.contactState !== 'NO_CONTACT') {
-      this.resetSignalTrackingBuffers();
+    // Map extended state → standard ContactState for export
+    switch (this.contactState) {
+      case 'NO_CONTACT':
+        this.exportedContactState = 'NO_CONTACT';
+        break;
+      case 'ACQUIRING_CONTACT':
+      case 'UNSTABLE_CONTACT':
+      case 'SATURATED_CONTACT':
+      case 'EXCESSIVE_PRESSURE':
+        this.exportedContactState = 'UNSTABLE_CONTACT';
+        break;
+      case 'STABLE_CONTACT':
+        this.exportedContactState = 'STABLE_CONTACT';
+        break;
     }
+
+    // Reset buffers on transition from NO_CONTACT
+    if (prev === 'NO_CONTACT' && this.contactState !== 'NO_CONTACT') {
+      this.resetSignalBuffers();
+    }
+
+    // Position lock logic
+    this.updatePositionLock(roi);
   }
 
-  private detectFingerInstant(roi: ROIMetrics): boolean {
-    const { rawRed, rawGreen, rawBlue, coverageRatio, fingerScore } = roi;
-
+  private detectFingerInstant(roi: ROIMaskResult): boolean {
     // Smooth inputs
     if (this.smoothedRed === 0) {
-      this.smoothedRed = rawRed;
-      this.smoothedGreen = rawGreen;
-      this.smoothedBlue = rawBlue;
-      this.smoothedCoverage = coverageRatio;
-      this.smoothedFingerScore = fingerScore;
+      this.smoothedRed = roi.rawRed;
+      this.smoothedGreen = roi.rawGreen;
+      this.smoothedBlue = roi.rawBlue;
+      this.smoothedCoverage = roi.coverageRatio;
+      this.smoothedFingerScore = roi.fingerScore;
     } else {
-      const a = this.RGB_SMOOTH_ALPHA;
-      const ca = this.COVERAGE_SMOOTH_ALPHA;
-      this.smoothedRed = this.smoothedRed * (1 - a) + rawRed * a;
-      this.smoothedGreen = this.smoothedGreen * (1 - a) + rawGreen * a;
-      this.smoothedBlue = this.smoothedBlue * (1 - a) + rawBlue * a;
-      this.smoothedCoverage = this.smoothedCoverage * (1 - ca) + coverageRatio * ca;
-      this.smoothedFingerScore = this.smoothedFingerScore * (1 - ca) + fingerScore * ca;
+      const a = this.RGB_ALPHA;
+      const ca = this.COV_ALPHA;
+      this.smoothedRed += (roi.rawRed - this.smoothedRed) * a;
+      this.smoothedGreen += (roi.rawGreen - this.smoothedGreen) * a;
+      this.smoothedBlue += (roi.rawBlue - this.smoothedBlue) * a;
+      this.smoothedCoverage += (roi.coverageRatio - this.smoothedCoverage) * ca;
+      this.smoothedFingerScore += (roi.fingerScore - this.smoothedFingerScore) * ca;
     }
 
     const r = this.smoothedRed;
     const g = this.smoothedGreen;
     const b = this.smoothedBlue;
-    const totalIntensity = r + g + b;
     const redDominance = r - (g + b) / 2;
     const rgRatio = r / Math.max(1, g);
+    const totalI = r + g + b;
     const notBlownOut = !(r > 253 && g > 252 && b > 252);
 
-    // === HEMOGLOBIN SIGNATURE: red MUST dominate when finger+flash ===
     if (this.fingerDetected) {
-      // MAINTAIN contact — moderately strict to prevent position changes
-      const maintainContact =
-        r > 50 &&
-        rgRatio > 1.08 &&
-        redDominance > 10 &&
-        this.smoothedCoverage > 0.20 &&
-        this.smoothedFingerScore > 0.20 &&
+      // MAINTAIN — moderately strict
+      return r > 50 && rgRatio > 1.08 && redDominance > 10 &&
+        this.smoothedCoverage > 0.15 && this.smoothedFingerScore > 0.15 &&
         notBlownOut;
-      return maintainContact;
     } else {
-      // ACQUIRE contact — VERY strict: only accept optimal finger placement
-      const acquireContact =
-        r > 90 &&
-        rgRatio > 1.25 &&
-        redDominance > 25 &&
-        totalIntensity > 150 && totalIntensity < 720 &&
-        this.smoothedCoverage > 0.45 &&
-        this.smoothedFingerScore > 0.45 &&
+      // ACQUIRE — very strict, only optimal placement
+      return r > 90 && rgRatio > 1.25 && redDominance > 25 &&
+        totalI > 150 && totalI < 720 &&
+        this.smoothedCoverage > 0.40 && this.smoothedFingerScore > 0.40 &&
+        roi.clipHighRatio < 0.3 &&
         this.motionScore < 1.0 &&
         notBlownOut;
-      return acquireContact;
     }
   }
 
-  private updateSampleRate(timestamp: number): void {
-    if (this.lastFrameTimestamp === 0) {
-      this.lastFrameTimestamp = timestamp;
-      return;
-    }
+  private updatePositionLock(roi: ROIMaskResult): void {
+    const currentRed = roi.rawRed;
+    const currentGreen = roi.rawGreen;
 
-    const delta = timestamp - this.lastFrameTimestamp;
-    this.lastFrameTimestamp = timestamp;
+    this.positionQualityScore = roi.coverageRatio * 0.35 + roi.spatialUniformity * 0.35 + roi.centerCoverage * 0.3;
 
-    if (delta < 10 || delta > 100) return;
-
-    this.frameIntervalBuffer.push(delta);
-    if (this.frameIntervalBuffer.length > 30) {
-      this.frameIntervalBuffer.shift();
-    }
-
-    if (this.frameIntervalBuffer.length < 8) return;
-
-    const sorted = [...this.frameIntervalBuffer].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)] ?? 33;
-    const estimatedFps = this.clamp(1000 / median, 20, 40);
-
-    if (Math.abs(estimatedFps - this.estimatedSampleRate) > 2) {
-      this.estimatedSampleRate = estimatedFps;
-      this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
-    }
-  }
-
-  private extractROI(imageData: ImageData): ROIMetrics {
-    const data = imageData.data;
-    const width = imageData.width;
-    const height = imageData.height;
-
-    const roiSize = Math.min(width, height) * 0.78;
-    const startX = Math.floor((width - roiSize) / 2);
-    const startY = Math.floor((height - roiSize) / 2);
-    const endX = startX + Math.floor(roiSize);
-    const endY = startY + Math.floor(roiSize);
-
-    const tiles = Array.from({ length: this.TILE_COLUMNS * this.TILE_ROWS }, () => ({
-      red: 0, green: 0, blue: 0, count: 0,
-    }));
-
-    const roiWidth = Math.max(1, endX - startX);
-    const roiHeight = Math.max(1, endY - startY);
-
-    // Sample every 3rd pixel for performance
-    for (let y = startY; y < endY; y += 3) {
-      for (let x = startX; x < endX; x += 3) {
-        const i = (y * width + x) * 4;
-        const tileX = Math.min(this.TILE_COLUMNS - 1, Math.floor(((x - startX) / roiWidth) * this.TILE_COLUMNS));
-        const tileY = Math.min(this.TILE_ROWS - 1, Math.floor(((y - startY) / roiHeight) * this.TILE_ROWS));
-        const tile = tiles[tileY * this.TILE_COLUMNS + tileX];
-
-        tile.red += data[i];
-        tile.green += data[i + 1];
-        tile.blue += data[i + 2];
-        tile.count++;
-      }
-    }
-
-    const averagedTiles = tiles
-      .map((tile, index) => ({ tile, index }))
-      .filter(({ tile }) => tile.count > 0)
-      .map(({ tile, index }) => {
-        const red = tile.red / tile.count;
-        const green = tile.green / tile.count;
-        const blue = tile.blue / tile.count;
-        const total = red + green + blue;
-        const redDominance = red - (green + blue) / 2;
-        const rednessRatio = red / Math.max(1, green);
-        const gridX = index % this.TILE_COLUMNS;
-        const gridY = Math.floor(index / this.TILE_COLUMNS);
-        const normX = this.TILE_COLUMNS <= 1 ? 0 : gridX / (this.TILE_COLUMNS - 1);
-        const normY = this.TILE_ROWS <= 1 ? 0 : gridY / (this.TILE_ROWS - 1);
-        const distanceFromCenter = Math.sqrt((normX - 0.5) ** 2 + (normY - 0.5) ** 2);
-        const centerBias = this.clamp(1 - distanceFromCenter * 1.2, 0.3, 1);
-
-        const brightnessScore = this.clamp((total - 120) / 220, 0, 1);
-        const redRatioScore = this.clamp((rednessRatio - 1.02) / 0.85, 0, 1);
-        const dominanceScore = this.clamp((redDominance - 10) / 35, 0, 1);
-        const frameScore = redRatioScore * 0.45 + dominanceScore * 0.4 + brightnessScore * 0.15;
-
-        this.tileConfidence[index] = this.tileConfidence[index] * 0.75 + frameScore * centerBias * 0.25;
-        const combinedScore = this.tileConfidence[index] * 0.7 + frameScore * 0.3;
-
-        return { red, green, blue, total, redDominance, rednessRatio, centerBias, frameScore, combinedScore, temporalScore: this.tileConfidence[index] };
-      });
-
-    if (averagedTiles.length === 0) {
-      return { rawRed: 0, rawGreen: 0, rawBlue: 0, coverageRatio: 0, fingerScore: 0 };
-    }
-
-    const fingerTiles = averagedTiles.filter((tile) =>
-      tile.red > 55 &&
-      tile.total > 120 &&
-      tile.redDominance > 12 &&
-      tile.rednessRatio > 1.08 &&
-      tile.combinedScore > 0.42
-    );
-
-    const selectedTiles = fingerTiles.length >= 5
-      ? fingerTiles
-      : averagedTiles;
-
-    const weightedAverage = (channel: 'red' | 'green' | 'blue') => {
-      let ws = 0, tw = 0;
-      for (const tile of selectedTiles) {
-        const w = 0.3 + tile.combinedScore * 2 + tile.centerBias * 0.4;
-        ws += tile[channel] * w;
-        tw += w;
-      }
-      return tw > 0 ? ws / tw : averagedTiles.reduce((s, t) => s + t[channel], 0) / averagedTiles.length;
-    };
-
-    const coverageRatio = fingerTiles.length / averagedTiles.length;
-    const avgFingerScore = fingerTiles.length > 0
-      ? fingerTiles.reduce((s, t) => s + t.combinedScore, 0) / fingerTiles.length
-      : 0;
-
-    // === POSITION QUALITY ANALYSIS ===
-    // Spatial uniformity: how evenly distributed the finger tiles are
-    if (fingerTiles.length >= 3) {
-      const scores = fingerTiles.map(t => t.combinedScore);
-      const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-      const variance = scores.reduce((a, s) => a + (s - mean) ** 2, 0) / scores.length;
-      const cv = mean > 0 ? Math.sqrt(variance) / mean : 1; // coefficient of variation
-      this.spatialUniformity = this.clamp(1 - cv, 0, 1);
-    } else {
-      this.spatialUniformity = 0;
-    }
-
-    // Center coverage: how many center tiles (3x3 inner grid) have finger
-    const centerTileIndices = [6, 7, 8, 11, 12, 13, 16, 17, 18]; // 5x5 grid center 3x3
-    const centerFingerCount = fingerTiles.filter((_, i) => {
-      const origIdx = averagedTiles.indexOf(fingerTiles[i] as any);
-      // Check if this tile's original index is a center tile
-      return centerTileIndices.includes(origIdx);
-    }).length;
-    this.centerCoverage = centerFingerCount / centerTileIndices.length;
-
-    // Combined position quality score
-    this.positionQualityScore = coverageRatio * 0.35 + this.spatialUniformity * 0.35 + this.centerCoverage * 0.3;
-
-    // Position drift detection (once locked)
-    const currentRed = weightedAverage('red');
-    const currentGreen = weightedAverage('green');
-    
     if (this.positionLocked) {
-      const redDrift = this.lockedRedBaseline > 0 
-        ? Math.abs(currentRed - this.lockedRedBaseline) / this.lockedRedBaseline : 0;
-      const greenDrift = this.lockedGreenBaseline > 0 
-        ? Math.abs(currentGreen - this.lockedGreenBaseline) / this.lockedGreenBaseline : 0;
-      const coverageDrift = this.lockedCoverage > 0 
-        ? Math.abs(coverageRatio - this.lockedCoverage) / this.lockedCoverage : 0;
-      this.positionDrift = (redDrift + greenDrift + coverageDrift) / 3;
+      const redDrift = this.lockedRedBase > 0 ? Math.abs(currentRed - this.lockedRedBase) / this.lockedRedBase : 0;
+      const greenDrift = this.lockedGreenBase > 0 ? Math.abs(currentGreen - this.lockedGreenBase) / this.lockedGreenBase : 0;
+      const covDrift = this.lockedCoverage > 0 ? Math.abs(roi.coverageRatio - this.lockedCoverage) / this.lockedCoverage : 0;
+      this.positionDrift = (redDrift + greenDrift + covDrift) / 3;
 
-      if (this.positionDrift > this.POSITION_DRIFT_TOLERANCE) {
+      if (this.positionDrift > this.POS_DRIFT_TOL) {
         this.positionDrifting = true;
-        this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA POSICIÓN INICIAL';
-        
-        // Si el drift es muy alto, desbloquear y forzar re-lock
-        if (this.positionDrift > this.POSITION_DRIFT_TOLERANCE * 2.5) {
+        this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA POSICIÓN';
+        if (this.positionDrift > this.POS_DRIFT_TOL * 2.5) {
           this.positionLocked = false;
           this.positionStabilityCount = 0;
           this.positionDrifting = false;
-          this.positionGuidance = 'REPOSICIONE EL DEDO CORRECTAMENTE';
+          this.positionGuidance = 'REPOSICIONE EL DEDO';
         }
       } else {
         this.positionDrifting = false;
-        // Actualizar baseline lentamente para adaptarse a cambios fisiológicos naturales
-        const adaptAlpha = 0.003;
-        this.lockedRedBaseline = this.lockedRedBaseline * (1 - adaptAlpha) + currentRed * adaptAlpha;
-        this.lockedGreenBaseline = this.lockedGreenBaseline * (1 - adaptAlpha) + currentGreen * adaptAlpha;
-        this.lockedCoverage = this.lockedCoverage * (1 - adaptAlpha) + coverageRatio * adaptAlpha;
+        const adapt = 0.003;
+        this.lockedRedBase += (currentRed - this.lockedRedBase) * adapt;
+        this.lockedGreenBase += (currentGreen - this.lockedGreenBase) * adapt;
+        this.lockedCoverage += (roi.coverageRatio - this.lockedCoverage) * adapt;
         this.positionGuidance = 'POSICIÓN CORRECTA — NO MUEVA EL DEDO';
       }
     } else if (this.fingerDetected) {
       this.positionDrifting = false;
-      // Try to lock position — STRICT requirements
-      if (this.positionQualityScore > 0.65 && coverageRatio > 0.55 && this.spatialUniformity > 0.50 && this.centerCoverage > 0.35) {
+      if (this.positionQualityScore > 0.60 && roi.coverageRatio > 0.45 &&
+        roi.spatialUniformity > 0.45 && roi.centerCoverage > 0.30 &&
+        this.pressureState !== 'HIGH_PRESSURE') {
         this.positionStabilityCount++;
-        if (this.positionStabilityCount >= this.POSITION_LOCK_FRAMES) {
+        if (this.positionStabilityCount >= this.POS_LOCK_FRAMES) {
           this.positionLocked = true;
-          this.lockedRedBaseline = currentRed;
-          this.lockedGreenBaseline = currentGreen;
-          this.lockedCoverage = coverageRatio;
-          this.lockedFingerScore = avgFingerScore;
+          this.lockedRedBase = currentRed;
+          this.lockedGreenBase = currentGreen;
+          this.lockedCoverage = roi.coverageRatio;
           this.positionGuidance = 'POSICIÓN BLOQUEADA — MANTENGA ASÍ';
         } else {
-          this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POSITION_LOCK_FRAMES) * 100)}%`;
+          this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POS_LOCK_FRAMES) * 100)}%`;
         }
       } else {
         this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 3);
-        // Specific guidance based on what's wrong
-        if (coverageRatio < 0.45) {
+        if (this.pressureState === 'HIGH_PRESSURE') {
+          this.positionGuidance = 'REDUZCA LA PRESIÓN DEL DEDO';
+        } else if (roi.coverageRatio < 0.40) {
           this.positionGuidance = 'CUBRA TODA LA CÁMARA CON SU DEDO';
-        } else if (this.spatialUniformity < 0.40) {
+        } else if (roi.spatialUniformity < 0.40) {
           this.positionGuidance = 'CENTRE EL DEDO SOBRE LA CÁMARA';
-        } else if (this.centerCoverage < 0.30) {
-          this.positionGuidance = 'MUEVA EL DEDO HACIA EL CENTRO';
         } else {
           this.positionGuidance = 'PRESIONE SUAVEMENTE — FIRME Y SIN MOVER';
         }
@@ -565,233 +496,83 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.positionDrifting = false;
       this.positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
     }
-
-    return {
-      rawRed: weightedAverage('red'),
-      rawGreen: weightedAverage('green'),
-      rawBlue: weightedAverage('blue'),
-      coverageRatio,
-      fingerScore: avgFingerScore,
-    };
   }
 
-  private updateChannelBaselines(rawRed: number, rawGreen: number, rawBlue: number, motionArtifact: boolean): void {
-    if (this.redBaseline === 0) {
-      this.redBaseline = rawRed;
-      this.greenBaseline = rawGreen;
-      this.blueBaseline = rawBlue;
+  // ══════════════════════════════════════════════════════
+  //  SIGNAL PROCESSING
+  // ══════════════════════════════════════════════════════
+
+  private updateSampleRate(timestamp: number): void {
+    if (this.lastFrameTime === 0) {
+      this.lastFrameTime = timestamp;
       return;
     }
+    const delta = timestamp - this.lastFrameTime;
+    this.lastFrameTime = timestamp;
+    if (delta < 8 || delta > 120) return;
 
-    const alpha = motionArtifact ? 0.008 : this.contactState === 'STABLE_CONTACT' ? 0.02 : 0.04;
-    this.redBaseline = this.redBaseline * (1 - alpha) + rawRed * alpha;
-    this.greenBaseline = this.greenBaseline * (1 - alpha) + rawGreen * alpha;
-    this.blueBaseline = this.blueBaseline * (1 - alpha) + rawBlue * alpha;
-  }
+    this.frameTimeBuf.push(delta);
+    if (this.frameTimeBuf.length < 10) return;
 
-  // === MULTI-SOURCE COMPETITIVE EXTRACTION ===
-  private extractBestPulseSignal(
-    rawRed: number, rawGreen: number, rawBlue: number, motionArtifact: boolean
-  ): { value: number; label: string; strength: number } {
-    const rNorm = this.redBaseline > 0 ? (this.redBaseline - rawRed) / this.redBaseline : 0;
-    const gNorm = this.greenBaseline > 0 ? (this.greenBaseline - rawGreen) / this.greenBaseline : 0;
-    const bNorm = this.blueBaseline > 0 ? (this.blueBaseline - rawBlue) / this.blueBaseline : 0;
+    // Median of last 30 intervals
+    const n = Math.min(30, this.frameTimeBuf.length);
+    const arr = this.frameTimeBuf.last(n);
+    arr.sort();
+    const median = arr[Math.floor(n / 2)];
+    const fps = Math.max(15, Math.min(60, 1000 / median));
+    this.realFps = fps;
 
-    const clamp = (v: number) => this.clamp(v, -0.04, 0.04);
-    const rPulse = clamp(rNorm);
-    const gPulse = clamp(gNorm);
-
-    // Source candidates (CHROM removed — amplifies noise without finger)
-    const sources: { [key: string]: number } = {
-      R: rPulse * 3200,
-      G: gPulse * 3200,
-      RG: this.blendRG(rPulse, gPulse, rawRed, rawGreen, motionArtifact) * 3200,
-    };
-
-    // Update per-source buffers
-    for (const key of Object.keys(sources)) {
-      this.sourceBuffers[key].push(sources[key]);
-      if (this.sourceBuffers[key].length > 120) {
-        this.sourceBuffers[key].shift();
-      }
-    }
-
-    // Rank sources every ~1 second (30 frames)
-    if (this.frameCount % 30 === 0 && this.redBuffer.length >= 60) {
-      this.rankSources();
-    }
-
-    const value = this.clamp(sources[this.activeSource] ?? sources['RG'], -80, 80);
-    const strength = Math.max(Math.abs(rPulse), Math.abs(gPulse)) * 1000;
-
-    return { value, label: this.activeSource, strength };
-  }
-
-  private blendRG(rPulse: number, gPulse: number, rawRed: number, rawGreen: number, motionArtifact: boolean): number {
-    const redPI = this.redDC > 0 ? this.redAC / this.redDC : 0;
-    const greenPI = this.greenDC > 0 ? this.greenAC / this.greenDC : 0;
-    const piSum = redPI + greenPI;
-
-    let greenWeight = 0.55;
-    let redWeight = 0.45;
-
-    if (piSum > 0) {
-      greenWeight = this.clamp(greenPI / piSum, 0.25, 0.8);
-      redWeight = 1 - greenWeight;
-    }
-
-    // Clipping penalties
-    if (rawGreen > 245) { greenWeight *= 0.4; redWeight = 1 - greenWeight; }
-    if (rawRed > 245) { redWeight *= 0.4; greenWeight = 1 - redWeight; }
-    if (motionArtifact) { greenWeight = this.clamp(greenWeight + 0.05, 0.3, 0.8); redWeight = 1 - greenWeight; }
-
-    return rPulse * redWeight + gPulse * greenWeight;
-  }
-
-  private rankSources(): void {
-    const now = Date.now();
-    // Hysteresis: don't switch too often
-    if (now - this.lastSourceSwitch < this.SOURCE_HYSTERESIS_MS) return;
-
-    let bestSource = this.activeSource;
-    let bestScore = -1;
-
-    for (const key of Object.keys(this.sourceBuffers)) {
-      const buf = this.sourceBuffers[key];
-      if (buf.length < 45) continue;
-
-      const recent = buf.slice(-90);
-      const score = this.computeSourceScore(recent);
-      this.sourceScores[key] = score;
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestSource = key;
-      }
-    }
-
-    // Only switch if new source is significantly better (>20%)
-    const currentScore = this.sourceScores[this.activeSource] ?? 0;
-    if (bestSource !== this.activeSource && bestScore > currentScore * 1.2) {
-      this.activeSource = bestSource;
-      this.lastSourceSwitch = now;
+    if (Math.abs(fps - this.estimatedSampleRate) > 2) {
+      this.estimatedSampleRate = fps;
+      this.bandpassFilter.setSampleRate(fps);
     }
   }
 
-  private computeSourceScore(buffer: number[]): number {
-    if (buffer.length < 30) return 0;
-
-    const sorted = [...buffer].sort((a, b) => a - b);
-    const p10 = sorted[Math.floor(sorted.length * 0.1)] ?? 0;
-    const p90 = sorted[Math.floor(sorted.length * 0.9)] ?? 0;
-    const range = p90 - p10;
-    if (range < 0.3) return 0;
-
-    const mean = buffer.reduce((a, b) => a + b, 0) / buffer.length;
-    const variance = buffer.reduce((a, v) => a + (v - mean) ** 2, 0) / buffer.length;
-    const snr = range / (Math.sqrt(variance) + 0.1);
-
-    // Check for clipping
-    const clipped = buffer.filter(v => Math.abs(v) > 70).length / buffer.length;
-    const clipPenalty = clipped * 30;
-
-    return Math.max(0, snr * 15 - clipPenalty);
+  private updateBaselines(r: number, g: number, b: number, motion: boolean): void {
+    if (this.redBaseline === 0) {
+      this.redBaseline = r; this.greenBaseline = g; this.blueBaseline = b;
+      return;
+    }
+    const alpha = motion ? 0.008 : this.exportedContactState === 'STABLE_CONTACT' ? 0.02 : 0.04;
+    this.redBaseline += (r - this.redBaseline) * alpha;
+    this.greenBaseline += (g - this.greenBaseline) * alpha;
+    this.blueBaseline += (b - this.blueBaseline) * alpha;
   }
 
-  private calculateACDCPrecise(): void {
-    const windowSize = Math.min(this.ACDC_WINDOW, this.redBuffer.length);
-    if (windowSize < 36) return;
+  private getBaselineDrift(): number {
+    if (this.redBuf.length < 60) return 0;
+    const recentMean = this.redBuf.mean(30);
+    const olderMean = this.redBuf.mean(60) - recentMean; // approximate
+    return Math.abs(olderMean) / (this.redBaseline + 1);
+  }
 
-    const redW = this.redBuffer.slice(-windowSize);
-    const greenW = this.greenBuffer.slice(-windowSize);
-    const blueW = this.blueBuffer.slice(-windowSize);
+  private calculateACDC(): void {
+    const n = Math.min(180, this.redBuf.length);
+    if (n < 36) return;
 
-    this.redDC = redW.reduce((a, b) => a + b, 0) / redW.length;
-    this.greenDC = greenW.reduce((a, b) => a + b, 0) / greenW.length;
-    this.blueDC = blueW.reduce((a, b) => a + b, 0) / blueW.length;
+    this.redDC = this.redBuf.mean(n);
+    this.greenDC = this.greenBuf.mean(n);
+    this.blueDC = this.blueBuf.mean(n);
 
     if (this.redDC < 5 || this.greenDC < 5) return;
 
-    const computeAC = (window: number[], dc: number) => {
-      let sumSq = 0;
-      for (let i = 0; i < window.length; i++) {
-        sumSq += (window[i] - dc) ** 2;
-      }
-      const rms = Math.sqrt(sumSq / window.length);
-      const sorted = [...window].sort((a, b) => a - b);
-      const p5 = sorted[Math.floor(window.length * 0.05)] ?? 0;
-      const p95 = sorted[Math.floor(window.length * 0.95)] ?? 0;
+    const computeAC = (buf: RingBuffer, dc: number): number => {
+      const p5 = buf.percentile(0.05, n);
+      const p95 = buf.percentile(0.95, n);
       const p2p = p95 - p5;
-      return (rms * Math.sqrt(2) + p2p * 0.5) / 2;
+      const v = buf.variance(n);
+      const rms = Math.sqrt(v) * Math.sqrt(2);
+      return (rms + p2p * 0.5) / 2;
     };
 
-    this.redAC = computeAC(redW, this.redDC);
-    this.greenAC = computeAC(greenW, this.greenDC);
-    this.blueAC = computeAC(blueW, this.blueDC);
+    this.redAC = computeAC(this.redBuf, this.redDC);
+    this.greenAC = computeAC(this.greenBuf, this.greenDC);
+    this.blueAC = computeAC(this.blueBuf, this.blueDC);
 
-    const redPI = this.redAC / this.redDC;
-    const greenPI = this.greenAC / this.greenDC;
-
-    if (redPI < 0.0001 || greenPI < 0.0001) {
-      this.redAC = 0;
-      this.greenAC = 0;
+    // Reject if no real pulsatility
+    if ((this.redAC / this.redDC) < 0.0001 && (this.greenAC / this.greenDC) < 0.0001) {
+      this.redAC = 0; this.greenAC = 0;
     }
-  }
-
-  private calculateDerivatives(): void {
-    const n = this.filteredBuffer.length;
-
-    if (n >= 3) {
-      const vpg = (this.filteredBuffer[n - 1] - this.filteredBuffer[n - 3]) / 2;
-      this.vpgBuffer.push(vpg);
-      if (this.vpgBuffer.length > this.BUFFER_SIZE) this.vpgBuffer.shift();
-    }
-
-    if (this.vpgBuffer.length >= 3) {
-      const vn = this.vpgBuffer.length;
-      const apg = (this.vpgBuffer[vn - 1] - this.vpgBuffer[vn - 3]) / 2;
-      this.apgBuffer.push(apg);
-      if (this.apgBuffer.length > this.BUFFER_SIZE) this.apgBuffer.shift();
-    }
-  }
-
-  // === SQI UNIFICADO - ÚNICA FUENTE DE VERDAD ===
-  private calculateSignalQuality(): number {
-    if (this.filteredBuffer.length < 24) return 0;
-    if (this.contactState === 'NO_CONTACT') return 0;
-
-    const perfusionIndex = this.calculatePerfusionIndex();
-    const redDominance = this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2;
-
-    // Gate: no perfusion = no real signal
-    if (perfusionIndex < 0.005) return Math.min(15, this.smoothedCoverage * 20);
-    // Gate: red must dominate (hemoglobin signature)
-    if (redDominance < 15) return 0;
-
-    const recent = this.filteredBuffer.slice(-90);
-    const sorted = [...recent].sort((a, b) => a - b);
-    const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
-    const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
-    const range = p90 - p10;
-
-    if (range < 0.3) return 5;
-
-    const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((a, v) => a + (v - mean) ** 2, 0) / recent.length;
-    const stdDev = Math.sqrt(variance);
-    const snr = range / (stdDev + 0.15);
-
-    const snrScore = Math.min(35, snr * 11);
-    const perfusionScore = Math.min(25, perfusionIndex * 12);
-    const coverageScore = Math.min(18, this.smoothedCoverage * 30);
-    const fingerScore = Math.min(18, this.smoothedFingerScore * 26);
-    const motionPenalty = Math.min(20, this.motionScore * 16);
-
-    // Bonus for stable contact + pulsatility evidence
-    const stabilityBonus = this.contactState === 'STABLE_CONTACT' ? 5 : 0;
-    const pulsatilityBonus = (this.redAC > 0 || this.greenAC > 0) ? 4 : 0;
-
-    return this.clamp(snrScore + perfusionScore + coverageScore + fingerScore - motionPenalty + stabilityBonus + pulsatilityBonus, 0, 100);
   }
 
   private calculatePerfusionIndex(): number {
@@ -800,99 +581,101 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return 0;
   }
 
-  private resetBaselines(): void {
-    this.redBaseline = 0;
-    this.greenBaseline = 0;
-    this.blueBaseline = 0;
+  private getSignalRange(): number {
+    if (this.filteredBuf.length < 30) return 0;
+    const mm = this.filteredBuf.minMax(90);
+    return mm.max - mm.min;
   }
 
-  private resetSignalTrackingBuffers(): void {
-    this.rawBuffer = [];
-    this.filteredBuffer = [];
-    this.redBuffer = [];
-    this.greenBuffer = [];
-    this.blueBuffer = [];
-    this.vpgBuffer = [];
-    this.apgBuffer = [];
+  private estimatePeriodicityFromFiltered(): number {
+    if (this.filteredBuf.length < 60) return 0;
+    const n = Math.min(120, this.filteredBuf.length);
+    // Search cardiac range lags
+    let best = 0;
+    for (let lag = 8; lag <= 60; lag++) {
+      const ac = this.filteredBuf.autocorrelation(lag, n);
+      if (ac > best) best = ac;
+    }
+    return Math.max(0, Math.min(1, best));
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  RESET
+  // ══════════════════════════════════════════════════════
+
+  private resetBaselines(): void {
+    this.redBaseline = 0; this.greenBaseline = 0; this.blueBaseline = 0;
+  }
+
+  private resetSignalBuffers(): void {
+    this.redBuf.clear(); this.greenBuf.clear(); this.blueBuf.clear();
+    this.rawSignalBuf.clear(); this.filteredBuf.clear();
+    this.vpgBuf.clear(); this.apgBuf.clear();
     this.redDC = 0; this.redAC = 0;
     this.greenDC = 0; this.greenAC = 0;
     this.blueDC = 0; this.blueAC = 0;
-    this.sourceBuffers = { R: [], G: [], RG: [] };
+    this.sourceRanker.reset();
     this.bandpassFilter.reset();
   }
 
   reset(): void {
-    this.rawBuffer = [];
-    this.filteredBuffer = [];
-    this.redBuffer = [];
-    this.greenBuffer = [];
-    this.blueBuffer = [];
-    this.vpgBuffer = [];
-    this.apgBuffer = [];
-    this.tileConfidence = new Array(25).fill(0);
-    this.frameIntervalBuffer = [];
+    this.resetSignalBuffers();
+    this.frameTimeBuf.clear();
+    this.roiMask.reset();
+    this.pressureEstimator.reset();
     this.frameCount = 0;
     this.lastLogTime = 0;
-    this.lastFrameTimestamp = 0;
+    this.lastFrameTime = 0;
     this.estimatedSampleRate = 30;
+    this.realFps = 0;
     this.fingerDetected = false;
     this.contactState = 'NO_CONTACT';
+    this.exportedContactState = 'NO_CONTACT';
     this.signalQuality = 0;
     this.fingerConfidenceCount = 0;
     this.fingerLostCount = 0;
     this.stableContactCount = 0;
-    this.smoothedRed = 0;
-    this.smoothedGreen = 0;
-    this.smoothedBlue = 0;
-    this.smoothedCoverage = 0;
-    this.smoothedFingerScore = 0;
-    this.redDC = 0; this.redAC = 0;
-    this.greenDC = 0; this.greenAC = 0;
-    this.blueDC = 0; this.blueAC = 0;
+    this.smoothedRed = 0; this.smoothedGreen = 0; this.smoothedBlue = 0;
+    this.smoothedCoverage = 0; this.smoothedFingerScore = 0;
     this.motionScore = 0;
-    this.lastAcceleration = { x: 0, y: 0, z: 0 };
-    this.sourceBuffers = { R: [], G: [], RG: [] };
-    this.sourceScores = { R: 0, G: 0, RG: 0 };
-    this.activeSource = 'RG';
-    this.lastSourceSwitch = 0;
+    this.lastAccel = { x: 0, y: 0, z: 0 };
+    this.activeSourceLabel = 'RG';
+    this.allSourceSQI = {};
+    this.sourceStableFrames = 0;
+    this.sourceStability = 0;
+    this.pressureState = 'LOW_PRESSURE';
+    this.pressurePenalty = 1.0;
+    this.clipHighRatio = 0; this.clipLowRatio = 0;
     this.resetBaselines();
     this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
-    this.bandpassFilter.reset();
-    // Reset position lock
+    // Position lock
     this.positionLocked = false;
-    this.lockedRedBaseline = 0;
-    this.lockedGreenBaseline = 0;
-    this.lockedCoverage = 0;
-    this.lockedFingerScore = 0;
+    this.lockedRedBase = 0; this.lockedGreenBase = 0; this.lockedCoverage = 0;
     this.positionStabilityCount = 0;
-    this.spatialUniformity = 0;
-    this.centerCoverage = 0;
-    this.positionDrift = 0;
-    this.positionDrifting = false;
+    this.spatialUniformity = 0; this.centerCoverage = 0;
+    this.positionDrift = 0; this.positionDrifting = false;
     this.positionQualityScore = 0;
     this.positionGuidance = 'COLOQUE SU DEDO';
   }
 
+  // ══════════════════════════════════════════════════════
+  //  MOTION LISTENER
+  // ══════════════════════════════════════════════════════
+
   private handleMotionEvent = (event: DeviceMotionEvent) => {
     const acc = event.accelerationIncludingGravity;
     if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
-
-    const dx = (acc.x ?? 0) - this.lastAcceleration.x;
-    const dy = (acc.y ?? 0) - this.lastAcceleration.y;
-    const dz = (acc.z ?? 0) - this.lastAcceleration.z;
-
-    this.lastAcceleration = { x: acc.x ?? 0, y: acc.y ?? 0, z: acc.z ?? 0 };
-
+    const dx = (acc.x ?? 0) - this.lastAccel.x;
+    const dy = (acc.y ?? 0) - this.lastAccel.y;
+    const dz = (acc.z ?? 0) - this.lastAccel.z;
+    this.lastAccel = { x: acc.x ?? 0, y: acc.y ?? 0, z: acc.z ?? 0 };
     const accelRMS = Math.sqrt(dx * dx + dy * dy + dz * dz);
     const rot = event.rotationRate;
     let gyroRMS = 0;
-
     if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
       gyroRMS = Math.sqrt((rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2) / 120;
     }
-
-    const rawScore = accelRMS * 0.5 + gyroRMS * 0.3;
-    this.motionScore = this.motionScore * 0.85 + rawScore * 0.15;
+    this.motionScore = this.motionScore * 0.85 + (accelRMS * 0.5 + gyroRMS * 0.3) * 0.15;
   };
 
   private startMotionListener(): void {
@@ -906,8 +689,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
                 window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
                 this.motionListenerActive = true;
               }
-            })
-            .catch(() => {});
+            }).catch(() => {});
         } else {
           window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
           this.motionListenerActive = true;
@@ -923,9 +705,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.motionScore = 0;
   }
 
-  private clamp(value: number, min: number, max: number): number {
-    return Math.min(max, Math.max(min, value));
-  }
+  // ══════════════════════════════════════════════════════
+  //  PUBLIC API
+  // ══════════════════════════════════════════════════════
 
   getRGBStats() {
     return {
@@ -933,8 +715,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       greenAC: this.greenAC, greenDC: this.greenDC,
       rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0,
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
-        ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC)
-        : 0,
+        ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) : 0,
     };
   }
 
@@ -947,6 +728,32 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       positionDrift: this.positionDrift,
       guidance: this.positionGuidance,
       qualityScore: this.positionQualityScore,
+    };
+  }
+
+  /** Debug telemetry — call from UI debug panel */
+  getDebugInfo() {
+    return {
+      contactState: this.contactState,
+      exportedState: this.exportedContactState,
+      pressureState: this.pressureState,
+      pressurePenalty: this.pressurePenalty,
+      activeSource: this.activeSourceLabel,
+      allSourceSQI: this.allSourceSQI,
+      realFps: this.realFps,
+      processingTimeMs: this.processingTimeMs,
+      sqiGlobal: this.signalQuality,
+      clipHighRatio: this.clipHighRatio,
+      clipLowRatio: this.clipLowRatio,
+      perfusionIndex: this.calculatePerfusionIndex(),
+      coverageRatio: this.smoothedCoverage,
+      positionDrift: this.positionDrift,
+      positionLocked: this.positionLocked,
+      spatialUniformity: this.spatialUniformity,
+      sourceStability: this.sourceStability,
+      motionScore: this.motionScore,
+      validROIPixels: this.lastROIResult?.validPixelCount ?? 0,
+      guidance: this.positionGuidance,
     };
   }
 }
