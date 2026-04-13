@@ -445,8 +445,16 @@ const Index = () => {
       sourceStability?: number;
     };
     const positionQuality = getPositionQuality();
-    /** Una sola fuente: PPGSignalProcessor.measurementReady (histérisis incluida). */
-    const stableHumanSignal = lastSignal.measurementReady === true;
+    const perf = lastSignal.perfusionIndex ?? 0;
+    /** Medición estricta: measurementReady. Latidos/onda: contacto estable + perfusión (evita silencio con dedo bueno). */
+    const stableForBeats =
+      lastSignal.measurementReady === true ||
+      (lastSignal.contactState === 'STABLE_CONTACT' &&
+        lastSignal.fingerDetected &&
+        !lastSignal.motionArtifact &&
+        (lastSignal.quality ?? 0) >= 14 &&
+        perf > 0.024);
+    const stableHumanSignal = stableForBeats;
 
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
@@ -462,7 +470,7 @@ const Index = () => {
       (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
       estimateSampleRateFromFrames(lastSignal.timestamp);
 
-    const contactForBeat = lastSignal.measurementReady ? "STABLE_CONTACT" : "NO_CONTACT";
+    const contactForBeat = stableForBeats ? "STABLE_CONTACT" : "NO_CONTACT";
 
     const heartBeatResult = processHeartBeat(
       signalValue,
@@ -567,7 +575,7 @@ const Index = () => {
         : undefined;
 
       setUpstreamContext({
-        contactStable: stableHumanSignal,
+        contactStable: lastSignal.measurementReady === true,
         pressureOptimal,
         clipHighRatio: clipHigh,
         sourceStability,
@@ -594,59 +602,88 @@ const Index = () => {
         beatCount: heartBeatResult.debug.beatsAccepted,
       });
 
-      const vitals = processVitalSigns(
-        lastSignal.filteredValue,
-        usableRRData,
-        beatInputs,
-        lastSignal.timestamp
-      );
+      if (lastSignal.measurementReady === true) {
+        const vitals = processVitalSigns(
+          lastSignal.filteredValue,
+          usableRRData,
+          beatInputs,
+          lastSignal.timestamp
+        );
 
-      const e = emaRef.current;
-      const smoothed: typeof vitals = {
-        ...vitals,
-        spo2: applyEMA(e.spo2, vitals.spo2),
-        glucose: applyEMA(e.glucose, vitals.glucose),
-        pressure: {
-          ...vitals.pressure,
-          systolic: applyEMA(e.systolic, vitals.pressure.systolic),
-          diastolic: applyEMA(e.diastolic, vitals.pressure.diastolic),
-        },
-        lipids: {
-          totalCholesterol: applyEMA(e.cholesterol, vitals.lipids.totalCholesterol),
-          triglycerides: applyEMA(e.triglycerides, vitals.lipids.triglycerides),
-        },
-      };
-      e.spo2 = smoothed.spo2;
-      e.glucose = smoothed.glucose;
-      e.systolic = smoothed.pressure.systolic;
-      e.diastolic = smoothed.pressure.diastolic;
-      e.cholesterol = smoothed.lipids.totalCholesterol;
-      e.triglycerides = smoothed.lipids.triglycerides;
+        const e = emaRef.current;
+        const smoothed: typeof vitals = {
+          ...vitals,
+          spo2: applyEMA(e.spo2, vitals.spo2),
+          glucose: applyEMA(e.glucose, vitals.glucose),
+          pressure: {
+            ...vitals.pressure,
+            systolic: applyEMA(e.systolic, vitals.pressure.systolic),
+            diastolic: applyEMA(e.diastolic, vitals.pressure.diastolic),
+          },
+          lipids: {
+            totalCholesterol: applyEMA(e.cholesterol, vitals.lipids.totalCholesterol),
+            triglycerides: applyEMA(e.triglycerides, vitals.lipids.triglycerides),
+          },
+        };
+        e.spo2 = smoothed.spo2;
+        e.glucose = smoothed.glucose;
+        e.systolic = smoothed.pressure.systolic;
+        e.diastolic = smoothed.pressure.diastolic;
+        e.cholesterol = smoothed.lipids.totalCholesterol;
+        e.triglycerides = smoothed.lipids.triglycerides;
 
-      setVitalSigns(smoothed);
+        setVitalSigns(smoothed);
 
-      if (usableRRData && vitals.measurementConfidence !== 'INVALID') {
-        const arrhythmiaStatus = vitals.arrhythmiaStatus;
-        if (arrhythmiaStatus) {
-          lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
-          const parts = arrhythmiaStatus.split('|');
-          const rhythmLabel = vitals.rhythm?.label || parts[0] || 'SINUS_STABLE';
-          const count = parseInt(parts[1] || '0', 10) || 0;
-          setArrhythmiaCount(count > 0 ? count : rhythmLabel.split('_').join(' '));
+        if (usableRRData && vitals.measurementConfidence !== 'INVALID') {
+          const arrhythmiaStatus = vitals.arrhythmiaStatus;
+          if (arrhythmiaStatus) {
+            lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
+            const parts = arrhythmiaStatus.split('|');
+            const rhythmLabel = vitals.rhythm?.label || parts[0] || 'SINUS_STABLE';
+            const count = parseInt(parts[1] || '0', 10) || 0;
+            setArrhythmiaCount(count > 0 ? count : rhythmLabel.split('_').join(' '));
 
-          const isArrhythmiaDetected = !NON_ALERT_RHYTHM_LABELS.has(rhythmLabel);
-          if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
-            arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-            setArrhythmiaState(isArrhythmiaDetected);
+            const isArrhythmiaDetected = !NON_ALERT_RHYTHM_LABELS.has(rhythmLabel);
+            if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
+              arrhythmiaDetectedRef.current = isArrhythmiaDetected;
+              setArrhythmiaState(isArrhythmiaDetected);
 
-            if (isArrhythmiaDetected) {
-              const minEvents = 2;
-              const cooldownMs = 12000;
+              if (isArrhythmiaDetected) {
+                const minEvents = 2;
+                const cooldownMs = 12000;
+                const now = Date.now();
+                const sameLabel = lastArrhythmiaToastRef.current.label === rhythmLabel;
+                const cooled = now - lastArrhythmiaToastRef.current.t >= cooldownMs;
+                const enoughEvents = count >= minEvents;
+                if (enoughEvents && (!sameLabel || cooled)) {
+                  lastArrhythmiaToastRef.current = { t: now, label: rhythmLabel };
+                  arrhythmiaToastPendingRef.current = false;
+                  if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                  toast({
+                    title: `⚠️ ${rhythmLabel.split('_').join(' ')}`,
+                    description: count > 0 ? `Eventos detectados: ${count}` : 'Ritmo irregular detectado',
+                    variant: "destructive",
+                    duration: 4000
+                  });
+                } else if (!enoughEvents) {
+                  arrhythmiaToastPendingRef.current = true;
+                }
+              } else {
+                lastArrhythmiaToastRef.current = { t: 0, label: '' };
+                arrhythmiaToastPendingRef.current = false;
+              }
+            }
+
+            if (
+              arrhythmiaToastPendingRef.current &&
+              isArrhythmiaDetected &&
+              arrhythmiaDetectedRef.current &&
+              count >= 2
+            ) {
               const now = Date.now();
               const sameLabel = lastArrhythmiaToastRef.current.label === rhythmLabel;
-              const cooled = now - lastArrhythmiaToastRef.current.t >= cooldownMs;
-              const enoughEvents = count >= minEvents;
-              if (enoughEvents && (!sameLabel || cooled)) {
+              const cooled = now - lastArrhythmiaToastRef.current.t >= 12000;
+              if (!sameLabel || cooled || lastArrhythmiaToastRef.current.t === 0) {
                 lastArrhythmiaToastRef.current = { t: now, label: rhythmLabel };
                 arrhythmiaToastPendingRef.current = false;
                 if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
@@ -656,34 +693,7 @@ const Index = () => {
                   variant: "destructive",
                   duration: 4000
                 });
-              } else if (!enoughEvents) {
-                arrhythmiaToastPendingRef.current = true;
               }
-            } else {
-              lastArrhythmiaToastRef.current = { t: 0, label: '' };
-              arrhythmiaToastPendingRef.current = false;
-            }
-          }
-
-          if (
-            arrhythmiaToastPendingRef.current &&
-            isArrhythmiaDetected &&
-            arrhythmiaDetectedRef.current &&
-            count >= 2
-          ) {
-            const now = Date.now();
-            const sameLabel = lastArrhythmiaToastRef.current.label === rhythmLabel;
-            const cooled = now - lastArrhythmiaToastRef.current.t >= 12000;
-            if (!sameLabel || cooled || lastArrhythmiaToastRef.current.t === 0) {
-              lastArrhythmiaToastRef.current = { t: now, label: rhythmLabel };
-              arrhythmiaToastPendingRef.current = false;
-              if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
-              toast({
-                title: `⚠️ ${rhythmLabel.split('_').join(' ')}`,
-                description: count > 0 ? `Eventos detectados: ${count}` : 'Ritmo irregular detectado',
-                variant: "destructive",
-                duration: 4000
-              });
             }
           }
         }

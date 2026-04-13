@@ -527,7 +527,7 @@ const PPGSignalMeter = ({
     const spo2Border = spo2 >= 95 ? 'rgba(45, 212, 191, 0.65)' : spo2 >= 90 ? 'rgba(251, 191, 36, 0.65)' : 'rgba(248, 113, 113, 0.65)';
     fillMetricPanel(ctx, W - panelW - 3, panelY, panelW, panelH, spo2Border);
     ctx.fillStyle = spo2 >= 95 ? 'rgba(45, 212, 191, 0.85)' : spo2 >= 90 ? 'rgba(251, 191, 36, 0.85)' : spo2 > 0 ? 'rgba(248, 113, 113, 0.85)' : 'rgba(34, 211, 238, 0.35)';
-    ctx.fillRect(W - panelW + 3, panelY + 2, panelW - 12, 3);
+    ctx.fillRect(W - panelW, panelY + 2, panelW - 12, 3);
 
     ctx.font = fontSize.label;
     ctx.fillStyle = 'rgba(148, 163, 184, 0.95)';

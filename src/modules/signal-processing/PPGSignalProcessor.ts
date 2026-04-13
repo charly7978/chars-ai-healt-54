@@ -63,17 +63,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
   private stableContactCount = 0;
-  private readonly FINGER_CONFIRM = 14;   // ~470ms @30fps — enganche más rápido con dedo real
-  private readonly FINGER_LOST = 90;      // ~3s antes de soltar contacto
-  private readonly STABLE_THRESHOLD = 48; // contacto estable antes de STABLE_CONTACT
-  private readonly UNSTABLE_GRACE = 160;
+  private readonly FINGER_CONFIRM = 10;
+  private readonly FINGER_LOST = 55;
+  private readonly STABLE_THRESHOLD = 42;
+  private readonly UNSTABLE_GRACE = 90;
+  /** Frames sin detección óptica instantánea antes de degradar bloqueo de posición (evita “estabiliza” sin dedo). */
+  private readonly INSTANT_MISS_RESET_LOCK = 14;
+  private readonly INSTANT_MISS_CLEAR_STABILITY = 6;
 
   /** Histéresis: una sola salida estable para medición (evita parpadeo y criterios duplicados en UI). */
   private measurementReadyLatched = false;
   private measurementReadyHoldFrames = 0;
   private measurementReadyLostFrames = 0;
-  private readonly MEASUREMENT_READY_ON_FRAMES = 12;
-  private readonly MEASUREMENT_READY_OFF_FRAMES = 10;
+  private readonly MEASUREMENT_READY_ON_FRAMES = 10;
+  private readonly MEASUREMENT_READY_OFF_FRAMES = 12;
+  private consecutiveInstantMiss = 0;
+  private consecutiveInstantHit = 0;
 
   // --- Smoothed metrics (EWMA) ---
   private smoothedRed = 0;
@@ -364,21 +369,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     periodicityScore: number,
     motionArtifact: boolean,
     clipHighRatio: number,
-    spatialUniformity: number
+    _spatialUniformity: number
   ): boolean {
     if (motionArtifact) return false;
-    if (this.motionScore > 0.42) return false;
+    if (this.motionScore > 0.45) return false;
     if (this.exportedContactState !== 'STABLE_CONTACT' || this.contactState !== 'STABLE_CONTACT') return false;
     if (!this.fingerDetected) return false;
     if (!this.positionLocked || this.positionDrifting) return false;
     if (this.pressureState === 'HIGH_PRESSURE') return false;
-    if (clipHighRatio > 0.24) return false;
-    if (spatialUniformity < 0.2 && clipHighRatio > 0.12) return false;
-    if (perfusionIndex < 0.042) return false;
-    if (gatedQuality < 19) return false;
-    if (periodicityScore < 0.13) return false;
-    if (this.smoothedCoverage < 0.3) return false;
-    if (this.sourceStability < 0.26) return false;
+    if (this.consecutiveInstantMiss > 4) return false;
+    if (clipHighRatio > 0.26) return false;
+    if (perfusionIndex < 0.036) return false;
+    if (gatedQuality < 17) return false;
+    if (periodicityScore < 0.14) return false;
+    if (this.smoothedCoverage < 0.22) return false;
+    if (this.sourceStability < 0.18) return false;
     return true;
   }
 
@@ -414,6 +419,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const instant = this.detectFingerInstant(roi);
 
     if (instant) {
+      this.consecutiveInstantMiss = 0;
+      this.consecutiveInstantHit = Math.min(this.consecutiveInstantHit + 1, 200);
+    } else {
+      this.consecutiveInstantMiss++;
+      this.consecutiveInstantHit = 0;
+      if (this.consecutiveInstantMiss >= this.INSTANT_MISS_CLEAR_STABILITY) {
+        this.positionStabilityCount = Math.max(0, Math.floor(this.positionStabilityCount * 0.4));
+      }
+      if (this.consecutiveInstantMiss >= this.INSTANT_MISS_RESET_LOCK) {
+        this.positionLocked = false;
+        this.positionStabilityCount = 0;
+        this.positionDrifting = false;
+      }
+    }
+
+    if (instant) {
       this.fingerLostCount = 0;
       this.fingerConfidenceCount = Math.min(this.fingerConfidenceCount + 1, 200);
       this.stableContactCount++;
@@ -421,32 +442,37 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       if (this.fingerConfidenceCount >= this.FINGER_CONFIRM) {
         this.fingerDetected = true;
 
-        // Check for pressure-based state overrides
         if (pressure.state === 'HIGH_PRESSURE' && roi.clipHighRatio > 0.15) {
           this.contactState = 'EXCESSIVE_PRESSURE';
-        } else if (roi.clipHighRatio > 0.3) {
+        } else if (roi.clipHighRatio > 0.32) {
           this.contactState = 'SATURATED_CONTACT';
         } else {
           const perfusion = this.calculatePerfusionIndex();
-          const minPiForStable = 0.018;
-          this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > minPiForStable && pressure.state !== 'HIGH_PRESSURE')
-            ? 'STABLE_CONTACT'
-            : 'UNSTABLE_CONTACT';
+          const minPiForStable = 0.032;
+          this.contactState =
+            this.stableContactCount >= this.STABLE_THRESHOLD &&
+            perfusion > minPiForStable &&
+            pressure.state !== 'HIGH_PRESSURE' &&
+            roi.fingerScore > 0.18
+              ? 'STABLE_CONTACT'
+              : 'UNSTABLE_CONTACT';
         }
       } else {
         this.contactState = 'ACQUIRING_CONTACT';
       }
     } else {
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.2);
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.35);
       this.fingerLostCount++;
-      this.stableContactCount = Math.max(0, this.stableContactCount - 0.15);
+      this.stableContactCount = Math.max(0, this.stableContactCount - 0.35);
 
       if (this.fingerDetected) {
         const softHold =
-          this.smoothedCoverage > 0.22 &&
-          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 12 &&
-          this.smoothedFingerScore > 0.22 &&
-          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.08;
+          this.fingerLostCount < 28 &&
+          this.smoothedCoverage > 0.26 &&
+          roi.fingerScore > 0.16 &&
+          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 10 &&
+          this.smoothedFingerScore > 0.18 &&
+          this.smoothedRed / Math.max(1, this.smoothedGreen) > 1.06;
 
         if (softHold || this.fingerLostCount < this.FINGER_LOST) {
           this.contactState = 'UNSTABLE_CONTACT';
@@ -489,8 +515,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.updatePositionLock(roi);
   }
 
+  /**
+   * Detección óptica de tejido vs fondo: prioriza salida de AdaptiveROIMask (fingerScore, coverage)
+   * y firma hemoglobina R>G; rechaza superficies planas uniformes sin tiles “dedo”.
+   */
   private detectFingerInstant(roi: ROIMaskResult): boolean {
-    // Smooth inputs
     if (this.smoothedRed === 0) {
       this.smoothedRed = roi.rawRed;
       this.smoothedGreen = roi.rawGreen;
@@ -513,24 +542,50 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redDominance = r - (g + b) / 2;
     const rgRatio = r / Math.max(1, g);
     const totalI = r + g + b;
-    const notBlownOut = !(r > 253 && g > 252 && b > 252);
+    const notBlownOut = !(r > 252 && g > 250 && b > 250);
+    if (this.motionScore > 0.92) return false;
+
+    const flatBrightNoTissue =
+      roi.spatialUniformity > 0.8 &&
+      roi.coverageRatio < 0.11 &&
+      roi.fingerScore < 0.18;
+    if (flatBrightNoTissue) return false;
+
+    if (roi.coverageRatio < 0.06 && roi.fingerScore < 0.12) return false;
 
     if (this.fingerDetected) {
-      return r > 55 && rgRatio > 1.11 && redDominance > 12 &&
-        this.smoothedCoverage > 0.18 && this.smoothedFingerScore > 0.18 &&
-        notBlownOut;
+      return (
+        notBlownOut &&
+        roi.clipHighRatio < 0.44 &&
+        rgRatio > 1.05 &&
+        redDominance > 5 &&
+        (roi.coverageRatio > 0.09 || this.smoothedCoverage > 0.1) &&
+        (roi.fingerScore > 0.1 || this.smoothedFingerScore > 0.12)
+      );
     }
-    const tissueLike =
-      roi.spatialUniformity > 0.22 &&
-      roi.centerCoverage > 0.2 &&
-      roi.clipHighRatio < 0.32;
-    return r > 86 && rgRatio > 1.2 && redDominance > 22 &&
-      totalI > 135 && totalI < 720 &&
-      this.smoothedCoverage > 0.36 && this.smoothedFingerScore > 0.34 &&
-      roi.clipHighRatio < 0.3 &&
-      this.motionScore < 0.85 &&
-      tissueLike &&
+
+    const strongMask =
+      roi.fingerScore >= 0.28 &&
+      roi.coverageRatio >= 0.15 &&
+      rgRatio >= 1.1 &&
+      redDominance >= 9 &&
+      totalI >= 85 &&
+      totalI < 800 &&
+      roi.clipHighRatio < 0.34 &&
       notBlownOut;
+
+    const moderateMask =
+      roi.fingerScore >= 0.2 &&
+      roi.coverageRatio >= 0.18 &&
+      rgRatio >= 1.12 &&
+      redDominance >= 11 &&
+      this.smoothedCoverage > 0.16 &&
+      this.smoothedFingerScore > 0.18 &&
+      roi.clipHighRatio < 0.32 &&
+      roi.centerCoverage > 0.08 &&
+      notBlownOut;
+
+    return strongMask || moderateMask;
   }
 
   private updatePositionLock(roi: ROIMaskResult): void {
@@ -562,11 +617,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.lockedCoverage += (roi.coverageRatio - this.lockedCoverage) * adapt;
         this.positionGuidance = 'POSICIÓN CORRECTA — NO MUEVA EL DEDO';
       }
-    } else if (this.fingerDetected) {
+    } else if (this.fingerDetected && this.exportedContactState !== 'NO_CONTACT') {
       this.positionDrifting = false;
-      if (this.positionQualityScore > 0.52 && roi.coverageRatio > 0.38 &&
-        roi.spatialUniformity > 0.38 && roi.centerCoverage > 0.26 &&
-        this.pressureState !== 'HIGH_PRESSURE') {
+      const canStabilize =
+        this.consecutiveInstantMiss < 5 &&
+        (this.contactState === 'STABLE_CONTACT' || this.contactState === 'UNSTABLE_CONTACT');
+      if (
+        canStabilize &&
+        this.positionQualityScore > 0.48 &&
+        roi.coverageRatio > 0.32 &&
+        roi.fingerScore > 0.16 &&
+        roi.centerCoverage > 0.18 &&
+        this.pressureState !== 'HIGH_PRESSURE'
+      ) {
         this.positionStabilityCount++;
         if (this.positionStabilityCount >= this.POS_LOCK_FRAMES) {
           this.positionLocked = true;
@@ -578,15 +641,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POS_LOCK_FRAMES) * 100)}%`;
         }
       } else {
-        this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 3);
-        if (this.pressureState === 'HIGH_PRESSURE') {
+        this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 4);
+        if (this.consecutiveInstantMiss >= 5) {
+          this.positionGuidance = 'MANTENGA EL DEDO FIRME SOBRE LA LENTE';
+        } else if (this.pressureState === 'HIGH_PRESSURE') {
           this.positionGuidance = 'REDUZCA LA PRESIÓN DEL DEDO';
-        } else if (roi.coverageRatio < 0.40) {
-          this.positionGuidance = 'CUBRA TODA LA CÁMARA CON SU DEDO';
-        } else if (roi.spatialUniformity < 0.40) {
-          this.positionGuidance = 'CENTRE EL DEDO SOBRE LA CÁMARA';
+        } else if (roi.coverageRatio < 0.32) {
+          this.positionGuidance = 'CUBRA LA LENTE CON EL DEDO';
+        } else if (roi.fingerScore < 0.18) {
+          this.positionGuidance = 'AJUSTE EL DEDO SOBRE LA CÁMARA';
         } else {
-          this.positionGuidance = 'PRESIONE SUAVEMENTE — FIRME Y SIN MOVER';
+          this.positionGuidance = 'PRESIONE CON FIRMEZA Y SIN MOVER';
         }
       }
     } else {
@@ -757,6 +822,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.measurementReadyLatched = false;
     this.measurementReadyHoldFrames = 0;
     this.measurementReadyLostFrames = 0;
+    this.consecutiveInstantMiss = 0;
+    this.consecutiveInstantHit = 0;
   }
 
   // ══════════════════════════════════════════════════════
