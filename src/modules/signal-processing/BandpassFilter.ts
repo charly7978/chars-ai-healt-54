@@ -1,80 +1,91 @@
 /**
- * BANDPASS FILTER V2 — ADAPTIVE SAMPLE RATE + DETRENDING
+ * BANDPASS FILTER V3 — LINEAR PHASE FIR (WINDOWED-SINC)
  * 
- * IIR Butterworth 2nd order: HPF 0.5Hz + LPF 5Hz
- * - Recalculates coefficients only on significant sample rate change
- * - Includes robust baseline detrending before bandpass
- * - Separates: raw → detrended → bandpassed
+ * Replaces IIR Butterworth with a Finite Impulse Response (FIR) filter using a Hamming window.
+ * 
+ * WHY FIR?
+ * - Zero phase distortion (Linear Phase): IIR filters distort the phase, moving the
+ *   dicrotic notch and systolic peaks out of their true temporal locations. FIR keeps
+ *   the entire wave shape intact, which is mathematically CRITICAL for Stiffness Index,
+ *   Augmentation Index, and Blood Pressure estimation.
+ * - Stability: FIR filters are inherently stable (no feedback loop).
+ * 
+ * Bandpass: ~0.5 Hz (30 BPM) to ~4.5 Hz (270 BPM)
  */
-export class BandpassFilter {
-  private hpfB = [0, 0, 0];
-  private hpfA = [1, 0, 0];
-  private lpfB = [0, 0, 0];
-  private lpfA = [1, 0, 0];
+import { RingBuffer } from './RingBuffer';
 
-  private hpfState = { x: [0, 0, 0], y: [0, 0, 0] };
-  private lpfState = { x: [0, 0, 0], y: [0, 0, 0] };
+export class BandpassFilter {
+  private sampleRate: number;
+  private lastComputedRate = 0;
+  
+  // FIR Filter specifications
+  private readonly ORDER = 40; // N=40 -> 41 taps. Good balance of resolution and low delay at 30-60fps
+  private coefficients: Float64Array;
+  private history: RingBuffer;
 
   // Detrending state (exponential moving average baseline)
   private baselineEWMA = 0;
   private baselineInitialized = false;
   private readonly DETREND_ALPHA = 0.015; // slow-moving baseline
 
-  private sampleRate: number;
-  private lastComputedRate = 0;
-  private initialized = false;
-
   constructor(sampleRate: number = 30) {
     this.sampleRate = sampleRate;
+    this.coefficients = new Float64Array(this.ORDER + 1);
+    this.history = new RingBuffer(this.ORDER + 1);
     this.computeCoefficients();
   }
 
+  /**
+   * Generates Bandpass FIR coefficients using the Windowed-Sinc method (Hamming Window)
+   */
   private computeCoefficients(): void {
     const fs = this.sampleRate;
     this.lastComputedRate = fs;
 
-    // HPF at 0.5Hz — removes DC + slow drift
-    const fcHp = 0.5;
-    const kHp = Math.tan(Math.PI * fcHp / fs);
-    const normHp = 1 / (1 + Math.sqrt(2) * kHp + kHp * kHp);
-    this.hpfB[0] = normHp;
-    this.hpfB[1] = -2 * normHp;
-    this.hpfB[2] = normHp;
-    this.hpfA[0] = 1;
-    this.hpfA[1] = 2 * (kHp * kHp - 1) * normHp;
-    this.hpfA[2] = (1 - Math.sqrt(2) * kHp + kHp * kHp) * normHp;
+    // Frequencies
+    const fLow = 0.5; // High-pass cutoff
+    const fHigh = 4.5; // Low-pass cutoff
 
-    // LPF at 5Hz — removes HF noise, keeps up to 300 BPM
-    const fcLp = 5.0;
-    const kLp = Math.tan(Math.PI * fcLp / fs);
-    const normLp = 1 / (1 + Math.sqrt(2) * kLp + kLp * kLp);
-    this.lpfB[0] = kLp * kLp * normLp;
-    this.lpfB[1] = 2 * kLp * kLp * normLp;
-    this.lpfB[2] = kLp * kLp * normLp;
-    this.lpfA[0] = 1;
-    this.lpfA[1] = 2 * (kLp * kLp - 1) * normLp;
-    this.lpfA[2] = (1 - Math.sqrt(2) * kLp + kLp * kLp) * normLp;
+    // Normalized angular frequencies (0 to PI)
+    const w1 = 2 * Math.PI * (fLow / fs);
+    const w2 = 2 * Math.PI * (fHigh / fs);
 
-    this.initialized = true;
-  }
+    const M = this.ORDER / 2;
+    let sum = 0;
 
-  private applyBiquad(
-    input: number,
-    b: number[], a: number[],
-    state: { x: number[], y: number[] }
-  ): number {
-    state.x[2] = state.x[1];
-    state.x[1] = state.x[0];
-    state.x[0] = input;
-    state.y[2] = state.y[1];
-    state.y[1] = state.y[0];
-    state.y[0] = b[0] * state.x[0] + b[1] * state.x[1] + b[2] * state.x[2]
-      - a[1] * state.y[1] - a[2] * state.y[2];
+    for (let i = 0; i <= this.ORDER; i++) {
+      const n = i - M;
+      let h = 0;
 
-    if (!isFinite(state.y[0]) || Math.abs(state.y[0]) > 1e10) {
-      state.y[0] = 0;
+      // Ideal bandpass impulse response: Lowpass(w2) - Lowpass(w1)
+      if (n === 0) {
+        h = (w2 - w1) / Math.PI;
+      } else {
+        h = (Math.sin(w2 * n) - Math.sin(w1 * n)) / (Math.PI * n);
+      }
+
+      // Hamming window
+      const window = 0.54 - 0.46 * Math.cos((2 * Math.PI * i) / this.ORDER);
+      h = h * window;
+
+      this.coefficients[i] = h;
+      sum += h;
     }
-    return state.y[0];
+
+    // Optional: Normalization to preserve amplitude scale
+    // For a bandpass, we normalize by the gain at the center frequency
+    const wCenter = (w1 + w2) / 2;
+    let gain = 0;
+    for (let i = 0; i <= this.ORDER; i++) {
+      const n = i - M;
+      gain += this.coefficients[i] * Math.cos(wCenter * n);
+    }
+    
+    if (Math.abs(gain) > 0.001) {
+      for (let i = 0; i <= this.ORDER; i++) {
+        this.coefficients[i] /= gain;
+      }
+    }
   }
 
   /** Detrend: remove slow baseline wander */
@@ -88,12 +99,32 @@ export class BandpassFilter {
     return value - this.baselineEWMA;
   }
 
-  /** Full pipeline: detrend → HPF → LPF */
+  /** Full pipeline: detrend → FIR Bandpass */
   filter(value: number): number {
-    if (!this.initialized || !isFinite(value)) return 0;
+    if (!isFinite(value)) return 0;
+    
+    // 1. Remove massive DC wandering
     const detrended = this.detrend(value);
-    const hpf = this.applyBiquad(detrended, this.hpfB, this.hpfA, this.hpfState);
-    return this.applyBiquad(hpf, this.lpfB, this.lpfA, this.lpfState);
+    
+    // 2. Push to history buffer
+    this.history.push(detrended);
+
+    // 3. Wait until buffer is full enough to filter
+    if (this.history.length < this.ORDER + 1) {
+      return 0; // Pre-roll phase
+    }
+
+    // 4. Apply FIR Filter (Convolution)
+    let output = 0;
+    const len = this.ORDER + 1;
+    // history.get(0) is the oldest, history.get(len-1) is the newest.
+    // Convolution: sum(coeff[i] * x[n - i])
+    for (let i = 0; i < len; i++) {
+      // history.get(len - 1 - i) gets the sample delayed by 'i'
+      output += this.coefficients[i] * this.history.get(len - 1 - i);
+    }
+
+    return output;
   }
 
   /** Get detrended value only (no bandpass) */
@@ -102,17 +133,15 @@ export class BandpassFilter {
   }
 
   reset(): void {
-    this.hpfState = { x: [0, 0, 0], y: [0, 0, 0] };
-    this.lpfState = { x: [0, 0, 0], y: [0, 0, 0] };
+    this.history.clear();
     this.baselineEWMA = 0;
     this.baselineInitialized = false;
   }
 
-  /** Only recompute if rate changed significantly (>1.5 fps) */
+  /** Only recompute if rate changed significantly (>2.0 fps) */
   setSampleRate(rate: number): void {
-    if (Math.abs(rate - this.lastComputedRate) < 1.5) return;
+    if (Math.abs(rate - this.lastComputedRate) < 2.0) return;
     this.sampleRate = rate;
     this.computeCoefficients();
-    // Do NOT reset filter state for small rate changes — preserves continuity
   }
 }
