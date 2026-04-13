@@ -68,6 +68,8 @@ const Index = () => {
   const arrhythmiaBeatsRef = useRef(0);
   const lastArrhythmiaCountForBeatsRef = useRef(0);
   const arrhythmiaDetectedRef = useRef(false);
+  const lastArrhythmiaToastRef = useRef<{ t: number; label: string }>({ t: 0, label: '' });
+  const arrhythmiaToastPendingRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const cameraRef = useRef<CameraViewHandle>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -76,7 +78,7 @@ const Index = () => {
   const isProcessingRef = useRef(false);
   const frameTimestampHistoryRef = useRef<number[]>([]);
 
-  const EMA_ALPHA = 0.3;
+  const EMA_ALPHA = 0.22;
   const emaRef = useRef({
     bpm: 0, spo2: 0, systolic: 0, diastolic: 0,
     glucose: 0, cholesterol: 0, triglycerides: 0,
@@ -422,12 +424,14 @@ const Index = () => {
     lastArrhythmiaData.current = null;
     setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
+    arrhythmiaToastPendingRef.current = false;
+    lastArrhythmiaToastRef.current = { t: 0, label: '' };
     console.log('✅ Reset completado');
   }, [cameraStream, stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
 
   const vitalSignsFrameCounter = useRef<number>(0);
   const unstableFrameCounter = useRef<number>(0);
-  const UNSTABLE_ZERO_THRESHOLD = 15;
+  const UNSTABLE_ZERO_THRESHOLD = 22;
   const VITALS_PROCESS_EVERY_N_FRAMES = 3;
   
   useEffect(() => {
@@ -443,10 +447,14 @@ const Index = () => {
       sourceStability?: number;
     };
     const positionQuality = getPositionQuality();
+    const q = lastSignal.quality || 0;
+    const pi = lastSignal.perfusionIndex || 0;
     const stableHumanSignal =
       contactState === 'STABLE_CONTACT' &&
-      (lastSignal.quality || 0) >= 12 &&
-      (lastSignal.perfusionIndex || 0) >= 0.005;
+      q >= 18 &&
+      pi >= 0.008 &&
+      !positionQuality.drifting &&
+      (positionQuality.locked ? q >= 18 : q >= 24);
 
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
@@ -637,6 +645,43 @@ const Index = () => {
             setArrhythmiaState(isArrhythmiaDetected);
 
             if (isArrhythmiaDetected) {
+              const minEvents = 2;
+              const cooldownMs = 12000;
+              const now = Date.now();
+              const sameLabel = lastArrhythmiaToastRef.current.label === rhythmLabel;
+              const cooled = now - lastArrhythmiaToastRef.current.t >= cooldownMs;
+              const enoughEvents = count >= minEvents;
+              if (enoughEvents && (!sameLabel || cooled)) {
+                lastArrhythmiaToastRef.current = { t: now, label: rhythmLabel };
+                arrhythmiaToastPendingRef.current = false;
+                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                toast({
+                  title: `⚠️ ${rhythmLabel.split('_').join(' ')}`,
+                  description: count > 0 ? `Eventos detectados: ${count}` : 'Ritmo irregular detectado',
+                  variant: "destructive",
+                  duration: 4000
+                });
+              } else if (!enoughEvents) {
+                arrhythmiaToastPendingRef.current = true;
+              }
+            } else {
+              lastArrhythmiaToastRef.current = { t: 0, label: '' };
+              arrhythmiaToastPendingRef.current = false;
+            }
+          }
+
+          if (
+            arrhythmiaToastPendingRef.current &&
+            isArrhythmiaDetected &&
+            arrhythmiaDetectedRef.current &&
+            count >= 2
+          ) {
+            const now = Date.now();
+            const sameLabel = lastArrhythmiaToastRef.current.label === rhythmLabel;
+            const cooled = now - lastArrhythmiaToastRef.current.t >= 12000;
+            if (!sameLabel || cooled || lastArrhythmiaToastRef.current.t === 0) {
+              lastArrhythmiaToastRef.current = { t: now, label: rhythmLabel };
+              arrhythmiaToastPendingRef.current = false;
               if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
               toast({
                 title: `⚠️ ${rhythmLabel.split('_').join(' ')}`,
@@ -699,36 +744,6 @@ const Index = () => {
         </button>
       )}
 
-      {isFullscreen && (
-        <div className="fixed top-2 left-2 z-40 flex flex-wrap items-center gap-2 rounded-lg bg-black/60 px-2 py-1.5 border border-white/15 text-white text-[11px] max-w-[min(96vw,420px)] pointer-events-auto">
-          <span className="text-slate-300 whitespace-nowrap">Altura (TA)</span>
-          <input
-            type="number"
-            step={0.01}
-            min={1.2}
-            max={2.15}
-            value={heightInput}
-            onChange={(e) => setHeightInput(e.target.value)}
-            className="w-16 bg-slate-900/90 border border-slate-600 rounded px-1 py-0.5 text-white text-xs"
-            aria-label="Altura en metros"
-          />
-          <span className="text-slate-500">m</span>
-          <button
-            type="button"
-            onClick={() => {
-              const v = parseFloat(heightInput.replace(",", "."));
-              if (!isFinite(v)) return;
-              setUserHeightM(clampUserHeightM(v));
-              setHeightInput(clampUserHeightM(v).toFixed(2));
-              toast({ title: "Altura guardada", description: "Modelo de presión arterial (PWV proxy)." });
-            }}
-            className="px-2 py-0.5 rounded bg-emerald-600/90 hover:bg-emerald-500 text-[10px] font-semibold"
-          >
-            Guardar
-          </button>
-        </div>
-      )}
-
       <div className="flex-1 relative">
         <div className="absolute inset-0">
           <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isCameraOn} />
@@ -764,6 +779,19 @@ const Index = () => {
               isFingerDetected={lastSignal?.fingerDetected || false}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
+              {...(isFullscreen
+                ? {
+                    userHeightInput: heightInput,
+                    onUserHeightInputChange: setHeightInput,
+                    onUserHeightSave: () => {
+                      const v = parseFloat(heightInput.replace(",", "."));
+                      if (!isFinite(v)) return;
+                      setUserHeightM(clampUserHeightM(v));
+                      setHeightInput(clampUserHeightM(v).toFixed(2));
+                      toast({ title: "Altura guardada", description: "Modelo de presión arterial (PWV proxy)." });
+                    },
+                  }
+                : {})}
               isMonitoring={isMonitoring}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}

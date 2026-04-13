@@ -11,6 +11,10 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
+  /** Altura (m) para modelo TA — visible encima del lienzo */
+  userHeightInput?: string;
+  onUserHeightInputChange?: (v: string) => void;
+  onUserHeightSave?: () => void;
   isMonitoring?: boolean;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
@@ -179,6 +183,9 @@ const PPGSignalMeter = ({
   isFingerDetected,
   onStartMeasurement,
   onReset,
+  userHeightInput,
+  onUserHeightInputChange,
+  onUserHeightSave,
   isMonitoring = false,
   arrhythmiaStatus,
   rawArrhythmiaData,
@@ -1041,9 +1048,34 @@ const PPGSignalMeter = ({
     <div className="fixed inset-0 bg-slate-950">
       <canvas
         ref={canvasRef}
-        className="w-full h-full absolute inset-0 block touch-none"
+        className="w-full h-full absolute inset-0 z-0 block touch-none"
         style={{ imageRendering: 'auto' }}
       />
+      {userHeightInput !== undefined && onUserHeightInputChange && onUserHeightSave && (
+        <div
+          className="absolute top-2 left-2 z-[100] flex flex-wrap items-center gap-1.5 rounded-xl bg-slate-950/92 px-2.5 py-2 border border-emerald-500/35 shadow-xl max-w-[min(92vw,340px)] pointer-events-auto"
+          role="region"
+          aria-label="Altura para estimación de presión arterial"
+        >
+          <span className="text-slate-300 text-[10px] font-mono whitespace-nowrap">Altura (TA) (m)</span>
+          <input
+            type="number"
+            step={0.01}
+            min={1.2}
+            max={2.15}
+            value={userHeightInput}
+            onChange={(e) => onUserHeightInputChange(e.target.value)}
+            className="w-[4.5rem] bg-slate-900 border border-slate-600 rounded-md px-1.5 py-1 text-white text-xs font-mono"
+          />
+          <button
+            type="button"
+            onClick={onUserHeightSave}
+            className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold font-mono"
+          >
+            Guardar
+          </button>
+        </div>
+      )}
       <div className="absolute top-0 left-0 p-2 z-10 flex items-center gap-2 pointer-events-none" style={{ top: '8px', left: '200px' }}>
         <div className={`p-2 rounded-full transition-all duration-100 ${showPulse ? 'bg-red-500/30 scale-110' : 'bg-emerald-500/20'}`}>
           <Heart className={`w-5 h-5 transition-all duration-100 ${showPulse ? 'text-red-400 scale-110' : 'text-emerald-400'}`} fill={showPulse ? 'currentColor' : 'none'} />

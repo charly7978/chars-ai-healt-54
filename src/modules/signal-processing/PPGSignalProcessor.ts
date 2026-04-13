@@ -63,9 +63,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
   private stableContactCount = 0;
-  private readonly FINGER_CONFIRM = 10;   // ~333ms strict
+  private readonly FINGER_CONFIRM = 16;   // ~530ms @30fps — menos falsos contactos
   private readonly FINGER_LOST = 120;     // ~4s tolerance
-  private readonly STABLE_THRESHOLD = 40; // ~1.3s for STABLE
+  private readonly STABLE_THRESHOLD = 52; // ~1.7s para STABLE
   private readonly UNSTABLE_GRACE = 160;
 
   // --- Smoothed metrics (EWMA) ---
@@ -74,8 +74,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private smoothedBlue = 0;
   private smoothedCoverage = 0;
   private smoothedFingerScore = 0;
-  private readonly RGB_ALPHA = 0.04;
-  private readonly COV_ALPHA = 0.05;
+  private readonly RGB_ALPHA = 0.03;
+  private readonly COV_ALPHA = 0.04;
 
   // --- Position lock ---
   private positionLocked = false;
@@ -363,9 +363,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.contactState = 'ACQUIRING_CONTACT';
       }
     } else {
-      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.3);
+      this.fingerConfidenceCount = Math.max(0, this.fingerConfidenceCount - 0.2);
       this.fingerLostCount++;
-      this.stableContactCount = Math.max(0, this.stableContactCount - 0.2);
+      this.stableContactCount = Math.max(0, this.stableContactCount - 0.15);
 
       if (this.fingerDetected) {
         const softHold =
