@@ -17,6 +17,9 @@ export { BPCalibrationManager } from './BPCalibrationManager';
 export { SpO2Calibrator } from './SpO2Calibrator';
 export { ratioOfRatios } from './OpticalRatioEngine';
 
+// Hook élite unificado
+export { useEliteMeasurement, type EliteMeasurementState, type EliteMeasurementActions } from '../../hooks/useEliteMeasurement';
+
 // Types adicionales del detector avanzado
 export type { 
   ArrhythmiaType, 
