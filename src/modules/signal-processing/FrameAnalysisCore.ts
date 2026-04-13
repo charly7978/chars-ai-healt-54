@@ -326,7 +326,20 @@ export class FrameAnalysisEngine {
       baselineDrift,
     });
 
-    const tissueInstant = Math.max(0, Math.min(1, assembled.globalScore));
+    let specNum = 0;
+    let specDen = 0;
+    for (let i = 0; i < this.tileMap.tileCount; i++) {
+      const t = this.tileSnapshots[i]!;
+      if (t.meanR < 10) continue;
+      const ww = Math.max(1e-4, t.weight);
+      specNum += t.spectralTissueScore * ww;
+      specDen += ww;
+    }
+    const spectralMean = specDen > 1e-6 ? specNum / specDen : 0;
+    const tissueInstant = Math.max(
+      0,
+      Math.min(1, assembled.globalScore * (0.2 + 0.8 * spectralMean))
+    );
     const pulsatilityQuality = Math.max(0, Math.min(1, perfusionIndex / 8));
     const dcDriftPenalty = Math.max(0, Math.min(1, baselineDrift * 4));
 

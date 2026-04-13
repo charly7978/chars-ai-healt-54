@@ -390,18 +390,29 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     spatialUniformity: number
   ): boolean {
     if (motionArtifact) return false;
-    if (this.motionScore > 0.42) return false;
+    if (this.motionScore > 0.38) return false;
     if (this.exportedContactState !== 'STABLE_CONTACT') return false;
     if (!this.fingerDetected) return false;
     if (!this.positionLocked || this.positionDrifting) return false;
     if (this.lastAnalysis?.pressureState === 'HIGH_PRESSURE') return false;
-    if (clipHighRatio > 0.24) return false;
-    if (perfusionIndexNorm < 0.028) return false;
-    if (gatedQuality < 16) return false;
-    if (periodicityScore < 0.12) return false;
-    if ((this.lastAnalysis?.coverageRatio ?? 0) < 0.18) return false;
-    if (this.sourceStability < 0.16) return false;
-    if (spatialUniformity < 0.26) return false;
+    if (clipHighRatio > 0.18) return false;
+    if (perfusionIndexNorm < 0.042) return false;
+    if (gatedQuality < 26) return false;
+    if (periodicityScore < 0.17) return false;
+    if ((this.lastAnalysis?.coverageRatio ?? 0) < 0.24) return false;
+    if (this.sourceStability < 0.26) return false;
+    if (spatialUniformity < 0.32) return false;
+
+    const a = this.lastAnalysis;
+    if (a) {
+      const rr = a.rawRed;
+      const gg = a.rawGreen;
+      if (rr < 64 || gg < 10 || rr / Math.max(gg, 1) < 1.1) return false;
+      if (a.fingerScore < 0.2) return false;
+      const sq = Object.values(a.allSQI);
+      if (sq.length === 0 || Math.max(...sq) < 22) return false;
+      if (a.readinessReason !== 'ok') return false;
+    }
     return true;
   }
 

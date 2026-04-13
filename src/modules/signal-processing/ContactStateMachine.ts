@@ -76,13 +76,13 @@ export class ContactStateMachine {
     const clipPen = Math.min(1, (i.clipHigh * 2.2 + i.clipLow * 1.4));
     const base =
       i.coverage * 0.22 +
-      Math.max(0, Math.min(1, (i.redDominance - 0.02) / 0.35)) * 0.14 +
-      Math.max(0, Math.min(1, (i.rgRatio - 1) / 0.35)) * 0.12 +
+      Math.max(0, Math.min(1, (i.redDominance - 0.04) / 0.32)) * 0.16 +
+      Math.max(0, Math.min(1, (i.rgRatio - 1.04) / 0.32)) * 0.14 +
       i.spatialStability * 0.12 +
       i.temporalStability * 0.12 +
       i.pulsatilityQuality * 0.18 +
-      i.tissueInstant * 0.1 -
-      clipPen * 0.35 -
+      i.tissueInstant * 0.12 -
+      clipPen * 0.38 -
       i.dcDriftPenalty * 0.12;
 
     const pressure = i.pressureProxy;
@@ -97,11 +97,14 @@ export class ContactStateMachine {
     if (i.clipHigh > 0.38 || (i.clipHigh > 0.28 && i.redDominance < 0.08)) return 'SATURATED';
     if (i.pressureProxy > 0.78 && i.clipHigh > 0.12) return 'EXCESS_PRESSURE';
     if (i.pulsatilityQuality < 0.06 && i.coverage > 0.14 && i.tissueInstant > 0.35) return 'LOW_PERFUSION';
-    if (i.tissueInstant < 0.18 && i.coverage < 0.1) return 'NO_FINGER';
-    if (agg < 0.28) return 'NO_FINGER';
-    if (agg < 0.42) return 'ACQUIRING';
-    if (i.temporalStability < 0.38 || i.spatialStability < 0.32) return 'CONTACT_UNSTABLE';
-    if (agg >= 0.58 && i.pulsatilityQuality >= 0.1) return 'CONTACT_STABLE';
+    /** Aire / ambiente: poca firma R>G y baja coherencia tejido */
+    if (i.rgRatio < 1.05 && i.redDominance < 0.11) return 'NO_FINGER';
+    if (i.redDominance < 0.035 && i.coverage < 0.16) return 'NO_FINGER';
+    if (i.tissueInstant < 0.2 && i.coverage < 0.13) return 'NO_FINGER';
+    if (agg < 0.33) return 'NO_FINGER';
+    if (agg < 0.46) return 'ACQUIRING';
+    if (i.temporalStability < 0.4 || i.spatialStability < 0.34) return 'CONTACT_UNSTABLE';
+    if (agg >= 0.62 && i.pulsatilityQuality >= 0.12 && i.tissueInstant >= 0.26) return 'CONTACT_STABLE';
     return 'CONTACT_UNSTABLE';
   }
 

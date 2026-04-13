@@ -574,7 +574,7 @@ export class HeartBeatProcessor {
       }
     }
 
-    if (bestLag === 0 || bestScore < 0.2) return 0;
+    if (bestLag === 0 || bestScore < 0.3) return 0;
     return (60 * sr) / bestLag;
   }
 
