@@ -1181,8 +1181,8 @@ const IndexElite: React.FC = () => {
         style={{ display: 'none' }}
       />
       
-      {/* Cámara (oculta, solo stream) */}
-      <div style={{ position: 'absolute', opacity: 0, pointerEvents: 'none' }}>
+      {/* Cámara - visible como en Index.tsx original */}
+      <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
         <CameraView
           ref={cameraRef}
           isMonitoring={isMonitoring}
@@ -1210,7 +1210,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: '"JetBrains Mono", "Fira Code", monospace',
     display: 'flex',
     flexDirection: 'column',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    position: 'relative'
   },
   header: {
     display: 'flex',
