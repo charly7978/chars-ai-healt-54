@@ -195,16 +195,16 @@ export class ElitePPGProcessor {
     let beatResult: HeartBeatResult | null = null;
     
     if (ppgSignal) {
+      const beatContact = ppgSignal.measurementReady ? "STABLE_CONTACT" : "NO_CONTACT";
       beatResult = this.beatProcessor.processSignal(
         ppgSignal.filteredValue ?? ppgSignal.rawValue ?? 0,
         timestamp,
         {
-          quality: fingerResult.contactQuality,
-          contactState: this.determineContactState(fingerResult),
-          motionArtifact: fingerResult.driftVelocity > 5,
-          pressureState: fingerResult.pressureEstimate < 0.35 ? 'LOW_PRESSURE' : 
-                         fingerResult.pressureEstimate > 0.65 ? 'HIGH_PRESSURE' : 'OPTIMAL_PRESSURE',
-          perfusionIndex: fingerResult.perfusionIndex / 100
+          quality: ppgSignal.quality,
+          contactState: beatContact,
+          motionArtifact: ppgSignal.motionArtifact ?? false,
+          pressureState: ppgSignal.pressureState ?? "LOW_PRESSURE",
+          perfusionIndex: ppgSignal.perfusionIndex
         }
       );
       
@@ -390,14 +390,6 @@ export class ElitePPGProcessor {
   
   isActive(): boolean {
     return this.isRunning;
-  }
-  
-  private determineContactState(finger: FingerTrackingResult): string {
-    if (finger.contactQuality < 40) return 'NO_CONTACT';
-    if (finger.pressureEstimate < 0.35) return 'LOOSE_CONTACT';
-    if (finger.pressureEstimate > 0.65) return 'EXCESSIVE_PRESSURE';
-    if (finger.driftVelocity > 8) return 'UNSTABLE_CONTACT';
-    return 'STABLE_CONTACT';
   }
   
   private estimateSampleRate(): number {
