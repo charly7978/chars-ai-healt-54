@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import { cn } from '@/lib/utils';
 import { parseArrhythmiaStatus, getArrhythmiaText, getArrhythmiaColor } from '@/utils/arrhythmiaUtils';
 
@@ -15,7 +15,7 @@ interface VitalSignProps {
   featureQuality?: number;
 }
 
-const VitalSign = ({ 
+const VitalSign = memo(function VitalSign({ 
   label, 
   value, 
   unit, 
@@ -26,7 +26,7 @@ const VitalSign = ({
   average,
   confidenceLevel,
   featureQuality
-}: VitalSignProps) => {
+}: VitalSignProps) {
   const [showDetails, setShowDetails] = useState(false);
 
   const getRiskLabel = (label: string, value: string | number) => {
@@ -214,6 +214,6 @@ const VitalSign = ({
       )}
     </div>
   );
-};
+});
 
 export default VitalSign;

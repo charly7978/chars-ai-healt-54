@@ -142,31 +142,30 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         // PHASE 1
         const cameraId = await findMainBackCamera();
 
-        // PHASE 2: Open stream with stable base
-        // MAXIMUM POSSIBLE QUALITY FOR PPG: 60fps at 720p/1080p if available, fallback to 30fps.
+        // PHASE 2: Open stream — 30 fps ideal alinea con el monitor PPG (~30 FPS) y reduce CPU sin perder utilidad clínica.
         const baseConstraints: MediaTrackConstraints = cameraId
           ? {
               deviceId: { exact: cameraId },
               width: { ideal: 1280, max: 1920 },
               height: { ideal: 720, max: 1080 },
-              frameRate: { ideal: 60, min: 30, max: 120 }
+              frameRate: { ideal: 30, min: 24, max: 60 }
             }
           : {
               facingMode: { ideal: 'environment' },
               width: { ideal: 1280, max: 1920 },
               height: { ideal: 720, max: 1080 },
-              frameRate: { ideal: 60, min: 30, max: 120 }
+              frameRate: { ideal: 30, min: 24, max: 60 }
             };
 
         let stream: MediaStream;
         try {
           stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: baseConstraints });
         } catch {
-          console.warn('Fallback to 60fps/480p constraints');
+          console.warn('Fallback to 30fps/480p constraints');
           try {
             stream = await navigator.mediaDevices.getUserMedia({
               audio: false,
-              video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 } }
+              video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 60 } }
             });
           } catch {
              console.warn('Fallback to simple constraints');

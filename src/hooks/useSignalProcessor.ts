@@ -7,12 +7,18 @@ import { ProcessedSignal, ProcessingError } from '../types/signal';
  * HOOK ÚNICO Y DEFINITIVO - ELIMINADAS TODAS LAS DUPLICIDADES
  * Sistema completamente unificado con prevención absoluta de múltiples instancias
  */
+/** Intervalo mínimo entre actualizaciones de estado React (~30 Hz): la ref lleva siempre el último frame. */
+const UI_SIGNAL_INTERVAL_MS = 33;
+
 export const useSignalProcessor = () => {
   const processorRef = useRef<PPGSignalProcessor | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSignal, setLastSignal] = useState<ProcessedSignal | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
+  /** Última señal procesada (cada frame); para lógica sin re-render por fotograma. */
+  const lastSignalRef = useRef<ProcessedSignal | null>(null);
+  const lastUiEmitAtRef = useRef(0);
   
   // CONTROL ÚNICO DE INSTANCIA - PREVENIR DUPLICIDADES ABSOLUTAMENTE
   const instanceLock = useRef<boolean>(false);
@@ -37,10 +43,14 @@ export const useSignalProcessor = () => {
     const onSignalReady = (signal: ProcessedSignal) => {
       if (initializationState.current !== 'READY') return;
       
-      setLastSignal(signal);
+      lastSignalRef.current = signal;
       setError(null);
-      // CRÍTICO: Limitar contador para evitar números infinitos que afectan rendimiento
       setFramesProcessed(prev => (prev + 1) % 10000);
+      const t = performance.now();
+      if (t - lastUiEmitAtRef.current >= UI_SIGNAL_INTERVAL_MS) {
+        lastUiEmitAtRef.current = t;
+        setLastSignal(signal);
+      }
     };
 
     const onError = (error: ProcessingError) => {
@@ -93,9 +103,13 @@ export const useSignalProcessor = () => {
     // Primero detener el procesador, luego actualizar estado
     processorRef.current.stop();
     setIsProcessing(false);
+    lastSignalRef.current = null;
+    lastUiEmitAtRef.current = 0;
     setLastSignal(null);
     setFramesProcessed(0);
   }, []);
+
+  const getLastSignal = useCallback((): ProcessedSignal | null => lastSignalRef.current, []);
 
   // CALIBRACIÓN ÚNICA
   const calibrate = useCallback(async () => {
@@ -154,6 +168,7 @@ export const useSignalProcessor = () => {
   return {
     isProcessing,
     lastSignal,
+    getLastSignal,
     error,
     framesProcessed,
     startProcessing,

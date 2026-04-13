@@ -554,6 +554,12 @@ const PPGSignalMeter = ({
     
     const render = () => {
       if (!isRunningRef.current) return;
+      const now = Date.now();
+      if (now - lastRenderTime < frameTime) {
+        animationRef.current = requestAnimationFrame(render);
+        return;
+      }
+      lastRenderTime = now;
       const canvas = canvasRef.current;
       const buffer = dataBufferRef.current;
       if (!canvas || !buffer) {
@@ -583,12 +589,6 @@ const PPGSignalMeter = ({
         drawGrid(ctx);
         drawTimeScale(ctx);
       }
-      const now = Date.now();
-      if (now - lastRenderTime < frameTime) {
-        animationRef.current = requestAnimationFrame(render);
-        return;
-      }
-      lastRenderTime = now;
       
       const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, peakEvent: pe } = propsRef.current;
       const rhythm = parseRhythmStatus(arrStatus);

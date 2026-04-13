@@ -22,6 +22,9 @@ Documento de apoyo para alinear implementación con literatura y tendencias reci
 | Pesos multi-escala según SNR previo | `AdvancedFingerTracker.ts` |
 | PA morfológica / PTT-proxy + altura usuario | `BloodPressureProcessorElite.ts`, perfil en `DeviceProfileManager` |
 | Pipeline UI principal | `VitalSignsProcessor.ts` (SpO2/PA élite + calibrador dispositivo), `Index.tsx` |
+| Monitor pantalla completa + altura (TA) | `PPGSignalMeter.tsx` (barra superior izquierda, `z-index` sobre el canvas; `Guardar` → `setUserHeightM` + toast; valor inicial desde perfil o 1,70 m) |
 | Pipeline élite autocontenido | `ElitePPGProcessor.ts`, `EliteMeasurementPanel.tsx` |
+
+**Estabilidad de contacto / lectura:** `PPGSignalProcessor.ts` usa confirmación de dedo más larga, umbral de contacto estable mayor, EWMA RGB/cobertura algo más suaves y menos castigo por fotogramas dudosos; en `Index.tsx` la señal “humana estable” para BPM exige más calidad, más perfusión, sin deriva de posición y calidad extra si el candado óptico no está activo; alertas por arritmia en toast requieren al menos 2 eventos y cooldown.
 
 Actualizar este archivo cuando aparezcan revisiones sistemáticas o validaciones clínicas nuevas relevantes para PPG por smartphone.

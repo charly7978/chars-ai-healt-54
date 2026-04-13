@@ -122,6 +122,7 @@ const Index = () => {
     startProcessing, 
     stopProcessing, 
     lastSignal, 
+    getLastSignal,
     processFrame, 
     isProcessing, 
     framesProcessed,
@@ -157,6 +158,9 @@ const Index = () => {
   const [heightInput, setHeightInput] = useState(() =>
     (getUserHeightMFromStorage() ?? DEFAULT_USER_HEIGHT_M).toFixed(2)
   );
+
+  const vitalSignsRef = useRef(vitalSigns);
+  vitalSignsRef.current = vitalSigns;
 
   useEffect(() => {
     if (!canvasRef.current) {
@@ -277,7 +281,6 @@ const Index = () => {
       }
     };
     
-    console.log('🎬 Capture started (rVFC with real timestamps)');
     captureOneFrame(performance.now());
   }, [processFrame]);
 
@@ -433,10 +436,15 @@ const Index = () => {
   const unstableFrameCounter = useRef<number>(0);
   const UNSTABLE_ZERO_THRESHOLD = 22;
   const VITALS_PROCESS_EVERY_N_FRAMES = 3;
-  
-  useEffect(() => {
-    if (!lastSignal || !isMonitoring) return;
-    
+  const lastProcessedSignalTsRef = useRef<number | null>(null);
+  const signalProcessingTickRef = useRef<() => void>(() => {});
+
+  signalProcessingTickRef.current = () => {
+    const lastSignal = getLastSignal();
+    if (!lastSignal) return;
+    if (lastSignal.timestamp === lastProcessedSignalTsRef.current) return;
+    lastProcessedSignalTsRef.current = lastSignal.timestamp;
+
     const signalValue = lastSignal.filteredValue;
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
     const ls = lastSignal as typeof lastSignal & {
@@ -537,7 +545,7 @@ const Index = () => {
             : null,
       }));
       totalBeatsRef.current++;
-      const currentArrCount = vitalSigns.arrhythmiaCount || 0;
+      const currentArrCount = vitalSignsRef.current.arrhythmiaCount || 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
         arrhythmiaBeatsRef.current++;
         lastArrhythmiaCountForBeatsRef.current = currentArrCount;
@@ -694,7 +702,21 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, setUpstreamContext, setHeartRuntime, ingestBeatOpticalRatio, getRGBStats, getPositionQuality, estimateSampleRateFromFrames, computeRRStability, applyEMA, vitalSigns.arrhythmiaCount]);
+  };
+
+  useEffect(() => {
+    if (!isMonitoring) {
+      lastProcessedSignalTsRef.current = null;
+      return;
+    }
+    let rafId = 0;
+    const loop = () => {
+      signalProcessingTickRef.current();
+      rafId = requestAnimationFrame(loop);
+    };
+    rafId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafId);
+  }, [isMonitoring]);
 
   useEffect(() => {
     if (isMonitoring && elapsedTime >= 60) {
