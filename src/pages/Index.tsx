@@ -33,10 +33,16 @@ const Index = () => {
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
-  const [peakEvent, setPeakEvent] = useState<{ seq: number; flags: BeatFlags | null; wallTime: number }>({
+  const [peakEvent, setPeakEvent] = useState<{
+    seq: number;
+    flags: BeatFlags | null;
+    wallTime: number;
+    morphologyScore: number | null;
+  }>({
     seq: 0,
     flags: null,
     wallTime: 0,
+    morphologyScore: null,
   });
   const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -388,7 +394,7 @@ const Index = () => {
     lastArrhythmiaCountForBeatsRef.current = 0;
     unstableFrameCounter.current = 0;
     setHeartbeatSignal(0);
-    setPeakEvent({ seq: 0, flags: null, wallTime: 0 });
+    setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
     setRRIntervals([]);
     setVitalSigns({ 
       spo2: 0,
@@ -470,7 +476,7 @@ const Index = () => {
       if (unstableFrameCounter.current >= UNSTABLE_ZERO_THRESHOLD) {
         setHeartRate(0);
         vitalSignsFrameCounter.current = 0;
-        setPeakEvent({ seq: 0, flags: null, wallTime: 0 });
+        setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
         setRRIntervals([]);
         setArrhythmiaCount("--");
         if (arrhythmiaDetectedRef.current) {
@@ -508,6 +514,10 @@ const Index = () => {
         seq: pe.seq + 1,
         flags: heartBeatResult.beatFlags ?? null,
         wallTime: Date.now(),
+        morphologyScore:
+          heartBeatResult.debug?.morphologyScore != null
+            ? heartBeatResult.debug.morphologyScore
+            : null,
       }));
       totalBeatsRef.current++;
       const currentArrCount = vitalSigns.arrhythmiaCount || 0;

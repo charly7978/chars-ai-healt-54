@@ -3,7 +3,7 @@ import { Heart, Activity } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { NON_ALERT_RHYTHM_LABELS } from '../constants/rhythmAlert';
 import type { BeatFlags } from '@/types/beat';
-import { shouldPaintBeatAsArrhythmic } from '@/utils/beatVisualization';
+import { classifyBeatWaveClass, type BeatWaveClass } from '@/utils/beatVisualization';
 
 interface PPGSignalMeterProps {
   value: number;
@@ -21,7 +21,7 @@ interface PPGSignalMeterProps {
   preserveResults?: boolean;
   diagnosticMessage?: string;
   /** Un incremento por latido aceptado (evita múltiples “picos” por el latch del UI). */
-  peakEvent?: { seq: number; flags: BeatFlags | null; wallTime: number };
+  peakEvent?: { seq: number; flags: BeatFlags | null; wallTime: number; morphologyScore?: number | null };
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
@@ -48,7 +48,10 @@ const CONFIG = {
     SIGNAL_GLOW: 'rgba(34, 197, 94, 0.5)',
     SIGNAL_ARRHYTHMIA: '#ef4444',
     ARRHYTHMIA_GLOW: 'rgba(239, 68, 68, 0.5)',
+    SIGNAL_WEAK: '#f59e0b',
+    WEAK_GLOW: 'rgba(245, 158, 11, 0.45)',
     PEAK_NORMAL: '#3b82f6',
+    PEAK_WEAK: '#f59e0b',
     PEAK_ARRHYTHMIA: '#ef4444',
     VALLEY_COLOR: '#64748b',
     TEXT_PRIMARY: '#22c55e',
@@ -57,6 +60,7 @@ const CONFIG = {
     TEXT_DANGER: '#ef4444',
     SCALE_TEXT: '#6b7280',
     SIGNAL_FILL_NORMAL: 'rgba(34, 197, 94, 0.08)',
+    SIGNAL_FILL_WEAK: 'rgba(245, 158, 11, 0.1)',
     SIGNAL_FILL_ARR: 'rgba(239, 68, 68, 0.08)',
     SYSTOLIC_MARKER: '#60a5fa',
     DIASTOLIC_MARKER: '#818cf8',
@@ -79,6 +83,17 @@ const parseRhythmStatus = (statusString?: string) => {
   return { label: normalized, count, display, isAlert, color };
 };
 
+function strokeForWaveClass(wc: BeatWaveClass, COLORS: typeof CONFIG.COLORS) {
+  switch (wc) {
+    case 'arrhythmia':
+      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 18, width: 4 };
+    case 'weak':
+      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 14, width: 3 };
+    default:
+      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 12, width: 2.5 };
+  }
+}
+
 const PPGSignalMeter = ({ 
   value, 
   quality, 
@@ -90,7 +105,7 @@ const PPGSignalMeter = ({
   rawArrhythmiaData,
   preserveResults = false,
   diagnosticMessage,
-  peakEvent = { seq: 0, flags: null, wallTime: 0 },
+  peakEvent = { seq: 0, flags: null, wallTime: 0, morphologyScore: null },
   bpm = 0,
   spo2 = 0,
   rrIntervals = []
@@ -107,7 +122,7 @@ const PPGSignalMeter = ({
   const lastRhythmCountSeenRef = useRef(0);
   const lastProcessedPeakSeqRef = useRef(0);
   const lastPulsePeakSeqRef = useRef(0);
-  const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
+  const beatHistoryRef = useRef<{ waveClass: BeatWaveClass; time: number }[]>([]);
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
@@ -440,24 +455,27 @@ const PPGSignalMeter = ({
       if (peakSeq > 0 && peakSeq !== lastProcessedPeakSeqRef.current) {
         lastProcessedPeakSeqRef.current = peakSeq;
         const { rrIntervals: rr } = propsRef.current;
-        const { arrhythmic, lastRhythmCountSeen } = shouldPaintBeatAsArrhythmic(
+        const { waveClass, lastRhythmCountSeen } = classifyBeatWaveClass(
           pe.flags ?? null,
           { isAlert: rhythm.isAlert, count: rhythm.count },
           rr ?? [],
-          lastRhythmCountSeenRef.current
+          lastRhythmCountSeenRef.current,
+          pe.morphologyScore ?? null
         );
         lastRhythmCountSeenRef.current = lastRhythmCountSeen;
-        if (arrhythmic) {
-          const lastRR = rr && rr.length > 0 ? rr[rr.length - 1]! : 800;
-          const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
-          buffer.markArrhythmiaBack(retroDuration);
+        const lastRR = rr && rr.length > 0 ? rr[rr.length - 1]! : 800;
+        const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
+        if (waveClass === 'arrhythmia') {
+          buffer.markWaveClassBack(retroDuration, 'arrhythmia');
+        } else if (waveClass === 'weak') {
+          buffer.markWaveClassBack(retroDuration, 'weak');
         }
         const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
-        beatHistoryRef.current.push({ isArrhythmia: arrhythmic, time: beatTime });
+        beatHistoryRef.current.push({ waveClass, time: beatTime });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
 
-      buffer.push({ time: now, value: scaledValue, isArrhythmia: false });
+      buffer.push({ time: now, value: scaledValue, waveClass: 'normal' });
       const points = buffer.getPoints();
       if (points.length > 30) {
         const recentPoints = points.slice(-150);
@@ -475,7 +493,7 @@ const PPGSignalMeter = ({
       if (points.length > 2) {
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
-        const pathCoords: { x: number; y: number; isArr: boolean }[] = [];
+        const pathCoords: { x: number; y: number; wc: BeatWaveClass }[] = [];
         for (let i = 0; i < points.length; i++) {
           const pt = points[i];
           const age = now - pt.time;
@@ -484,7 +502,7 @@ const PPGSignalMeter = ({
           const normalizedY = (stats.max - pt.value) / stats.range;
           const y = plot.y + normalizedY * plot.height;
           if (x < plot.x || x > plot.x + plot.width) continue;
-          pathCoords.push({ x, y, isArr: pt.isArrhythmia });
+          pathCoords.push({ x, y, wc: pt.waveClass });
         }
         if (pathCoords.length > 2) {
           ctx.save();
@@ -500,22 +518,42 @@ const PPGSignalMeter = ({
           ctx.fillStyle = fillGrad;
           ctx.fill();
           ctx.restore();
-          const arrSegments: { x: number; y: number }[][] = [];
-          let currentSeg: { x: number; y: number }[] = [];
-          for (const c of pathCoords) {
-            if (c.isArr) currentSeg.push(c);
-            else {
-              if (currentSeg.length > 1) arrSegments.push(currentSeg);
-              currentSeg = [];
+          const collectSeg = (cls: BeatWaveClass) => {
+            const segs: { x: number; y: number }[][] = [];
+            let cur: { x: number; y: number }[] = [];
+            for (const c of pathCoords) {
+              if (c.wc === cls) cur.push({ x: c.x, y: c.y });
+              else {
+                if (cur.length > 1) segs.push(cur);
+                cur = [];
+              }
             }
-          }
-          if (currentSeg.length > 1) arrSegments.push(currentSeg);
-          for (const seg of arrSegments) {
+            if (cur.length > 1) segs.push(cur);
+            return segs;
+          };
+          const weakSegs = collectSeg('weak');
+          const arrSegs = collectSeg('arrhythmia');
+          for (const seg of weakSegs) {
             ctx.save();
             ctx.beginPath();
-            ctx.moveTo(seg[0].x, plot.centerY);
+            ctx.moveTo(seg[0]!.x, plot.centerY);
             for (const c of seg) ctx.lineTo(c.x, c.y);
-            ctx.lineTo(seg[seg.length - 1].x, plot.centerY);
+            ctx.lineTo(seg[seg.length - 1]!.x, plot.centerY);
+            ctx.closePath();
+            const wFill = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
+            wFill.addColorStop(0, 'rgba(245, 158, 11, 0.14)');
+            wFill.addColorStop(0.5, 'rgba(245, 158, 11, 0.05)');
+            wFill.addColorStop(1, 'rgba(245, 158, 11, 0.0)');
+            ctx.fillStyle = wFill;
+            ctx.fill();
+            ctx.restore();
+          }
+          for (const seg of arrSegs) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(seg[0]!.x, plot.centerY);
+            for (const c of seg) ctx.lineTo(c.x, c.y);
+            ctx.lineTo(seg[seg.length - 1]!.x, plot.centerY);
             ctx.closePath();
             const arrFill = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
             arrFill.addColorStop(0, 'rgba(239, 68, 68, 0.15)');
@@ -527,29 +565,23 @@ const PPGSignalMeter = ({
           }
         }
         for (let i = 1; i < pathCoords.length; i++) {
-          const prev = pathCoords[i - 1];
-          const curr = pathCoords[i];
+          const prev = pathCoords[i - 1]!;
+          const curr = pathCoords[i]!;
           ctx.beginPath();
           ctx.moveTo(prev.x, prev.y);
           ctx.lineTo(curr.x, curr.y);
-          if (curr.isArr) {
-            ctx.strokeStyle = COLORS.SIGNAL_ARRHYTHMIA;
-            ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
-            ctx.shadowBlur = 18;
-            ctx.lineWidth = 4;
-          } else {
-            ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
-            ctx.shadowColor = COLORS.SIGNAL_GLOW;
-            ctx.shadowBlur = 12;
-            ctx.lineWidth = 2.5;
-          }
+          const st = strokeForWaveClass(curr.wc, COLORS);
+          ctx.strokeStyle = st.stroke;
+          ctx.shadowColor = st.glow;
+          ctx.shadowBlur = st.blur;
+          ctx.lineWidth = st.width;
           ctx.stroke();
           ctx.shadowBlur = 0;
         }
-        const peaks: { x: number; y: number; isArrhythmia: boolean; time: number }[] = [];
+        const peaks: { x: number; y: number; waveClass: BeatWaveClass; time: number }[] = [];
         const valleys: { x: number; y: number }[] = [];
         const history = beatHistoryRef.current;
-        const visibleBeats: { time: number; x: number; y: number; isArrhythmia: boolean }[] = [];
+        const visibleBeats: { time: number; x: number; y: number; waveClass: BeatWaveClass }[] = [];
         for (const beat of history) {
           const age = now - beat.time;
           if (age > WINDOW_MS || age < 0) continue;
@@ -564,8 +596,8 @@ const PPGSignalMeter = ({
           if (closestPt && minDist < 200) {
             const normalizedY = (stats.max - closestPt.value) / stats.range;
             const y = plot.y + normalizedY * plot.height;
-            peaks.push({ x, y, isArrhythmia: beat.isArrhythmia, time: beat.time });
-            visibleBeats.push({ time: beat.time, x, y, isArrhythmia: beat.isArrhythmia });
+            peaks.push({ x, y, waveClass: beat.waveClass, time: beat.time });
+            visibleBeats.push({ time: beat.time, x, y, waveClass: beat.waveClass });
           }
         }
         for (let b = 0; b < visibleBeats.length - 1; b++) {
@@ -608,9 +640,21 @@ const PPGSignalMeter = ({
           }
         }
         peaks.forEach(p => {
-          const color = p.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.SIGNAL_NORMAL;
+          const peakColor =
+            p.waveClass === 'arrhythmia' ? COLORS.PEAK_ARRHYTHMIA :
+            p.waveClass === 'weak' ? COLORS.PEAK_WEAK :
+            COLORS.SIGNAL_NORMAL;
+          const dashStroke =
+            p.waveClass === 'arrhythmia' ? 'rgba(239, 68, 68, 0.35)' :
+            p.waveClass === 'weak' ? 'rgba(245, 158, 11, 0.35)' :
+            'rgba(34, 197, 94, 0.25)';
+          const label = p.waveClass === 'arrhythmia' ? 'A' : p.waveClass === 'weak' ? 'W' : 'N';
+          const textCol =
+            p.waveClass === 'arrhythmia' ? COLORS.TEXT_DANGER :
+            p.waveClass === 'weak' ? COLORS.TEXT_WARNING :
+            COLORS.SIGNAL_NORMAL;
           ctx.save();
-          ctx.strokeStyle = p.isArrhythmia ? 'rgba(239, 68, 68, 0.35)' : 'rgba(34, 197, 94, 0.25)';
+          ctx.strokeStyle = dashStroke;
           ctx.lineWidth = 1;
           ctx.setLineDash([4, 4]);
           ctx.beginPath();
@@ -619,18 +663,18 @@ const PPGSignalMeter = ({
           ctx.stroke();
           ctx.restore();
           ctx.beginPath();
-          ctx.arc(p.x, p.y, p.isArrhythmia ? 8 : 6, 0, Math.PI * 2);
-          ctx.fillStyle = color;
+          ctx.arc(p.x, p.y, p.waveClass === 'arrhythmia' ? 8 : p.waveClass === 'weak' ? 7 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = peakColor;
           ctx.fill();
           ctx.beginPath();
           ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
           ctx.fillStyle = '#fff';
           ctx.fill();
           ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
-          ctx.fillStyle = p.isArrhythmia ? COLORS.TEXT_DANGER : COLORS.SIGNAL_NORMAL;
+          ctx.fillStyle = textCol;
           ctx.textAlign = 'center';
-          ctx.fillText(p.isArrhythmia ? 'A' : 'N', p.x, p.y - 16);
-          if (p.isArrhythmia) {
+          ctx.fillText(label, p.x, p.y - 16);
+          if (p.waveClass === 'arrhythmia') {
             const alpha = (Math.sin(now / 80) + 1) / 2;
             ctx.beginPath();
             ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
@@ -669,34 +713,41 @@ const PPGSignalMeter = ({
         const startX = histX + (plot.width - totalWidth) / 2;
         ctx.fillStyle = 'rgba(10, 15, 30, 0.85)';
         const panelPad = 8;
-        ctx.fillRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 14);
+        const panelExtra = 24;
+        ctx.fillRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + panelExtra);
         ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
         ctx.lineWidth = 1;
-        ctx.strokeRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + 14);
+        ctx.strokeRect(startX - panelPad, histY - dotRadius - panelPad, totalWidth + panelPad * 2, dotRadius * 2 + panelPad * 2 + panelExtra);
         ctx.font = '8px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_SECONDARY;
         ctx.textAlign = 'center';
         ctx.fillText('HISTORIAL DE LATIDOS', startX + totalWidth / 2, histY - dotRadius - 1);
-        const arrCount = beatHistory.filter(b => b.isArrhythmia).length;
-        const normalCount = beatHistory.length - arrCount;
-        ctx.textAlign = 'right';
-        ctx.fillStyle = COLORS.SIGNAL_NORMAL;
-        ctx.fillText(`N:${normalCount}`, startX + totalWidth + panelPad - 2, histY - dotRadius - 1);
-        ctx.fillStyle = arrCount > 0 ? COLORS.SIGNAL_ARRHYTHMIA : COLORS.TEXT_SECONDARY;
-        ctx.fillText(`A:${arrCount}`, startX - 2, histY - dotRadius - 1);
+        const nCount = beatHistory.filter(b => b.waveClass === 'normal').length;
+        const wCount = beatHistory.filter(b => b.waveClass === 'weak').length;
+        const aCount = beatHistory.filter(b => b.waveClass === 'arrhythmia').length;
+        ctx.font = '7px "SF Mono", Consolas, monospace';
+        ctx.fillText(`N:${nCount} · W:${wCount} · A:${aCount}`, startX + totalWidth / 2, histY - dotRadius + 9);
         ctx.textAlign = 'center';
         beatHistory.forEach((beat, i) => {
           const cx = startX + i * dotSpacing + dotSpacing / 2;
-          const cy = histY + 6;
-          if (beat.isArrhythmia) {
+          const cy = histY + 16;
+          if (beat.waveClass === 'arrhythmia') {
             ctx.beginPath();
             ctx.arc(cx, cy, dotRadius + 3, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
             ctx.fill();
+          } else if (beat.waveClass === 'weak') {
+            ctx.beginPath();
+            ctx.arc(cx, cy, dotRadius + 2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.22)';
+            ctx.fill();
           }
           ctx.beginPath();
           ctx.arc(cx, cy, dotRadius, 0, Math.PI * 2);
-          ctx.fillStyle = beat.isArrhythmia ? COLORS.SIGNAL_ARRHYTHMIA : COLORS.SIGNAL_NORMAL;
+          ctx.fillStyle =
+            beat.waveClass === 'arrhythmia' ? COLORS.SIGNAL_ARRHYTHMIA :
+            beat.waveClass === 'weak' ? COLORS.SIGNAL_WEAK :
+            COLORS.SIGNAL_NORMAL;
           ctx.fill();
           ctx.font = 'bold 7px "SF Mono", Consolas, monospace';
           ctx.fillStyle = '#fff';
@@ -716,32 +767,39 @@ const PPGSignalMeter = ({
       ctx.fill();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.fillText('Normal (N)', lx + 30, legendY);
-      ctx.fillStyle = COLORS.SIGNAL_ARRHYTHMIA;
-      ctx.fillRect(lx + 110, legendY - 6, 15, 3);
+      ctx.fillStyle = COLORS.SIGNAL_WEAK;
+      ctx.fillRect(lx + 108, legendY - 6, 15, 3);
       ctx.beginPath();
-      ctx.arc(lx + 132, legendY - 4, 3, 0, Math.PI * 2);
+      ctx.arc(lx + 130, legendY - 4, 3, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Arritmia (A)', lx + 140, legendY);
+      ctx.fillText('Débil (W)', lx + 138, legendY);
+      ctx.fillStyle = COLORS.SIGNAL_ARRHYTHMIA;
+      ctx.fillRect(lx + 210, legendY - 6, 15, 3);
       ctx.beginPath();
-      ctx.arc(lx + 230, legendY - 4, 4, 0, Math.PI * 2);
+      ctx.arc(lx + 232, legendY - 4, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = COLORS.TEXT_SECONDARY;
+      ctx.fillText('Arritmia (A)', lx + 240, legendY);
+      ctx.beginPath();
+      ctx.arc(lx + 330, legendY - 4, 4, 0, Math.PI * 2);
       ctx.fillStyle = COLORS.PEAK_NORMAL;
       ctx.fill();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Pico', lx + 240, legendY);
+      ctx.fillText('Pico', lx + 340, legendY);
       ctx.beginPath();
-      ctx.moveTo(lx + 275, legendY - 6);
-      ctx.lineTo(lx + 271, legendY);
-      ctx.lineTo(lx + 279, legendY);
+      ctx.moveTo(lx + 365, legendY - 6);
+      ctx.lineTo(lx + 361, legendY);
+      ctx.lineTo(lx + 369, legendY);
       ctx.closePath();
       ctx.fillStyle = COLORS.VALLEY_COLOR;
       ctx.fill();
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('Valle', lx + 285, legendY);
+      ctx.fillText('Valle', lx + 375, legendY);
       ctx.fillStyle = COLORS.IBI_TEXT;
-      ctx.fillRect(lx + 320, legendY - 5, 12, 2);
+      ctx.fillRect(lx + 410, legendY - 5, 12, 2);
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
-      ctx.fillText('IBI', lx + 338, legendY);
+      ctx.fillText('IBI', lx + 428, legendY);
       animationRef.current = requestAnimationFrame(render);
     };
     

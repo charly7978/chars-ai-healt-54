@@ -1,5 +1,11 @@
 import type { BeatFlags } from '@/types/beat';
 
+/** Clase visual del trazo PPG por latido (monitor). */
+export type BeatWaveClass = 'normal' | 'weak' | 'arrhythmia';
+
+/** Por debajo de esto (0–100) la morfología se considera “débil” si no hay arritmia. */
+export const MORPHOLOGY_WEAK_BELOW = 46;
+
 function medianSorted(sorted: number[]): number {
   if (sorted.length === 0) return 0;
   const m = Math.floor(sorted.length / 2);
@@ -48,4 +54,30 @@ export function shouldPaintBeatAsArrhythmic(
     return { arrhythmic: true, lastRhythmCountSeen: nextSeen };
   }
   return { arrhythmic: false, lastRhythmCountSeen: nextSeen };
+}
+
+/**
+ * Prioridad: arritmia (flags/ritmo/RR) → ámbar (isWeak sin prematuro, o morfología baja) → normal.
+ */
+export function classifyBeatWaveClass(
+  flags: BeatFlags | null,
+  rhythm: RhythmPanel,
+  rrIntervals: number[],
+  lastRhythmCountSeen: number,
+  morphologyScore?: number | null
+): { waveClass: BeatWaveClass; lastRhythmCountSeen: number } {
+  const step = shouldPaintBeatAsArrhythmic(flags, rhythm, rrIntervals, lastRhythmCountSeen);
+  if (step.arrhythmic) {
+    return { waveClass: 'arrhythmia', lastRhythmCountSeen: step.lastRhythmCountSeen };
+  }
+  const weakByFlag = !!(flags?.isWeak && !flags?.isPremature);
+  const morph =
+    morphologyScore != null &&
+    Number.isFinite(morphologyScore) &&
+    morphologyScore >= 0 &&
+    morphologyScore < MORPHOLOGY_WEAK_BELOW;
+  if (weakByFlag || morph) {
+    return { waveClass: 'weak', lastRhythmCountSeen: step.lastRhythmCountSeen };
+  }
+  return { waveClass: 'normal', lastRhythmCountSeen: step.lastRhythmCountSeen };
 }
