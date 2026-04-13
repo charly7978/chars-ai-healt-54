@@ -549,6 +549,7 @@ const IndexElite: React.FC = () => {
   // -------------------------------------------------
   
   const startMeasurement = useCallback(async () => {
+    console.log('🟢 START MEASUREMENT called');
     // Reset completo
     resetAllState();
     
@@ -567,21 +568,24 @@ const IndexElite: React.FC = () => {
     isPausedRef.current = false;
     sessionStartTimeRef.current = Date.now();
     
+    console.log('🟢 Setting isMonitoring to true');
     // Estado React - Activar cámara
     setIsMonitoring(true);
     setIsPaused(false);
     setSessionComplete(false);
     
+    console.log('🟢 isMonitoring state updated');
     // NOTA: La captura se inicia cuando onStreamReady se llame
     // No iniciar aquí - esperar a que la cámara esté lista
     
     toast({
-      title: "� Starting Camera...",
+      title: "📷 Starting Camera...",
       description: "Please place your finger on the camera"
     });
   }, []);
   
   const pauseMeasurement = useCallback(() => {
+    console.log('🟢 PAUSE MEASUREMENT called');
     isPausedRef.current = !isPausedRef.current;
     setIsPaused(isPausedRef.current);
     

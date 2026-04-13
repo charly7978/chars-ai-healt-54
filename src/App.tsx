@@ -1,6 +1,6 @@
 import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import IndexElite from "./pages/IndexElite";
+import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 
 class ErrorBoundary extends React.Component<
@@ -50,7 +50,7 @@ const App = () => {
     <ErrorBoundary>
       <Router>
         <Routes>
-          <Route path="/" element={<IndexElite />} />
+          <Route path="/" element={<Index />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Router>
