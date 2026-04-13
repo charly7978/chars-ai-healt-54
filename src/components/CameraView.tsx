@@ -80,33 +80,56 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       isStartingRef.current = false;
     };
 
-    // PHASE 1: Find main back camera with torch
+    /** Permiso + etiquetas: en PC no hay cámara "environment"; hay que probar varias restricciones. */
+    const openTempStreamForPermission = async (): Promise<boolean> => {
+      const attempts: MediaStreamConstraints[] = [
+        { video: { facingMode: 'environment' } },
+        { video: { facingMode: 'user' } },
+        { video: { width: { ideal: 640 }, height: { ideal: 480 } } },
+        { video: true },
+      ];
+      for (const c of attempts) {
+        try {
+          const s = await navigator.mediaDevices.getUserMedia(c);
+          s.getTracks().forEach(t => t.stop());
+          return true;
+        } catch {
+          /* siguiente intento */
+        }
+      }
+      return false;
+    };
+
+    // PHASE 1: Elegir mejor cámara trasera (móvil) o la única disponible (PC)
     const findMainBackCamera = async (): Promise<string | null> => {
+      const ok = await openTempStreamForPermission();
+      if (!ok) {
+        console.warn('📷 Sin permiso de cámara o getUserMedia rechazado');
+        return null;
+      }
+
       try {
-        // Request minimal access first to get labels
-        const tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        tempStream.getTracks().forEach(t => t.stop());
-        
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         console.log('📷 Cameras:', videoDevices.map(d => d.label || d.deviceId));
 
-        // Una sola cámara (p. ej. webcam en PC): evita abrir/cerrar varios streams de prueba → menos parpadeo LED/OS.
+        if (videoDevices.length === 0) return null;
+
+        // Una sola cámara (webcam PC): usar su deviceId
         if (videoDevices.length === 1) {
           const d = videoDevices[0]!;
           diagnosticsRef.current.deviceLabel = d.label || 'Cámara';
           return d.deviceId;
         }
 
-        // Try each back camera to find one with torch
+        // Móvil / varias cámaras: buscar trasera con linterna
         for (const device of videoDevices) {
           const label = device.label.toLowerCase();
           if (label.includes('back') || label.includes('rear') || label.includes('environment') ||
-            label.includes('trasera') || label.includes('camera 0') || label.includes('camera0') ||
-            videoDevices.length === 1) {
+            label.includes('trasera') || label.includes('camera 0') || label.includes('camera0')) {
             try {
               const ts = await navigator.mediaDevices.getUserMedia({
-                video: { deviceId: { exact: device.deviceId } }
+                video: { deviceId: { ideal: device.deviceId } }
               });
               const track = ts.getVideoTracks()[0];
               const caps = track.getCapabilities?.() as any;
@@ -121,11 +144,10 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           }
         }
 
-        // Fallback: any camera with torch
         for (const device of videoDevices) {
           try {
             const ts = await navigator.mediaDevices.getUserMedia({
-              video: { deviceId: { exact: device.deviceId } }
+              video: { deviceId: { ideal: device.deviceId } }
             });
             const track = ts.getVideoTracks()[0];
             const caps = track.getCapabilities?.() as any;
@@ -180,53 +202,62 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         // PHASE 1
         const cameraId = await findMainBackCamera();
 
-        // PHASE 2: Open stream — 30 fps ideal alinea con el monitor PPG (~30 FPS) y reduce CPU sin perder utilidad clínica.
+        // PHASE 2: `ideal` en deviceId evita OverconstrainedError; sin facingMode si no hay cameraId (PC).
         const baseConstraints: MediaTrackConstraints = cameraId
           ? {
-              deviceId: { exact: cameraId },
-              width: { ideal: 1280, max: 1920 },
-              height: { ideal: 720, max: 1080 },
-              frameRate: { ideal: 30, min: 24, max: 60 }
+              deviceId: { ideal: cameraId },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              frameRate: { ideal: 30 }
             }
           : {
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 1280, max: 1920 },
-              height: { ideal: 720, max: 1080 },
-              frameRate: { ideal: 30, min: 24, max: 60 }
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 30 }
             };
 
         let stream: MediaStream;
         try {
           stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: baseConstraints });
         } catch {
-          console.warn('Fallback to 30fps/480p constraints');
+          console.warn('Fallback cámara 480p / 30fps');
           try {
             stream = await navigator.mediaDevices.getUserMedia({
               audio: false,
-              video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 60 } }
+              video: cameraId
+                ? { deviceId: { ideal: cameraId }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
+                : { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }
             });
           } catch {
-             console.warn('Fallback to simple constraints');
-             stream = await navigator.mediaDevices.getUserMedia({
-               audio: false,
-               video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }
-             });
+            console.warn('Fallback video: true');
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: cameraId ? { deviceId: { ideal: cameraId } } : true
+            });
           }
         }
 
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); isStartingRef.current = false; return; }
         streamRef.current = stream;
 
-        // Connect video
+        // Connect video — si metadata ya cargó, onloadedmetadata no dispara: hay que reproducir igual.
         if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await new Promise<void>((resolve) => {
-            const video = videoRef.current!;
-            video.onloadedmetadata = async () => {
-              try { await video.play(); } catch {}
-              resolve();
-            };
-          });
+          const video = videoRef.current;
+          video.srcObject = stream;
+          const playSafe = async () => {
+            try { await video.play(); } catch {}
+          };
+          if (video.readyState >= 1) {
+            await playSafe();
+          } else {
+            await new Promise<void>((resolve) => {
+              const onMeta = () => {
+                video.removeEventListener('loadedmetadata', onMeta);
+                void playSafe().then(() => resolve());
+              };
+              video.addEventListener('loadedmetadata', onMeta);
+            });
+          }
         }
 
         const track = stream.getVideoTracks()[0];

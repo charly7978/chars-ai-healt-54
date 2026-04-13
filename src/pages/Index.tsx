@@ -54,7 +54,6 @@ const Index = () => {
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [measurementSummary, setMeasurementSummary] = useState<{
     totalBeats: number;
     arrhythmiaBeats: number;
@@ -116,13 +115,13 @@ const Index = () => {
     return Math.max(0, Math.min(1, 1 - cv * 2));
   }, []);
 
-  const { 
-    startProcessing, 
-    stopProcessing, 
-    lastSignal, 
+  const {
+    startProcessing,
+    stopProcessing,
+    lastSignal,
     getLastSignal,
-    processFrame, 
-    isProcessing, 
+    processFrame,
+    isProcessing,
     framesProcessed,
     getRGBStats,
     getPositionQuality,
@@ -156,9 +155,6 @@ const Index = () => {
   const { saveMeasurement } = useSaveMeasurement();
   const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
   const [showAIAnalysis, setShowAIAnalysis] = useState(false);
-  const [heightInput, setHeightInput] = useState(() =>
-    (getUserHeightMFromStorage() ?? DEFAULT_USER_HEIGHT_M).toFixed(2)
-  );
 
   const vitalSignsRef = useRef(vitalSigns);
   vitalSignsRef.current = vitalSigns;
@@ -219,6 +215,11 @@ const Index = () => {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
     };
   }, []);
+
+  useEffect(() => {
+    const h = getUserHeightMFromStorage() ?? DEFAULT_USER_HEIGHT_M;
+    setUserHeightM(clampUserHeightM(h));
+  }, [setUserHeightM]);
 
   useEffect(() => {
     const preventScroll = (e: Event) => e.preventDefault();
@@ -315,9 +316,8 @@ const Index = () => {
     setTimeout(() => setIsCalibrating(false), 3000);
   }, [isMonitoring, startProcessing, startCalibration, enterFullScreen]);
 
-  const handleStreamReady = useCallback((stream: MediaStream) => {
+  const handleStreamReady = useCallback((_stream: MediaStream) => {
     console.log('📹 Stream recibido');
-    setCameraStream(stream);
     setTimeout(() => {
       const video = cameraRef.current?.getVideoElement();
       if (video && video.readyState >= 2) {
@@ -358,10 +358,6 @@ const Index = () => {
         signalQuality: lastSignal?.quality || 0
       });
     }
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
     setIsMonitoring(false);
     setIsCalibrating(false);
     frameTimestampHistoryRef.current = [];
@@ -377,7 +373,7 @@ const Index = () => {
     setElapsedTime(0);
     setCalibrationProgress(0);
     console.log('✅ Medición finalizada y guardada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
+  }, [isMonitoring, isCalibrating, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
 
   const handleReset = useCallback(() => {
     console.log('🔄 Reset completo...');
@@ -391,10 +387,6 @@ const Index = () => {
     resetHeartBeat();
     emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, cholesterol: 0, triglycerides: 0 };
     frameTimestampHistoryRef.current = [];
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
     setIsMonitoring(false);
     setShowResults(false);
     setMeasurementSummary(null);
@@ -428,7 +420,7 @@ const Index = () => {
     arrhythmiaToastPendingRef.current = false;
     lastArrhythmiaToastRef.current = { t: 0, label: '' };
     console.log('✅ Reset completado');
-  }, [cameraStream, stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
+  }, [stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
 
   const vitalSignsFrameCounter = useRef<number>(0);
   const unstableFrameCounter = useRef<number>(0);
@@ -807,19 +799,6 @@ const Index = () => {
               isFingerDetected={lastSignal?.measurementReady ?? false}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
-              {...(isFullscreen
-                ? {
-                    userHeightInput: heightInput,
-                    onUserHeightInputChange: setHeightInput,
-                    onUserHeightSave: () => {
-                      const v = parseFloat(heightInput.replace(",", "."));
-                      if (!isFinite(v)) return;
-                      setUserHeightM(clampUserHeightM(v));
-                      setHeightInput(clampUserHeightM(v).toFixed(2));
-                      toast({ title: "Altura guardada", description: "Modelo de presión arterial (PWV proxy)." });
-                    },
-                  }
-                : {})}
               isMonitoring={isMonitoring}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}

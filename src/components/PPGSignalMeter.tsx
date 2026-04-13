@@ -11,10 +11,6 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
-  /** Altura (m) para modelo TA — visible encima del lienzo */
-  userHeightInput?: string;
-  onUserHeightInputChange?: (v: string) => void;
-  onUserHeightSave?: () => void;
   isMonitoring?: boolean;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
@@ -183,9 +179,6 @@ const PPGSignalMeter = ({
   isFingerDetected,
   onStartMeasurement,
   onReset,
-  userHeightInput,
-  onUserHeightInputChange,
-  onUserHeightSave,
   isMonitoring = false,
   arrhythmiaStatus,
   rawArrhythmiaData,
@@ -1079,32 +1072,6 @@ const PPGSignalMeter = ({
             </span>
           </div>
         </div>
-        {userHeightInput !== undefined && onUserHeightInputChange && onUserHeightSave && (
-          <div
-            className="pointer-events-auto flex max-w-full flex-wrap items-center gap-2 rounded-2xl border border-emerald-500/40 bg-slate-950/95 px-3 py-2.5 shadow-2xl ring-1 ring-white/5 backdrop-blur-md sm:gap-3 sm:px-4 sm:py-3"
-            role="region"
-            aria-label="Altura para estimación de presión arterial"
-          >
-            <span className="whitespace-nowrap text-sm font-semibold text-slate-200">Altura (TA)</span>
-            <input
-              type="number"
-              step={0.01}
-              min={1.2}
-              max={2.15}
-              value={userHeightInput}
-              onChange={(e) => onUserHeightInputChange(e.target.value)}
-              className="w-[5.5rem] rounded-lg border border-slate-500 bg-slate-900/95 px-2 py-2 text-center text-base font-mono text-white shadow-inner sm:w-24"
-            />
-            <span className="text-slate-400 text-sm">m</span>
-            <button
-              type="button"
-              onClick={onUserHeightSave}
-              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-md hover:bg-emerald-500 active:scale-[0.98]"
-            >
-              Guardar
-            </button>
-          </div>
-        )}
       </div>
       <div className="fixed bottom-0 left-0 right-0 z-50 grid h-16 grid-cols-2 border-t border-white/10 bg-slate-950/55 pb-[max(0.25rem,env(safe-area-inset-bottom))] backdrop-blur-lg sm:h-[4.25rem]">
         <button
