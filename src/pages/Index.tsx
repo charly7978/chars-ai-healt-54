@@ -69,6 +69,7 @@ const Index = () => {
   const arrhythmiaToastPendingRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const cameraRef = useRef<CameraViewHandle>(null);
+  const autoFinalizeAt60Ref = useRef(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
   const frameLoopRef = useRef<number | null>(null);
@@ -705,8 +706,13 @@ const Index = () => {
   }, [isMonitoring]);
 
   useEffect(() => {
-    if (isMonitoring && elapsedTime >= 60) {
-      finalizeMeasurement();
+    if (!isMonitoring) {
+      autoFinalizeAt60Ref.current = false;
+      return;
+    }
+    if (elapsedTime >= 60 && !autoFinalizeAt60Ref.current) {
+      autoFinalizeAt60Ref.current = true;
+      void finalizeMeasurement();
     }
   }, [elapsedTime, isMonitoring, finalizeMeasurement]);
 
