@@ -8,7 +8,8 @@ import { ProcessedSignal, ProcessingError } from '../types/signal';
  * Sistema completamente unificado con prevención absoluta de múltiples instancias
  */
 /** Intervalo mínimo entre actualizaciones de estado React (~30 Hz): la ref lleva siempre el último frame. */
-const UI_SIGNAL_INTERVAL_MS = 33;
+/** ~25 Hz UI: menos setState que 30 Hz, suficiente para PPG y menos trabajo en el hilo principal. */
+const UI_SIGNAL_INTERVAL_MS = 40;
 
 export const useSignalProcessor = () => {
   const processorRef = useRef<PPGSignalProcessor | null>(null);

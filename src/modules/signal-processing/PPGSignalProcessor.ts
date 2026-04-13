@@ -63,17 +63,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
   private stableContactCount = 0;
-  private readonly FINGER_CONFIRM = 20;   // ~670ms @30fps — rechazar fondos sin dedo
-  private readonly FINGER_LOST = 90;      // ~3s antes de soltar “dedo” falso
-  private readonly STABLE_THRESHOLD = 64; // ~2.1s contacto estable + perfusión
+  private readonly FINGER_CONFIRM = 14;   // ~470ms @30fps — enganche más rápido con dedo real
+  private readonly FINGER_LOST = 90;      // ~3s antes de soltar contacto
+  private readonly STABLE_THRESHOLD = 48; // contacto estable antes de STABLE_CONTACT
   private readonly UNSTABLE_GRACE = 160;
 
   /** Histéresis: una sola salida estable para medición (evita parpadeo y criterios duplicados en UI). */
   private measurementReadyLatched = false;
   private measurementReadyHoldFrames = 0;
   private measurementReadyLostFrames = 0;
-  private readonly MEASUREMENT_READY_ON_FRAMES = 18;
-  private readonly MEASUREMENT_READY_OFF_FRAMES = 8;
+  private readonly MEASUREMENT_READY_ON_FRAMES = 12;
+  private readonly MEASUREMENT_READY_OFF_FRAMES = 10;
 
   // --- Smoothed metrics (EWMA) ---
   private smoothedRed = 0;
@@ -90,7 +90,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lockedGreenBase = 0;
   private lockedCoverage = 0;
   private positionStabilityCount = 0;
-  private readonly POS_LOCK_FRAMES = 60;
+  private readonly POS_LOCK_FRAMES = 42;
   private readonly POS_DRIFT_TOL = 0.12;
   private positionDrifting = false;
   private positionDrift = 0;
@@ -300,7 +300,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       perfusionIndex,
       gatedQuality,
       periodicityScore,
-      motionArtifact
+      motionArtifact,
+      roi.clipHighRatio,
+      roi.spatialUniformity
     );
     const measurementReady = this.updateMeasurementReadyLatch(measurementReadyRaw);
 
@@ -360,7 +362,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     perfusionIndex: number,
     gatedQuality: number,
     periodicityScore: number,
-    motionArtifact: boolean
+    motionArtifact: boolean,
+    clipHighRatio: number,
+    spatialUniformity: number
   ): boolean {
     if (motionArtifact) return false;
     if (this.motionScore > 0.42) return false;
@@ -368,11 +372,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (!this.fingerDetected) return false;
     if (!this.positionLocked || this.positionDrifting) return false;
     if (this.pressureState === 'HIGH_PRESSURE') return false;
-    if (perfusionIndex < 0.05) return false;
-    if (gatedQuality < 22) return false;
-    if (periodicityScore < 0.16) return false;
-    if (this.smoothedCoverage < 0.34) return false;
-    if (this.sourceStability < 0.32) return false;
+    if (clipHighRatio > 0.24) return false;
+    if (spatialUniformity < 0.2 && clipHighRatio > 0.12) return false;
+    if (perfusionIndex < 0.042) return false;
+    if (gatedQuality < 19) return false;
+    if (periodicityScore < 0.13) return false;
+    if (this.smoothedCoverage < 0.3) return false;
+    if (this.sourceStability < 0.26) return false;
     return true;
   }
 
@@ -514,11 +520,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.smoothedCoverage > 0.18 && this.smoothedFingerScore > 0.18 &&
         notBlownOut;
     }
-    return r > 100 && rgRatio > 1.28 && redDominance > 28 &&
-      totalI > 160 && totalI < 700 &&
-      this.smoothedCoverage > 0.44 && this.smoothedFingerScore > 0.44 &&
-      roi.clipHighRatio < 0.26 &&
+    const tissueLike =
+      roi.spatialUniformity > 0.22 &&
+      roi.centerCoverage > 0.2 &&
+      roi.clipHighRatio < 0.32;
+    return r > 86 && rgRatio > 1.2 && redDominance > 22 &&
+      totalI > 135 && totalI < 720 &&
+      this.smoothedCoverage > 0.36 && this.smoothedFingerScore > 0.34 &&
+      roi.clipHighRatio < 0.3 &&
       this.motionScore < 0.85 &&
+      tissueLike &&
       notBlownOut;
   }
 
@@ -553,8 +564,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       }
     } else if (this.fingerDetected) {
       this.positionDrifting = false;
-      if (this.positionQualityScore > 0.60 && roi.coverageRatio > 0.45 &&
-        roi.spatialUniformity > 0.45 && roi.centerCoverage > 0.30 &&
+      if (this.positionQualityScore > 0.52 && roi.coverageRatio > 0.38 &&
+        roi.spatialUniformity > 0.38 && roi.centerCoverage > 0.26 &&
         this.pressureState !== 'HIGH_PRESSURE') {
         this.positionStabilityCount++;
         if (this.positionStabilityCount >= this.POS_LOCK_FRAMES) {

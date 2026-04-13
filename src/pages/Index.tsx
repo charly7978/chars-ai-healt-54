@@ -697,8 +697,12 @@ const Index = () => {
       return;
     }
     let rafId = 0;
-    const loop = () => {
-      signalProcessingTickRef.current();
+    let lastUiTick = 0;
+    const loop = (t: number) => {
+      if (t - lastUiTick >= 22) {
+        lastUiTick = t;
+        signalProcessingTickRef.current();
+      }
       rafId = requestAnimationFrame(loop);
     };
     rafId = requestAnimationFrame(loop);

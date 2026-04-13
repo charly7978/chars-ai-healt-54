@@ -29,11 +29,12 @@ interface PPGSignalMeterProps {
 
 /** Resolución lógica del lienzo (coordenadas de dibujo); el buffer físico = esto × devicePixelRatio. */
 const CONFIG = {
-  CANVAS_WIDTH: 1800,
-  CANVAS_HEIGHT: 3200,
+  /** Lienzo lógico algo menor = menos píxeles por frame (mejor FPS en móvil/PC). */
+  CANVAS_WIDTH: 1400,
+  CANVAS_HEIGHT: 2480,
   WINDOW_MS: 2800,
-  /** ~30 FPS: equilibrio fluidez / CPU en canvas grande + sombras. */
-  TARGET_FPS: 30,
+  /** ~22 FPS dibujo onda: suficiente para PPG y menos carga que 30 en canvas pesado. */
+  TARGET_FPS: 22,
   BUFFER_SIZE: 400,
   PLOT_AREA: {
     LEFT: 96,
@@ -42,9 +43,9 @@ const CONFIG = {
     BOTTOM: 76
   },
   COLORS: {
-    BG: '#060a12',
-    GRID_MAJOR: 'rgba(34, 197, 94, 0.25)',
-    GRID_MINOR: 'rgba(34, 197, 94, 0.1)',
+    BG: '#040810',
+    GRID_MAJOR: 'rgba(34, 197, 94, 0.32)',
+    GRID_MINOR: 'rgba(34, 197, 94, 0.14)',
     BASELINE: 'rgba(34, 197, 94, 0.4)',
     SIGNAL_NORMAL: '#22c55e',
     SIGNAL_GLOW: 'rgba(34, 197, 94, 0.5)',
@@ -88,11 +89,11 @@ const parseRhythmStatus = (statusString?: string) => {
 function strokeForWaveClass(wc: BeatWaveClass, COLORS: typeof CONFIG.COLORS) {
   switch (wc) {
     case 'arrhythmia':
-      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 26, width: 6.5 };
+      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 14, width: 5.8 };
     case 'weak':
-      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 20, width: 5.5 };
+      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 12, width: 5 };
     default:
-      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 18, width: 5.2 };
+      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 11, width: 4.8 };
   }
 }
 
@@ -384,7 +385,7 @@ const PPGSignalMeter = ({
     if (!sctx) return;
     sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     sctx.imageSmoothingEnabled = true;
-    sctx.imageSmoothingQuality = 'high';
+    sctx.imageSmoothingQuality = 'medium';
     drawGrid(sctx);
     drawTimeScale(sctx);
   }, [drawGrid, drawTimeScale]);
@@ -394,14 +395,14 @@ const PPGSignalMeter = ({
     if (!canvas) return;
     const applySize = () => {
       const raw = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
-      const dpr = Math.min(raw, 2);
+      const dpr = Math.min(raw, 1.35);
       dprRef.current = dpr;
       canvas.width = Math.round(CONFIG.CANVAS_WIDTH * dpr);
       canvas.height = Math.round(CONFIG.CANVAS_HEIGHT * dpr);
       const c2 = canvas.getContext('2d', { alpha: false, desynchronized: true });
       if (c2) {
         c2.imageSmoothingEnabled = true;
-        c2.imageSmoothingQuality = 'high';
+        c2.imageSmoothingQuality = 'medium';
         ctxRef.current = c2;
       }
       paintStaticLayer();
@@ -567,14 +568,14 @@ const PPGSignalMeter = ({
           return;
         }
         c2.imageSmoothingEnabled = true;
-        c2.imageSmoothingQuality = 'high';
+        c2.imageSmoothingQuality = 'medium';
         ctxRef.current = c2;
         ctx = c2;
       }
       const dpr = dprRef.current;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+      ctx.imageSmoothingQuality = 'medium';
       const staticCanvas = staticLayerRef.current;
       if (staticCanvas && staticCanvas.width > 0) {
         ctx.drawImage(staticCanvas, 0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
@@ -1038,14 +1039,14 @@ const PPGSignalMeter = ({
   }, [onReset]);
 
   return (
-    <div className="fixed inset-0 bg-gradient-to-b from-slate-950 via-slate-900/98 to-slate-950">
+    <div className="fixed inset-0 bg-gradient-to-b from-slate-950 via-[#0c1220] to-slate-950">
       <canvas
         ref={canvasRef}
         className="w-full h-full absolute inset-0 z-0 block touch-none"
         style={{ imageRendering: 'auto' }}
       />
       <div
-        className="absolute left-0 right-0 z-[100] flex flex-row flex-wrap items-start justify-between gap-3 border-b border-white/5 bg-black/25 px-3 backdrop-blur-xl sm:px-4 pointer-events-none"
+        className="absolute left-0 right-0 z-[100] flex flex-row flex-wrap items-start justify-between gap-3 border-b border-emerald-500/15 bg-gradient-to-b from-black/50 to-black/20 px-3 backdrop-blur-xl sm:px-4 pointer-events-none shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
         style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))', paddingBottom: '0.75rem' }}
       >
         <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
@@ -1073,7 +1074,7 @@ const PPGSignalMeter = ({
           </div>
         </div>
       </div>
-      <div className="fixed bottom-0 left-0 right-0 z-50 grid h-16 grid-cols-2 border-t border-white/10 bg-slate-950/55 pb-[max(0.25rem,env(safe-area-inset-bottom))] backdrop-blur-lg sm:h-[4.25rem]">
+      <div className="fixed bottom-0 left-0 right-0 z-50 grid h-16 grid-cols-2 border-t border-emerald-500/20 bg-slate-950/70 pb-[max(0.25rem,env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(0,0,0,0.45)] backdrop-blur-lg sm:h-[4.25rem]">
         <button
           type="button"
           onClick={onStartMeasurement}
