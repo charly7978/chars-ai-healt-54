@@ -5,7 +5,7 @@
 
 import { ContactStateMachine, type ContactMachineState, type ContactScoreInput } from './ContactStateMachine';
 import { TilePulsatilityMap, type TileSnapshot } from './TilePulsatilityMap';
-import { AdaptiveROIAssembler } from './AdaptiveROIAssembler';
+import { AdaptiveROIAssembler, type AdaptiveROIResult } from './AdaptiveROIAssembler';
 import { PressureProxyEstimator } from './PressureProxyEstimator';
 import { SignalExtractionEngine, type CandidateVector } from './SignalExtractionEngine';
 import { SignalQualityScorer } from './SignalQualityScorer';
@@ -96,6 +96,15 @@ export interface FrameAnalysisResult {
   roiValidPixelRatio: number;
   gridCols: number;
   gridRows: number;
+  /**
+   * Firma de pose/ángulo respecto al ROI (dedo yema vs base): centroide del tejido en [0,1]²
+   * y gradientes normalizados de R (asimetría iluminación/ángulo). Estables solo con contacto.
+   */
+  poseCentroidNorm: { x: number; y: number };
+  /** (R_arriba − R_abajo) / DC — proxy de inclinación vertical del dedo */
+  poseRedGradientY: number;
+  /** (R_izq − R_der) / DC — proxy de rotación/azimut */
+  poseRedGradientX: number;
 }
 
 export class FrameAnalysisEngine {
@@ -384,6 +393,7 @@ export class FrameAnalysisEngine {
     const clipLowRatio = totalW > 0 ? totalClipLo / totalW : 0;
 
     const tr = assembled.trimmedMean.r;
+    const poseSig = this.computePoseSignature(assembled, tr, nMask);
     const tg = assembled.trimmedMean.g;
     const tb = assembled.trimmedMean.b;
 
@@ -629,6 +639,59 @@ export class FrameAnalysisEngine {
       roiValidPixelRatio,
       gridCols: this.tileMap.cols,
       gridRows: this.tileMap.rows,
+      poseCentroidNorm: poseSig.poseCentroidNorm,
+      poseRedGradientY: poseSig.poseRedGradientY,
+      poseRedGradientX: poseSig.poseRedGradientX,
+    };
+  }
+
+  /** Proxy determinista de ángulo dedo/lente/flash a partir del grid de tejido activo */
+  private computePoseSignature(
+    assembled: AdaptiveROIResult,
+    tr: number,
+    nMask: number
+  ): { poseCentroidNorm: { x: number; y: number }; poseRedGradientY: number; poseRedGradientX: number } {
+    const cols = this.tileMap.cols;
+    const rows = this.tileMap.rows;
+    const denom = tr + 1e-3;
+    let tR = 0,
+      bR = 0,
+      lR = 0,
+      rR = 0,
+      tW = 0,
+      bW = 0,
+      lW = 0,
+      rW = 0;
+    for (let i = 0; i < nMask; i++) {
+      if (!assembled.activeTiles[i]) continue;
+      const row = Math.floor(i / cols);
+      const col = i % cols;
+      const t = this.tileSnapshots[i]!;
+      const ww = Math.max(1e-6, t.weight);
+      const mr = t.meanR;
+      if (row < rows / 3) {
+        tR += mr * ww;
+        tW += ww;
+      }
+      if (row >= (2 * rows) / 3) {
+        bR += mr * ww;
+        bW += ww;
+      }
+      if (col < cols / 3) {
+        lR += mr * ww;
+        lW += ww;
+      }
+      if (col >= (2 * cols) / 3) {
+        rR += mr * ww;
+        rW += ww;
+      }
+    }
+    const poseRedGradientY = tW > 1e-5 && bW > 1e-5 ? (tR / tW - bR / bW) / denom : 0;
+    const poseRedGradientX = lW > 1e-5 && rW > 1e-5 ? (lR / lW - rR / rW) / denom : 0;
+    return {
+      poseCentroidNorm: { x: assembled.centroidNorm.x, y: assembled.centroidNorm.y },
+      poseRedGradientY,
+      poseRedGradientX,
     };
   }
 

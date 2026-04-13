@@ -175,6 +175,8 @@ export const useSignalProcessor = () => {
         positionDrift: 0,
         guidance: 'COLOQUE SU DEDO',
         qualityScore: 0,
+        poseAngleDrift: 0,
+        poseOptimal: false,
       };
     }
     return processorRef.current.getPositionQuality();

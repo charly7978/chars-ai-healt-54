@@ -72,14 +72,18 @@ export class AdvancedFingerTracker {
       }
       const sqiNorm = Math.max(0, Math.min(1, bestSqi));
 
+      const maskIoU = p.maskIoU ?? 1;
+      const poseCoherence = maskIoU * 0.55 + temporalStability * 0.45;
+
       const hybrid =
-        tissueInstant * 0.22 +
-        temporalStability * 0.2 +
-        pulsatilityScore * 0.26 +
-        agg * 0.14 +
-        readinessOk * 0.1 +
-        sqiNorm * 0.12 -
-        clipPen * 0.35;
+        tissueInstant * 0.2 +
+        temporalStability * 0.18 +
+        pulsatilityScore * 0.24 +
+        agg * 0.13 +
+        readinessOk * 0.09 +
+        sqiNorm * 0.11 +
+        poseCoherence * 0.09 -
+        clipPen * 0.34;
 
       const contactQuality = Math.max(0, Math.min(100, hybrid * 100));
       const stabilityScore = Math.max(

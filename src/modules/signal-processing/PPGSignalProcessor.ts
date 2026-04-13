@@ -53,6 +53,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private positionStabilityCount = 0;
   private readonly POS_LOCK_FRAMES = 40;
   private readonly POS_DRIFT_TOL = 0.13;
+  /** Pose óptima bloqueada (centroide + gradientes R) — un solo ángulo de medición */
+  private lockedPoseNx = 0.5;
+  private lockedPoseNy = 0.5;
+  private lockedPoseGy = 0;
+  private lockedPoseGx = 0;
+  /** Desviación respecto a la pose bloqueada (0 ≈ mismo ángulo yema/base) */
+  private poseAngleDrift = 0;
+  private readonly POSE_DRIFT_MEASURE_MAX = 0.076;
+  private readonly POSE_DRIFT_SOFT = 0.09;
+  private readonly POSE_DRIFT_UNLOCK = 0.2;
   private positionDrifting = false;
   private positionDrift = 0;
   private positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
@@ -403,6 +413,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.exportedContactState !== 'STABLE_CONTACT') return false;
     if (!this.fingerDetected) return false;
     if (!this.positionLocked || this.positionDrifting) return false;
+    if (this.poseAngleDrift > this.POSE_DRIFT_MEASURE_MAX) return false;
     if (this.lastAnalysis?.pressureState === 'HIGH_PRESSURE') return false;
     if (clipHighRatio > 0.22) return false;
     if (perfusionIndexNorm < 0.034) return false;
@@ -450,6 +461,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   private updatePositionLock(a: FrameAnalysisResult): void {
+    if (!this.positionLocked) {
+      this.poseAngleDrift = 0;
+    }
+
     const roi = a.roi;
     const currentRed = roi.rawRed;
     const currentGreen = roi.rawGreen;
@@ -463,16 +478,35 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.lockedGreenBase > 0 ? Math.abs(currentGreen - this.lockedGreenBase) / this.lockedGreenBase : 0;
       const covDrift =
         this.lockedCoverage > 0 ? Math.abs(roi.coverageRatio - this.lockedCoverage) / this.lockedCoverage : 0;
-      this.positionDrift = (redDrift + greenDrift + covDrift) / 3;
+      const colorDrift = (redDrift + greenDrift + covDrift) / 3;
 
-      if (this.positionDrift > this.POS_DRIFT_TOL) {
+      const pc = a.poseCentroidNorm;
+      const dCent = Math.hypot(pc.x - this.lockedPoseNx, pc.y - this.lockedPoseNy);
+      const dGrad =
+        Math.abs(a.poseRedGradientY - this.lockedPoseGy) * 0.5 + Math.abs(a.poseRedGradientX - this.lockedPoseGx) * 0.45;
+      this.poseAngleDrift = dCent * 0.78 + dGrad;
+
+      const poseNorm = Math.min(1, this.poseAngleDrift / 0.11);
+      this.positionDrift = colorDrift * 0.42 + poseNorm * 0.58;
+
+      const angleBad = this.poseAngleDrift > this.POSE_DRIFT_SOFT;
+      const colorBad = colorDrift > this.POS_DRIFT_TOL;
+
+      if (colorBad || angleBad) {
         this.positionDrifting = true;
-        this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA POSICIÓN';
-        if (this.positionDrift > this.POS_DRIFT_TOL * 2.4) {
+        if (angleBad && !colorBad) {
+          this.positionGuidance = 'NO GIRE EL DEDO — MANTENGA EL MISMO ÁNGULO (YEMA O BASE)';
+        } else {
+          this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA MISMA POSICIÓN';
+        }
+        const unlock =
+          this.poseAngleDrift > this.POSE_DRIFT_UNLOCK || colorDrift > this.POS_DRIFT_TOL * 2.35;
+        if (unlock) {
           this.positionLocked = false;
           this.positionStabilityCount = 0;
           this.positionDrifting = false;
-          this.positionGuidance = 'REPOSICIONE EL DEDO';
+          this.poseAngleDrift = 0;
+          this.positionGuidance = 'REPOSICIONE EL DEDO COMO AL INICIO';
         }
       } else {
         this.positionDrifting = false;
@@ -480,7 +514,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.lockedRedBase += (currentRed - this.lockedRedBase) * adapt;
         this.lockedGreenBase += (currentGreen - this.lockedGreenBase) * adapt;
         this.lockedCoverage += (roi.coverageRatio - this.lockedCoverage) * adapt;
-        this.positionGuidance = 'POSICIÓN CORRECTA — NO MUEVA EL DEDO';
+        this.lockedPoseNx += (pc.x - this.lockedPoseNx) * 0.008;
+        this.lockedPoseNy += (pc.y - this.lockedPoseNy) * 0.008;
+        this.lockedPoseGy += (a.poseRedGradientY - this.lockedPoseGy) * 0.012;
+        this.lockedPoseGx += (a.poseRedGradientX - this.lockedPoseGx) * 0.012;
+        this.positionGuidance = 'ÁNGULO ÓPTIMO — NO MUEVA EL DEDO';
       }
     } else if (this.fingerDetected && this.exportedContactState !== 'NO_CONTACT') {
       this.positionDrifting = false;
@@ -500,7 +538,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.lockedRedBase = currentRed;
           this.lockedGreenBase = currentGreen;
           this.lockedCoverage = roi.coverageRatio;
-          this.positionGuidance = 'POSICIÓN BLOQUEADA — MANTENGA ASÍ';
+          this.lockedPoseNx = a.poseCentroidNorm.x;
+          this.lockedPoseNy = a.poseCentroidNorm.y;
+          this.lockedPoseGy = a.poseRedGradientY;
+          this.lockedPoseGx = a.poseRedGradientX;
+          this.poseAngleDrift = 0;
+          this.positionGuidance = 'ÁNGULO DE MEDICIÓN BLOQUEADO — NO GIRE EL DEDO';
         } else {
           this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POS_LOCK_FRAMES) * 100)}%`;
         }
@@ -643,6 +686,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       positionDrift: this.positionDrift,
       guidance: this.positionGuidance,
       qualityScore: this.positionQualityScore,
+      poseAngleDrift: this.poseAngleDrift,
+      poseOptimal:
+        this.positionLocked && !this.positionDrifting && this.poseAngleDrift <= this.POSE_DRIFT_MEASURE_MAX,
     };
   }
 
@@ -707,6 +753,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.positionStabilityCount = 0;
     this.positionDrifting = false;
     this.positionDrift = 0;
+    this.poseAngleDrift = 0;
+    this.lockedPoseNx = 0.5;
+    this.lockedPoseNy = 0.5;
+    this.lockedPoseGy = 0;
+    this.lockedPoseGx = 0;
     this.positionQualityScore = 0;
     this.positionGuidance = 'COLOQUE SU DEDO';
     this.motionScore = 0;
