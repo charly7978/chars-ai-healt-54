@@ -5,6 +5,8 @@
 export { AdvancedArrhythmiaDetector } from './AdvancedArrhythmiaDetector';
 export { HRVNonlinearAnalyzer, type NonlinearHRVResult } from './HRVNonlinearAnalyzer';
 export { HRVFrequencyAnalyzer, type FrequencyHRVResult } from './HRVFrequencyAnalyzer';
+export { SpO2ProcessorElite, type SpO2ResultElite } from './SpO2ProcessorElite';
+export { BloodPressureProcessorElite, type BPEstimateElite } from './BloodPressureProcessorElite';
 export { ArrhythmiaProcessor } from './arrhythmia-processor';
 export { RhythmClassifier, type RhythmLabel, type RhythmEvent, type RhythmResult, type RhythmFeatures } from './RhythmClassifier';
 export { VitalSignsProcessor, type VitalSignsResult, type RGBData } from './VitalSignsProcessor';
