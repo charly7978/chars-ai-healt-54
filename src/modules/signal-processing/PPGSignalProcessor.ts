@@ -63,9 +63,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerConfidenceCount = 0;
   private fingerLostCount = 0;
   private stableContactCount = 0;
-  private readonly FINGER_CONFIRM = 16;   // ~530ms @30fps — menos falsos contactos
-  private readonly FINGER_LOST = 120;     // ~4s tolerance
-  private readonly STABLE_THRESHOLD = 52; // ~1.7s para STABLE
+  private readonly FINGER_CONFIRM = 20;   // ~670ms @30fps — rechazar fondos sin dedo
+  private readonly FINGER_LOST = 90;      // ~3s antes de soltar “dedo” falso
+  private readonly STABLE_THRESHOLD = 64; // ~2.1s contacto estable + perfusión
   private readonly UNSTABLE_GRACE = 160;
 
   // --- Smoothed metrics (EWMA) ---
@@ -281,7 +281,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // Gate: drift penalty
     const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
-    const gatedQuality = this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
+    const gatedQuality = this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.015
       ? this.signalQuality * driftPenalty
       : Math.min(18, this.signalQuality * 0.45);
 
@@ -355,7 +355,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.contactState = 'SATURATED_CONTACT';
         } else {
           const perfusion = this.calculatePerfusionIndex();
-          this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > 0.003 && pressure.state !== 'HIGH_PRESSURE')
+          const minPiForStable = 0.018;
+          this.contactState = (this.stableContactCount >= this.STABLE_THRESHOLD && perfusion > minPiForStable && pressure.state !== 'HIGH_PRESSURE')
             ? 'STABLE_CONTACT'
             : 'UNSTABLE_CONTACT';
         }
@@ -369,10 +370,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       if (this.fingerDetected) {
         const softHold =
-          this.smoothedCoverage > 0.10 &&
-          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 5 &&
-          this.smoothedFingerScore > 0.12 &&
-          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.03;
+          this.smoothedCoverage > 0.22 &&
+          (this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2) > 12 &&
+          this.smoothedFingerScore > 0.22 &&
+          (this.smoothedRed / Math.max(1, this.smoothedGreen)) > 1.08;
 
         if (softHold || this.fingerLostCount < this.FINGER_LOST) {
           this.contactState = 'UNSTABLE_CONTACT';
@@ -442,19 +443,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const notBlownOut = !(r > 253 && g > 252 && b > 252);
 
     if (this.fingerDetected) {
-      // MAINTAIN — moderately strict
-      return r > 50 && rgRatio > 1.08 && redDominance > 10 &&
-        this.smoothedCoverage > 0.15 && this.smoothedFingerScore > 0.15 &&
-        notBlownOut;
-    } else {
-      // ACQUIRE — very strict, only optimal placement
-      return r > 90 && rgRatio > 1.25 && redDominance > 25 &&
-        totalI > 150 && totalI < 720 &&
-        this.smoothedCoverage > 0.40 && this.smoothedFingerScore > 0.40 &&
-        roi.clipHighRatio < 0.3 &&
-        this.motionScore < 1.0 &&
+      return r > 55 && rgRatio > 1.11 && redDominance > 12 &&
+        this.smoothedCoverage > 0.18 && this.smoothedFingerScore > 0.18 &&
         notBlownOut;
     }
+    return r > 100 && rgRatio > 1.28 && redDominance > 28 &&
+      totalI > 160 && totalI < 700 &&
+      this.smoothedCoverage > 0.44 && this.smoothedFingerScore > 0.44 &&
+      roi.clipHighRatio < 0.26 &&
+      this.motionScore < 0.85 &&
+      notBlownOut;
   }
 
   private updatePositionLock(roi: ROIMaskResult): void {

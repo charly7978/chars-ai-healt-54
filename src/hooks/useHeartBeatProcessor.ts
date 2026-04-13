@@ -96,6 +96,14 @@ export const useHeartBeatProcessor = () => {
       return emptyResult(0);
     }
 
+    if (contactState !== 'STABLE_CONTACT') {
+      noContactFramesRef.current = 0;
+      if (currentBPMRef.current !== 0) setCurrentBPM(0);
+      if (confidenceRef.current !== 0) setConfidence(0);
+      if (signalQualityRef.current !== 0) setSignalQuality(0);
+      return emptyResult(0);
+    }
+
     if (currentTime - lastProcessTimeRef.current < 12) {
       return emptyResult(currentBPMRef.current);
     }

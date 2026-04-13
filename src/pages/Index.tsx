@@ -19,6 +19,26 @@ import {
   DEFAULT_USER_HEIGHT_M,
   clampUserHeightM,
 } from "@/modules/personalization/userPhysiology";
+import type { ProcessedSignal } from "@/types/signal";
+
+/** Solo contacto real con pulso verificable — evita "medición" con fondo/luz sin dedo. */
+function isValidMeasurementSignal(
+  sig: ProcessedSignal | null | undefined,
+  pq: { locked: boolean; drifting: boolean; qualityScore: number }
+): boolean {
+  if (!sig) return false;
+  return (
+    sig.contactState === "STABLE_CONTACT" &&
+    sig.fingerDetected === true &&
+    sig.extendedContactState === "STABLE_CONTACT" &&
+    sig.diagnostics?.hasPulsatility === true &&
+    (sig.perfusionIndex ?? 0) >= 0.05 &&
+    (sig.quality ?? 0) >= 20 &&
+    pq.locked &&
+    !pq.drifting &&
+    pq.qualityScore >= 0.48
+  );
+}
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -434,7 +454,7 @@ const Index = () => {
 
   const vitalSignsFrameCounter = useRef<number>(0);
   const unstableFrameCounter = useRef<number>(0);
-  const UNSTABLE_ZERO_THRESHOLD = 22;
+  const UNSTABLE_ZERO_THRESHOLD = 10;
   const VITALS_PROCESS_EVERY_N_FRAMES = 3;
   const lastProcessedSignalTsRef = useRef<number | null>(null);
   const signalProcessingTickRef = useRef<() => void>(() => {});
@@ -446,7 +466,7 @@ const Index = () => {
     lastProcessedSignalTsRef.current = lastSignal.timestamp;
 
     const signalValue = lastSignal.filteredValue;
-    const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
+    const contactState = lastSignal.contactState;
     const ls = lastSignal as typeof lastSignal & {
       clipHighRatio?: number;
       clipLowRatio?: number;
@@ -455,14 +475,7 @@ const Index = () => {
       sourceStability?: number;
     };
     const positionQuality = getPositionQuality();
-    const q = lastSignal.quality || 0;
-    const pi = lastSignal.perfusionIndex || 0;
-    const stableHumanSignal =
-      contactState === 'STABLE_CONTACT' &&
-      q >= 18 &&
-      pi >= 0.008 &&
-      !positionQuality.drifting &&
-      (positionQuality.locked ? q >= 18 : q >= 24);
+    const stableHumanSignal = isValidMeasurementSignal(lastSignal, positionQuality);
 
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
@@ -498,8 +511,9 @@ const Index = () => {
 
     if (!stableHumanSignal) {
       unstableFrameCounter.current++;
+      setHeartRate(0);
+      emaRef.current.bpm = 0;
       if (unstableFrameCounter.current >= UNSTABLE_ZERO_THRESHOLD) {
-        setHeartRate(0);
         vitalSignsFrameCounter.current = 0;
         setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
         setRRIntervals([]);
@@ -798,7 +812,7 @@ const Index = () => {
             <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
-              isFingerDetected={lastSignal?.fingerDetected || false}
+              isFingerDetected={isValidMeasurementSignal(lastSignal ?? undefined, getPositionQuality())}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
               {...(isFullscreen
