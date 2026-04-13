@@ -11,22 +11,18 @@ export interface BeatCandidate {
   upSlope: number;
   downSlope: number;
   localBaseline: number;
-  // Detector support
-  detectorHits: number;        // how many detectors flagged this
-  detectorAgreement: number;   // 0-1
+  detectorHits: number;
+  detectorAgreement: number;
   zeroCrossingSupport: boolean;
   periodicitySupport: boolean;
-  templateCorrelation: number; // -1 to 1
+  templateCorrelation: number;
   localBandPowerRatio: number;
   localPerfusion: number;
-  // Penalties
   localMotionPenalty: number;
   localPressurePenalty: number;
   localClipPenalty: number;
-  // Decision
   status: 'accepted' | 'rejected' | 'pending';
   rejectionReason: string;
-  // Scoring
   morphologyScore: number;
   rhythmScore: number;
   totalScore: number;
@@ -101,4 +97,12 @@ export interface HeartBeatDebug {
   templateCorrelation: number;
   morphologyScore: number;
   consecutivePeaks: number;
+  recentAcceptedBeats?: Array<{
+    ibiMs: number;
+    beatSQI: number;
+    morphologyScore: number;
+    detectorAgreement: number;
+    amplitude?: number;
+    flags: BeatFlags;
+  }>;
 }
