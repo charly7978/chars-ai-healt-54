@@ -179,6 +179,105 @@ export class RhythmClassifier {
     };
   }
 
+  /**
+   * Fallback cuando hay menos de 8 latidos con entidad rica: ritmo desde intervalos RR
+   * (evita `arrhythmiaStatus` / `lastRhythm` obsoletos cuando el umbral de 8 no se cumple).
+   */
+  classifyFromRRIntervals(
+    rrIntervalsMs: number[],
+    avgBeatSQI: number,
+    sourceStability: number,
+    beatEntityCount: number
+  ): RhythmResult {
+    const filtered = rrIntervalsMs.filter((i) => i >= 250 && i <= 2200).slice(-12);
+
+    if (filtered.length < 2) {
+      return {
+        rhythmLabel: 'INSUFFICIENT_DATA',
+        rhythmConfidence: 0,
+        rhythmQuality: 0,
+        arrhythmiaBurden: 0,
+        recentEvents: [],
+        undeterminedReason: 'rr_too_few',
+        features: this.emptyFeatures(),
+      };
+    }
+
+    if (filtered.length === 2) {
+      const d = Math.abs(filtered[1] - filtered[0]);
+      const mean = (filtered[0] + filtered[1]) / 2;
+      const rrCV = mean > 0 ? d / mean : 0;
+      const medianHR = 60000 / this.median(filtered);
+      return {
+        rhythmLabel: 'INSUFFICIENT_DATA',
+        rhythmConfidence: 0,
+        rhythmQuality: Math.min(25, avgBeatSQI * 0.35),
+        arrhythmiaBurden: 0,
+        recentEvents: [],
+        undeterminedReason: 'need_more_rr_pairs',
+        features: {
+          ...this.emptyFeatures(),
+          rmssd: d,
+          sdnn: d / Math.sqrt(2),
+          rrCV,
+          medianHR,
+        },
+      };
+    }
+
+    const synthetic: BeatInput[] = filtered.map((ibi) => ({
+      ibiMs: ibi,
+      beatSQI: avgBeatSQI,
+      morphologyScore: beatEntityCount >= 4 ? 48 : 34,
+      detectorAgreement: Math.max(0.35, sourceStability),
+      flags: {
+        isWeak: beatEntityCount < 6,
+        isPremature: false,
+        isSuspicious: beatEntityCount < 4,
+        isDoublePeak: false,
+      },
+    }));
+
+    const ibis = synthetic.map((b) => b.ibiMs);
+    const features = this.computeFeatures(ibis, synthetic, sourceStability);
+    let windowQuality = this.assessWindowQuality(synthetic, avgBeatSQI, features);
+    if (beatEntityCount < 8) windowQuality = Math.min(windowQuality, 44);
+
+    let label: RhythmLabel;
+    let undeterminedReason = '';
+
+    if (filtered.length < 4 || beatEntityCount < 3) {
+      label = 'INSUFFICIENT_DATA';
+      undeterminedReason = 'partial_beat_or_rr_window';
+    } else if (windowQuality < 22 || (beatEntityCount < 5 && windowQuality < 34)) {
+      label = 'UNDETERMINED_LOW_QUALITY';
+      undeterminedReason = `window_quality_${windowQuality.toFixed(0)}`;
+    } else {
+      label = this.classifyRhythm(features, ibis);
+      if (beatEntityCount < 8 && label === 'SINUS_STABLE' && features.rrCV > 0.065) {
+        label = 'SINUS_VARIABLE';
+      }
+    }
+
+    let confidence = this.computeConfidence(label, features, windowQuality, ibis.length);
+    if (beatEntityCount < 8) confidence *= 0.62;
+    if (label === 'INSUFFICIENT_DATA' || label === 'UNDETERMINED_LOW_QUALITY') {
+      confidence = Math.min(confidence, 0.45);
+    }
+
+    const burden = Math.min(1, features.rrIrregularityScore * 0.45 + (beatEntityCount < 5 ? 0.08 : 0));
+
+    return {
+      rhythmLabel: label,
+      rhythmConfidence: confidence,
+      rhythmQuality: windowQuality,
+      arrhythmiaBurden: burden,
+      recentEvents: this.events.slice(-10),
+      undeterminedReason,
+      features,
+    };
+  }
+
   private classifyRhythm(f: RhythmFeatures, ibis: number[]): RhythmLabel {
     const hr = f.medianHR;
 

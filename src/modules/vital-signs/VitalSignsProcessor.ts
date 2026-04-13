@@ -1,6 +1,15 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessor } from './BloodPressureProcessor';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
+
+type BeatInputRow = {
+  ibiMs: number;
+  beatSQI: number;
+  morphologyScore: number;
+  detectorAgreement: number;
+  amplitude?: number;
+  flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
+};
 import { SpO2Processor, type SpO2Result } from './SpO2Processor';
 import { SpO2Calibrator } from './SpO2Calibrator';
 import { ratioOfRatios } from './OpticalRatioEngine';
@@ -406,23 +415,35 @@ export class VitalSignsProcessor {
       }
     }
 
-    if (beatInputs && beatInputs.length >= 8) {
-      const rhythmResult = this.rhythmClassifier.classify(
-        beatInputs,
-        Math.max(this.upstreamContext.avgBeatSQI, 20),
-        Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement)
-      );
-      this.lastRhythm = rhythmResult;
+    this.updateRhythmMeasurements(beatInputs, validRR);
+  }
 
-      const ev = rhythmResult.recentEvents?.length ?? 0;
-      this.measurements.arrhythmiaStatus = `${rhythmResult.rhythmLabel}|${ev}`;
-      this.measurements.arrhythmiaCount = ev;
-      this.measurements.lastArrhythmiaData = {
-        timestamp: Date.now(),
-        rmssd: rhythmResult.features.rmssd,
-        rrVariation: rhythmResult.features.rrCV * 100,
-      };
+  /**
+   * Ritmo siempre actualizado: ruta completa (>=8 beats) o fallback RR cuando hay menos entidades.
+   */
+  private updateRhythmMeasurements(beatInputs: BeatInputRow[] | undefined, validRR: number[]): void {
+    if (validRR.length < 2) return;
+
+    const beatN = beatInputs?.length ?? 0;
+    const avgSQI = Math.max(this.upstreamContext.avgBeatSQI, 15);
+    const stab = Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement);
+
+    let rhythmResult: RhythmResult;
+    if (beatInputs && beatN >= 8) {
+      rhythmResult = this.rhythmClassifier.classify(beatInputs, Math.max(avgSQI, 20), stab);
+    } else {
+      rhythmResult = this.rhythmClassifier.classifyFromRRIntervals(validRR, avgSQI, stab, beatN);
     }
+
+    this.lastRhythm = rhythmResult;
+    const ev = rhythmResult.recentEvents?.length ?? 0;
+    this.measurements.arrhythmiaStatus = `${rhythmResult.rhythmLabel}|${ev}`;
+    this.measurements.arrhythmiaCount = ev;
+    this.measurements.lastArrhythmiaData = {
+      timestamp: Date.now(),
+      rmssd: rhythmResult.features.rmssd,
+      rrVariation: rhythmResult.features.rrCV * 100,
+    };
   }
 
   private getFormattedResult(): VitalSignsResult {
