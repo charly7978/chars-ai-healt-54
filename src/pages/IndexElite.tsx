@@ -221,6 +221,7 @@ const IndexElite: React.FC = () => {
   const [showDetailedMetrics, setShowDetailedMetrics] = useState(false);
   const [cameraDiagnostics, setCameraDiagnostics] = useState<CameraDiagnostics | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isStreamReady, setIsStreamReady] = useState(false);
   
   // -------------------------------------------------
   // INICIALIZACIÓN DE PROCESADORES
@@ -551,6 +552,9 @@ const IndexElite: React.FC = () => {
     // Reset completo
     resetAllState();
     
+    // Reset stream ready
+    setIsStreamReady(false);
+    
     // Iniciar procesadores
     eliteProcessorRef.current?.start();
     spo2ProcessorRef.current?.reset();
@@ -563,21 +567,19 @@ const IndexElite: React.FC = () => {
     isPausedRef.current = false;
     sessionStartTimeRef.current = Date.now();
     
-    // Estado React
+    // Estado React - Activar cámara
     setIsMonitoring(true);
     setIsPaused(false);
     setSessionComplete(false);
     
-    // Iniciar captura
-    setTimeout(() => {
-      animationFrameRef.current = requestAnimationFrame(captureLoop);
-    }, 500);
+    // NOTA: La captura se inicia cuando onStreamReady se llame
+    // No iniciar aquí - esperar a que la cámara esté lista
     
     toast({
-      title: "🔴 Recording Started",
-      description: `Session: ${SESSION_DURATION_SECONDS}s`
+      title: "� Starting Camera...",
+      description: "Please place your finger on the camera"
     });
-  }, [captureLoop]);
+  }, []);
   
   const pauseMeasurement = useCallback(() => {
     isPausedRef.current = !isPausedRef.current;
