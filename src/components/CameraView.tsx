@@ -125,7 +125,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             deviceId: { ideal: d.deviceId },
             width: { ideal: 1280 },
             height: { ideal: 720 },
-            frameRate: { ideal: 30 },
+            frameRate: { ideal: 60, min: 15, max: 60 },
           });
         } catch {
           try {
@@ -133,7 +133,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
               deviceId: { ideal: d.deviceId },
               width: { ideal: 640 },
               height: { ideal: 480 },
-              frameRate: { ideal: 30 },
+              frameRate: { ideal: 60, min: 15, max: 60 },
             });
           } catch {
             return await tryVideo({ deviceId: { ideal: d.deviceId } });
@@ -146,7 +146,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           return await tryVideo({
             width: { ideal: 640 },
             height: { ideal: 480 },
-            frameRate: { ideal: 30 },
+            frameRate: { ideal: 60, min: 15, max: 60 },
           });
         } catch {
           return await tryVideo(true);
@@ -159,7 +159,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           facingMode: { ideal: 'environment' },
           width: { ideal: 640 },
           height: { ideal: 480 },
-          frameRate: { ideal: 30 },
+          frameRate: { ideal: 60, min: 15, max: 60 },
         });
       } catch {
         try {
@@ -167,7 +167,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             facingMode: { ideal: 'user' },
             width: { ideal: 640 },
             height: { ideal: 480 },
-            frameRate: { ideal: 30 },
+            frameRate: { ideal: 60, min: 15, max: 60 },
           });
         } catch {
           const first = videoInputs[0];
@@ -177,7 +177,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
                 deviceId: { ideal: first.deviceId },
                 width: { ideal: 640 },
                 height: { ideal: 480 },
-                frameRate: { ideal: 30 },
+                frameRate: { ideal: 60, min: 15, max: 60 },
               });
             } catch {
               return await tryVideo({ deviceId: { ideal: first.deviceId } });

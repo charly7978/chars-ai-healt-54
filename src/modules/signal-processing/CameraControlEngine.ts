@@ -142,11 +142,15 @@ export class CameraControlEngine {
     const backoff = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     if (caps.frameRate) {
-      const ok = await tryAdv({ frameRate: Math.min(30, caps.frameRate.max) }, 'frameRate_max30');
+      const maxF = caps.frameRate.max;
+      let ok = await tryAdv({ frameRate: Math.min(60, maxF) }, 'frameRate_max60');
+      if (!ok) {
+        ok = await tryAdv({ frameRate: Math.min(30, maxF) }, 'frameRate_max30');
+      }
       if (!ok) {
         this.pendingBackoff++;
         await backoff(120 + this.pendingBackoff * 80);
-        await tryAdv({ frameRate: Math.min(24, caps.frameRate.max) }, 'frameRate_max24');
+        await tryAdv({ frameRate: Math.min(24, maxF) }, 'frameRate_max24');
       }
     }
 

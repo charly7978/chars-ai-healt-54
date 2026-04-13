@@ -387,7 +387,9 @@ export class HeartBeatProcessor {
     const hardLimit = 280;
     if (timeSinceLast < hardLimit) return 'hard';
     if (expectedRR > 0) {
-      const softLimit = expectedRR * 0.55;
+      // FC alta: ventana "soft" más estrecha (~0.48×RR) para reducir dobles picos a ~>100 lpm
+      const softFrac = expectedRR < 420 ? 0.48 : 0.55;
+      const softLimit = expectedRR * softFrac;
       if (timeSinceLast < softLimit) return 'soft';
     } else if (timeSinceLast < 380) {
       return 'soft';
@@ -506,12 +508,34 @@ export class HeartBeatProcessor {
       finalBpm = fromAutocorrelation > 0 && Math.abs(peakBpm - fromAutocorrelation) < peakBpm * 0.2
         ? peakBpm * 0.8 + fromAutocorrelation * 0.2
         : peakBpm;
+      if (fromSpectral > 0 && Math.abs(finalBpm - fromSpectral) / Math.max(finalBpm, 1) < 0.12) {
+        finalBpm = finalBpm * 0.88 + fromSpectral * 0.12;
+      }
       dominantSource = 'median';
       confidence = clamp(0.5 + this.consecutivePeaks * 0.06 + this.getAvgBeatSQI() * 0.003, 0, 1);
-    } else if (fromAutocorrelation > 0) {
-      finalBpm = fromMedianIBI > 0 ? fromMedianIBI * 0.5 + fromAutocorrelation * 0.5 : fromAutocorrelation;
-      dominantSource = 'autocorr';
-      confidence = clamp(0.2 + this.consecutivePeaks * 0.04, 0, 0.7);
+    } else if (fromAutocorrelation > 0 || fromSpectral > 0) {
+      const ac = fromAutocorrelation;
+      const sp = fromSpectral;
+      if (ac > 0 && sp > 0) {
+        const rel = Math.abs(ac - sp) / Math.max(ac, sp);
+        if (rel < 0.14) {
+          finalBpm = ac * 0.58 + sp * 0.42;
+          dominantSource = 'autocorr';
+        } else {
+          finalBpm = ac >= sp ? ac : sp;
+          dominantSource = ac >= sp ? 'autocorr' : 'spectral';
+        }
+      } else {
+        finalBpm = ac || sp;
+        dominantSource = ac > 0 ? 'autocorr' : 'spectral';
+      }
+      if (fromMedianIBI > 0) {
+        const relM = Math.abs(finalBpm - fromMedianIBI) / Math.max(fromMedianIBI, 1);
+        if (relM < 0.22) {
+          finalBpm = finalBpm * 0.62 + fromMedianIBI * 0.38;
+        }
+      }
+      confidence = clamp(0.22 + this.consecutivePeaks * 0.05 + (sp > 0 ? 0.08 : 0), 0, 0.75);
     } else if (fromMedianIBI > 0) {
       finalBpm = fromMedianIBI;
       dominantSource = 'median';
@@ -553,6 +577,15 @@ export class HeartBeatProcessor {
     return mean > 0 ? 60000 / mean : 0;
   }
 
+  /** Sesgo suave hacia el lag esperado por RR reciente (sin aleatoriedad). */
+  private rhythmBiasLag(lag: number, expectedLag: number): number {
+    if (expectedLag <= 0) return 1;
+    return 1 - Math.min(0.15, Math.abs(lag - expectedLag) / Math.max(1, expectedLag) * 0.1);
+  }
+
+  /**
+   * Autocorrelación en banda cardíaca + corrección armónico/subarmónico frecuente en PPG por dedo.
+   */
   private estimateAutocorrBPM(): number {
     if (this.signalBuf.length < 80) return 0;
     const sr = this.estimateSampleRate();
@@ -560,22 +593,104 @@ export class HeartBeatProcessor {
     const minLag = Math.max(5, Math.round((sr * 60) / 200));
     const maxLag = Math.min(n - 10, Math.round((sr * 60) / 38));
 
-    let bestLag = 0, bestScore = 0;
     const expectedRR = this.getExpectedRR();
     const expectedLag = expectedRR > 0 ? Math.round((expectedRR / 1000) * sr) : 0;
 
+    const weightedAc = (lag: number): number =>
+      this.signalBuf.autocorrelation(lag, n) * this.rhythmBiasLag(lag, expectedLag);
+
+    let bestLag = 0;
+    let bestScore = 0;
     for (let lag = minLag; lag <= maxLag; lag++) {
-      const ac = this.signalBuf.autocorrelation(lag, n);
-      const rhythmBias = expectedLag > 0 ? 1 - Math.min(0.15, Math.abs(lag - expectedLag) / Math.max(1, expectedLag) * 0.1) : 1;
-      const weighted = ac * rhythmBias;
-      if (weighted > bestScore) {
-        bestScore = weighted;
+      const w = weightedAc(lag);
+      if (w > bestScore) {
+        bestScore = w;
         bestLag = lag;
       }
     }
 
-    if (bestLag === 0 || bestScore < 0.3) return 0;
-    return (60 * sr) / bestLag;
+    if (bestLag === 0 || bestScore < 0.28) return 0;
+
+    let L = bestLag;
+    let s = bestScore;
+    let bpm = (60 * sr) / L;
+
+    // Subarmónico: FC aparente muy baja; probar periodo ~T/2 (armónica 2× en FC)
+    if (bpm < 62 && L >= 2 * minLag) {
+      const Lh = Math.round(L / 2);
+      if (Lh >= minLag) {
+        const sh = weightedAc(Lh);
+        const bpmH = (60 * sr) / Lh;
+        if (bpmH >= 56 && bpmH <= 198 && sh >= s * 0.87 && sh > 0.28) {
+          L = Lh;
+          s = sh;
+          bpm = bpmH;
+        }
+      }
+    }
+    // Armónico: FC aparente muy alta; probar periodo ~2T (mitad de FC)
+    if (bpm > 108 && 2 * L <= maxLag) {
+      const Ld = 2 * L;
+      const sd = weightedAc(Ld);
+      const bpmD = (60 * sr) / Ld;
+      if (bpmD >= 40 && bpmD <= 102 && sd >= s * 0.84 && sd > 0.26) {
+        L = Ld;
+      }
+    }
+
+    return (60 * sr) / L;
+  }
+
+  /**
+   * Periodograma en rejilla BPM (proyecciones sen/cos) — desacoplado de autocorr para fusión al arranque.
+   */
+  private estimateSpectralPeakBPM(): number {
+    if (this.signalBuf.length < 100) return 0;
+    const sr = this.estimateSampleRate();
+    const n = Math.min(240, this.signalBuf.length);
+    const start = this.signalBuf.length - n;
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      m += this.signalBuf.get(start + i);
+    }
+    m /= n;
+
+    const expectedRR = this.getExpectedRR();
+    const expectedBpm = expectedRR > 0 ? 60000 / expectedRR : 0;
+
+    let bestPow = 0;
+    let bestBpm = 0;
+    for (let bpm = 42; bpm <= 195; bpm += 3) {
+      const f = bpm / 60;
+      const omega = (2 * Math.PI * f) / sr;
+      let cp = 0;
+      let sp = 0;
+      for (let i = 0; i < n; i++) {
+        const x = this.signalBuf.get(start + i) - m;
+        const ang = omega * i;
+        cp += x * Math.cos(ang);
+        sp += x * Math.sin(ang);
+      }
+      const pow = cp * cp + sp * sp;
+      let bias = 1;
+      if (expectedBpm > 45 && expectedBpm < 200) {
+        bias = 1 - Math.min(0.12, Math.abs(bpm - expectedBpm) / Math.max(expectedBpm, 1) * 0.08);
+      }
+      const w = pow * bias;
+      if (w > bestPow) {
+        bestPow = w;
+        bestBpm = bpm;
+      }
+    }
+
+    let varN = 0;
+    for (let i = 0; i < n; i++) {
+      const d = this.signalBuf.get(start + i) - m;
+      varN += d * d;
+    }
+    varN /= Math.max(1, n - 1);
+    if (bestPow < varN * n * 0.035) return 0;
+    return bestBpm;
   }
 
   private updateSmoothBPM(instantBPM: number): void {
@@ -634,7 +749,7 @@ export class HeartBeatProcessor {
     }
 
     let coherence = 0;
-    const hyps = [h.fromMedianIBI, h.fromTrimmedIBI, h.fromAutocorrelation].filter(v => v > 0);
+    const hyps = [h.fromMedianIBI, h.fromTrimmedIBI, h.fromAutocorrelation, h.fromSpectral].filter(v => v > 0);
     if (hyps.length >= 2 && h.finalBpm > 0) {
       const diffs = hyps.map(v => Math.abs(v - h.finalBpm) / h.finalBpm);
       const avgDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length;
@@ -757,8 +872,8 @@ export class HeartBeatProcessor {
   }
 
   private updatePeriodicityEstimates(): void {
-    if (this.frameCount % 60 === 0 && this.signalBuf.length >= 120) {
-      this.spectralBPM = this.estimateAutocorrBPM();
+    if (this.frameCount % 16 === 0 && this.signalBuf.length >= 100) {
+      this.spectralBPM = this.estimateSpectralPeakBPM();
     }
   }
 
