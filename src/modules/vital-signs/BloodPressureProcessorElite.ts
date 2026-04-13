@@ -117,7 +117,9 @@ export class BloodPressureProcessorElite {
     signalBuffer: number[],     // Señal PPG filtrada
     rrIntervals: number[],       // Intervalos RR en ms
     timestamps: number[],          // Timestamps de cada muestra
-    sampleRate: number = 30      // Hz
+    sampleRate: number = 30,      // Hz
+    /** Altura en metros (proxy PWV); por defecto 1.7 si se omite */
+    userHeightM?: number
   ): BPEstimateElite {
     const warnings: string[] = [];
     
@@ -166,9 +168,13 @@ export class BloodPressureProcessorElite {
     const rrVar = this.calculateRRVariability(validRR);
     
     // ========== CALCULAR PWV PROXY ==========
-    // PWV ≈ altura / tiempo (simplificado)
-    const height = 1.7; // m (estimado, debería venir de perfil usuario)
-    const pwvProxy = height / (medianFeatures.sutMs / 1000);
+    // PWV ≈ distancia arterial efectiva / tiempo de subida (proxy); altura personalizada mejora coherencia fisiológica
+    const height =
+      userHeightM != null && isFinite(userHeightM) && userHeightM >= 1.2 && userHeightM <= 2.15
+        ? userHeightM
+        : 1.7;
+    const sutSec = Math.max(0.02, (medianFeatures.sutMs || 80) / 1000);
+    const pwvProxy = height / sutSec;
     
     // ========== ESTIMAR SBP ==========
     let sbp = this.SBP_COEFF.intercept +

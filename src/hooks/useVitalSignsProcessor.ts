@@ -109,12 +109,20 @@ export const useVitalSignsProcessor = () => {
     processorRef.current?.ingestBeatOpticalRatio();
   }, []);
 
+  const setUserHeightM = useCallback((meters: number) => {
+    processorRef.current?.setUserHeightM(meters);
+  }, []);
+
+  const getUserHeightM = useCallback(() => processorRef.current?.getUserHeightM(), []);
+
   return {
     processSignal,
     setRGBData,
     setUpstreamContext,
     setHeartRuntime,
     ingestBeatOpticalRatio,
+    setUserHeightM,
+    getUserHeightM,
     reset,
     fullReset,
     startCalibration,

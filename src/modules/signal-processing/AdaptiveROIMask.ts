@@ -8,6 +8,7 @@
  * 4. Adapts thresholds using frame percentiles (no fixed absolutes)
  * 5. Temporal intersection to prevent mask deformation
  * 6. Separates coarse ROI (detection) from fine ROI (extraction)
+ * 7. Meta-ROI: fracción espacial adaptada a estabilidad de máscara + proxy de pulsatility (estilo SmartPhOx)
  */
 
 export interface TileMetrics {
@@ -54,6 +55,12 @@ export class AdaptiveROIMask {
   private prevMaskValid: Uint8Array = new Uint8Array(TOTAL_TILES).fill(0);
   private frameCount = 0;
 
+  /** Meta-ROI: estado entre frames */
+  private metaStabilityEma = 0.5;
+  private pulsatilityEma = 0.4;
+  private lastRawRedForMeta = 0;
+  private prevMaskChangeRate = 0;
+
   // Reusable per-tile accumulator arrays to avoid per-frame allocation
   private tileR = new Float64Array(TOTAL_TILES);
   private tileG = new Float64Array(TOTAL_TILES);
@@ -69,8 +76,12 @@ export class AdaptiveROIMask {
     const w = imageData.width;
     const h = imageData.height;
 
-    // Central ROI: 80% of min dimension
-    const roiSize = Math.min(w, h) * 0.80;
+    // Meta-ROI: fracción del menor lado según estabilidad de máscara (frame anterior) y pulsatility proxy
+    this.metaStabilityEma =
+      this.metaStabilityEma * 0.9 + (1 - Math.min(1, this.prevMaskChangeRate * 2.5)) * 0.1;
+    const metaQ = 0.5 * this.metaStabilityEma + 0.5 * this.pulsatilityEma;
+    const roiFrac = Math.max(0.58, Math.min(0.88, 0.63 + 0.21 * metaQ));
+    const roiSize = Math.min(w, h) * roiFrac;
     const sx = Math.floor((w - roiSize) / 2);
     const sy = Math.floor((h - roiSize) / 2);
     const ex = sx + Math.floor(roiSize);
@@ -286,6 +297,14 @@ export class AdaptiveROIMask {
     const tileScores = new Float64Array(TOTAL_TILES);
     for (let ti = 0; ti < TOTAL_TILES; ti++) tileScores[ti] = tileMetrics[ti].score;
 
+    const dr =
+      this.lastRawRedForMeta > 0
+        ? Math.abs(rawRed - this.lastRawRedForMeta) / (this.lastRawRedForMeta + 1e-6)
+        : 0;
+    this.pulsatilityEma = this.pulsatilityEma * 0.88 + Math.min(1, dr * 35) * 0.12;
+    this.lastRawRedForMeta = rawRed;
+    this.prevMaskChangeRate = maskChangeCount / TOTAL_TILES;
+
     return {
       rawRed, rawGreen, rawBlue,
       coverageRatio,
@@ -306,5 +325,9 @@ export class AdaptiveROIMask {
     this.tileConfidence.fill(0);
     this.prevMaskValid.fill(0);
     this.frameCount = 0;
+    this.metaStabilityEma = 0.5;
+    this.pulsatilityEma = 0.4;
+    this.lastRawRedForMeta = 0;
+    this.prevMaskChangeRate = 0;
   }
 }

@@ -14,6 +14,11 @@ import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { NON_ALERT_RHYTHM_LABELS } from "@/constants/rhythmAlert";
 import type { BeatFlags } from "@/types/beat";
+import {
+  getUserHeightMFromStorage,
+  DEFAULT_USER_HEIGHT_M,
+  clampUserHeightM,
+} from "@/modules/personalization/userPhysiology";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -141,11 +146,15 @@ const Index = () => {
     getCalibrationProgress,
     setHeartRuntime,
     ingestBeatOpticalRatio,
+    setUserHeightM,
   } = useVitalSignsProcessor();
   
   const { saveMeasurement } = useSaveMeasurement();
   const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
   const [showAIAnalysis, setShowAIAnalysis] = useState(false);
+  const [heightInput, setHeightInput] = useState(() =>
+    (getUserHeightMFromStorage() ?? DEFAULT_USER_HEIGHT_M).toFixed(2)
+  );
 
   useEffect(() => {
     if (!canvasRef.current) {
@@ -688,6 +697,36 @@ const Index = () => {
             <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
           </div>
         </button>
+      )}
+
+      {isFullscreen && (
+        <div className="fixed top-2 left-2 z-40 flex flex-wrap items-center gap-2 rounded-lg bg-black/60 px-2 py-1.5 border border-white/15 text-white text-[11px] max-w-[min(96vw,420px)] pointer-events-auto">
+          <span className="text-slate-300 whitespace-nowrap">Altura (TA)</span>
+          <input
+            type="number"
+            step={0.01}
+            min={1.2}
+            max={2.15}
+            value={heightInput}
+            onChange={(e) => setHeightInput(e.target.value)}
+            className="w-16 bg-slate-900/90 border border-slate-600 rounded px-1 py-0.5 text-white text-xs"
+            aria-label="Altura en metros"
+          />
+          <span className="text-slate-500">m</span>
+          <button
+            type="button"
+            onClick={() => {
+              const v = parseFloat(heightInput.replace(",", "."));
+              if (!isFinite(v)) return;
+              setUserHeightM(clampUserHeightM(v));
+              setHeightInput(clampUserHeightM(v).toFixed(2));
+              toast({ title: "Altura guardada", description: "Modelo de presión arterial (PWV proxy)." });
+            }}
+            className="px-2 py-0.5 rounded bg-emerald-600/90 hover:bg-emerald-500 text-[10px] font-semibold"
+          >
+            Guardar
+          </button>
+        </div>
       )}
 
       <div className="flex-1 relative">

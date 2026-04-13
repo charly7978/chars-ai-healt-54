@@ -85,7 +85,9 @@ export class AdvancedFingerTracker {
   private adaptiveThreshold = 0.5;
   private noiseFloor = 0;
   private lastContactQuality = 0;
-  
+  /** SNR del frame anterior para ponderar escalas multi-ROI (refina cuando la señal es buena) */
+  private lastSnrHint = 0;
+
   /**
    * Procesa frame y retorna tracking de dedo con métricas avanzadas
    */
@@ -111,9 +113,9 @@ export class AdvancedFingerTracker {
       flowResult.vx, flowResult.vy
     );
     
-    // 4. EXTRACCIÓN DE ROI MULTI-ESCALA
+    // 4. EXTRACCIÓN DE ROI MULTI-ESCALA (pesos según SNR previo)
     const multiScaleSignal = this.extractMultiScaleROI(
-      data, width, height, trackedCenter.x, trackedCenter.y
+      data, width, height, trackedCenter.x, trackedCenter.y, this.lastSnrHint
     );
     
     // 5. ANÁLISIS DE CALIDAD DE CONTACTO
@@ -123,7 +125,8 @@ export class AdvancedFingerTracker {
     
     // 6. ACTUALIZAR HISTÓRICO
     this.updateSignalHistory(multiScaleSignal.perfusionIndex);
-    
+    this.lastSnrHint = Math.max(0, this.computeSNR());
+
     // 7. ACTUALIZAR FRAME ANTERIOR
     this.prevFrameData = new Uint8ClampedArray(data);
     
@@ -345,7 +348,8 @@ export class AdvancedFingerTracker {
     width: number,
     height: number,
     centerX: number,
-    centerY: number
+    centerY: number,
+    snrHint: number
   ): { 
     meanR: number; meanG: number; meanB: number;
     perfusionIndex: number;
@@ -404,8 +408,20 @@ export class AdvancedFingerTracker {
       return { meanR: 0, meanG: 0, meanB: 0, perfusionIndex: 0 };
     }
     
-    // Promedio ponderado por escala (preferir escala media)
-    const weights = [0.2, 0.5, 0.3];
+    // Pesos adaptativos: SNR bajo → más ventana grande; SNR alto → más detalle fino
+    let w0 = 0.2;
+    let w1 = 0.5;
+    let w2 = 0.3;
+    if (snrHint < 6) {
+      w0 = 0.36;
+      w1 = 0.38;
+      w2 = 0.26;
+    } else if (snrHint > 14) {
+      w0 = 0.12;
+      w1 = 0.42;
+      w2 = 0.46;
+    }
+    const weights = [w0, w1, w2];
     let weightedR = 0, weightedG = 0, weightedB = 0, weightedPI = 0;
     
     for (let i = 0; i < results.length; i++) {
@@ -531,7 +547,8 @@ export class AdvancedFingerTracker {
     this.frameDimensions = { width, height };
     this.signalHistory = new Float32Array(this.HISTORY_LENGTH);
     this.historyIndex = 0;
-    
+    this.lastSnrHint = 0;
+
     // Inicializar Kalman
     this.kalmanState.x = width / 2;
     this.kalmanState.y = height / 2;
@@ -546,5 +563,6 @@ export class AdvancedFingerTracker {
     this.signalHistory = new Float32Array(this.HISTORY_LENGTH);
     this.histogramHistory = [];
     this.adaptiveThreshold = 0.5;
+    this.lastSnrHint = 0;
   }
 }

@@ -21,6 +21,7 @@ import { HRVFrequencyAnalyzer, type FrequencyHRVResult } from '../vital-signs/HR
 import { AdvancedArrhythmiaDetector, type ArrhythmiaResult, type ArrhythmiaType } from '../vital-signs/AdvancedArrhythmiaDetector';
 import { SpO2ProcessorElite } from '../vital-signs/SpO2ProcessorElite';
 import { BloodPressureProcessorElite } from '../vital-signs/BloodPressureProcessorElite';
+import { getUserHeightMFromStorage } from '../personalization/userPhysiology';
 import type { ProcessedSignal } from '../../types/signal';
 
 export type BpConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
@@ -93,6 +94,8 @@ export interface EliteConfig {
   enableNonlinearHRV: boolean;
   enableFrequencyHRV: boolean;
   enableArrhythmiaDetection: boolean;
+  /** Altura usuario (m); si no se define, se lee del perfil en almacenamiento */
+  userHeightM?: number;
 }
 
 export class ElitePPGProcessor {
@@ -297,11 +300,13 @@ export class ElitePPGProcessor {
       (beatResult?.bpmConfidence ?? 0) > 0.18;
     if (usableRR && this.signalBuffer.length > 90 && rrIntervals) {
       const sr = this.estimateSampleRate();
+      const heightM = this.config.userHeightM ?? getUserHeightMFromStorage();
       const bpRes = this.bpProcessor.process(
         [...this.signalBuffer],
         rrIntervals,
         [...this.timestampBuffer],
-        sr
+        sr,
+        heightM
       );
       if (bpRes.confidenceLevel !== 'INSUFFICIENT') {
         systolicBP = bpRes.systolic;

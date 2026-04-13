@@ -1,6 +1,7 @@
 import type { SpO2CalibrationCurve } from '../vital-signs/SpO2Calibrator';
 
-const STORAGE_KEY = 'ppg_device_profile_v2';
+export const DEVICE_PROFILE_STORAGE_KEY = 'ppg_device_profile_v2';
+const STORAGE_KEY = DEVICE_PROFILE_STORAGE_KEY;
 
 /** Huella estable por navegador/resolución (no PII). */
 export function deviceFingerprint(): string {
@@ -17,6 +18,8 @@ export interface DeviceProfile {
   deviceProfileId: string;
   calibrationVersion: number;
   sessionCount: number;
+  /** Altura del usuario en metros (1.2–2.15); mejora proxy PWV en BloodPressureProcessorElite */
+  userHeightM?: number;
   /** Sesgo medio observado en ratio-of-ratios vs población */
   opticalBiasR: number;
   /** Delta típico de intervalo de frame (ms) */

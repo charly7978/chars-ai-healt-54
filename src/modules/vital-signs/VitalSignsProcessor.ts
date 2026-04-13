@@ -24,6 +24,7 @@ import { DeviceCalibrationEngine } from '../calibration/DeviceCalibrationEngine'
 import { BPCalibrationManager } from './BPCalibrationManager';
 import { UserBaselineEngine } from '../personalization/UserBaselineEngine';
 import { LongitudinalDatasetStore } from '../personalization/LongitudinalDatasetStore';
+import { clampUserHeightM } from '../personalization/userPhysiology';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -163,6 +164,15 @@ export class VitalSignsProcessor {
     if (ctx.bpm !== undefined) this.heartRuntime.bpm = ctx.bpm;
     if (ctx.bpmConfidence !== undefined) this.heartRuntime.bpmConfidence = ctx.bpmConfidence;
     if (ctx.beatCount !== undefined) this.heartRuntime.beatCount = ctx.beatCount;
+  }
+
+  /** Persiste altura (m) para el modelo PWV en BloodPressureProcessorElite */
+  setUserHeightM(meters: number): void {
+    this.deviceProfiles.save({ userHeightM: clampUserHeightM(meters) });
+  }
+
+  getUserHeightM(): number | undefined {
+    return this.deviceProfiles.get().userHeightM;
   }
 
   /** En ventana de pico cardíaco: refuerza SpO2 con ratio alineado a latido */
@@ -378,7 +388,8 @@ export class VitalSignsProcessor {
         [...this.signalHistory],
         validRR,
         [...this.timestampHistory],
-        sampleRate
+        sampleRate,
+        this.deviceProfiles.get().userHeightM
       );
       this.lastBPConfidence = bpElite.confidenceLevel;
       this.lastBPFeatureQuality = bpElite.featureQuality;
