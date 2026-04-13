@@ -129,13 +129,13 @@ export class HeartBeatProcessor {
     this.slopeSum.push(ssf);
 
     if (this.signalBuf.length < 25) {
-      return this.emptyResult(0);
+      return this.makeEmptyResult(0);
     }
 
     // === GATE: minimum signal energy ===
     const range = this.getSignalRange(60);
     if (range < 0.4) {
-      return this.emptyResult(0);
+      return this.makeEmptyResult(0);
     }
 
     // Normalize
