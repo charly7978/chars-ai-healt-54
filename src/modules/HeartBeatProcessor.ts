@@ -1039,6 +1039,25 @@ export class HeartBeatProcessor {
   getLastPeakTime(): number { return this.lastPeakTime; }
   getSQI(): number { return this.computeGlobalSQI(); }
 
+  private makeEmptyResult(bpm: number): HeartBeatResult {
+    return {
+      bpm, bpmConfidence: 0, isPeak: false,
+      filteredValue: 0, arrhythmiaCount: 0, sqi: 0, beatSQI: 0,
+      rrData: { intervals: [], lastPeakTime: null },
+      hypothesis: null, detectorAgreement: 0,
+      rejectionReason: '', beatFlags: null,
+      debug: {
+        instantBpm: 0, medianRRBpm: 0, autocorrBpm: 0, spectralBpm: 0,
+        lastBeatSQI: 0, detectorAgreement: 0, expectedRR: 0,
+        refractoryState: 'open' as const, beatsAccepted: this.beatsAccepted,
+        beatsRejected: this.beatsRejected, lastRejectionReason: this.lastRejectionReason,
+        doublePeakCount: this.doublePeakCount, missedBeatCount: this.missedBeatCount,
+        suspiciousCount: this.suspiciousCount, templateCorrelation: 0,
+        morphologyScore: 0, consecutivePeaks: this.consecutivePeaks,
+      },
+    };
+  }
+
   reset(): void {
     this.signalBuf.clear();
     this.derivBuf.clear();
