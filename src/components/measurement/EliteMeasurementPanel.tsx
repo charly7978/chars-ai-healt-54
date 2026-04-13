@@ -121,6 +121,9 @@ export const EliteMeasurementPanel: React.FC<EliteMeasurementPanelProps> = ({
       setFingerDetected(result.finger.detected);
       setStability(result.finger.stabilityScore);
       setCurrentHR(result.beat.bpm);
+      setCurrentSpO2(result.spo2);
+      setCurrentSBP(result.systolicBP);
+      setCurrentDBP(result.diastolicBP);
       
       // Guardar en historial
       if (result.finger.contactQuality > 50) {
@@ -303,9 +306,18 @@ export const EliteMeasurementPanel: React.FC<EliteMeasurementPanelProps> = ({
       endTime: validData[validData.length - 1]?.timestamp || Date.now(),
       duration: elapsedTime,
       averageHR: avg(validData.map(d => d.beat.bpm)),
-      averageSpO2: avg(validData.map(d => d.finger.perfusionIndex * 20 + 95).filter(v => v >= 70 && v <= 100)),
-      averageSBP: 0, // Requiere BP processor
-      averageDBP: 0,
+      averageSpO2: (() => {
+        const vals = validData.map(d => d.spo2).filter(v => v > 0);
+        return vals.length > 0 ? avg(vals) : 0;
+      })(),
+      averageSBP: (() => {
+        const vals = validData.map(d => d.systolicBP).filter(v => v > 0);
+        return vals.length > 0 ? avg(vals) : 0;
+      })(),
+      averageDBP: (() => {
+        const vals = validData.map(d => d.diastolicBP).filter(v => v > 0);
+        return vals.length > 0 ? avg(vals) : 0;
+      })(),
       hrvMetrics: {
         rmssd: currentData?.hrvTime.rmssd || 0,
         sdnn: currentData?.hrvTime.sdnn || 0,
@@ -466,7 +478,7 @@ export const EliteMeasurementPanel: React.FC<EliteMeasurementPanelProps> = ({
           }}>
             <div style={styles.metricLabel}>SpO2</div>
             <div style={{ ...styles.metricValueLarge, color: '#00ccff' }}>
-              {fingerDetected && currentData ? '98' : '--'}
+              {fingerDetected && currentData && currentSpO2 > 0 ? Math.round(currentSpO2) : '--'}
             </div>
             <div style={styles.metricUnit}>%</div>
           </div>

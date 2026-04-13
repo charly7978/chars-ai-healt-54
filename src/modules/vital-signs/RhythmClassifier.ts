@@ -354,12 +354,35 @@ export class RhythmClassifier {
     if (irrBurden > 0.1 && irrBurden <= 0.3) ectopySuspicionScore += 40;
     if (sd1 > 20 && sd2 < 50) ectopySuspicionScore += 20; // Torpedo-shaped Poincaré
 
+    const sampleEntropy = this.computeSampleEntropyValue(ibis);
+
+    const agreements = recentBeats
+      .map((b) => b.detectorAgreement)
+      .filter((a): a is number => typeof a === 'number' && isFinite(a));
+    let detectorDisagreementBurden = 0;
+    if (agreements.length > 0) {
+      const meanDisag =
+        agreements.reduce((s, a) => s + (1 - Math.min(1, Math.max(0, a))), 0) / agreements.length;
+      detectorDisagreementBurden = Math.min(100, meanDisag * 100);
+    }
+
+    const amps = recentBeats
+      .map((b) => b.amplitude)
+      .filter((a): a is number => typeof a === 'number' && isFinite(a) && a > 0);
+    let beatAmplitudeCV = 0;
+    if (amps.length >= 2) {
+      const am = amps.reduce((a, b) => a + b, 0) / amps.length;
+      const v = amps.reduce((s, x) => s + (x - am) ** 2, 0) / (amps.length - 1);
+      const asd = Math.sqrt(v);
+      beatAmplitudeCV = am > 0 ? Math.min(100, (asd / am) * 100) : 0;
+    }
+
     return {
       rmssd,
       sdnn,
       pnn50,
       shannonEntropy,
-      sampleEntropy: 0, // Placeholder
+      sampleEntropy,
       sd1,
       sd2,
       sd1sd2Ratio,
@@ -367,12 +390,44 @@ export class RhythmClassifier {
       medianHR,
       rrIrregularityScore: Math.min(100, rrCV * 3),
       morphologyInstabilityScore,
-      detectorDisagreementBurden: 0, // Simplified
+      detectorDisagreementBurden,
       sourceSwitchBurden: 1 - sourceStability,
-      beatAmplitudeCV: 0, // Simplified
+      beatAmplitudeCV,
       ectopySuspicionScore: Math.min(100, ectopySuspicionScore),
       afLikeScore: Math.min(100, afLikeScore),
     };
+  }
+
+  /** Sample entropy (m=2, r=0.2·SDRR), alineado con HRVNonlinearAnalyzer */
+  private computeSampleEntropyValue(rr: number[]): number {
+    const m = 2;
+    const n = rr.length;
+    if (n < m + 2) return 0;
+    const mean = rr.reduce((a, b) => a + b, 0) / n;
+    const variance = rr.reduce((s, x) => s + (x - mean) ** 2, 0) / Math.max(1, n - 1);
+    const sd = Math.sqrt(variance);
+    const r = 0.2 * sd;
+    if (r <= 0 || !isFinite(r)) return 0;
+    let A = 0;
+    let B = 0;
+    for (let i = 0; i < n - m; i++) {
+      for (let j = i + 1; j < n - m; j++) {
+        let matchM = true;
+        for (let k = 0; k < m; k++) {
+          if (Math.abs(rr[i + k] - rr[j + k]) > r) {
+            matchM = false;
+            break;
+          }
+        }
+        if (matchM) {
+          B++;
+          if (Math.abs(rr[i + m] - rr[j + m]) <= r) A++;
+        }
+      }
+    }
+    if (B === 0 || A === 0) return 0;
+    const s = -Math.log(A / B);
+    return isFinite(s) ? s : 0;
   }
 
   private classifyRhythm(f: RhythmFeatures, ibis: number[]): RhythmLabel {

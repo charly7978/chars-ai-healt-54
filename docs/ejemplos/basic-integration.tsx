@@ -230,10 +230,9 @@ export const BasicMeasurementWithAdvancedTracking: React.FC = () => {
     requestAnimationFrame(processFrame);
   }, [state.isMeasuring]);
 
-  // Helper para obtener ventana de señal
+  // Helper: en producción, devolver los últimos valores del buffer PPG real (p. ej. ring buffer)
   const getSignalWindow = (): number[] => {
-    // Simulación - en implementación real, obtener del historial
-    return Array(25).fill(0).map(() => Math.random() * 100);
+    return [];
   };
 
   // Debug logging

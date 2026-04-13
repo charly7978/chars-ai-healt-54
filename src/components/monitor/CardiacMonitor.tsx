@@ -331,11 +331,10 @@ export const CardiacMonitor: React.FC<CardiacMonitorProps> = ({
     ctx.fillStyle = colors.text;
     ctx.fillText('BPM', x + 50, y + 30);
     
-    // SpO2 si disponible
-    if (data.finger.perfusionIndex > 0.5) {
+    if (data.spo2 > 0) {
       ctx.font = 'bold 18px monospace';
       ctx.fillStyle = '#00ccff';
-      ctx.fillText(`SpO2 --%`, x, y + 55);
+      ctx.fillText(`SpO2 ${Math.round(data.spo2)}%`, x, y + 55);
     }
     
     // Calidad de señal

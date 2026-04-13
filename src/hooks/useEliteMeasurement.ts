@@ -123,9 +123,9 @@ export const useEliteMeasurement = (
           fingerDetected: result.finger.detected,
           stability: result.finger.stabilityScore,
           heartRate: result.beat.bpm,
-          spo2: 98, // TODO: Integrar SpO2ProcessorElite
-          systolicBP: 0, // TODO: Integrar BloodPressureProcessorElite
-          diastolicBP: 0,
+          spo2: result.spo2,
+          systolicBP: result.systolicBP,
+          diastolicBP: result.diastolicBP,
           rmssd: result.hrvTime.rmssd,
           sdnn: result.hrvTime.sdnn,
           pnn50: result.hrvTime.pnn50,

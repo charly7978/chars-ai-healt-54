@@ -19,7 +19,11 @@ import type { HeartBeatResult } from '../../types/beat';
 import { HRVNonlinearAnalyzer, type NonlinearHRVResult } from '../vital-signs/HRVNonlinearAnalyzer';
 import { HRVFrequencyAnalyzer, type FrequencyHRVResult } from '../vital-signs/HRVFrequencyAnalyzer';
 import { AdvancedArrhythmiaDetector, type ArrhythmiaResult, type ArrhythmiaType } from '../vital-signs/AdvancedArrhythmiaDetector';
+import { SpO2ProcessorElite } from '../vital-signs/SpO2ProcessorElite';
+import { BloodPressureProcessorElite } from '../vital-signs/BloodPressureProcessorElite';
 import type { ProcessedSignal } from '../../types/signal';
+
+export type BpConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
 
 export interface ElitePPGResult {
   finger: {
@@ -68,6 +72,14 @@ export interface ElitePPGResult {
     confidence: number;
     severity: 'info' | 'warning' | 'alert' | 'critical' | null;
   };
+
+  /** Oximetría (SpO2ProcessorElite); 0 si calidad insuficiente o retenido */
+  spo2: number;
+  spo2Confidence: number;
+  /** Presión estimada (BloodPressureProcessorElite); 0 si INSUFFICIENT */
+  systolicBP: number;
+  diastolicBP: number;
+  bpConfidenceLevel: BpConfidenceLevel;
   
   timestamp: number;
   processingTime: number;
@@ -90,6 +102,10 @@ export class ElitePPGProcessor {
   private hrvNonlinear: HRVNonlinearAnalyzer;
   private hrvFrequency: HRVFrequencyAnalyzer;
   private arrhythmiaDetector: AdvancedArrhythmiaDetector;
+  private spo2Processor: SpO2ProcessorElite;
+  private bpProcessor: BloodPressureProcessorElite;
+  private signalBuffer: number[] = [];
+  private timestampBuffer: number[] = [];
   
   private config: EliteConfig;
   private isRunning = false;
@@ -126,6 +142,8 @@ export class ElitePPGProcessor {
     this.hrvNonlinear = new HRVNonlinearAnalyzer();
     this.hrvFrequency = new HRVFrequencyAnalyzer();
     this.arrhythmiaDetector = new AdvancedArrhythmiaDetector();
+    this.spo2Processor = new SpO2ProcessorElite();
+    this.bpProcessor = new BloodPressureProcessorElite();
   }
   
   start(): void {
@@ -142,6 +160,8 @@ export class ElitePPGProcessor {
   reset(): void {
     this.frameCount = 0;
     this.rrHistory = [];
+    this.signalBuffer = [];
+    this.timestampBuffer = [];
     this.lastResult = null;
     this.lastSignal = null;
     this.lastBeatResult = null;
@@ -151,6 +171,8 @@ export class ElitePPGProcessor {
     this.hrvNonlinear.reset();
     this.hrvFrequency.reset();
     this.arrhythmiaDetector.reset();
+    this.spo2Processor.reset();
+    this.bpProcessor.reset();
   }
   
   processFrame(imageData: ImageData, timestamp: number): ElitePPGResult {
@@ -229,6 +251,64 @@ export class ElitePPGProcessor {
         this.onArrhythmia?.(arrhythmiaResult);
       }
     }
+
+    // Buffer PPG para estimación de PA (misma ventana que Index.tsx)
+    const fv = ppgSignal?.filteredValue;
+    if (fv !== undefined && fv !== null && Number.isFinite(fv)) {
+      this.signalBuffer.push(fv);
+      this.timestampBuffer.push(timestamp);
+      if (this.signalBuffer.length > 360) {
+        this.signalBuffer.shift();
+        this.timestampBuffer.shift();
+      }
+    }
+
+    let spo2 = 0;
+    let spo2Confidence = 0;
+    let systolicBP = 0;
+    let diastolicBP = 0;
+    let bpConfidenceLevel: BpConfidenceLevel = 'INSUFFICIENT';
+
+    const rgbStats = this.ppgProcessor.getRGBStats();
+    if (rgbStats.redDC > 0 && rgbStats.greenDC > 0 && beatResult) {
+      const pressureOptimal =
+        fingerResult.pressureEstimate >= 0.35 && fingerResult.pressureEstimate <= 0.65;
+      const spo2Res = this.spo2Processor.process({
+        redAC: rgbStats.redAC,
+        redDC: rgbStats.redDC,
+        greenAC: rgbStats.greenAC,
+        greenDC: rgbStats.greenDC,
+        contactQuality: fingerResult.contactQuality,
+        beatSQI: beatResult.beatSQI ?? 0,
+        pressureOptimal,
+        clipHighRatio: ppgSignal?.clipHighRatio ?? 0,
+        clipLowRatio: ppgSignal?.clipLowRatio ?? 0,
+      });
+      if (spo2Res.value > 0) {
+        spo2 = spo2Res.value;
+        spo2Confidence = spo2Res.confidence;
+      }
+    }
+
+    const rrIntervals = beatResult?.rrData?.intervals;
+    const usableRR =
+      rrIntervals &&
+      rrIntervals.length >= 2 &&
+      (beatResult?.bpmConfidence ?? 0) > 0.18;
+    if (usableRR && this.signalBuffer.length > 90 && rrIntervals) {
+      const sr = this.estimateSampleRate();
+      const bpRes = this.bpProcessor.process(
+        [...this.signalBuffer],
+        rrIntervals,
+        [...this.timestampBuffer],
+        sr
+      );
+      if (bpRes.confidenceLevel !== 'INSUFFICIENT') {
+        systolicBP = bpRes.systolic;
+        diastolicBP = bpRes.diastolic;
+        bpConfidenceLevel = bpRes.confidenceLevel;
+      }
+    }
     
     // CONSTRUIR RESULTADO
     const result: ElitePPGResult = {
@@ -275,6 +355,11 @@ export class ElitePPGProcessor {
         confidence: arrhythmiaResult?.confidence ?? 0,
         severity: this.determineSeverity(arrhythmiaResult?.primaryDiagnosis ?? null)
       },
+      spo2,
+      spo2Confidence,
+      systolicBP,
+      diastolicBP,
+      bpConfidenceLevel,
       timestamp,
       processingTime: performance.now() - startTime,
       frameCount: this.frameCount
@@ -310,6 +395,20 @@ export class ElitePPGProcessor {
     return 'STABLE_CONTACT';
   }
   
+  private estimateSampleRate(): number {
+    const ts = this.timestampBuffer;
+    if (ts.length < 6) return 30;
+    const deltas: number[] = [];
+    for (let i = 1; i < ts.length; i++) {
+      const d = ts[i] - ts[i - 1];
+      if (d >= 8 && d <= 120) deltas.push(d);
+    }
+    if (deltas.length < 4) return 30;
+    deltas.sort((a, b) => a - b);
+    const median = deltas[Math.floor(deltas.length / 2)];
+    return Math.max(15, Math.min(60, 1000 / Math.max(1, median)));
+  }
+
   private determineSeverity(type: ArrhythmiaType | null): 'info' | 'warning' | 'alert' | 'critical' | null {
     if (!type) return null;
     
