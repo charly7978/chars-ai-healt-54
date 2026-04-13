@@ -12,16 +12,7 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-
-const NON_ALERT_RHYTHMS = new Set([
-  'SIN ARRITMIAS',
-  'SINUS_STABLE',
-  'SINUS_VARIABLE',
-  'CALIBRANDO...',
-  'CALIBRANDO',
-  'UNDETERMINED_LOW_QUALITY',
-  'INSUFFICIENT_DATA',
-]);
+import { NON_ALERT_RHYTHM_LABELS } from "@/constants/rhythmAlert";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -611,7 +602,7 @@ const Index = () => {
           const count = parseInt(parts[1] || '0', 10) || 0;
           setArrhythmiaCount(count > 0 ? count : rhythmLabel.split('_').join(' '));
 
-          const isArrhythmiaDetected = !NON_ALERT_RHYTHMS.has(rhythmLabel);
+          const isArrhythmiaDetected = !NON_ALERT_RHYTHM_LABELS.has(rhythmLabel);
           if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
             arrhythmiaDetectedRef.current = isArrhythmiaDetected;
             setArrhythmiaState(isArrhythmiaDetected);

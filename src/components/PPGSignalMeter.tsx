@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart, Activity } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
+import { NON_ALERT_RHYTHM_LABELS } from '../constants/rhythmAlert';
 
 interface PPGSignalMeterProps {
   value: number;
@@ -61,14 +62,12 @@ const CONFIG = {
   }
 };
 
-const NON_ALERT_RHYTHMS = new Set(['SIN ARRITMIAS', 'SINUS_STABLE', 'SINUS_VARIABLE', 'CALIBRANDO...', 'UNDETERMINED_LOW_QUALITY']);
-
 const parseRhythmStatus = (statusString?: string) => {
   const [label = 'SIN ARRITMIAS', countStr = '0'] = (statusString || 'SIN ARRITMIAS|0').split('|');
   const count = parseInt(countStr, 10) || 0;
   const normalized = label.trim();
   const display = normalized.split('_').join(' ');
-  const isAlert = !NON_ALERT_RHYTHMS.has(normalized);
+  const isAlert = !NON_ALERT_RHYTHM_LABELS.has(normalized);
   const color = normalized === 'UNDETERMINED_LOW_QUALITY'
     ? CONFIG.COLORS.TEXT_WARNING
     : isAlert
