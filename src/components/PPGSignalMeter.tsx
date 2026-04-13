@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Heart, Activity } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { NON_ALERT_RHYTHM_LABELS } from '../constants/rhythmAlert';
+import type { BeatFlags } from '@/types/beat';
+import { shouldPaintBeatAsArrhythmic } from '@/utils/beatVisualization';
 
 interface PPGSignalMeterProps {
   value: number;
@@ -18,7 +20,8 @@ interface PPGSignalMeterProps {
   } | null;
   preserveResults?: boolean;
   diagnosticMessage?: string;
-  isPeak?: boolean;
+  /** Un incremento por latido aceptado (evita múltiples “picos” por el latch del UI). */
+  peakEvent?: { seq: number; flags: BeatFlags | null; wallTime: number };
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
@@ -87,7 +90,7 @@ const PPGSignalMeter = ({
   rawArrhythmiaData,
   preserveResults = false,
   diagnosticMessage,
-  isPeak = false,
+  peakEvent = { seq: 0, flags: null, wallTime: 0 },
   bpm = 0,
   spo2 = 0,
   rrIntervals = []
@@ -97,19 +100,20 @@ const PPGSignalMeter = ({
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData });
+  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, peakEvent, bpm, spo2, rrIntervals, rawArrhythmiaData });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   
-  const beatArrhythmiaRef = useRef(false);
-  const lastArrhythmiaCountRef = useRef(0);
+  const lastRhythmCountSeenRef = useRef(0);
+  const lastProcessedPeakSeqRef = useRef(0);
+  const lastPulsePeakSeqRef = useRef(0);
   const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
 
   useEffect(() => {
-    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData };
+    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, peakEvent, bpm, spo2, rrIntervals, rawArrhythmiaData };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
       ibiDisplayRef.current = Math.round(last);
@@ -120,10 +124,12 @@ const PPGSignalMeter = ({
       for (let i = 1; i < rrIntervals.length; i++) sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
       hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
     }
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData]);
+  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, peakEvent, bpm, spo2, rrIntervals, rawArrhythmiaData]);
 
   useEffect(() => {
-    if (isPeak && isFingerDetected) {
+    const seq = peakEvent?.seq ?? 0;
+    if (seq > 0 && seq !== lastPulsePeakSeqRef.current && isFingerDetected) {
+      lastPulsePeakSeqRef.current = seq;
       const now = Date.now();
       if (now - lastPeakTimeRef.current > 250) {
         lastPeakTimeRef.current = now;
@@ -131,7 +137,7 @@ const PPGSignalMeter = ({
         setTimeout(() => setShowPulse(false), 120);
       }
     }
-  }, [isPeak, isFingerDetected]);
+  }, [peakEvent?.seq, isFingerDetected]);
 
   useEffect(() => {
     if (!dataBufferRef.current) dataBufferRef.current = new CircularBuffer(CONFIG.BUFFER_SIZE);
@@ -146,6 +152,13 @@ const PPGSignalMeter = ({
       dataBufferRef.current?.clear();
     }
   }, [preserveResults, isFingerDetected]);
+
+  useEffect(() => {
+    if (peakEvent.seq === 0) {
+      lastProcessedPeakSeqRef.current = 0;
+      lastRhythmCountSeenRef.current = 0;
+    }
+  }, [peakEvent.seq]);
 
   const getPlotArea = useCallback(() => {
     const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, PLOT_AREA } = CONFIG;
@@ -407,7 +420,7 @@ const PPGSignalMeter = ({
       }
       lastRenderTime = now;
       
-      const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, isPeak: peak } = propsRef.current;
+      const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, peakEvent: pe } = propsRef.current;
       const rhythm = parseRhythmStatus(arrStatus);
       const plot = getPlotArea();
       const { WINDOW_MS, COLORS } = CONFIG;
@@ -423,25 +436,28 @@ const PPGSignalMeter = ({
       }
       const scaledValue = signalValue * 2;
       
-      if (peak) {
-        const currentCount = rhythm.count;
-        const shouldMarkArrhythmia = rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current;
-        if (shouldMarkArrhythmia) {
-          beatArrhythmiaRef.current = true;
-          lastArrhythmiaCountRef.current = Math.max(lastArrhythmiaCountRef.current, currentCount);
-          const { rrIntervals: rr } = propsRef.current;
-          const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
+      const peakSeq = pe?.seq ?? 0;
+      if (peakSeq > 0 && peakSeq !== lastProcessedPeakSeqRef.current) {
+        lastProcessedPeakSeqRef.current = peakSeq;
+        const { rrIntervals: rr } = propsRef.current;
+        const { arrhythmic, lastRhythmCountSeen } = shouldPaintBeatAsArrhythmic(
+          pe.flags ?? null,
+          { isAlert: rhythm.isAlert, count: rhythm.count },
+          rr ?? [],
+          lastRhythmCountSeenRef.current
+        );
+        lastRhythmCountSeenRef.current = lastRhythmCountSeen;
+        if (arrhythmic) {
+          const lastRR = rr && rr.length > 0 ? rr[rr.length - 1]! : 800;
           const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
           buffer.markArrhythmiaBack(retroDuration);
-        } else {
-          beatArrhythmiaRef.current = false;
         }
-        beatHistoryRef.current.push({ isArrhythmia: beatArrhythmiaRef.current, time: now });
+        const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
+        beatHistoryRef.current.push({ isArrhythmia: arrhythmic, time: beatTime });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
-      const currentIsArrhythmia = beatArrhythmiaRef.current;
-      
-      buffer.push({ time: now, value: scaledValue, isArrhythmia: currentIsArrhythmia });
+
+      buffer.push({ time: now, value: scaledValue, isArrhythmia: false });
       const points = buffer.getPoints();
       if (points.length > 30) {
         const recentPoints = points.slice(-150);
@@ -740,7 +756,9 @@ const PPGSignalMeter = ({
     dataBufferRef.current?.clear();
     amplitudeStatsRef.current = { min: -50, max: 50, range: 100 };
     beatHistoryRef.current = [];
-    lastArrhythmiaCountRef.current = 0;
+    lastRhythmCountSeenRef.current = 0;
+    lastProcessedPeakSeqRef.current = 0;
+    lastPulsePeakSeqRef.current = 0;
     ibiDisplayRef.current = 0;
     hrvDisplayRef.current = { sdnn: 0, rmssd: 0 };
     onReset();

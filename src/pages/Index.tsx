@@ -13,6 +13,7 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { NON_ALERT_RHYTHM_LABELS } from "@/constants/rhythmAlert";
+import type { BeatFlags } from "@/types/beat";
 
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -32,7 +33,11 @@ const Index = () => {
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
-  const [beatMarker, setBeatMarker] = useState(0);
+  const [peakEvent, setPeakEvent] = useState<{ seq: number; flags: BeatFlags | null; wallTime: number }>({
+    seq: 0,
+    flags: null,
+    wallTime: 0,
+  });
   const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
@@ -383,7 +388,7 @@ const Index = () => {
     lastArrhythmiaCountForBeatsRef.current = 0;
     unstableFrameCounter.current = 0;
     setHeartbeatSignal(0);
-    setBeatMarker(0);
+    setPeakEvent({ seq: 0, flags: null, wallTime: 0 });
     setRRIntervals([]);
     setVitalSigns({ 
       spo2: 0,
@@ -465,7 +470,7 @@ const Index = () => {
       if (unstableFrameCounter.current >= UNSTABLE_ZERO_THRESHOLD) {
         setHeartRate(0);
         vitalSignsFrameCounter.current = 0;
-        setBeatMarker(0);
+        setPeakEvent({ seq: 0, flags: null, wallTime: 0 });
         setRRIntervals([]);
         setArrhythmiaCount("--");
         if (arrhythmiaDetectedRef.current) {
@@ -499,8 +504,11 @@ const Index = () => {
 
     if (heartBeatResult.isPeak) {
       ingestBeatOpticalRatio();
-      setBeatMarker(1);
-      setTimeout(() => setBeatMarker(0), 300);
+      setPeakEvent((pe) => ({
+        seq: pe.seq + 1,
+        flags: heartBeatResult.beatFlags ?? null,
+        wallTime: Date.now(),
+      }));
       totalBeatsRef.current++;
       const currentArrCount = vitalSigns.arrhythmiaCount || 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
@@ -710,7 +718,7 @@ const Index = () => {
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
               diagnosticMessage={lastSignal?.diagnostics?.message}
-              isPeak={beatMarker === 1}
+              peakEvent={peakEvent}
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
