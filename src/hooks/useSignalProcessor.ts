@@ -133,14 +133,14 @@ export const useSignalProcessor = () => {
     }
   }, []);
 
-  const processFrame = useCallback((imageData: ImageData, frameTimestamp?: number) => {
+  const processFrame = useCallback((frame: ImageData | ImageBitmap, frameTimestamp?: number) => {
     if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
       return;
     }
 
     try {
       const ts = frameTimestamp ?? performance.now();
-      processorRef.current.processFrame(imageData, ts);
+      processorRef.current.processFrame(frame, ts);
       const signal = processorRef.current.getLastProcessedSignal();
       lastBeatRef.current = processorRef.current.getLastBeatResult();
       if (signal) {

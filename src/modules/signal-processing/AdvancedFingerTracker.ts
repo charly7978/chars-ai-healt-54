@@ -1,6 +1,6 @@
 /**
  * Detector híbrido dedo/tejido: combina señal del FrameAnalysisCore (pulsatilidad, cobertura, clipping)
- * con coherencia temporal local ligera. Sin depender solo de rojo/cobertura cuando hay snapshot de pipeline.
+ * con coherencia temporal local y métricas de SQI/readiness del pipeline.
  */
 
 import type { FrameAnalysisResult } from './FrameAnalysisCore';
@@ -36,10 +36,17 @@ export class AdvancedFingerTracker {
   }
 
   /**
-   * @param pipelineSnapshot Resultado opcional del núcleo de análisis (misma ventana temporal que PPG).
+   * @param frame Opcional si el pipeline ya aporta todo (worker/ImageBitmap sin readback en main).
+   * @param pipelineSnapshot Resultado del núcleo de análisis (misma ventana temporal que PPG).
    */
-  processFrame(imageData: ImageData, pipelineSnapshot?: FrameAnalysisResult | null): FingerTrackingResult {
-    const { width, height } = imageData;
+  processFrame(
+    frame: ImageData | ImageBitmap | null,
+    pipelineSnapshot?: FrameAnalysisResult | null
+  ): FingerTrackingResult {
+    const { width, height } =
+      frame && 'width' in frame
+        ? { width: frame.width, height: frame.height }
+        : { width: 320, height: 240 };
     const cx = width * 0.5;
     const cy = height * 0.5;
 
@@ -55,15 +62,29 @@ export class AdvancedFingerTracker {
       const pulsatilityScore = Math.max(0, Math.min(1, pi / 10));
       const clipPen = Math.min(1, p.clipHighRatio * 2 + p.clipLowRatio * 1.2);
 
+      const agg = Math.max(0, Math.min(1, p.aggregateContactScore));
+      const readinessOk =
+        p.readinessReason === 'ok' ? 1 : p.readinessReason === 'contact_not_ready' ? 0.35 : 0.55;
+      let bestSqi = 0;
+      for (const v of Object.values(p.allSQI)) {
+        if (v > bestSqi) bestSqi = v;
+      }
+      const sqiNorm = Math.max(0, Math.min(1, bestSqi));
+
       const hybrid =
-        tissueInstant * 0.28 +
-        temporalStability * 0.22 +
-        pulsatilityScore * 0.32 +
-        Math.max(0, Math.min(1, p.aggregateContactScore)) * 0.18 -
+        tissueInstant * 0.22 +
+        temporalStability * 0.2 +
+        pulsatilityScore * 0.26 +
+        agg * 0.14 +
+        readinessOk * 0.1 +
+        sqiNorm * 0.12 -
         clipPen * 0.35;
 
       const contactQuality = Math.max(0, Math.min(100, hybrid * 100));
-      const stabilityScore = Math.max(0, Math.min(1, temporalStability * 0.65 + (1 - clipPen) * 0.35));
+      const stabilityScore = Math.max(
+        0,
+        Math.min(1, temporalStability * 0.55 + (1 - clipPen) * 0.25 + sqiNorm * 0.2)
+      );
 
       return {
         centerX: cx,
@@ -78,14 +99,33 @@ export class AdvancedFingerTracker {
         roiMeanB: p.rawBlue,
         perfusionIndex: pi,
         signalToNoiseRatio: this.lastSnr,
-        trackedFeatures: Math.round(p.coverageRatio * 192),
+        trackedFeatures: p.activeTileCount,
         opticalFlowMagnitude: p.globalMotion * 12,
         segmentationConfidence: tissueInstant,
       };
     }
 
-    // Fallback mínimo sin pipeline (no debería ocurrir en flujo Elite integrado)
-    const data = imageData.data;
+    if (!frame || frame instanceof ImageBitmap) {
+      return {
+        centerX: cx,
+        centerY: cy,
+        stabilityScore: 0.2,
+        driftVelocity: 0,
+        contactQuality: 15,
+        pressureEstimate: 0.4,
+        coverageUniformity: 0.2,
+        roiMeanR: 0,
+        roiMeanG: 0,
+        roiMeanB: 0,
+        perfusionIndex: 0,
+        signalToNoiseRatio: 0,
+        trackedFeatures: 0,
+        opticalFlowMagnitude: 0,
+        segmentationConfidence: 0,
+      };
+    }
+
+    const data = frame.data;
     let r = 0;
     let g = 0;
     let b = 0;

@@ -1,6 +1,6 @@
 /**
  * Pipeline de frames con Worker opcional; fallback síncrono al núcleo FrameAnalysisCore.
- * Minimiza copias: transfer del buffer RGBA del ImageData cuando el worker está activo.
+ * Soporta buffer RGBA transferido o ImageBitmap (readback principalmente en worker).
  */
 
 import { FrameAnalysisEngine, type FrameAnalysisResult } from './FrameAnalysisCore';
@@ -13,9 +13,11 @@ export interface PipelineStats {
   workerRoundtripMs: number;
   readbackMs: number;
   workerActive: boolean;
+  /** Resultado del frame anterior (latencia N−1) cuando la cola worker > 0 */
+  staleResult: boolean;
 }
 
-type WorkerInbound = {
+type WorkerInboundFrame = {
   type: 'frame';
   id: number;
   width: number;
@@ -25,12 +27,27 @@ type WorkerInbound = {
   buffer: ArrayBuffer;
 };
 
+type WorkerInboundBitmap = {
+  type: 'bitmap';
+  id: number;
+  timestamp: number;
+  motion: boolean;
+  bitmap: ImageBitmap;
+};
+
+type WorkerInbound = WorkerInboundFrame | WorkerInboundBitmap;
+
 type WorkerOutbound = {
   type: 'result';
   id: number;
   payload: FrameAnalysisResult;
   dt: number;
+  readbackMs: number;
 };
+
+function isImageBitmap(x: unknown): x is ImageBitmap {
+  return typeof ImageBitmap !== 'undefined' && x instanceof ImageBitmap;
+}
 
 export class WorkerizedFramePipeline {
   private worker: Worker | null = null;
@@ -47,9 +64,14 @@ export class WorkerizedFramePipeline {
     workerRoundtripMs: 0,
     readbackMs: 0,
     workerActive: false,
+    staleResult: false,
   };
   private lastInputTs: number[] = [];
   private lastProcTs: number[] = [];
+
+  /** Canvas oculto para convertir ImageBitmap → ImageData en main (solo sin worker). */
+  private bitmapCanvas: HTMLCanvasElement | null = null;
+  private bitmapCtx: CanvasRenderingContext2D | null = null;
 
   constructor(options?: { preferWorker?: boolean }) {
     this.engine = new FrameAnalysisEngine();
@@ -65,6 +87,7 @@ export class WorkerizedFramePipeline {
           if (m.type !== 'result') return;
           this.pending = Math.max(0, this.pending - 1);
           this.stats.workerRoundtripMs = m.dt;
+          this.stats.readbackMs = m.readbackMs ?? m.dt;
           this.lastResult = m.payload;
           const now = performance.now();
           this.lastProcTs.push(now);
@@ -89,7 +112,7 @@ export class WorkerizedFramePipeline {
     return this.lastResult;
   }
 
-  /** Procesa frame: con worker transfiere buffer; resultado puede ser N-1. */
+  /** Procesa frame RGBA: con worker transfiere buffer; resultado puede ser N−1. */
   process(imageData: ImageData, timestamp: number, motionArtifact: boolean): FrameAnalysisResult | null {
     const t0 = performance.now();
     this.lastInputTs.push(t0);
@@ -101,6 +124,7 @@ export class WorkerizedFramePipeline {
       this.lastResult = r;
       this.stats.lastFrameLatencyMs = performance.now() - t0;
       this.stats.readbackMs = this.stats.lastFrameLatencyMs;
+      this.stats.staleResult = false;
       this.lastProcTs.push(performance.now());
       if (this.lastProcTs.length > 40) this.lastProcTs.shift();
       this.stats.processedFps = this.estimateFps(this.lastProcTs);
@@ -110,29 +134,104 @@ export class WorkerizedFramePipeline {
     const buf = imageData.data.buffer;
     const id = ++this.seq;
     this.pending++;
+    this.stats.staleResult = this.pending > 1;
     if (this.pending > 2) {
       this.stats.droppedFrames++;
     }
 
-    const msg: WorkerInbound = {
+    const msg: WorkerInboundFrame = {
       type: 'frame',
       id,
       width: imageData.width,
       height: imageData.height,
       timestamp,
       motion: motionArtifact,
+      buffer: buf,
     };
 
     try {
-      const payload: WorkerInbound = { ...msg, buffer: buf };
-      this.worker.postMessage(payload, [buf]);
+      this.worker.postMessage(msg, [buf]);
     } catch {
       const copy = new Uint8ClampedArray(imageData.data);
       const idata = new ImageData(copy, imageData.width, imageData.height);
       const r = this.engine.processFrame(idata, timestamp, motionArtifact);
       this.lastResult = r;
       this.stats.lastFrameLatencyMs = performance.now() - t0;
+      this.stats.staleResult = false;
       return r;
+    }
+
+    this.stats.lastFrameLatencyMs = performance.now() - t0;
+    return this.lastResult;
+  }
+
+  /**
+   * Procesa ImageBitmap (p. ej. desde video): en worker hace draw + getImageData allí.
+   * Transfiere el bitmap al worker; el hilo principal no hace readback RGBA.
+   */
+  processBitmap(bitmap: ImageBitmap, timestamp: number, motionArtifact: boolean): FrameAnalysisResult | null {
+    if (!isImageBitmap(bitmap)) {
+      return null;
+    }
+
+    const t0 = performance.now();
+    this.lastInputTs.push(t0);
+    if (this.lastInputTs.length > 40) this.lastInputTs.shift();
+    this.stats.inputFps = this.estimateFps(this.lastInputTs);
+
+    if (!this.useWorker || !this.worker) {
+      const w = bitmap.width;
+      const h = bitmap.height;
+      if (!this.bitmapCanvas || this.bitmapCanvas.width !== w || this.bitmapCanvas.height !== h) {
+        this.bitmapCanvas = document.createElement('canvas');
+        this.bitmapCanvas.width = w;
+        this.bitmapCanvas.height = h;
+        this.bitmapCtx = this.bitmapCanvas.getContext('2d', { willReadFrequently: true, alpha: false });
+      }
+      const ctx = this.bitmapCtx!;
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      const rb0 = performance.now();
+      const imageData = ctx.getImageData(0, 0, w, h);
+      this.stats.readbackMs = performance.now() - rb0;
+      try {
+        bitmap.close();
+      } catch {
+        /* noop */
+      }
+      const r = this.engine.processFrame(imageData, timestamp, motionArtifact);
+      this.lastResult = r;
+      this.stats.lastFrameLatencyMs = performance.now() - t0;
+      this.stats.staleResult = false;
+      this.lastProcTs.push(performance.now());
+      if (this.lastProcTs.length > 40) this.lastProcTs.shift();
+      this.stats.processedFps = this.estimateFps(this.lastProcTs);
+      return r;
+    }
+
+    const id = ++this.seq;
+    this.pending++;
+    this.stats.staleResult = this.pending > 1;
+    if (this.pending > 2) {
+      this.stats.droppedFrames++;
+    }
+
+    const msg: WorkerInboundBitmap = {
+      type: 'bitmap',
+      id,
+      timestamp,
+      motion: motionArtifact,
+      bitmap,
+    };
+
+    try {
+      this.worker.postMessage(msg, [bitmap]);
+    } catch {
+      try {
+        bitmap.close();
+      } catch {
+        /* noop */
+      }
+      return null;
     }
 
     this.stats.lastFrameLatencyMs = performance.now() - t0;
@@ -144,6 +243,7 @@ export class WorkerizedFramePipeline {
     this.lastResult = null;
     this.pending = 0;
     this.stats.droppedFrames = 0;
+    this.stats.staleResult = false;
   }
 
   destroy(): void {

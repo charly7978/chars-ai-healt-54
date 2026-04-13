@@ -10,8 +10,26 @@ import { PressureProxyEstimator } from './PressureProxyEstimator';
 import { SignalExtractionEngine } from './SignalExtractionEngine';
 import { SignalQualityScorer } from './SignalQualityScorer';
 import { RingBuffer } from './RingBuffer';
-import type { ROIMaskResult } from './AdaptiveROIMask';
 import type { SourceSQIDetail } from './SignalQualityScorer';
+
+/** ROI agregada para compatibilidad con exports legacy */
+export interface ROIMaskResult {
+  rawRed: number;
+  rawGreen: number;
+  rawBlue: number;
+  coverageRatio: number;
+  fingerScore: number;
+  clipHighRatio: number;
+  clipLowRatio: number;
+  spatialUniformity: number;
+  centerCoverage: number;
+  brightness: number;
+  brightnessVariance: number;
+  validPixelCount: number;
+  totalPixelCount: number;
+  tileScores: Float64Array;
+  debugBbox?: { sx: number; sy: number; ex: number; ey: number };
+}
 
 const LABELS = ['R', 'G', 'RG', 'CHROM', 'POS', 'ICA_APPROX', 'ROT', 'W_TILE', 'R_G', 'LOG_RG'] as const;
 
@@ -49,6 +67,14 @@ export interface FrameAnalysisResult {
   assemblerCoverage: number;
   spatialStabilityROI: number;
   roiBBox: { sx: number; sy: number; ex: number; ey: number };
+  /** Tiles con máscara activa tras histéresis */
+  activeTileCount: number;
+  /** Tiles excluidos explícitamente */
+  discardedTileCount: number;
+  /** Hasta 32 índices de tiles activos (debug) */
+  activeTileSample: number[];
+  /** Fs estimada en el núcleo (Δt entre frames); alinear filtro en PPGSignalProcessor */
+  sampleRateHint: number;
 }
 
 export class FrameAnalysisEngine {
@@ -207,6 +233,8 @@ export class FrameAnalysisEngine {
     let fingerW = 0;
     let activeTiles = 0;
     let discarded = 0;
+    const activeTileSample: number[] = [];
+    const SAMPLE_CAP = 32;
     for (let i = 0; i < this.tileMap.tileCount; i++) {
       const t = this.tileSnapshots[i]!;
       const wt = t.weight;
@@ -216,6 +244,7 @@ export class FrameAnalysisEngine {
       if (assembled.activeTiles[i]) {
         fingerW += wt;
         activeTiles++;
+        if (activeTileSample.length < SAMPLE_CAP) activeTileSample.push(i);
       }
       if (assembled.discardedTiles[i]) discarded++;
     }
@@ -424,6 +453,10 @@ export class FrameAnalysisEngine {
       assemblerCoverage: assembled.coverageEffective,
       spatialStabilityROI: assembled.spatialStability,
       roiBBox: assembled.bbox,
+      activeTileCount: activeTiles,
+      discardedTileCount: discarded,
+      activeTileSample,
+      sampleRateHint: this.estimatedSampleRate,
     };
   }
 

@@ -7,7 +7,7 @@ export { AdaptiveROIMask, type ROIMaskResult, type TileMetrics } from './Adaptiv
 export { TilePulsatilityMap } from './TilePulsatilityMap';
 export { AdaptiveROIAssembler } from './AdaptiveROIAssembler';
 export { ContactStateMachine, type ContactMachineState } from './ContactStateMachine';
-export { FrameAnalysisEngine, type FrameAnalysisResult } from './FrameAnalysisCore';
+export { FrameAnalysisEngine, type FrameAnalysisResult, type ROIMaskResult } from './FrameAnalysisCore';
 export { WorkerizedFramePipeline } from './WorkerizedFramePipeline';
 export { CameraControlEngine } from './CameraControlEngine';
 export { SignalQualityScorer } from './SignalQualityScorer';

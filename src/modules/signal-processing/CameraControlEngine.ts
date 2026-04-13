@@ -35,11 +35,22 @@ export class CameraControlEngine {
   private readonly cooldownMs = 520;
   private pendingBackoff = 0;
   private lastFeedbackKey = '';
+  /** Frames consecutivos con clipping alto (zoom de emergencia) */
+  private highClipStreak = 0;
+  /** Último snapshot tras intento de feedback (lectura real del track) */
+  private lastFeedbackEffective: EffectiveCameraSettings | null = null;
 
   attachTrack(track: MediaStreamTrack | null): void {
     this.track = track;
     this.pendingBackoff = 0;
     this.lastFeedbackKey = '';
+    this.highClipStreak = 0;
+    this.lastFeedbackEffective = null;
+  }
+
+  /** Settings leídos tras el último ajuste por feedback (puede ser null). */
+  getLastFeedbackEffective(): EffectiveCameraSettings | null {
+    return this.lastFeedbackEffective;
   }
 
   getCapabilities(): CameraCapabilitiesSnapshot | null {
@@ -173,12 +184,42 @@ export class CameraControlEngine {
     if (now - this.lastAdjustAt < this.cooldownMs) return;
     if (contactUnstable) return;
 
+    if (clipHigh > 0.36) this.highClipStreak = Math.min(this.highClipStreak + 1, 30);
+    else this.highClipStreak = Math.max(0, this.highClipStreak - 2);
+
     const key = `${clipHigh.toFixed(2)}_${clipLow.toFixed(2)}_${signalWeak ? 1 : 0}`;
     if (key === this.lastFeedbackKey) return;
-    this.lastFeedbackKey = key;
 
-    const caps = track.getCapabilities() as MediaTrackCapabilities & { exposureCompensation?: { min: number; max: number; step: number } };
-    if (!caps.exposureCompensation) return;
+    const caps = track.getCapabilities() as MediaTrackCapabilities & {
+      exposureCompensation?: { min: number; max: number; step: number };
+      zoom?: { min: number; max: number; step: number };
+    };
+
+    const tryZoomOut = (): boolean => {
+      if (!caps.zoom || this.highClipStreak < 6 || clipHigh < 0.32) return false;
+      const cur = track.getSettings() as MediaTrackSettings & { zoom?: number };
+      const z = typeof cur.zoom === 'number' ? cur.zoom : 1;
+      const zMin = caps.zoom.min;
+      const step = caps.zoom.step || 0.1;
+      if (z <= zMin + 1e-4) return false;
+      const nz = Math.max(zMin, z - Math.max(step, 0.05) * 3);
+      this.lastFeedbackKey = `zoom_${nz.toFixed(3)}`;
+      this.lastAdjustAt = now;
+      void track
+        .applyConstraints({ advanced: [{ zoom: nz }] } as MediaTrackConstraints)
+        .then(() => {
+          this.lastFeedbackEffective = this.getEffectiveSettings();
+        })
+        .catch(() => {});
+      return true;
+    };
+
+    if (!caps.exposureCompensation) {
+      tryZoomOut();
+      return;
+    }
+
+    this.lastFeedbackKey = key;
 
     const cur = track.getSettings() as MediaTrackSettings & { exposureCompensation?: number };
     const min = caps.exposureCompensation.min ?? -2;
@@ -195,12 +236,16 @@ export class CameraControlEngine {
     } else if (signalWeak && clipHigh < 0.12) {
       ec = Math.min(max, ec + step * 0.5);
     } else {
+      if (clipHigh > 0.28) tryZoomOut();
       return;
     }
 
     this.lastAdjustAt = now;
-    track
+    void track
       .applyConstraints({ advanced: [{ exposureCompensation: ec }] } as MediaTrackConstraints)
+      .then(() => {
+        this.lastFeedbackEffective = this.getEffectiveSettings();
+      })
       .catch(() => {});
   }
 }

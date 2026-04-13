@@ -19,6 +19,7 @@ import {
   DEFAULT_USER_HEIGHT_M,
   clampUserHeightM,
 } from "@/modules/personalization/userPhysiology";
+import { FrameCaptureScheduler } from "@/modules/camera/FrameCaptureScheduler";
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
@@ -70,8 +71,8 @@ const Index = () => {
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const cameraRef = useRef<CameraViewHandle>(null);
   const autoFinalizeAt60Ref = useRef(false);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const captureSchedulerRef = useRef<FrameCaptureScheduler | null>(null);
+  const captureBusyRef = useRef(false);
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
   const frameTimestampHistoryRef = useRef<number[]>([]);
@@ -162,18 +163,6 @@ const Index = () => {
   const vitalSignsRef = useRef(vitalSigns);
   vitalSignsRef.current = vitalSigns;
 
-  useEffect(() => {
-    if (!canvasRef.current) {
-      canvasRef.current = document.createElement('canvas');
-      canvasRef.current.width = 320;
-      canvasRef.current.height = 240;
-      ctxRef.current = canvasRef.current.getContext('2d', { 
-        willReadFrequently: true,
-        alpha: false 
-      });
-    }
-  }, []);
-
   const enterFullScreen = async () => {
     if (isFullscreen) return;
     try {
@@ -244,12 +233,13 @@ const Index = () => {
   const startFrameLoop = useCallback(() => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
-    
-    const canvas = canvasRef.current;
-    const ctx = ctxRef.current;
-    if (!canvas || !ctx) {
-      isProcessingRef.current = false;
-      return;
+
+    if (!captureSchedulerRef.current) {
+      captureSchedulerRef.current = new FrameCaptureScheduler({
+        targetWidth: 320,
+        targetHeight: 240,
+        preferBitmapPath: true,
+      });
     }
 
     const captureOneFrame = (nowOrMetadata?: number | any) => {
@@ -269,23 +259,39 @@ const Index = () => {
         frameTimestamp = performance.now();
       }
 
-      try {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        processFrameRef.current(imageData, frameTimestamp);
-      } catch {}
-      scheduleNext(video);
+      if (captureBusyRef.current) {
+        scheduleNext(video);
+        return;
+      }
+
+      const sched = captureSchedulerRef.current!;
+      captureBusyRef.current = true;
+      void (async () => {
+        try {
+          const frame = await sched.captureFromVideo(video);
+          if (frame && isProcessingRef.current) {
+            processFrameRef.current(frame, frameTimestamp);
+          }
+        } catch {
+          /* noop */
+        } finally {
+          captureBusyRef.current = false;
+        }
+        scheduleNext(video);
+      })();
     };
 
     const scheduleNext = (video: HTMLVideoElement) => {
       if (!isProcessingRef.current) return;
       if ('requestVideoFrameCallback' in video) {
-        (video as any).requestVideoFrameCallback((now: number, metadata: any) => captureOneFrame(metadata?.presentationTime ?? now));
+        (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: (n: number, m?: { presentationTime?: number }) => void) => void }).requestVideoFrameCallback(
+          (now: number, metadata?: { presentationTime?: number }) => captureOneFrame(metadata?.presentationTime ?? now)
+        );
       } else {
         frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
       }
     };
-    
+
     captureOneFrame(performance.now());
   }, []);
 
@@ -777,6 +783,20 @@ const Index = () => {
             <div>
               {(getPPGDebugInfo()?.contactState as string) ?? '—'} | src {lastSignal?.activeSource ?? '—'} | ready{' '}
               {lastSignal?.measurementReady ? '1' : '0'}
+            </div>
+            <div>
+              tiles {lastSignal?.pipelineDebug?.activeTileCount ?? '—'} / −{lastSignal?.pipelineDebug?.discardedTileCount ?? '—'} | px{' '}
+              {lastSignal?.pipelineDebug?.pressureProxy != null
+                ? lastSignal.pipelineDebug.pressureProxy.toFixed(2)
+                : '—'}{' '}
+              | {lastSignal?.pipelineDebug?.readinessReason ?? '—'}
+            </div>
+            <div>
+              stale {lastSignal?.pipelineDebug?.stalePipeline ? '1' : '0'} | cap{' '}
+              {captureSchedulerRef.current?.getMetrics().strategy ?? '—'}
+            </div>
+            <div className="break-all opacity-90">
+              idx [{lastSignal?.pipelineDebug?.activeTileSample?.slice(0, 20).join(',') ?? '—'}]
             </div>
           </div>
         )}

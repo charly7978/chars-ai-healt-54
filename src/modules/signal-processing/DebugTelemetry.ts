@@ -23,12 +23,16 @@ export interface DebugTelemetry {
   roiBBox: { sx: number; sy: number; ex: number; ey: number };
   activeTileCount: number;
   discardedTileCount: number;
+  /** Subconjunto de índices de tiles activos (debug) */
+  activeTileSample?: number[];
   activeSource: string;
   sqiBySource: Record<string, number>;
   readinessReason: string;
   timing: PipelineTimingStats;
   globalScore: number;
   spatialStability: number;
+  /** Resultado de análisis puede corresponder a frame previo (cola worker) */
+  stalePipeline?: boolean;
 }
 
 export function emptyTiming(): PipelineTimingStats {

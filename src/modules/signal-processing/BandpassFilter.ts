@@ -140,9 +140,11 @@ export class BandpassFilter {
     this.baselineInitialized = false;
   }
 
-  /** Only recompute if rate changed significantly (>2.0 fps) */
+  /** Recompute si cambia Fs de forma relativa (~6%) o >1.5 Hz absoluto en baja Fs */
   setSampleRate(rate: number): void {
-    if (Math.abs(rate - this.lastComputedRate) < 2.0) return;
+    const prev = this.lastComputedRate || this.sampleRate;
+    const rel = prev > 1e-6 ? Math.abs(rate - prev) / prev : 1;
+    if (rel < 0.06 && Math.abs(rate - prev) < 1.5) return;
     this.sampleRate = rate;
     this.computeCoefficients();
   }

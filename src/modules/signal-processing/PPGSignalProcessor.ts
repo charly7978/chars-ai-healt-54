@@ -82,7 +82,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    this.pipeline = new WorkerizedFramePipeline({ preferWorker: false });
+    this.pipeline = new WorkerizedFramePipeline({ preferWorker: true });
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
   }
 
@@ -118,7 +118,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return true;
   }
 
-  processFrame(imageData: ImageData, frameTimestamp?: number): void {
+  processFrame(frame: ImageData | ImageBitmap, frameTimestamp?: number): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
     const t0 = performance.now();
@@ -127,11 +127,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.updateSampleRate(timestamp);
 
     const motionArtifact = this.motionScore > this.MOTION_THRESH;
-    const analysis = this.pipeline.process(imageData, timestamp, motionArtifact);
+    const isBm = typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap;
+    const analysis = isBm
+      ? this.pipeline.processBitmap(frame, timestamp, motionArtifact)
+      : this.pipeline.process(frame as ImageData, timestamp, motionArtifact);
+
+    const dims = isBm ? { width: frame.width, height: frame.height } : { width: (frame as ImageData).width, height: (frame as ImageData).height };
+
     if (!analysis) {
-      this.emitEmpty(timestamp, imageData, motionArtifact, t0);
+      this.emitEmpty(timestamp, dims.width, dims.height, motionArtifact, t0);
       return;
     }
+
+    this.syncSampleRateFromEngine(analysis);
 
     this.lastAnalysis = analysis;
     this.applyContactMapping(analysis.contactRaw);
@@ -215,8 +223,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           pressureProxy: analysis.pressureScore,
           pressureState,
           roiBBox: analysis.roiBBox,
-          activeTileCount: Math.round(analysis.coverageRatio * 192),
-          discardedTileCount: Math.max(0, 192 - Math.round(analysis.coverageRatio * 192)),
+          activeTileCount: analysis.activeTileCount,
+          discardedTileCount: analysis.discardedTileCount,
+          activeTileSample: analysis.activeTileSample,
           activeSource: this.activeSourceLabel,
           sqiBySource: this.allSourceSQI,
           readinessReason: analysis.readinessReason,
@@ -231,6 +240,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           },
           globalScore: analysis.fingerScore,
           spatialStability: analysis.spatialStabilityROI,
+          stalePipeline: pipeStats.staleResult,
         }
       : undefined;
 
@@ -254,7 +264,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       contactState: this.exportedContactState,
       extendedContactState: this.extendedState,
       motionArtifact,
-      roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
+      roi: { x: 0, y: 0, width: dims.width, height: dims.height },
       perfusionIndex,
       rawRed: analysis.rawRed,
       rawGreen: analysis.rawGreen,
@@ -283,7 +293,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private emitEmpty(
     timestamp: number,
-    imageData: ImageData,
+    width: number,
+    height: number,
     motionArtifact: boolean,
     t0: number
   ): void {
@@ -298,7 +309,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       contactState: 'NO_CONTACT',
       extendedContactState: 'NO_CONTACT',
       motionArtifact,
-      roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
+      roi: { x: 0, y: 0, width, height },
       perfusionIndex: 0,
       rawRed: 0,
       rawGreen: 0,
@@ -505,9 +516,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const median = arr[Math.floor(n / 2)]!;
     const fps = Math.max(15, Math.min(60, 1000 / median));
     this.realFps = fps;
-    if (Math.abs(fps - this.estimatedSampleRate) > 1.5) {
+    const base = Math.max(this.estimatedSampleRate, 1e-6);
+    if (Math.abs(fps - this.estimatedSampleRate) / base > 0.07) {
       this.estimatedSampleRate = fps;
       this.bandpassFilter.setSampleRate(fps);
+    }
+  }
+
+  private syncSampleRateFromEngine(analysis: FrameAnalysisResult): void {
+    const h = analysis.sampleRateHint;
+    if (h < 15 || h > 60 || !isFinite(h)) return;
+    const base = Math.max(this.estimatedSampleRate, 1e-6);
+    if (Math.abs(h - this.estimatedSampleRate) / base > 0.05) {
+      this.estimatedSampleRate = h;
+      this.bandpassFilter.setSampleRate(h);
     }
   }
 
@@ -632,6 +654,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       processedFps: ps.processedFps,
       droppedFrames: ps.droppedFrames,
       latencyMs: ps.lastFrameLatencyMs,
+      activeTileCount: a?.activeTileCount,
+      discardedTileCount: a?.discardedTileCount,
+      stalePipeline: ps.staleResult,
+      sampleRateHint: a?.sampleRateHint,
     };
   }
 
