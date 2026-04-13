@@ -130,12 +130,13 @@ const VitalSign = memo(function VitalSign({
   return (
     <div 
       className={cn(
-        "relative flex min-h-[5.5rem] flex-col justify-center items-center rounded-xl border border-cyan-500/15 bg-gradient-to-b from-slate-900/85 to-slate-950/95 p-2.5 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all duration-300 cursor-pointer backdrop-blur-sm",
-        showDetails && "ring-1 ring-cyan-400/30"
+        "relative flex min-h-[5.5rem] flex-col justify-center items-center rounded-xl border border-cyan-500/20 bg-gradient-to-b from-slate-900/90 to-slate-950/98 p-2.5 text-center shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.05)] transition-all duration-300 cursor-pointer backdrop-blur-md",
+        "hover:border-cyan-400/35 hover:shadow-[0_12px_32px_rgba(34,211,238,0.08)] active:scale-[0.99]",
+        showDetails && "ring-1 ring-cyan-400/35"
       )}
       onClick={handleClick}
     >
-      <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-cyan-500/75">
+      <div className="mb-1 font-display text-[9px] font-semibold uppercase tracking-[0.22em] text-cyan-400/85">
         {label}
       </div>
       

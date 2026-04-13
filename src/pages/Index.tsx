@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2, Brain, Loader2 } from "lucide-react";
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
@@ -20,6 +20,12 @@ import {
   clampUserHeightM,
 } from "@/modules/personalization/userPhysiology";
 import { FrameCaptureScheduler } from "@/modules/camera/FrameCaptureScheduler";
+import { ClinicalTopBar } from "@/components/visual/ClinicalTopBar";
+
+const MedicalAmbient3D = lazy(() =>
+  import("@/components/visual/MedicalAmbient3D").then((m) => ({ default: m.MedicalAmbient3D }))
+);
+import { cn } from "@/lib/utils";
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
@@ -762,9 +768,12 @@ const Index = () => {
       )}
 
       <div className="flex-1 relative">
-        <div className="absolute inset-0">
+        <div className="absolute inset-0 z-0">
           <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
         </div>
+        <Suspense fallback={null}>
+          <MedicalAmbient3D />
+        </Suspense>
         {ppgDebug && isMonitoring && (
           <div
             className="pointer-events-none absolute left-1 bottom-28 z-[40] max-w-[min(96vw,22rem)] rounded-md border border-lime-500/35 bg-black/75 px-2 py-1.5 font-mono text-[9px] leading-snug text-lime-100/95 shadow-lg"
@@ -801,7 +810,11 @@ const Index = () => {
           </div>
         )}
         <div
-          className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/50 via-transparent to-[#020617]/70"
+          className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/60 via-black/15 to-[#020617]/88"
+          aria-hidden
+        />
+        <div
+          className="pointer-events-none absolute inset-0 z-[6] bg-[radial-gradient(ellipse_85%_55%_at_50%_18%,rgba(34,211,238,0.07),transparent_55%)]"
           aria-hidden
         />
 
@@ -835,7 +848,15 @@ const Index = () => {
           ) : null;
         })()}
 
-        <div className="relative z-10 h-full">
+        <ClinicalTopBar
+          isMonitoring={isMonitoring}
+          elapsedSeconds={elapsedTime}
+          signalQuality={lastSignal?.quality ?? 0}
+          isCalibrating={isCalibrating}
+          calibrationProgress={calibrationProgress}
+        />
+
+        <div className="relative z-10 h-full font-display">
           <div className="flex-1 h-full">
             <PPGSignalMeter 
               value={heartbeatSignal}
@@ -856,7 +877,7 @@ const Index = () => {
           </div>
 
           <div className="pointer-events-none absolute inset-x-0 top-[55%] bottom-[72px] px-2 py-4 sm:bottom-20 sm:px-3">
-            <div className="mx-auto max-w-4xl rounded-2xl border border-cyan-500/20 bg-gradient-to-b from-slate-950/80 to-[#020617]/90 px-2 py-4 shadow-[0_16px_48px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(34,211,238,0.08)] backdrop-blur-xl sm:px-4 sm:py-5">
+            <div className="clinical-vitals-shell clinical-vitals-inner mx-auto max-w-4xl rounded-2xl border border-cyan-500/25 bg-gradient-to-b from-slate-950/90 via-slate-950/85 to-[#020617]/95 px-2 py-4 backdrop-blur-xl sm:px-4 sm:py-5">
             <div className="grid grid-cols-3 gap-2 place-items-stretch sm:gap-3">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
@@ -890,15 +911,38 @@ const Index = () => {
             const StatusIcon = statusIcon;
             
             return (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
-                <div className="bg-slate-950 border border-slate-700/50 rounded-2xl max-w-sm w-[92%] shadow-2xl overflow-hidden">
-                  <div className={`px-4 py-3 bg-${statusColor}-500/10 border-b border-slate-800`}>
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md animate-fade-in">
+                <div className="font-display max-w-sm w-[92%] overflow-hidden rounded-2xl border border-cyan-500/20 bg-slate-950 shadow-[0_24px_80px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(34,211,238,0.08)]">
+                  <div
+                    className={cn(
+                      "border-b border-slate-800 px-4 py-3",
+                      statusColor === "emerald" && "bg-emerald-500/10",
+                      statusColor === "yellow" && "bg-yellow-500/10",
+                      statusColor === "red" && "bg-red-500/10"
+                    )}
+                  >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <StatusIcon className={`w-5 h-5 text-${statusColor}-400`} />
+                        <StatusIcon
+                          className={cn(
+                            "h-5 w-5",
+                            statusColor === "emerald" && "text-emerald-400",
+                            statusColor === "yellow" && "text-yellow-400",
+                            statusColor === "red" && "text-red-400"
+                          )}
+                        />
                         <div>
-                          <h3 className="text-white text-sm font-bold tracking-wide">MEDICIÓN COMPLETADA</h3>
-                          <p className={`text-${statusColor}-400 text-[10px] font-semibold tracking-wider`}>{statusText}</p>
+                          <h3 className="text-sm font-bold tracking-wide text-white">MEDICIÓN COMPLETADA</h3>
+                          <p
+                            className={cn(
+                              "text-[10px] font-semibold tracking-wider",
+                              statusColor === "emerald" && "text-emerald-400",
+                              statusColor === "yellow" && "text-yellow-400",
+                              statusColor === "red" && "text-red-400"
+                            )}
+                          >
+                            {statusText}
+                          </p>
                         </div>
                       </div>
                       <button onClick={() => setMeasurementSummary(null)} className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors">
