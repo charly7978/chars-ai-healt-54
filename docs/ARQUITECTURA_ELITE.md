@@ -6,6 +6,10 @@ Sistema biomédico de **medición real de signos vitales** mediante cámara tras
 
 **CERO SIMULACIÓN - 100% DATOS REALES**
 
+### Integración en producción (`Index.tsx`)
+
+`VitalSignsProcessor` ejecuta **SpO2ProcessorElite** y **BloodPressureProcessorElite** con buffers PPG y timestamps alineados, más **SpO2Calibrator** y offsets de calibración de dispositivo/TA. Así se evita duplicar el mismo cómputo en la página. Ver también `docs/SOLUCION_AUDITORIA.md` y `docs/REFERENCIAS_PPG.md`.
+
 ---
 
 ## MÓDULOS ÉLITE CREADOS

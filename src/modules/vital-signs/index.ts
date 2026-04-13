@@ -10,8 +10,10 @@ export { BloodPressureProcessorElite, type BPEstimateElite } from './BloodPressu
 export { ArrhythmiaProcessor } from './arrhythmia-processor';
 export { RhythmClassifier, type RhythmLabel, type RhythmEvent, type RhythmResult, type RhythmFeatures } from './RhythmClassifier';
 export { VitalSignsProcessor, type VitalSignsResult, type RGBData } from './VitalSignsProcessor';
+/** Referencia / tests; runtime principal usa *ProcessorElite vía VitalSignsProcessor */
 export { BloodPressureProcessor } from './BloodPressureProcessor';
 export { SpO2Processor, type SpO2Result } from './SpO2Processor';
+export { mapEliteSpO2ToDetail } from './spo2EliteAdapter';
 export { PPGFeatureExtractor } from './PPGFeatureExtractor';
 export { BPCalibrationManager } from './BPCalibrationManager';
 export { SpO2Calibrator } from './SpO2Calibrator';

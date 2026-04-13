@@ -1,14 +1,18 @@
-# AUDITORÍA CRÍTICA - PROBLEMAS ENCONTRADOS
+# AUDITORÍA CRÍTICA — NOTA DE ACTUALIZACIÓN (2026)
 
-## 🔴 PROBLEMA 1: DUPLICADOS DE PROCESADORES
+**Estado vigente:** `VitalSignsProcessor` ya integra **`SpO2ProcessorElite`** y **`BloodPressureProcessorElite`** con `SpO2Calibrator`, buffers alineados por timestamp y offsets de TA. La página principal es **`Index.tsx`**. Documentación al día: **`docs/SOLUCION_AUDITORIA.md`**, **`docs/REFERENCIAS_PPG.md`**.
 
-### Archivos a ELIMINAR (mantener versión Elite):
-- ❌ `BloodPressureProcessor.ts` → Usar `BloodPressureProcessorElite.ts`
-- ❌ `SpO2Processor.ts` → Usar `SpO2ProcessorElite.ts`
-- ❌ `VitalSignsProcessor.ts` → Usar integración directa con ElitePPGProcessor
+Los archivos `SpO2Processor.ts` / `BloodPressureProcessor.ts` siguen en el repo como **referencia de tipos** (`SpO2Result`) y compatibilidad; el runtime principal no los usa para SpO2/TA.
 
-### Hooks a DEPRECAR:
-- ❌ `useVitalSignsProcessor.ts` → Usa procesadores obsoletos
+---
+
+## 🔴 PROBLEMA 1 (histórico): DUPLICADOS DE PROCESADORES
+
+### Resolución aplicada:
+- `VitalSignsProcessor.ts` → usa **SpO2ProcessorElite** + **BloodPressureProcessorElite** (no los procesadores clásicos en el bucle principal).
+
+### Hooks:
+- `useVitalSignsProcessor.ts` → alimenta el procesador unificado anterior (SpO2/PA élite dentro de `VitalSignsProcessor`).
 
 ---
 
