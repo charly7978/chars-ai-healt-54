@@ -31,7 +31,6 @@ export interface VitalSignsResult {
   };
   signalQuality: number;
   measurementConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID';
-  // ── New V2 fields ──
   rhythm?: {
     label: RhythmLabel;
     confidence: number;
@@ -58,19 +57,6 @@ export interface RGBData {
   greenDC: number;
 }
 
-/**
- * VITAL SIGNS PROCESSOR V2
- * 
- * Integrates:
- * - RhythmClassifier (multi-label rhythm analysis)
- * - SpO2Processor (calibrated pipeline)
- * - GlucoseResearchProcessor (research head with personalization)
- * - LipidResearchProcessor (research head)
- * - MeasurementGate (per-output confidence gating)
- * - BloodPressureProcessor (morphology-based BP)
- * 
- * No mocks, no hardcoded values, no simulation.
- */
 export class VitalSignsProcessor {
   private arrhythmiaProcessor: ArrhythmiaProcessor;
   private bloodPressureProcessor: BloodPressureProcessor;
@@ -98,9 +84,7 @@ export class VitalSignsProcessor {
   private readonly HISTORY_SIZE = 90;
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   private validPulseCount = 0;
-  private readonly MIN_PULSES_REQUIRED = 2;
 
-  // Upstream context for gating
   private upstreamContext = {
     contactStable: false,
     pressureOptimal: false,
@@ -108,15 +92,16 @@ export class VitalSignsProcessor {
     sourceStability: 0,
     avgBeatSQI: 0,
     beatCount: 0,
+    sampleRate: 30,
+    detectorAgreement: 0,
+    rrStability: 0,
   };
 
-  // Last detailed results
   private lastRhythm: RhythmResult | null = null;
   private lastSpo2: SpO2Result | null = null;
   private lastGlucose: GlucoseResult | null = null;
   private lastLipids: LipidResult | null = null;
 
-  // EMA smoothing
   private readonly EMA_ALPHA_STABLE = 0.20;
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
 
@@ -135,7 +120,7 @@ export class VitalSignsProcessor {
     this.validPulseCount = 0;
     this.measurements = {
       spo2: 0, glucose: 0, systolicPressure: 0, diastolicPressure: 0,
-      arrhythmiaCount: 0, arrhythmiaStatus: "CALIBRANDO...",
+      arrhythmiaCount: 0, arrhythmiaStatus: "CALIBRANDO...|0",
       totalCholesterol: 0, triglycerides: 0, lastArrhythmiaData: null, signalQuality: 0,
     };
     this.signalHistory = [];
@@ -148,9 +133,6 @@ export class VitalSignsProcessor {
 
   setRGBData(data: RGBData): void { this.rgbData = data; }
 
-  /**
-   * Set upstream context from signal processor for gating decisions
-   */
   setUpstreamContext(ctx: {
     contactStable?: boolean;
     pressureOptimal?: boolean;
@@ -158,6 +140,9 @@ export class VitalSignsProcessor {
     sourceStability?: number;
     avgBeatSQI?: number;
     beatCount?: number;
+    sampleRate?: number;
+    detectorAgreement?: number;
+    rrStability?: number;
   }): void {
     if (ctx.contactStable !== undefined) this.upstreamContext.contactStable = ctx.contactStable;
     if (ctx.pressureOptimal !== undefined) this.upstreamContext.pressureOptimal = ctx.pressureOptimal;
@@ -165,6 +150,9 @@ export class VitalSignsProcessor {
     if (ctx.sourceStability !== undefined) this.upstreamContext.sourceStability = ctx.sourceStability;
     if (ctx.avgBeatSQI !== undefined) this.upstreamContext.avgBeatSQI = ctx.avgBeatSQI;
     if (ctx.beatCount !== undefined) this.upstreamContext.beatCount = ctx.beatCount;
+    if (ctx.sampleRate !== undefined && isFinite(ctx.sampleRate)) this.upstreamContext.sampleRate = Math.max(15, Math.min(60, ctx.sampleRate));
+    if (ctx.detectorAgreement !== undefined) this.upstreamContext.detectorAgreement = ctx.detectorAgreement;
+    if (ctx.rrStability !== undefined) this.upstreamContext.rrStability = ctx.rrStability;
   }
 
   processSignal(
@@ -186,7 +174,6 @@ export class VitalSignsProcessor {
 
     this.measurements.signalQuality = this.calculateSignalQuality();
     const hasRealPulse = this.validateRealPulse(rrData);
-
     if (!hasRealPulse) return this.getFormattedResult();
 
     if (this.signalHistory.length >= 20 && rrData && rrData.intervals.length >= 2) {
@@ -201,12 +188,24 @@ export class VitalSignsProcessor {
       this.validPulseCount = 0;
       return false;
     }
+
     const validIntervals = rrData.intervals.filter(i => i >= 270 && i <= 2200);
-    if (validIntervals.length < 2) { this.validPulseCount = 0; return false; }
-    if (rrData.lastPeakTime) {
-      const timeSince = Date.now() - rrData.lastPeakTime;
-      if (timeSince > 4000) { this.validPulseCount = 0; return false; }
+    if (validIntervals.length < 2) {
+      this.validPulseCount = 0;
+      return false;
     }
+
+    if (rrData.lastPeakTime) {
+      const nowPerf = performance.now();
+      const nowEpoch = Date.now();
+      const lastPeak = rrData.lastPeakTime;
+      const sameClockDelta = lastPeak < 1e12 ? nowPerf - lastPeak : nowEpoch - lastPeak;
+      if (sameClockDelta > 4000) {
+        this.validPulseCount = 0;
+        return false;
+      }
+    }
+
     this.validPulseCount = validIntervals.length;
     return true;
   }
@@ -228,9 +227,9 @@ export class VitalSignsProcessor {
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
-    if (sq >= 55 && this.validPulseCount >= 4) return 'HIGH';
-    if (sq >= 30 && this.validPulseCount >= 3) return 'MEDIUM';
-    if (sq >= 12 && this.validPulseCount >= 2) return 'LOW';
+    if (sq >= 45 && this.validPulseCount >= 4) return 'HIGH';
+    if (sq >= 24 && this.validPulseCount >= 3) return 'MEDIUM';
+    if (sq >= 10 && this.validPulseCount >= 2) return 'LOW';
     return 'INVALID';
   }
 
@@ -239,21 +238,21 @@ export class VitalSignsProcessor {
     rrData: { intervals: number[], lastPeakTime: number | null },
     beatInputs?: Array<any>
   ): void {
-    if (this.measurements.signalQuality < 10) return;
+    if (this.measurements.signalQuality < 8) return;
 
     const validRR = rrData.intervals.filter(i => i >= 270 && i <= 2200);
     const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
     const hr = avgRR > 0 ? 60000 / avgRR : 0;
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
+    const sampleRate = this.upstreamContext.sampleRate || 30;
 
-    // ── SpO2 via calibrated processor ──
     const spo2Result = this.spo2Processor.process({
       redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
       greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
       contactStable: this.upstreamContext.contactStable,
       pressureOptimal: this.upstreamContext.pressureOptimal,
       clipHighRatio: this.upstreamContext.clipHighRatio,
-      beatCount: this.upstreamContext.beatCount,
+      beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
       avgBeatSQI: this.upstreamContext.avgBeatSQI,
       sourceStability: this.upstreamContext.sourceStability,
     });
@@ -262,19 +261,17 @@ export class VitalSignsProcessor {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
     }
 
-    // ── Cycle features for downstream ──
-    const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, 30);
+    const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, sampleRate);
     const validCycleFeatures: import('./PPGFeatureExtractor').CycleFeatures[] = [];
     for (const cycle of cycles) {
-      const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality >= 0.25) validCycleFeatures.push(features);
+      const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, sampleRate);
+      if (features && features.quality >= 0.2) validCycleFeatures.push(features);
     }
 
     const medianF = validCycleFeatures.length >= 1 ? this.medianCycleFeatures(validCycleFeatures) : null;
 
-    // ── BP ──
     if (validRR.length >= 2) {
-      const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, 30);
+      const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, sampleRate);
       this.lastBPConfidence = bpEstimate.confidence;
       this.lastBPFeatureQuality = bpEstimate.featureQuality;
       if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
@@ -283,11 +280,10 @@ export class VitalSignsProcessor {
       }
     }
 
-    // ── Glucose via research processor ──
     const piGreen = this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0;
     const rgACRatio = this.rgbData.greenAC > 0 ? this.rgbData.redAC / this.rgbData.greenAC : 0;
 
-    if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 12) {
+    if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 10) {
       const glucoseResult = this.glucoseProcessor.process({
         cycleFeatures: {
           sutMs: medianF.sutMs, pw50Ms: medianF.pw50Ms,
@@ -300,14 +296,13 @@ export class VitalSignsProcessor {
         hr, rrVar, piGreen, rgACRatio,
         contactStable: this.upstreamContext.contactStable,
         signalQuality: this.measurements.signalQuality,
-        beatCount: this.upstreamContext.beatCount,
+        beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
       });
       this.lastGlucose = glucoseResult;
       if (glucoseResult.value > 0 && glucoseResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
         this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseResult.value, 'dynamic');
       }
 
-      // ── Lipids via research processor ──
       const lipidResult = this.lipidProcessor.process({
         cycleFeatures: {
           stiffnessIndex: medianF.stiffnessIndex,
@@ -329,27 +324,33 @@ export class VitalSignsProcessor {
       }
     }
 
-    // ── Rhythm classifier ──
-    if (beatInputs && beatInputs.length >= 5) {
+    if (beatInputs && beatInputs.length >= 4) {
       const rhythmResult = this.rhythmClassifier.classify(
-        beatInputs, this.upstreamContext.avgBeatSQI, this.upstreamContext.sourceStability
+        beatInputs,
+        Math.max(this.upstreamContext.avgBeatSQI, 20),
+        Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement)
       );
       this.lastRhythm = rhythmResult;
     }
 
-    // ── Legacy arrhythmia (kept for backward compat) ──
     const arrhythmiaRR = validRR.slice(-10);
-    const arrhythmiaInput = (arrhythmiaRR.length >= 5 && this.measurements.signalQuality >= 25 && hr >= 35 && hr <= 180)
+    const arrhythmiaInput = (arrhythmiaRR.length >= 4 && this.measurements.signalQuality >= 18 && hr >= 35 && hr <= 180)
       ? { ...rrData, intervals: arrhythmiaRR } : undefined;
     const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(arrhythmiaInput);
     this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
     this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
     const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
     this.measurements.arrhythmiaCount = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
+
+    if (this.lastRhythm && this.lastRhythm.rhythmConfidence >= 0.2) {
+      const rhythmLabel = this.lastRhythm.rhythmLabel;
+      const rhythmCount = this.lastRhythm.recentEvents?.length ?? this.measurements.arrhythmiaCount ?? 0;
+      this.measurements.arrhythmiaStatus = `${rhythmLabel}|${rhythmCount}`;
+      this.measurements.arrhythmiaCount = rhythmCount;
+    }
   }
 
   private getFormattedResult(): VitalSignsResult {
-    // Build output states
     const spo2State = this.lastSpo2?.enabledState ?? 'WITHHELD_LOW_QUALITY';
     const glucoseState = this.lastGlucose?.enabledState ?? 'WITHHELD_LOW_QUALITY';
     const lipidsState = this.lastLipids?.enabledState ?? 'WITHHELD_LOW_QUALITY';
@@ -379,7 +380,6 @@ export class VitalSignsProcessor {
       lastArrhythmiaData: this.measurements.lastArrhythmiaData ?? undefined,
       signalQuality: Math.round(this.measurements.signalQuality),
       measurementConfidence: this.getMeasurementConfidence(),
-      // V2 fields
       rhythm: this.lastRhythm ? {
         label: this.lastRhythm.rhythmLabel,
         confidence: this.lastRhythm.rhythmConfidence,
@@ -395,7 +395,7 @@ export class VitalSignsProcessor {
         bp: bpGated.state,
         glucose: glucoseState,
         lipids: lipidsState,
-        rhythm: this.lastRhythm ? (this.lastRhythm.rhythmQuality > 50 ? 'ENABLED_MEDIUM_CONFIDENCE' : 'ENABLED_LOW_CONFIDENCE') : 'WITHHELD_LOW_QUALITY',
+        rhythm: this.lastRhythm ? (this.lastRhythm.rhythmQuality > 40 ? 'ENABLED_MEDIUM_CONFIDENCE' : 'ENABLED_LOW_CONFIDENCE') : 'WITHHELD_LOW_QUALITY',
       },
     };
   }
