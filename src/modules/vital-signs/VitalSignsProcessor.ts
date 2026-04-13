@@ -1,6 +1,11 @@
 import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessor } from './BloodPressureProcessor';
+import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
+import { SpO2Processor, type SpO2Result } from './SpO2Processor';
+import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
+import { LipidResearchProcessor, type LipidResult } from '../biomarkers/LipidResearchProcessor';
+import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -26,6 +31,24 @@ export interface VitalSignsResult {
   };
   signalQuality: number;
   measurementConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID';
+  // ── New V2 fields ──
+  rhythm?: {
+    label: RhythmLabel;
+    confidence: number;
+    burden: number;
+    recentEvents: any[];
+  };
+  spo2Detail?: SpO2Result;
+  glucoseDetail?: GlucoseResult;
+  lipidsDetail?: LipidResult;
+  outputStates?: {
+    bpm: OutputState;
+    spo2: OutputState;
+    bp: OutputState;
+    glucose: OutputState;
+    lipids: OutputState;
+    rhythm: OutputState;
+  };
 }
 
 export interface RGBData {
@@ -36,76 +59,74 @@ export interface RGBData {
 }
 
 /**
- * PROCESADOR DE SIGNOS VITALES - SIN CLAMPS
+ * VITAL SIGNS PROCESSOR V2
  * 
- * CAMBIOS PRINCIPALES:
- * 1. SpO2 = 110 - 25 * R (fórmula pura, SIN CLAMP)
- * 2. Presión arterial desde morfología PPG (SIN BASE FIJA 120/80)
- * 3. Todos los valores calculados crudos
- * 4. SQI indica confiabilidad en lugar de forzar rangos
+ * Integrates:
+ * - RhythmClassifier (multi-label rhythm analysis)
+ * - SpO2Processor (calibrated pipeline)
+ * - GlucoseResearchProcessor (research head with personalization)
+ * - LipidResearchProcessor (research head)
+ * - MeasurementGate (per-output confidence gating)
+ * - BloodPressureProcessor (morphology-based BP)
  * 
- * Referencias:
- * - Ratio-of-Ratios: Webster 1997, Tremper 1989
- * - BP from PPG morphology: Elgendi 2019, Mukkamala 2022
+ * No mocks, no hardcoded values, no simulation.
  */
 export class VitalSignsProcessor {
   private arrhythmiaProcessor: ArrhythmiaProcessor;
   private bloodPressureProcessor: BloodPressureProcessor;
+  private rhythmClassifier: RhythmClassifier;
+  private spo2Processor: SpO2Processor;
+  private glucoseProcessor: GlucoseResearchProcessor;
+  private lipidProcessor: LipidResearchProcessor;
+
   private lastBPConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT' = 'INSUFFICIENT';
-  private lastBPFeatureQuality: number = 0;
-  private calibrationSamples: number = 0;
+  private lastBPFeatureQuality = 0;
+  private calibrationSamples = 0;
   private readonly CALIBRATION_REQUIRED = 25;
-  private isCalibrating: boolean = false;
-  
-  // Estado actual - SIN VALORES BASE FIJOS
+  private isCalibrating = false;
+
   private measurements = {
-    spo2: 0,
-    glucose: 0,
-    systolicPressure: 0,
-    diastolicPressure: 0,
-    arrhythmiaCount: 0,
-    arrhythmiaStatus: "SIN ARRITMIAS|0",
-    totalCholesterol: 0,
-    triglycerides: 0,
-    lastArrhythmiaData: null as { timestamp: number; rmssd: number; rrVariation: number; } | null,
-    signalQuality: 0
+    spo2: 0, glucose: 0,
+    systolicPressure: 0, diastolicPressure: 0,
+    arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+    totalCholesterol: 0, triglycerides: 0,
+    lastArrhythmiaData: null as { timestamp: number; rmssd: number; rrVariation: number } | null,
+    signalQuality: 0,
   };
-  
-  // Historial de señal
+
   private signalHistory: number[] = [];
   private readonly HISTORY_SIZE = 90;
-  
-  // RGB para SpO2
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
+  private validPulseCount = 0;
+  private readonly MIN_PULSES_REQUIRED = 2;
 
-  // Rolling R-ratio buffer for SpO2 stability (Sensors 2023 / van Gastel approach)
-  private rRatioBuffer: number[] = [];
-  private readonly R_RATIO_BUFFER_SIZE = 8;  // ~8 estimates → median filter
-  
-  // Suavizado adaptativo para estabilidad SIN perder respuesta
-  // Alpha más bajo = más suavizado = lecturas más estables
+  // Upstream context for gating
+  private upstreamContext = {
+    contactStable: false,
+    pressureOptimal: false,
+    clipHighRatio: 0,
+    sourceStability: 0,
+    avgBeatSQI: 0,
+    beatCount: 0,
+  };
+
+  // Last detailed results
+  private lastRhythm: RhythmResult | null = null;
+  private lastSpo2: SpO2Result | null = null;
+  private lastGlucose: GlucoseResult | null = null;
+  private lastLipids: LipidResult | null = null;
+
+  // EMA smoothing
   private readonly EMA_ALPHA_STABLE = 0.20;
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
-  
-  // Historial para validación de tendencias
-  private measurementHistory: { [key: string]: number[] } = {
-    spo2: [],
-    systolic: [],
-    diastolic: [],
-    glucose: []
-  };
-  private readonly HISTORY_SIZE_VALIDATION = 10; // Últimas 10 mediciones
-  
-  // Contador de pulsos válidos
-  private validPulseCount: number = 0;
-  private readonly MIN_PULSES_REQUIRED = 2;
-  
+
   constructor() {
     this.arrhythmiaProcessor = new ArrhythmiaProcessor();
     this.bloodPressureProcessor = new BloodPressureProcessor();
-    this.arrhythmiaProcessor.setArrhythmiaDetectionCallback((detected) => {
-      console.log(`ArrhythmiaProcessor: Cambio de estado → ${detected ? 'ARRITMIA' : 'NORMAL'}`);
-    });
+    this.rhythmClassifier = new RhythmClassifier();
+    this.spo2Processor = new SpO2Processor();
+    this.glucoseProcessor = new GlucoseResearchProcessor();
+    this.lipidProcessor = new LipidResearchProcessor();
   }
 
   startCalibration(): void {
@@ -113,16 +134,9 @@ export class VitalSignsProcessor {
     this.calibrationSamples = 0;
     this.validPulseCount = 0;
     this.measurements = {
-      spo2: 0,
-      glucose: 0,
-      systolicPressure: 0,
-      diastolicPressure: 0,
-      arrhythmiaCount: 0,
-      arrhythmiaStatus: "CALIBRANDO...",
-      totalCholesterol: 0,
-      triglycerides: 0,
-      lastArrhythmiaData: null,
-      signalQuality: 0
+      spo2: 0, glucose: 0, systolicPressure: 0, diastolicPressure: 0,
+      arrhythmiaCount: 0, arrhythmiaStatus: "CALIBRANDO...",
+      totalCholesterol: 0, triglycerides: 0, lastArrhythmiaData: null, signalQuality: 0,
     };
     this.signalHistory = [];
   }
@@ -131,45 +145,52 @@ export class VitalSignsProcessor {
     this.isCalibrating = false;
     this.calibrationSamples = this.CALIBRATION_REQUIRED;
   }
-  
-  setRGBData(data: RGBData): void {
-    this.rgbData = data;
+
+  setRGBData(data: RGBData): void { this.rgbData = data; }
+
+  /**
+   * Set upstream context from signal processor for gating decisions
+   */
+  setUpstreamContext(ctx: {
+    contactStable?: boolean;
+    pressureOptimal?: boolean;
+    clipHighRatio?: number;
+    sourceStability?: number;
+    avgBeatSQI?: number;
+    beatCount?: number;
+  }): void {
+    if (ctx.contactStable !== undefined) this.upstreamContext.contactStable = ctx.contactStable;
+    if (ctx.pressureOptimal !== undefined) this.upstreamContext.pressureOptimal = ctx.pressureOptimal;
+    if (ctx.clipHighRatio !== undefined) this.upstreamContext.clipHighRatio = ctx.clipHighRatio;
+    if (ctx.sourceStability !== undefined) this.upstreamContext.sourceStability = ctx.sourceStability;
+    if (ctx.avgBeatSQI !== undefined) this.upstreamContext.avgBeatSQI = ctx.avgBeatSQI;
+    if (ctx.beatCount !== undefined) this.upstreamContext.beatCount = ctx.beatCount;
   }
 
   processSignal(
-    signalValue: number, 
-    rrData?: { intervals: number[], lastPeakTime: number | null }
+    signalValue: number,
+    rrData?: { intervals: number[], lastPeakTime: number | null },
+    beatInputs?: Array<{
+      ibiMs: number; beatSQI: number; morphologyScore: number;
+      detectorAgreement: number; amplitude?: number;
+      flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
+    }>
   ): VitalSignsResult {
-    
-    // Actualizar historial
     this.signalHistory.push(signalValue);
-    if (this.signalHistory.length > this.HISTORY_SIZE) {
-      this.signalHistory.shift();
-    }
+    if (this.signalHistory.length > this.HISTORY_SIZE) this.signalHistory.shift();
 
-    // Control de calibración
     if (this.isCalibrating) {
       this.calibrationSamples++;
-      if (this.calibrationSamples >= this.CALIBRATION_REQUIRED) {
-        this.isCalibrating = false;
-      }
+      if (this.calibrationSamples >= this.CALIBRATION_REQUIRED) this.isCalibrating = false;
     }
 
-    // Calcular SQI propio para control de calidad de signos vitales
     this.measurements.signalQuality = this.calculateSignalQuality();
-
-    // Validar pulso real
     const hasRealPulse = this.validateRealPulse(rrData);
-    
-    if (!hasRealPulse) {
-      // Don't zero-out values that are already accumulated — just stop updating
-      // This prevents flicker when signal dips momentarily
-      return this.getFormattedResult();
-    }
 
-    // Calcular signos vitales — lowered from 30 to 20 samples, 3 to 2 intervals
+    if (!hasRealPulse) return this.getFormattedResult();
+
     if (this.signalHistory.length >= 20 && rrData && rrData.intervals.length >= 2) {
-      this.calculateVitalSigns(signalValue, rrData);
+      this.calculateVitalSigns(signalValue, rrData, beatInputs);
     }
 
     return this.getFormattedResult();
@@ -180,45 +201,28 @@ export class VitalSignsProcessor {
       this.validPulseCount = 0;
       return false;
     }
-    
-    // Ventana humana conservadora: evita ruido no fisiológico sin forzar rangos clínicos “bonitos”
-    const validIntervals = rrData.intervals.filter(interval => 
-      interval >= 270 && interval <= 2200
-    );
-    
-    if (validIntervals.length < 2) {
-      this.validPulseCount = 0;
-      return false;
-    }
-
+    const validIntervals = rrData.intervals.filter(i => i >= 270 && i <= 2200);
+    if (validIntervals.length < 2) { this.validPulseCount = 0; return false; }
     if (rrData.lastPeakTime) {
-      const timeSinceLastPeak = Date.now() - rrData.lastPeakTime;
-      if (timeSinceLastPeak > 4000) {
-        this.validPulseCount = 0;
-        return false;
-      }
+      const timeSince = Date.now() - rrData.lastPeakTime;
+      if (timeSince > 4000) { this.validPulseCount = 0; return false; }
     }
-    
     this.validPulseCount = validIntervals.length;
     return true;
   }
 
   private calculateSignalQuality(): number {
     if (this.signalHistory.length < 20) return 0;
-    
     const recent = this.signalHistory.slice(-60);
     const sorted = [...recent].sort((a, b) => a - b);
     const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
     const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
     const range = p90 - p10;
-    
     if (range < 0.2) return 2;
-    
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const variance = recent.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / recent.length;
+    const variance = recent.reduce((acc, val) => acc + (val - mean) ** 2, 0) / recent.length;
     const stdDev = Math.sqrt(variance);
     const snr = range / (stdDev + 0.05);
-    
     return Math.min(100, Math.max(0, snr * 16));
   }
 
@@ -230,16 +234,131 @@ export class VitalSignsProcessor {
     return 'INVALID';
   }
 
-  /**
-   * FORMATEO DE RESULTADOS - REDONDEO APROPIADO
-   * Cada signo vital tiene su formato específico:
-   * - SpO2: entero (97, 98, 99)
-   * - Presión arterial: enteros (120/80)
-   * - Glucosa: entero (95, 110, 120)
-   * - Hemoglobina: 1 decimal (13.5, 14.2)
-   * - Colesterol/Triglicéridos: enteros (180, 150)
-   */
+  private calculateVitalSigns(
+    signalValue: number,
+    rrData: { intervals: number[], lastPeakTime: number | null },
+    beatInputs?: Array<any>
+  ): void {
+    if (this.measurements.signalQuality < 10) return;
+
+    const validRR = rrData.intervals.filter(i => i >= 270 && i <= 2200);
+    const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
+    const hr = avgRR > 0 ? 60000 / avgRR : 0;
+    const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
+
+    // ── SpO2 via calibrated processor ──
+    const spo2Result = this.spo2Processor.process({
+      redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
+      greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
+      contactStable: this.upstreamContext.contactStable,
+      pressureOptimal: this.upstreamContext.pressureOptimal,
+      clipHighRatio: this.upstreamContext.clipHighRatio,
+      beatCount: this.upstreamContext.beatCount,
+      avgBeatSQI: this.upstreamContext.avgBeatSQI,
+      sourceStability: this.upstreamContext.sourceStability,
+    });
+    this.lastSpo2 = spo2Result;
+    if (spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
+      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
+    }
+
+    // ── Cycle features for downstream ──
+    const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, 30);
+    const validCycleFeatures: import('./PPGFeatureExtractor').CycleFeatures[] = [];
+    for (const cycle of cycles) {
+      const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
+      if (features && features.quality >= 0.25) validCycleFeatures.push(features);
+    }
+
+    const medianF = validCycleFeatures.length >= 1 ? this.medianCycleFeatures(validCycleFeatures) : null;
+
+    // ── BP ──
+    if (validRR.length >= 2) {
+      const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, 30);
+      this.lastBPConfidence = bpEstimate.confidence;
+      this.lastBPFeatureQuality = bpEstimate.featureQuality;
+      if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+        this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
+        this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
+      }
+    }
+
+    // ── Glucose via research processor ──
+    const piGreen = this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0;
+    const rgACRatio = this.rgbData.greenAC > 0 ? this.rgbData.redAC / this.rgbData.greenAC : 0;
+
+    if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 12) {
+      const glucoseResult = this.glucoseProcessor.process({
+        cycleFeatures: {
+          sutMs: medianF.sutMs, pw50Ms: medianF.pw50Ms,
+          pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
+          augmentationIndex: medianF.augmentationIndex,
+          stiffnessIndex: medianF.stiffnessIndex,
+          dicroticDepth: medianF.dicroticDepth,
+          areaRatio: medianF.areaRatio,
+        },
+        hr, rrVar, piGreen, rgACRatio,
+        contactStable: this.upstreamContext.contactStable,
+        signalQuality: this.measurements.signalQuality,
+        beatCount: this.upstreamContext.beatCount,
+      });
+      this.lastGlucose = glucoseResult;
+      if (glucoseResult.value > 0 && glucoseResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
+        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseResult.value, 'dynamic');
+      }
+
+      // ── Lipids via research processor ──
+      const lipidResult = this.lipidProcessor.process({
+        cycleFeatures: {
+          stiffnessIndex: medianF.stiffnessIndex,
+          augmentationIndex: medianF.augmentationIndex,
+          areaRatio: medianF.areaRatio,
+          dicroticDepth: medianF.dicroticDepth,
+          pwvProxy: medianF.pwvProxy,
+          pw50Ms: medianF.pw50Ms, pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
+          diastolicTimeMs: medianF.diastolicTimeMs,
+        },
+        hr, rrVar, piGreen,
+        contactStable: this.upstreamContext.contactStable,
+        signalQuality: this.measurements.signalQuality,
+      });
+      this.lastLipids = lipidResult;
+      if (lipidResult.totalCholesterol > 0 && lipidResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
+        this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipidResult.totalCholesterol, 'dynamic');
+        this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipidResult.triglycerides, 'dynamic');
+      }
+    }
+
+    // ── Rhythm classifier ──
+    if (beatInputs && beatInputs.length >= 5) {
+      const rhythmResult = this.rhythmClassifier.classify(
+        beatInputs, this.upstreamContext.avgBeatSQI, this.upstreamContext.sourceStability
+      );
+      this.lastRhythm = rhythmResult;
+    }
+
+    // ── Legacy arrhythmia (kept for backward compat) ──
+    const arrhythmiaRR = validRR.slice(-10);
+    const arrhythmiaInput = (arrhythmiaRR.length >= 5 && this.measurements.signalQuality >= 25 && hr >= 35 && hr <= 180)
+      ? { ...rrData, intervals: arrhythmiaRR } : undefined;
+    const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(arrhythmiaInput);
+    this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
+    this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
+    const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
+    this.measurements.arrhythmiaCount = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
+  }
+
   private getFormattedResult(): VitalSignsResult {
+    // Build output states
+    const spo2State = this.lastSpo2?.enabledState ?? 'WITHHELD_LOW_QUALITY';
+    const glucoseState = this.lastGlucose?.enabledState ?? 'WITHHELD_LOW_QUALITY';
+    const lipidsState = this.lastLipids?.enabledState ?? 'WITHHELD_LOW_QUALITY';
+
+    const bpGated = MeasurementGate.gateBP(
+      this.measurements.systolicPressure, this.measurements.diastolicPressure,
+      this.lastBPConfidence, this.lastBPFeatureQuality, 0
+    );
+
     return {
       spo2: Math.round(this.measurements.spo2),
       glucose: Math.round(this.measurements.glucose),
@@ -253,369 +372,53 @@ export class VitalSignsProcessor {
       arrhythmiaStatus: this.measurements.arrhythmiaStatus,
       lipids: {
         totalCholesterol: Math.round(this.measurements.totalCholesterol),
-        triglycerides: Math.round(this.measurements.triglycerides)
+        triglycerides: Math.round(this.measurements.triglycerides),
       },
       isCalibrating: this.isCalibrating,
       calibrationProgress: Math.min(100, Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100)),
       lastArrhythmiaData: this.measurements.lastArrhythmiaData ?? undefined,
       signalQuality: Math.round(this.measurements.signalQuality),
-      measurementConfidence: this.getMeasurementConfidence()
+      measurementConfidence: this.getMeasurementConfidence(),
+      // V2 fields
+      rhythm: this.lastRhythm ? {
+        label: this.lastRhythm.rhythmLabel,
+        confidence: this.lastRhythm.rhythmConfidence,
+        burden: this.lastRhythm.arrhythmiaBurden,
+        recentEvents: this.lastRhythm.recentEvents,
+      } : undefined,
+      spo2Detail: this.lastSpo2 ?? undefined,
+      glucoseDetail: this.lastGlucose ?? undefined,
+      lipidsDetail: this.lastLipids ?? undefined,
+      outputStates: {
+        bpm: 'ENABLED_MEDIUM_CONFIDENCE',
+        spo2: spo2State,
+        bp: bpGated.state,
+        glucose: glucoseState,
+        lipids: lipidsState,
+        rhythm: this.lastRhythm ? (this.lastRhythm.rhythmQuality > 50 ? 'ENABLED_MEDIUM_CONFIDENCE' : 'ENABLED_LOW_CONFIDENCE') : 'WITHHELD_LOW_QUALITY',
+      },
     };
   }
 
-  /**
-   * CÁLCULO UNIFICADO DE SIGNOS VITALES
-   * Usa extractCycleFeatures (API moderna) en lugar de extractAllFeatures (legacy)
-   * para glucosa, hemoglobina y lípidos con modelos basados en literatura
-   */
-  private calculateVitalSigns(
-    signalValue: number, 
-    rrData: { intervals: number[], lastPeakTime: number | null }
-  ): void {
-    const minQualityForCalculation = 10;
-    if (this.measurements.signalQuality < minQualityForCalculation) {
-      return;
-    }
-    
-    // SpO2 — lowest gate, always try first
-    const spo2 = this.calculateSpO2Raw();
-    if (spo2 !== 0 && spo2 > 70 && spo2 <= 100) {
-      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2, 'stable');
-      this.updateHistory('spo2', spo2);
-    }
-
-    const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, 30);
-    const validCycleFeatures: import('./PPGFeatureExtractor').CycleFeatures[] = [];
-    
-    for (const cycle of cycles) {
-      const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, 30);
-      if (features && features.quality >= 0.25) {
-        validCycleFeatures.push(features);
-      }
-    }
-
-    // Diagnostic log every ~3s
-    if (this.signalHistory.length % 60 === 0) {
-      const { redAC, redDC, greenAC, greenDC } = this.rgbData;
-      console.log(`🩺 Vitals diag: SpO2raw=${spo2.toFixed(1)} rAC=${redAC.toFixed(2)} rDC=${redDC.toFixed(0)} gAC=${greenAC.toFixed(2)} gDC=${greenDC.toFixed(0)} cycles=${cycles.length} validCF=${validCycleFeatures.length} hist=${this.signalHistory.length} SQ=${this.measurements.signalQuality.toFixed(0)}`);
-    }
-
-    const validRR = rrData.intervals.filter(i => i >= 270 && i <= 2200);
-    const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
-    const hr = avgRR > 0 ? 60000 / avgRR : 0;
-    const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
-
-    // BP — try with 2+ valid RR
-    if (validRR.length >= 2) {
-      const bpEstimate = this.bloodPressureProcessor.estimate(
-        this.signalHistory, validRR, 30
-      );
-      this.lastBPConfidence = bpEstimate.confidence;
-      this.lastBPFeatureQuality = bpEstimate.featureQuality;
-      if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
-        this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
-        this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
-        this.updateHistory('systolic', bpEstimate.systolic);
-        this.updateHistory('diastolic', bpEstimate.diastolic);
-      }
-    }
-
-    // Glucose, Hemoglobin, Lipids — need cycle features
-    if (validCycleFeatures.length >= 1 && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 12) {
-      const medianF = this.medianCycleFeatures(validCycleFeatures);
-      
-      const glucose = this.calculateGlucoseAdvanced(medianF, hr, rrVar);
-      if (glucose > 40 && glucose < 400) {
-        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucose, 'dynamic');
-        this.updateHistory('glucose', glucose);
-      }
-
-      const lipids = this.calculateLipidsAdvanced(medianF, hr, rrVar);
-      if (lipids.totalCholesterol > 80 && lipids.totalCholesterol < 400) {
-        this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipids.totalCholesterol, 'dynamic');
-        this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipids.triglycerides, 'dynamic');
-      }
-    }
-
-    // Arrhythmia — solo con RR robustos y SQI suficiente
-    const arrhythmiaRR = validRR.slice(-10);
-    const arrhythmiaInput = (
-      arrhythmiaRR.length >= 5 &&
-      this.measurements.signalQuality >= 25 &&
-      hr >= 35 &&
-      hr <= 180
-    ) ? { ...rrData, intervals: arrhythmiaRR } : undefined;
-
-    const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(arrhythmiaInput);
-    this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
-    this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
-    
-    const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
-    this.measurements.arrhythmiaCount = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
+  private smoothValue(current: number, newVal: number, type: 'stable' | 'dynamic' = 'stable'): number {
+    if (current === 0 || !isFinite(current)) return newVal;
+    if (!isFinite(newVal)) return current;
+    const baseAlpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
+    const relChange = Math.abs(newVal - current) / (Math.abs(current) + 0.01);
+    let alpha = baseAlpha;
+    if (relChange > 0.5) alpha = baseAlpha * 0.3;
+    else if (relChange > 0.3) alpha = baseAlpha * 0.5;
+    else if (relChange < 0.1) alpha = baseAlpha * 1.5;
+    alpha = Math.max(0.05, Math.min(0.4, alpha));
+    return current * (1 - alpha) + newVal * alpha;
   }
 
-  /**
-   * SpO2 - QUADRATIC CALIBRATION + ROLLING R MEDIAN
-   * 
-   * Based on:
-   * - van Gastel et al. 2019 (Philips/Applsci): Data-driven calibration SpO2 = C1 + C2·R
-   * - Sensors 2023 (Quadratic): SpO2 = A + B·R + C·R² for better fit at extremes
-   * - Nature npj Digital Medicine 2022: Validated smartphone SpO2 70-100%
-   * 
-   * Uses green channel as IR proxy (best SNR in smartphone cameras).
-   * Rolling median of R values for stability without simulation.
-   * 
-   * Quadratic coefficients derived from empirical calibration curves:
-   *   SpO2 = 104 + 4.2·R - 28.5·R²
-   * These coefficients yield ~97% at R=0.4, ~95% at R=0.6, ~90% at R=0.9 
-   * (matching published data from Tremper/Webster adjusted for camera sensors)
-   */
-  private calculateSpO2Raw(): number {
-    const { redAC, redDC, greenAC, greenDC } = this.rgbData;
-    
-    // Gate: minimum DC baseline (tissue present)
-    if (redDC < 10 || greenDC < 10) return 0;
-    
-    // Gate: minimum AC pulsatility (real pulse)
-    if (redAC < 0.05 || greenAC < 0.05) return 0;
-    
-    // Perfusion indices — reject noise
-    const piRed = (redAC / redDC) * 100;
-    const piGreen = (greenAC / greenDC) * 100;
-    if (piRed < 0.05 || piGreen < 0.05) return 0;
-    
-    const ratioRed = redAC / redDC;
-    const ratioGreen = greenAC / greenDC;
-    if (!isFinite(ratioRed) || !isFinite(ratioGreen) || ratioRed <= 0 || ratioGreen <= 0) return 0;
-    
-    const R = ratioRed / ratioGreen;
-    if (R < 0.15 || R > 2.5) return 0;  // broader acceptance
-    
-    // Add to rolling buffer for median filtering (removes outliers)
-    this.rRatioBuffer.push(R);
-    if (this.rRatioBuffer.length > this.R_RATIO_BUFFER_SIZE) {
-      this.rRatioBuffer.shift();
-    }
-    
-    // Need at least 3 R samples for median
-    if (this.rRatioBuffer.length < 3) return 0;
-    
-    // Median R (robust to single-frame noise)
-    const sortedR = [...this.rRatioBuffer].sort((a, b) => a - b);
-    const medianR = sortedR[Math.floor(sortedR.length / 2)];
-    
-    // Quadratic calibration curve (empirical, camera-specific)
-    // SpO2 = A + B·R + C·R²  where R = (AC_red/DC_red)/(AC_green/DC_green)
-    // Coefficients tuned for smartphone white-LED + finger contact PPG
-    const A = 104.0;   // intercept
-    const B = 4.2;     // linear term (positive — slight boost for low R)
-    const C = -28.5;   // quadratic term (dominant — maps R curve)
-    
-    const spo2 = A + B * medianR + C * medianR * medianR;
-    
-    if (!Number.isFinite(spo2)) return 0;
-    
-    // Log for debugging
-    if (this.rRatioBuffer.length % 4 === 0) {
-      console.log(`🫁 SpO2: R=${medianR.toFixed(3)} → ${spo2.toFixed(1)}% (buf=${this.rRatioBuffer.length} piR=${piRed.toFixed(2)} piG=${piGreen.toFixed(2)})`);
-    }
-    
-    return spo2;
-  }
-
-  // Blood pressure is now handled by BloodPressureProcessor
-
-  /**
-   * GLUCOSA - Modelo Multivariable Avanzado
-   * 
-   * Basado en:
-   * - Nature Scientific Reports 2024: PPG + DNN → RMSE 19.7 mg/dL
-   * - IEEE DNN (Gupta et al.): Smartphone PPG characteristic features
-   * - Islam et al. 2021 (IEEE): PLS/SVR desde morfología PPG
-   * - Satter et al. 2024: AC/DC ratio, PI, augmentation index
-   * - Avram et al. 2020 (Nature Medicine): Digital biomarker from smartphone PPG
-   * 
-   * Key insight from literature: PPG morphology features (SUT, PW, AI, PI, HRV)
-   * correlate with blood glucose through vascular compliance and blood viscosity
-   * changes. The model uses weighted combination of 12 features.
-   */
-  private calculateGlucoseAdvanced(
-    f: MedianCycleFeatures,
-    hr: number,
-    rrVar: { sdnn: number; rmssd: number; cv: number }
-  ): number {
-    const { redAC, redDC, greenAC, greenDC } = this.rgbData;
-    
-    // Perfusion index — primary validation gate
-    const piGreen = greenDC > 0 ? (greenAC / greenDC) * 100 : 0;
-    const piRed = redDC > 0 ? (redAC / redDC) * 100 : 0;
-    if (piGreen < 0.03) return 0;
-    
-    const acDcRatio = greenDC > 0 ? greenAC / greenDC : 0;
-    if (acDcRatio < 0.00005) return 0;
-    
-    // Red/Green AC ratio — tissue optical properties change with glucose
-    const rgACRatio = greenAC > 0 ? redAC / greenAC : 0;
-
-    // ── Multivariate regression model ──
-    // Intercept calibrated to typical fasting glucose
-    let glucose = 95.0;
-    
-    // 1. Systolic Upstroke Time (SUT): viscosity proxy
-    // Higher glucose → higher viscosity → slower upstroke
-    if (f.sutMs > 0) {
-      glucose += (f.sutMs - 140) * 0.15;
-    }
-    
-    // 2. Pulse Width at 50% (main morphology feature per Satter 2024)
-    if (f.pw50Ms > 0) {
-      glucose += (f.pw50Ms - 320) * 0.05;
-    }
-    
-    // 3. Augmentation Index — vascular stiffness (insulin resistance marker)
-    glucose += (f.augmentationIndex - 45) * 0.12;
-    
-    // 4. AC/DC ratio — perfusion inversely correlates with chronic high glucose
-    glucose += (0.015 - acDcRatio) * 600;
-    
-    // 5. Heart Rate — metabolic demand proxy
-    glucose += (hr - 72) * 0.28;
-    
-    // 6. HRV (SDNN) — autonomic dysfunction → glucose dysregulation
-    if (rrVar.sdnn > 0) {
-      glucose += Math.max(0, (45 - rrVar.sdnn)) * 0.32;
-    }
-    
-    // 7. HRV (RMSSD) — parasympathetic tone
-    if (rrVar.rmssd > 0) {
-      glucose += Math.max(0, (35 - rrVar.rmssd)) * 0.20;
-    }
-    
-    // 8. Dicrotic depth — peripheral vascular resistance
-    glucose += (0.25 - f.dicroticDepth) * 12;
-    
-    // 9. Stiffness Index — arterial rigidity from insulin resistance
-    glucose += (f.stiffnessIndex - 5.5) * 2.0;
-    
-    // 10. Red/Green AC ratio — optical absorption changes with glucose
-    if (rgACRatio > 0) {
-      glucose += (rgACRatio - 1.0) * 8;
-    }
-    
-    // 11. Pulse width ratio (PW75/PW25) — waveform shape = viscosity
-    if (f.pw25Ms > 0 && f.pw75Ms > 0) {
-      const pwRatio = f.pw75Ms / f.pw25Ms;
-      glucose += (pwRatio - 0.55) * 15;
-    }
-    
-    // 12. Area ratio (systolic/diastolic) — vascular compliance
-    if (f.areaRatio > 0) {
-      glucose += (f.areaRatio - 1.4) * 5;
-    }
-    
-    // 13. CV of RR intervals — glucose variability correlate
-    if (rrVar.cv > 0) {
-      glucose += (rrVar.cv - 0.05) * 80;
-    }
-    
-    return glucose;
-  }
-
-  /**
-   * LÍPIDOS (Colesterol + Triglicéridos) - Rigidez Arterial
-   * 
-   * Referencias:
-   * - Ferizoli et al. 2024: Area-related features (systolicArea, diastolicArea, IPA) 
-   *   como strongest correlators con colesterol
-   * - Arguello-Prada et al. 2025: Pulse width multi-level + AI para colesterol
-   * - PWV y SI correlacionan con aterosclerosis/dislipidemia
-   * 
-   * Triglicéridos: viscosidad → pulse width + diastolic time + perfusion
-   */
-  private calculateLipidsAdvanced(
-    f: MedianCycleFeatures,
-    hr: number,
-    rrVar: { sdnn: number; rmssd: number; cv: number }
-  ): { totalCholesterol: number; triglycerides: number } {
-    const { greenAC, greenDC } = this.rgbData;
-    const perfusionIndex = greenDC > 0 ? (greenAC / greenDC) * 100 : 0;
-    
-    if (perfusionIndex < 0.05) return { totalCholesterol: 0, triglycerides: 0 };
-    
-    // ═══ COLESTEROL (Ferizoli 2024 + Arguello-Prada 2025) ═══
-    let cholesterol = 150.0; // Intercept (valor medio poblacional)
-    
-    // Stiffness Index: strongest predictor de aterosclerosis
-    // Mayor SI = arterias más rígidas = probable colesterol elevado
-    cholesterol += (f.stiffnessIndex - 6) * 8.0;
-    
-    // Augmentation Index: reflejo de onda aumentado por rigidez
-    cholesterol += (f.augmentationIndex - 50) * 0.45;
-    
-    // IPA ratio (systolicArea/diastolicArea): Ferizoli 2024 - strongest correlator
-    // IPA elevado → más rigidez → colesterol alto
-    cholesterol += (f.areaRatio - 1.5) * 12.0;
-    
-    // Dicrotic depth: muesca superficial = arterias rígidas = colesterol alto
-    cholesterol += (0.3 - f.dicroticDepth) * 25;
-    
-    // PWV proxy: velocidad de onda alta = rigidez = aterosclerosis
-    cholesterol += (f.pwvProxy - 7) * 4.0;
-    
-    // Pulse width at multiple levels (Arguello-Prada 2025)
-    // PW50 corto puede indicar compliance reducida
-    cholesterol += (300 - f.pw50Ms) * 0.08;
-    
-    // PW75/PW25 ratio: forma del pulso estrecha = rigidez
-    if (f.pw25Ms > 0) {
-      const pwRatio = f.pw75Ms / f.pw25Ms;
-      cholesterol += (0.5 - pwRatio) * 15;
-    }
-    
-    // HR elevada: asociación metabólica
-    cholesterol += (hr - 72) * 0.3;
-    
-    // HRV baja: disfunción autonómica asociada a dislipidemia
-    if (rrVar.sdnn > 0) {
-      cholesterol += Math.max(0, (50 - rrVar.sdnn)) * 0.35;
-    }
-    
-    // ═══ TRIGLICÉRIDOS (viscosidad sanguínea) ═══
-    let triglycerides = 120.0; // Intercept
-    
-    // Pulse width: sangre más viscosa → pulso más ancho
-    triglycerides += (f.pw50Ms - 300) * 0.15;
-    
-    // Diastolic time: mayor tiempo diastólico → resistencia periférica
-    triglycerides += (f.diastolicTimeMs - 400) * 0.06;
-    
-    // Perfusion baja: viscosidad alta reduce perfusión
-    triglycerides += (2 - perfusionIndex) * 8;
-    
-    // HR elevada: compensación metabólica
-    triglycerides += (hr - 72) * 0.4;
-    
-    // Stiffness: también correlaciona con triglicéridos
-    triglycerides += (f.stiffnessIndex - 6) * 3.5;
-    
-    // HRV: tono parasimpático bajo
-    if (rrVar.sdnn > 0 && rrVar.sdnn < 40) {
-      triglycerides += (40 - rrVar.sdnn) * 0.5;
-    }
-    
-    return { totalCholesterol: cholesterol, triglycerides };
-  }
-
-  /**
-   * Calcular mediana de features de ciclos (robusto ante outliers)
-   */
-  private medianCycleFeatures(cycles: import('./PPGFeatureExtractor').CycleFeatures[]): MedianCycleFeatures {
+  private medianCycleFeatures(cycles: import('./PPGFeatureExtractor').CycleFeatures[]) {
     const median = (arr: number[]) => {
       const sorted = [...arr].sort((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
       return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
     };
-
     return {
       sutMs: median(cycles.map(c => c.sutMs)),
       diastolicTimeMs: median(cycles.map(c => c.diastolicTimeMs)),
@@ -639,56 +442,6 @@ export class VitalSignsProcessor {
     };
   }
 
-  /**
-   * Actualizar historial de mediciones para análisis de tendencias
-   */
-  private updateHistory(key: string, value: number): void {
-    if (!this.measurementHistory[key]) {
-      this.measurementHistory[key] = [];
-    }
-    this.measurementHistory[key].push(value);
-    if (this.measurementHistory[key].length > this.HISTORY_SIZE_VALIDATION) {
-      this.measurementHistory[key].shift();
-    }
-  }
-
-  /**
-   * Suavizado EMA adaptativo con detección de outliers
-   * type: 'stable' para valores que cambian lentamente (SpO2, PA)
-   *       'dynamic' para valores más variables (Glucosa)
-   * 
-   * MEJORA: Detecta cambios bruscos y ajusta alpha dinámicamente
-   */
-  private smoothValue(current: number, newVal: number, type: 'stable' | 'dynamic' = 'stable'): number {
-    if (current === 0 || isNaN(current) || !isFinite(current)) return newVal; // Fast initial lock
-    if (isNaN(newVal) || !isFinite(newVal)) return current;
-    
-    const baseAlpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
-    
-    // Calcular cambio relativo
-    const relativeChange = Math.abs(newVal - current) / (Math.abs(current) + 0.01);
-    
-    // Si el cambio es muy grande (>50%), podría ser ruido - suavizar más
-    // Si el cambio es moderado (<20%), responder más rápido
-    let adaptiveAlpha = baseAlpha;
-    
-    if (relativeChange > 0.5) {
-      // Cambio muy grande - probablemente ruido, suavizar mucho más
-      adaptiveAlpha = baseAlpha * 0.3;
-    } else if (relativeChange > 0.3) {
-      // Cambio grande - suavizar un poco más
-      adaptiveAlpha = baseAlpha * 0.5;
-    } else if (relativeChange < 0.1) {
-      // Cambio pequeño - responder más rápido para seguir tendencia
-      adaptiveAlpha = baseAlpha * 1.5;
-    }
-    
-    // Limitar alpha entre 0.05 y 0.4
-    adaptiveAlpha = Math.max(0.05, Math.min(0.4, adaptiveAlpha));
-    
-    return current * (1 - adaptiveAlpha) + newVal * adaptiveAlpha;
-  }
-
   getCalibrationProgress(): number {
     return Math.min(100, Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100));
   }
@@ -698,13 +451,15 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.validPulseCount = 0;
     this.arrhythmiaProcessor.reset();
+    this.spo2Processor.reset();
+    this.glucoseProcessor.reset();
+    this.lipidProcessor.reset();
+    this.rhythmClassifier.reset();
     this.measurements.arrhythmiaCount = 0;
     this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
     this.measurements.lastArrhythmiaData = null;
     return result.spo2 !== 0 ? result : null;
   }
-
-  // Calibración eliminada — BP se calcula exclusivamente desde morfología PPG
 
   hasValidPressureEstimate(): boolean {
     return this.measurements.systolicPressure > 0 && this.measurements.diastolicPressure > 0;
@@ -714,50 +469,22 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.validPulseCount = 0;
     this.measurements = {
-      spo2: 0,
-      glucose: 0,
-      systolicPressure: 0,
-      diastolicPressure: 0,
-      arrhythmiaCount: 0,
-      arrhythmiaStatus: "SIN ARRITMIAS|0",
-      totalCholesterol: 0,
-      triglycerides: 0,
-      lastArrhythmiaData: null,
-      signalQuality: 0
+      spo2: 0, glucose: 0, systolicPressure: 0, diastolicPressure: 0,
+      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+      totalCholesterol: 0, triglycerides: 0, lastArrhythmiaData: null, signalQuality: 0,
     };
     this.rgbData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
     this.isCalibrating = false;
     this.calibrationSamples = 0;
     this.arrhythmiaProcessor.reset();
     this.bloodPressureProcessor.fullReset();
-    this.measurementHistory = {
-      spo2: [],
-      systolic: [],
-      diastolic: [],
-      glucose: [],
-      hemoglobin: []
-    };
+    this.spo2Processor.fullReset();
+    this.glucoseProcessor.fullReset();
+    this.lipidProcessor.fullReset();
+    this.rhythmClassifier.reset();
+    this.lastRhythm = null;
+    this.lastSpo2 = null;
+    this.lastGlucose = null;
+    this.lastLipids = null;
   }
-}
-
-interface MedianCycleFeatures {
-  sutMs: number;
-  diastolicTimeMs: number;
-  pw10Ms: number;
-  pw25Ms: number;
-  pw50Ms: number;
-  pw75Ms: number;
-  systolicAmplitude: number;
-  diastolicAmplitude: number;
-  dicroticDepth: number;
-  systolicArea: number;
-  diastolicArea: number;
-  areaRatio: number;
-  ipaRatio: number;
-  stiffnessIndex: number;
-  augmentationIndex: number;
-  pwvProxy: number;
-  apgBDivA: number;
-  apgDDivA: number;
-  apgAgi: number;
 }
