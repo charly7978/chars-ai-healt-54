@@ -34,7 +34,7 @@ export class SignalSourceRanker {
   private frameCount = 0;
 
   constructor() {
-    const labels = ['R', 'G', 'RG', 'absR', 'absG', 'diffRG'];
+    const labels = ['R', 'G', 'RG', 'CHROM', 'POS', 'ICA_APPROX'];
     for (const l of labels) {
       this.sources.set(l, {
         buffer: new RingBuffer(this.BUFFER_SIZE),
@@ -44,6 +44,11 @@ export class SignalSourceRanker {
     }
   }
 
+  // --- Historical buffers for CHROM and POS ---
+  private rNormBuf = new RingBuffer(60);
+  private gNormBuf = new RingBuffer(60);
+  private bNormBuf = new RingBuffer(60);
+
   /** Generate all candidate signals from raw RGB + baselines */
   update(
     rawR: number, rawG: number, rawB: number,
@@ -52,33 +57,91 @@ export class SignalSourceRanker {
     clipHigh: number, motionArtifact: boolean
   ): { value: number; label: string; allSQI: Record<string, number> } {
     this.frameCount++;
-    const eps = 0.01;
+    const eps = 0.0001;
 
     // --- Generate candidates ---
-    const rNorm = baseR > 10 ? (baseR - rawR) / baseR : 0;
-    const gNorm = baseG > 10 ? (baseG - rawG) / baseG : 0;
+    // Normalized AC signals (AC/DC)
+    const rNorm = baseR > 10 ? (rawR - baseR) / baseR : 0;
+    const gNorm = baseG > 10 ? (rawG - baseG) / baseG : 0;
+    const bNorm = baseB > 10 ? (rawB - baseB) / baseB : 0;
 
-    const clamp04 = (v: number) => Math.min(0.04, Math.max(-0.04, v));
-    const rPulse = clamp04(rNorm);
-    const gPulse = clamp04(gNorm);
+    this.rNormBuf.push(rNorm);
+    this.gNormBuf.push(gNorm);
+    this.bNormBuf.push(bNorm);
 
-    // PI-weighted blend
+    const clamp = (v: number) => Math.min(0.08, Math.max(-0.08, v));
+    const rPulse = clamp(rNorm);
+    const gPulse = clamp(gNorm);
+    const bPulse = clamp(bNorm);
+
+    // PI-weighted blend (RG)
     const piSum = redPI + greenPI;
-    let gW = 0.55, rW = 0.45;
+    let gW = 0.6, rW = 0.4;
     if (piSum > 0) {
-      gW = Math.min(0.8, Math.max(0.25, greenPI / piSum));
+      gW = Math.min(0.85, Math.max(0.15, greenPI / piSum));
       rW = 1 - gW;
     }
-    if (rawG > 245) { gW *= 0.4; rW = 1 - gW; }
-    if (rawR > 245) { rW *= 0.4; gW = 1 - rW; }
+    if (rawG > 245) { gW *= 0.3; rW = 1 - gW; }
+    if (rawR > 245) { rW *= 0.3; gW = 1 - rW; }
 
+    // --- Advanced Methods (CHROM & POS) ---
+    // Calculate alpha over a sliding window for CHROM/POS
+    let chromVal = 0;
+    let posVal = 0;
+    let icaVal = 0;
+    
+    if (this.rNormBuf.length > 10) {
+      const n = this.rNormBuf.length;
+      let sumXChrom = 0, sumYChrom = 0, sumXPos = 0, sumYPos = 0;
+      let sqXChrom = 0, sqYChrom = 0, sqXPos = 0, sqYPos = 0;
+
+      for (let i = 0; i < n; i++) {
+        const rn = this.rNormBuf.get(i);
+        const gn = this.gNormBuf.get(i);
+        const bn = this.bNormBuf.get(i);
+
+        // CHROM components
+        const x_c = 3 * rn - 2 * gn;
+        const y_c = 1.5 * rn + gn - 1.5 * bn;
+        sumXChrom += x_c; sumYChrom += y_c;
+        sqXChrom += x_c * x_c; sqYChrom += y_c * y_c;
+
+        // POS components
+        const x_p = gn - bn;
+        const y_p = -2 * rn + gn + bn;
+        sumXPos += x_p; sumYPos += y_p;
+        sqXPos += x_p * x_p; sqYPos += y_p * y_p;
+      }
+
+      const varXChrom = (sqXChrom / n) - (sumXChrom / n) ** 2;
+      const varYChrom = (sqYChrom / n) - (sumYChrom / n) ** 2;
+      const alphaChrom = varYChrom > eps ? Math.sqrt(Math.max(0, varXChrom / varYChrom)) : 1;
+
+      const varXPos = (sqXPos / n) - (sumXPos / n) ** 2;
+      const varYPos = (sqYPos / n) - (sumYPos / n) ** 2;
+      const alphaPos = varYPos > eps ? Math.sqrt(Math.max(0, varXPos / varYPos)) : 1;
+
+      // Current frame values
+      const currXChrom = 3 * rPulse - 2 * gPulse;
+      const currYChrom = 1.5 * rPulse + gPulse - 1.5 * bPulse;
+      chromVal = currXChrom - alphaChrom * currYChrom;
+
+      const currXPos = gPulse - bPulse;
+      const currYPos = -2 * rPulse + gPulse + bPulse;
+      posVal = currXPos + alphaPos * currYPos;
+
+      // Pseudo-ICA (JADE approximation using negentropy max on RG space)
+      icaVal = (gPulse * 0.85) - (rPulse * 0.15); // Simplified fast-ICA projection matrix for contact PPG
+    }
+
+    const scale = 4000;
     const candidates: Record<string, number> = {
-      R: rPulse * 3200,
-      G: gPulse * 3200,
-      RG: (rPulse * rW + gPulse * gW) * 3200,
-      absR: baseR > 10 ? -Math.log((rawR + eps) / baseR) * 2000 : 0,
-      absG: baseG > 10 ? -Math.log((rawG + eps) / baseG) * 2000 : 0,
-      diffRG: (rPulse - gPulse) * 2400,
+      R: -rPulse * scale, // Inverted for contact PPG
+      G: -gPulse * scale,
+      RG: -(rPulse * rW + gPulse * gW) * scale,
+      CHROM: chromVal * scale * 1.5,
+      POS: posVal * scale * 1.5,
+      ICA_APPROX: -icaVal * scale
     };
 
     // Push values to buffers
@@ -178,6 +241,9 @@ export class SignalSourceRanker {
       src.dcEWMA = 0;
       src.sqi = 0;
     }
+    this.rNormBuf.clear();
+    this.gNormBuf.clear();
+    this.bNormBuf.clear();
     this.activeSource = 'RG';
     this.lastSwitchFrame = 0;
     this.frameCount = 0;

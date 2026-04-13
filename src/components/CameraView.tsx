@@ -143,29 +143,38 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         const cameraId = await findMainBackCamera();
 
         // PHASE 2: Open stream with stable base
+        // MAXIMUM POSSIBLE QUALITY FOR PPG: 60fps at 720p/1080p if available, fallback to 30fps.
         const baseConstraints: MediaTrackConstraints = cameraId
           ? {
               deviceId: { exact: cameraId },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              frameRate: { ideal: 60, min: 30, max: 120 }
             }
           : {
               facingMode: { ideal: 'environment' },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
+              frameRate: { ideal: 60, min: 30, max: 120 }
             };
 
         let stream: MediaStream;
         try {
           stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: baseConstraints });
         } catch {
-          console.warn('Fallback to simple constraints');
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }
-          });
+          console.warn('Fallback to 60fps/480p constraints');
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              audio: false,
+              video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 60 } }
+            });
+          } catch {
+             console.warn('Fallback to simple constraints');
+             stream = await navigator.mediaDevices.getUserMedia({
+               audio: false,
+               video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }
+             });
+          }
         }
 
         if (!mounted) { stream.getTracks().forEach(t => t.stop()); isStartingRef.current = false; return; }
