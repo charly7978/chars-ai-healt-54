@@ -31,7 +31,7 @@ export class ArrhythmiaProcessor {
   private lastRMSSD: number = 0;
   private lastRRVariation: number = 0;
   private lastArrhythmiaTime: number = 0;
-  private measurementStartTime: number = Date.now();
+  private measurementStartTime: number = performance.now();
   
   // Advanced metrics
   private shannonEntropy: number = 0;
@@ -56,7 +56,7 @@ export class ArrhythmiaProcessor {
     arrhythmiaStatus: string;
     lastArrhythmiaData: { timestamp: number; rmssd: number; rrVariation: number; } | null;
   } {
-    const currentTime = Date.now();
+    const currentTime = performance.now();
 
     // Update RR intervals if available
     if (rrData?.intervals && rrData.intervals.length > 0) {
@@ -121,7 +121,7 @@ export class ArrhythmiaProcessor {
       return;
     }
 
-    const currentTime = Date.now();
+    const currentTime = performance.now();
     const recentRR = this.rrIntervals.slice(-this.RR_WINDOW_SIZE);
     const validRRs = recentRR.filter((rr) => rr >= this.MIN_VALID_RR_MS && rr <= this.MAX_VALID_RR_MS);
 
@@ -173,7 +173,6 @@ export class ArrhythmiaProcessor {
     this.lastRMSSD = rmssd;
     this.lastRRVariation = rrVariation;
 
-    // Evidence-based decision: require strong variability + sustained irregularity + secondary confirmation
     const strongVariability = rmssd > this.RMSSD_THRESHOLD && coefficientOfVariation > 0.10 && rrVariation > 0.10;
     const nonlinearSupport = this.shannonEntropy > this.SHANNON_ENTROPY_THRESHOLD && this.pnnX > this.PNNX_THRESHOLD;
     const entropySupport = this.sampleEntropy > this.SAMPLE_ENTROPY_THRESHOLD && outlierCount >= 3;
@@ -184,7 +183,6 @@ export class ArrhythmiaProcessor {
       nonlinearSupport || entropySupport || isolatedOutlierPattern
     );
 
-    // Notificar cambios en el estado de arritmia
     if (newArrhythmiaState !== this.arrhythmiaDetected) {
       if (this.onArrhythmiaDetection) {
         this.onArrhythmiaDetection(newArrhythmiaState);
@@ -192,7 +190,6 @@ export class ArrhythmiaProcessor {
       }
     }
 
-    // Contar eventos solo si son nuevos y suficientemente espaciados
     if (newArrhythmiaState && currentTime - this.lastArrhythmiaTime >= this.MIN_ARRHYTHMIA_INTERVAL) {
       this.arrhythmiaCount++;
       this.lastArrhythmiaTime = currentTime;
@@ -219,109 +216,110 @@ export class ArrhythmiaProcessor {
    * Based on cutting-edge HRV research from MIT and Stanford labs
    */
   private calculateNonLinearMetrics(rrIntervals: number[]): void {
-    // Calculate pNNx (percentage of successive RR intervals differing by more than x ms)
-    // Used by Mayo Clinic for arrhythmia analysis
-    let countAboveThreshold = 0;
+    if (rrIntervals.length < 5) {
+      this.shannonEntropy = 0;
+      this.sampleEntropy = 0;
+      this.pnnX = 0;
+      return;
+    }
+
+    this.pnnX = this.calculatePNNX(rrIntervals);
+    this.shannonEntropy = this.calculateShannonEntropy(rrIntervals);
+    this.sampleEntropy = this.calculateSampleEntropy(rrIntervals);
+  }
+
+  private calculatePNNX(rrIntervals: number[], threshold: number = 50): number {
+    if (rrIntervals.length < 2) return 0;
+
+    let countExceedingThreshold = 0;
     for (let i = 1; i < rrIntervals.length; i++) {
-      if (Math.abs(rrIntervals[i] - rrIntervals[i-1]) > 50) {
-        countAboveThreshold++;
+      if (Math.abs(rrIntervals[i] - rrIntervals[i - 1]) > threshold) {
+        countExceedingThreshold++;
       }
     }
-    this.pnnX = countAboveThreshold / (rrIntervals.length - 1);
-    
-    // Calculate Shannon Entropy (information theory approach)
-    // Implementation based on "Information Theory Applications in Cardiac Monitoring"
-    this.calculateShannonEntropy(rrIntervals);
-    
-    // Sample Entropy calculation (simplified)
-    // Based on "Sample Entropy Analysis of Neonatal Heart Rate Variability"
-    this.sampleEntropy = this.estimateSampleEntropy(rrIntervals);
+
+    return countExceedingThreshold / (rrIntervals.length - 1);
   }
-  
-  /**
-   * Calculate Shannon Entropy for RR intervals
-   * Information theory approach from MIT research
-   */
-  private calculateShannonEntropy(intervals: number[]): void {
-    // Simplified histogram-based entropy calculation
-    const bins: {[key: string]: number} = {};
-    const binWidth = 25; // 25ms bin width
-    
-    intervals.forEach(interval => {
-      const binKey = Math.floor(interval / binWidth);
-      bins[binKey] = (bins[binKey] || 0) + 1;
+
+  private calculateShannonEntropy(rrIntervals: number[]): number {
+    if (rrIntervals.length < 5) return 0;
+
+    const histogram = new Map<number, number>();
+    const binWidth = 50;
+
+    rrIntervals.forEach(rr => {
+      const bin = Math.floor(rr / binWidth) * binWidth;
+      histogram.set(bin, (histogram.get(bin) || 0) + 1);
     });
-    
+
     let entropy = 0;
-    const totalPoints = intervals.length;
-    
-    Object.values(bins).forEach(count => {
-      const probability = count / totalPoints;
+    const total = rrIntervals.length;
+
+    histogram.forEach(count => {
+      const probability = count / total;
       entropy -= probability * Math.log2(probability);
     });
-    
-    this.shannonEntropy = entropy;
-  }
-  
-  /**
-   * Estimate Sample Entropy (simplified implementation)
-   * Based on Massachusetts General Hospital research
-   */
-  private estimateSampleEntropy(intervals: number[]): number {
-    if (intervals.length < 4) return 0;
-    
-    // Simplified sample entropy estimation
-    // In a full implementation, this would use template matching
-    const normalizedIntervals = intervals.map(interval => 
-      (interval - intervals.reduce((a, b) => a + b, 0) / intervals.length) / 
-      Math.max(1, Math.sqrt(intervals.reduce((a, b) => a + Math.pow(b, 2), 0) / intervals.length))
-    );
-    
-    let sumCorr = 0;
-    for (let i = 0; i < normalizedIntervals.length - 1; i++) {
-      sumCorr += Math.abs(normalizedIntervals[i + 1] - normalizedIntervals[i]);
-    }
-    
-    // Convert to entropy-like measure
-    return -Math.log(sumCorr / (normalizedIntervals.length - 1));
+
+    return entropy;
   }
 
-  /**
-   * Detecta secuencias irregulares en los últimos intervalos RR
-   */
-  private detectIrregularSequence(lastIntervals: number[]): boolean {
-    if (lastIntervals.length < 4) return false;
-    
-    const diffs: number[] = [];
-    for (let i = 1; i < lastIntervals.length; i++) {
-      diffs.push(Math.abs(lastIntervals[i] - lastIntervals[i - 1]));
-    }
-    
-    let consecutiveLargeDiffs = 0;
-    for (const diff of diffs) {
-      if (diff > 130) {
-        consecutiveLargeDiffs++;
-      } else {
-        consecutiveLargeDiffs = 0;
+  private calculateSampleEntropy(rrIntervals: number[]): number {
+    if (rrIntervals.length < 10) return 0;
+
+    const m = 2;
+    const r = 0.2 * this.calculateStandardDeviation(rrIntervals);
+
+    let A = 0;
+    let B = 0;
+
+    for (let i = 0; i < rrIntervals.length - m; i++) {
+      for (let j = i + 1; j < rrIntervals.length - m; j++) {
+        let matchM = true;
+        let matchM1 = true;
+
+        for (let k = 0; k < m; k++) {
+          if (Math.abs(rrIntervals[i + k] - rrIntervals[j + k]) > r) {
+            matchM = false;
+            matchM1 = false;
+            break;
+          }
+        }
+
+        if (matchM) {
+          B++;
+
+          if (Math.abs(rrIntervals[i + m] - rrIntervals[j + m]) <= r) {
+            A++;
+          } else {
+            matchM1 = false;
+          }
+        }
       }
-      
-      if (consecutiveLargeDiffs >= 2) {
-        return true;
-      }
     }
-    
-    const pattern1 = Math.abs(lastIntervals[0] - lastIntervals[2]);
-    const pattern2 = Math.abs(lastIntervals[1] - lastIntervals[3]);
-    if (pattern1 < 60 && pattern2 < 60 && Math.abs(lastIntervals[0] - lastIntervals[1]) > 180) {
-      return true;
-    }
-    
-    return false;
+
+    if (B === 0 || A === 0) return 0;
+    return -Math.log(A / B);
   }
 
-  /**
-   * Reset the arrhythmia processor state
-   */
+  private calculateStandardDeviation(values: number[]): number {
+    const avg = values.reduce((sum, val) => sum + val, 0) / values.length;
+    const squareDiffs = values.map(val => Math.pow(val - avg, 2));
+    const avgSquareDiff = squareDiffs.reduce((sum, val) => sum + val, 0) / values.length;
+    return Math.sqrt(avgSquareDiff);
+  }
+
+  private detectIrregularSequence(rrSequence: number[]): boolean {
+    if (rrSequence.length < 4) return false;
+    let irregularCount = 0;
+    for (let i = 1; i < rrSequence.length; i++) {
+      const prev = rrSequence[i - 1];
+      const curr = rrSequence[i];
+      const deviation = Math.abs(curr - prev) / Math.max(1, prev);
+      if (deviation > 0.12) irregularCount++;
+    }
+    return irregularCount >= 2;
+  }
+
   public reset(): void {
     this.rrIntervals = [];
     this.rrDifferences = [];
@@ -330,17 +328,12 @@ export class ArrhythmiaProcessor {
     this.hasDetectedFirstArrhythmia = false;
     this.arrhythmiaDetected = false;
     this.arrhythmiaCount = 0;
-    this.measurementStartTime = Date.now();
     this.lastRMSSD = 0;
     this.lastRRVariation = 0;
     this.lastArrhythmiaTime = 0;
+    this.measurementStartTime = performance.now();
     this.shannonEntropy = 0;
     this.sampleEntropy = 0;
     this.pnnX = 0;
-    
-    // Notificar reset del estado de arritmia
-    if (this.onArrhythmiaDetection) {
-      this.onArrhythmiaDetection(false);
-    }
   }
 }
