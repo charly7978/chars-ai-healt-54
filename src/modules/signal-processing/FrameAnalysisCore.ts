@@ -7,7 +7,7 @@ import { ContactStateMachine, type ContactMachineState, type ContactScoreInput }
 import { TilePulsatilityMap, type TileSnapshot } from './TilePulsatilityMap';
 import { AdaptiveROIAssembler } from './AdaptiveROIAssembler';
 import { PressureProxyEstimator } from './PressureProxyEstimator';
-import { SignalExtractionEngine } from './SignalExtractionEngine';
+import { SignalExtractionEngine, type CandidateVector } from './SignalExtractionEngine';
 import { SignalQualityScorer } from './SignalQualityScorer';
 import { RingBuffer } from './RingBuffer';
 import type { SourceSQIDetail } from './SignalQualityScorer';
@@ -150,6 +150,66 @@ export class FrameAnalysisEngine {
   /** EMA brillo R para umbrales adaptativos por sesión */
   private sessionRedEma = 88;
   private prevStableMask: Uint8Array | null = null;
+
+  /**
+   * PPG contacto dedo + flash: el rojo suele portar más pulsación útil que el verde.
+   * Prior determinista (sin aleatoriedad) para ranking y fusión cuando R≫G.
+   */
+  private flashContactPrior(tr: number, tg: number, label: string): number {
+    const rg = tr / Math.max(tg, 1e-3);
+    if (rg < 1.035) return 0;
+    const t = Math.min(1, (rg - 1.035) / 0.24);
+    const redHeavy = new Set([
+      'R',
+      'RG',
+      'LOG_R',
+      'LOG_RG',
+      'ROT',
+      'W_TILE',
+      'R_G',
+      'DIFF_R',
+      'ROBUST',
+    ]);
+    const chromatic = new Set(['CHROM', 'POS', 'ICA_APPROX']);
+    if (redHeavy.has(label)) return 0.055 * t + (rg > 1.1 ? 0.035 : 0);
+    if (label === 'LOG_G') return 0.03 * t;
+    if (chromatic.has(label)) return 0.028 * t;
+    if (label === 'G') return rg > 1.08 ? -0.045 * t : 0;
+    return 0;
+  }
+
+  /** Combina top-3 fuentes con peso ∝ SQI² para reducir saltos cuando varias son válidas */
+  private fusedSourceValue(
+    candidates: CandidateVector[],
+    sqiByLabel: Record<string, number>,
+    tr: number,
+    tg: number
+  ): number {
+    type Labeled = { label: string; s: number };
+    const ranked: Labeled[] = [];
+    for (const l of LABELS) {
+      const raw = sqiByLabel[l];
+      if (raw === undefined || raw < 0) continue;
+      const s = raw + this.flashContactPrior(tr, tg, l);
+      ranked.push({ label: l, s: Math.max(0.001, s) });
+    }
+    ranked.sort((a, b) => b.s - a.s);
+    const top = ranked.slice(0, 3);
+    let sumW = 0;
+    let acc = 0;
+    for (const { label, s } of top) {
+      const cand = candidates.find((c) => c.label === label);
+      if (!cand) continue;
+      const w = s * s;
+      sumW += w;
+      acc += w * cand.value;
+    }
+    if (sumW < 1e-12) {
+      const fb = candidates.find((c) => c.label === this.activeSource) ?? candidates.find((c) => c.label === 'RG');
+      return fb?.value ?? 0;
+    }
+    return acc / sumW;
+  }
 
   constructor() {
     this.tileMap = new TilePulsatilityMap({ cols: 9, rows: 9, pixelStep: 2 });
@@ -452,28 +512,34 @@ export class FrameAnalysisEngine {
         const d = this.scorer.scoreSource(buf, clipHighRatio, clipLowRatio, motionArtifact, this.estimatedSampleRate);
         sqiDetail[l] = d;
         allSQI[l] = d.sqi;
-        if (d.sqi > bestScore) {
-          bestScore = d.sqi;
+        const boosted = d.sqi + this.flashContactPrior(tr, tg, l);
+        if (boosted > bestScore) {
+          bestScore = boosted;
           best = l;
         }
       }
       this.lastAllSQI = { ...allSQI };
 
-      const cur = this.scorer.scoreSource(
+      const curRaw = this.scorer.scoreSource(
         this.sourceBuffers.get(this.activeSource)!,
         clipHighRatio,
         clipLowRatio,
         motionArtifact,
         this.estimatedSampleRate
       ).sqi;
+      const curBoosted = curRaw + this.flashContactPrior(tr, tg, this.activeSource);
 
-      if (best !== this.activeSource && bestScore > cur * 1.1) {
+      const rgRatio = tr / Math.max(tg, 1e-3);
+      const switchMult = rgRatio > 1.08 ? 1.06 : 1.1;
+      const streakNeed = rgRatio > 1.08 ? 5 : 6;
+
+      if (best !== this.activeSource && bestScore > curBoosted * switchMult) {
         if (best === this.lastBestLabel) this.bestStreak++;
         else {
           this.lastBestLabel = best;
           this.bestStreak = 1;
         }
-        if (this.bestStreak >= 6) {
+        if (this.bestStreak >= streakNeed) {
           this.activeSource = best;
           this.bestStreak = 0;
         }
@@ -484,8 +550,9 @@ export class FrameAnalysisEngine {
       Object.assign(allSQI, this.lastAllSQI);
     }
 
-    const activeCand = candidates.find((c) => c.label === this.activeSource) ?? candidates.find((c) => c.label === 'RG');
-    const sourceValue = activeCand?.value ?? 0;
+    const sqiFusion =
+      this.frameCount < 3 || this.frameCount % 2 === 0 ? allSQI : this.lastAllSQI;
+    const sourceValue = this.fusedSourceValue(candidates, sqiFusion, tr, tg);
 
     const fingerScore = assembled.globalScore;
     const spatialUniformity = assembled.spatialStability;

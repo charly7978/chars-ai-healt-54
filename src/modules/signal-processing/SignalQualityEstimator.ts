@@ -52,11 +52,11 @@ export function computeGlobalSQI(params: {
 
   if (contactState === 'NO_CONTACT') return 0;
 
-  // Gate: no hemoglobin signature = no real finger
-  if (redDominance < 12) return 0;
+  // Gate: firma hemoglobina (relajado para piel oscura / exposición baja)
+  if (redDominance < 8) return 0;
 
-  // Gate: no perfusion = no signal
-  if (perfusionIndex < 0.003) return Math.min(8, coverageRatio * 15);
+  // Gate: perfusión casi nula
+  if (perfusionIndex < 0.002) return Math.min(8, coverageRatio * 15);
 
   // ROI casi todo inválido → SQI severo
   if (roiValidRatio < 0.22) return Math.max(0, Math.min(12, roiValidRatio * 40));

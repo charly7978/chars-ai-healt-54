@@ -112,7 +112,8 @@ export class SignalQualityScorer {
       (1 - Math.min(1, driftPenalty * 3)) * 0.06 -
       clipPenalty * 0.35 -
       entropyPenalty * 0.12;
-    if (motion) sqi -= 0.18;
+    // Penalización moderada: en móvil el dedo tiembla ligeramente sin invalidar el pulso
+    if (motion) sqi -= 0.13;
     if (motion) reasons.push('motion');
 
     sqi = Math.max(0, Math.min(1, sqi));

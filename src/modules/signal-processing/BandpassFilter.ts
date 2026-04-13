@@ -26,7 +26,7 @@ export class BandpassFilter {
   // Detrending state (exponential moving average baseline)
   private baselineEWMA = 0;
   private baselineInitialized = false;
-  private readonly DETREND_ALPHA = 0.015; // slow-moving baseline
+  private readonly DETREND_ALPHA = 0.019; // baseline un poco más reactivo = más contraste AC con dedo+flash
 
   constructor(sampleRate: number = 30) {
     this.sampleRate = sampleRate;

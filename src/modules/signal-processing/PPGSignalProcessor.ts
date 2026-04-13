@@ -59,9 +59,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private positionQualityScore = 0;
 
   private motionScore = 0;
+  /** EMA del movimiento: evita cortar medición por picos breves del acelerómetro */
+  private motionScoreSmoothed = 0;
   private motionListenerActive = false;
   private lastAccel = { x: 0, y: 0, z: 0 };
-  private readonly MOTION_THRESH = 0.55;
+  private readonly MOTION_THRESH = 0.62;
 
   private activeSourceLabel = 'RG';
   private allSourceSQI: Record<string, number> = {};
@@ -126,7 +128,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const timestamp = frameTimestamp ?? performance.now();
     this.updateSampleRate(timestamp);
 
-    const motionArtifact = this.motionScore > this.MOTION_THRESH;
+    this.motionScoreSmoothed = this.motionScoreSmoothed * 0.82 + this.motionScore * 0.18;
+    const motionArtifact = this.motionScoreSmoothed > this.MOTION_THRESH;
     const isBm = typeof ImageBitmap !== 'undefined' && frame instanceof ImageBitmap;
     const analysis = isBm
       ? this.pipeline.processBitmap(frame, timestamp, motionArtifact)
@@ -396,27 +399,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     spatialUniformity: number
   ): boolean {
     if (motionArtifact) return false;
-    if (this.motionScore > 0.38) return false;
+    if (this.motionScoreSmoothed > 0.44) return false;
     if (this.exportedContactState !== 'STABLE_CONTACT') return false;
     if (!this.fingerDetected) return false;
     if (!this.positionLocked || this.positionDrifting) return false;
     if (this.lastAnalysis?.pressureState === 'HIGH_PRESSURE') return false;
-    if (clipHighRatio > 0.18) return false;
-    if (perfusionIndexNorm < 0.042) return false;
-    if (gatedQuality < 26) return false;
-    if (periodicityScore < 0.17) return false;
-    if ((this.lastAnalysis?.coverageRatio ?? 0) < 0.24) return false;
-    if (this.sourceStability < 0.26) return false;
-    if (spatialUniformity < 0.32) return false;
+    if (clipHighRatio > 0.22) return false;
+    if (perfusionIndexNorm < 0.034) return false;
+    if (gatedQuality < 22) return false;
+    if (periodicityScore < 0.13) return false;
+    if ((this.lastAnalysis?.coverageRatio ?? 0) < 0.2) return false;
+    if (this.sourceStability < 0.2) return false;
+    if (spatialUniformity < 0.26) return false;
 
     const a = this.lastAnalysis;
     if (a) {
       const rr = a.rawRed;
       const gg = a.rawGreen;
-      if (rr < 64 || gg < 10 || rr / Math.max(gg, 1) < 1.1) return false;
-      if (a.fingerScore < 0.2) return false;
+      if (rr < 52 || gg < 8 || rr / Math.max(gg, 1) < 1.06) return false;
+      if (a.fingerScore < 0.16) return false;
       const sq = Object.values(a.allSQI);
-      if (sq.length === 0 || Math.max(...sq) < 22) return false;
+      // SQI por fuente está en 0..1 (SignalQualityScorer)
+      if (sq.length === 0 || Math.max(...sq) < 0.16) return false;
       if (a.readinessReason !== 'ok') return false;
     }
     return true;
@@ -706,6 +710,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.positionQualityScore = 0;
     this.positionGuidance = 'COLOQUE SU DEDO';
     this.motionScore = 0;
+    this.motionScoreSmoothed = 0;
     this.lastAccel = { x: 0, y: 0, z: 0 };
     this.activeSourceLabel = 'RG';
     this.allSourceSQI = {};
