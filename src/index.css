@@ -5,6 +5,30 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Monitor cardíaco — capa visual profesional */
+@layer components {
+  .monitor-header-grid {
+    background-image:
+      linear-gradient(rgba(6, 182, 212, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(6, 182, 212, 0.04) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+  .monitor-glow-text {
+    text-shadow: 0 0 24px rgba(34, 211, 238, 0.18);
+  }
+  .monitor-dock-btn {
+    @apply relative overflow-hidden transition-all duration-200 active:scale-[0.98];
+  }
+  .monitor-dock-btn::before {
+    content: "";
+    @apply pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-200;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 40%);
+  }
+  .monitor-dock-btn:hover::before {
+    @apply opacity-100;
+  }
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

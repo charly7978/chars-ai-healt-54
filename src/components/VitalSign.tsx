@@ -130,22 +130,22 @@ const VitalSign = memo(function VitalSign({
   return (
     <div 
       className={cn(
-        "relative flex flex-col justify-center items-center p-2 bg-transparent transition-all duration-500 text-center cursor-pointer",
-        showDetails && "bg-gray-800/20 backdrop-blur-sm rounded-lg"
+        "relative flex min-h-[5.5rem] flex-col justify-center items-center rounded-xl border border-cyan-500/15 bg-gradient-to-b from-slate-900/85 to-slate-950/95 p-2.5 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition-all duration-300 cursor-pointer backdrop-blur-sm",
+        showDetails && "ring-1 ring-cyan-400/30"
       )}
       onClick={handleClick}
     >
-      <div className="text-[11px] font-medium uppercase tracking-wider text-black/70 mb-1">
+      <div className="mb-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-cyan-500/75">
         {label}
       </div>
       
-      <div className="font-bold text-xl sm:text-2xl transition-all duration-300">
-        <span className="text-gradient-soft animate-value-glow">
+      <div className="font-mono font-bold text-lg sm:text-xl transition-all duration-300">
+        <span className="bg-gradient-to-br from-cyan-100 to-teal-200 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(34,211,238,0.15)]">
           {isArrhytmia && typeof value === 'string'
             ? getArrhythmiaText(parseArrhythmiaStatus(value))
             : value}
         </span>
-        {unit && <span className="text-xs text-white/70 ml-1">{unit}</span>}
+        {unit && <span className="ml-1 text-[10px] font-normal text-slate-400">{unit}</span>}
       </div>
 
       {confidenceLevel && confidenceLevel !== 'INSUFFICIENT' && label === 'PRESIÓN ARTERIAL' && (
@@ -197,17 +197,17 @@ const VitalSign = memo(function VitalSign({
       )}
 
       {showDetails && detailedInfo && (
-        <div className="absolute inset-x-0 top-full z-50 mt-2 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg text-left">
-          <div className="text-sm font-medium text-gray-900 mb-2">Información adicional:</div>
+        <div className="absolute inset-x-0 top-full z-50 mt-2 rounded-xl border border-cyan-500/20 bg-slate-900/95 p-4 text-left shadow-2xl backdrop-blur-xl">
+          <div className="mb-2 text-sm font-medium text-cyan-100">Información adicional</div>
           <div className="grid grid-cols-2 gap-2 mb-2">
-            <div className="text-xs">
-              <span className="font-medium">Mediana:</span> {median} {unit}
+            <div className="text-xs text-slate-300">
+              <span className="font-medium text-cyan-200/90">Mediana:</span> {median} {unit}
             </div>
-            <div className="text-xs">
-              <span className="font-medium">Promedio ponderado:</span> {average} {unit}
+            <div className="text-xs text-slate-300">
+              <span className="font-medium text-cyan-200/90">Promedio ponderado:</span> {average} {unit}
             </div>
           </div>
-          <div className="text-xs mt-1 text-gray-800">
+          <div className="mt-1 text-xs text-slate-400">
             {detailedInfo.interpretation}
           </div>
         </div>

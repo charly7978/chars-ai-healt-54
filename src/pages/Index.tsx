@@ -767,7 +767,7 @@ const Index = () => {
           <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
         </div>
         <div
-          className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/40 via-transparent to-black/50"
+          className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/50 via-transparent to-[#020617]/70"
           aria-hidden
         />
 
@@ -821,9 +821,9 @@ const Index = () => {
             />
           </div>
 
-          <div className="pointer-events-none absolute inset-x-0 top-[55%] bottom-[72px] px-3 py-5 sm:bottom-20 sm:px-4">
-            <div className="mx-auto max-w-4xl rounded-2xl border border-white/10 bg-black/35 px-3 py-5 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:px-5">
-            <div className="grid grid-cols-3 gap-3 place-items-center sm:gap-4">
+          <div className="pointer-events-none absolute inset-x-0 top-[55%] bottom-[72px] px-2 py-4 sm:bottom-20 sm:px-3">
+            <div className="mx-auto max-w-4xl rounded-2xl border border-cyan-500/20 bg-gradient-to-b from-slate-950/80 to-[#020617]/90 px-2 py-4 shadow-[0_16px_48px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(34,211,238,0.08)] backdrop-blur-xl sm:px-4 sm:py-5">
+            <div className="grid grid-cols-3 gap-2 place-items-stretch sm:gap-3">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
               <VitalSign 

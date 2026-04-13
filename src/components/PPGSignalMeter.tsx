@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
-import { Heart, Activity } from 'lucide-react';
+import { Activity, Heart, Radio, Square, Play } from 'lucide-react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 import { NON_ALERT_RHYTHM_LABELS } from '../constants/rhythmAlert';
 import type { BeatFlags } from '@/types/beat';
@@ -43,32 +43,33 @@ const CONFIG = {
     BOTTOM: 76
   },
   COLORS: {
-    BG: '#040810',
-    GRID_MAJOR: 'rgba(34, 197, 94, 0.32)',
-    GRID_MINOR: 'rgba(34, 197, 94, 0.14)',
-    BASELINE: 'rgba(34, 197, 94, 0.4)',
-    SIGNAL_NORMAL: '#22c55e',
-    SIGNAL_GLOW: 'rgba(34, 197, 94, 0.5)',
-    SIGNAL_ARRHYTHMIA: '#ef4444',
-    ARRHYTHMIA_GLOW: 'rgba(239, 68, 68, 0.5)',
-    SIGNAL_WEAK: '#f59e0b',
-    WEAK_GLOW: 'rgba(245, 158, 11, 0.45)',
-    PEAK_NORMAL: '#3b82f6',
-    PEAK_WEAK: '#f59e0b',
-    PEAK_ARRHYTHMIA: '#ef4444',
+    BG: '#020617',
+    GRID_MAJOR: 'rgba(34, 211, 238, 0.12)',
+    GRID_MINOR: 'rgba(52, 211, 153, 0.06)',
+    BASELINE: 'rgba(45, 212, 191, 0.35)',
+    SIGNAL_NORMAL: '#34d399',
+    SIGNAL_GLOW: 'rgba(52, 211, 153, 0.45)',
+    SIGNAL_ARRHYTHMIA: '#fb7185',
+    ARRHYTHMIA_GLOW: 'rgba(251, 113, 133, 0.45)',
+    SIGNAL_WEAK: '#fbbf24',
+    WEAK_GLOW: 'rgba(251, 191, 36, 0.4)',
+    PEAK_NORMAL: '#22d3ee',
+    PEAK_WEAK: '#fbbf24',
+    PEAK_ARRHYTHMIA: '#f87171',
     VALLEY_COLOR: '#64748b',
-    TEXT_PRIMARY: '#22c55e',
+    TEXT_PRIMARY: '#5eead4',
     TEXT_SECONDARY: '#94a3b8',
-    TEXT_WARNING: '#f59e0b',
-    TEXT_DANGER: '#ef4444',
-    SCALE_TEXT: '#6b7280',
-    SIGNAL_FILL_NORMAL: 'rgba(34, 197, 94, 0.08)',
-    SIGNAL_FILL_WEAK: 'rgba(245, 158, 11, 0.1)',
-    SIGNAL_FILL_ARR: 'rgba(239, 68, 68, 0.08)',
-    SYSTOLIC_MARKER: '#60a5fa',
+    TEXT_WARNING: '#fbbf24',
+    TEXT_DANGER: '#f87171',
+    SCALE_TEXT: '#64748b',
+    SIGNAL_FILL_NORMAL: 'rgba(52, 211, 153, 0.1)',
+    SIGNAL_FILL_WEAK: 'rgba(251, 191, 36, 0.09)',
+    SIGNAL_FILL_ARR: 'rgba(248, 113, 113, 0.09)',
+    SYSTOLIC_MARKER: '#22d3ee',
     DIASTOLIC_MARKER: '#818cf8',
     DICHROTIC_NOTCH: '#a78bfa',
     IBI_TEXT: '#67e8f9',
+    ACCENT_LINE: 'rgba(34, 211, 238, 0.45)',
   }
 };
 
@@ -89,12 +90,46 @@ const parseRhythmStatus = (statusString?: string) => {
 function strokeForWaveClass(wc: BeatWaveClass, COLORS: typeof CONFIG.COLORS) {
   switch (wc) {
     case 'arrhythmia':
-      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 14, width: 5.8 };
+      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 16, width: 5.6 };
     case 'weak':
-      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 12, width: 5 };
+      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 13, width: 4.9 };
     default:
-      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 11, width: 4.8 };
+      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 12, width: 4.6 };
   }
+}
+
+/** Panel estilo consola clínica (canvas). */
+function fillMetricPanel(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  accent: string
+) {
+  const r = 14;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.rect(x, y, w, h);
+  }
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, 'rgba(15, 23, 42, 0.92)');
+  g.addColorStop(0.5, 'rgba(8, 15, 35, 0.96)');
+  g.addColorStop(1, 'rgba(2, 6, 23, 0.98)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.25;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(34, 211, 238, 0.15)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(x + 1, y + 1, w - 2, h - 2, r - 1);
+  }
+  ctx.stroke();
 }
 
 /**
@@ -281,7 +316,14 @@ const PPGSignalMeter = ({
     const plot = getPlotArea();
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(6, 18, 28, 0.55)';
+    const cx = plot.x + plot.width / 2;
+    const cy = plot.y + plot.height / 2;
+    const rad = Math.max(plot.width, plot.height) * 0.65;
+    const vignette = ctx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+    vignette.addColorStop(0, 'rgba(8, 51, 68, 0.35)');
+    vignette.addColorStop(0.45, 'rgba(4, 24, 38, 0.2)');
+    vignette.addColorStop(1, 'rgba(2, 6, 23, 0.55)');
+    ctx.fillStyle = vignette;
     ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
     ctx.strokeStyle = COLORS.GRID_MINOR;
     ctx.lineWidth = 0.5;
@@ -308,16 +350,46 @@ const PPGSignalMeter = ({
     }
     ctx.stroke();
     ctx.strokeStyle = COLORS.BASELINE;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([8, 4]);
+    ctx.lineWidth = 1.25;
+    ctx.setLineDash([10, 5]);
     ctx.beginPath();
     ctx.moveTo(plot.x, plot.centerY);
     ctx.lineTo(plot.x + plot.width, plot.centerY);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
+    ctx.strokeStyle = COLORS.ACCENT_LINE;
+    ctx.lineWidth = 1.25;
+    ctx.strokeRect(plot.x + 0.5, plot.y + 0.5, plot.width - 1, plot.height - 1);
+    const L = 20;
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(34, 211, 238, 0.45)';
+    const corners: [number, number, 'tl' | 'tr' | 'bl' | 'br'][] = [
+      [plot.x, plot.y, 'tl'],
+      [plot.x + plot.width, plot.y, 'tr'],
+      [plot.x, plot.y + plot.height, 'bl'],
+      [plot.x + plot.width, plot.y + plot.height, 'br'],
+    ];
+    for (const [bx, by, c] of corners) {
+      ctx.beginPath();
+      if (c === 'tl') {
+        ctx.moveTo(bx, by + L);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(bx + L, by);
+      } else if (c === 'tr') {
+        ctx.moveTo(bx - L, by);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(bx, by + L);
+      } else if (c === 'bl') {
+        ctx.moveTo(bx, by - L);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(bx + L, by);
+      } else {
+        ctx.moveTo(bx - L, by);
+        ctx.lineTo(bx, by);
+        ctx.lineTo(bx, by - L);
+      }
+      ctx.stroke();
+    }
   }, [getPlotArea]);
 
   const drawAmplitudeScale = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -420,28 +492,27 @@ const PPGSignalMeter = ({
     const panelW = 186;
     const panelY = 4;
     const fontSize = {
-      label: 'bold 16px "SF Mono", Consolas, monospace',
-      value: 'bold 56px "SF Mono", Consolas, monospace',
-      unit: '18px "SF Mono", Consolas, monospace',
-      class: '13px "SF Mono", Consolas, monospace',
-      small: '12px "SF Mono", Consolas, monospace',
+      label: '600 11px "SF Mono", Consolas, monospace',
+      value: 'bold 52px "SF Mono", Consolas, monospace',
+      unit: '16px "SF Mono", Consolas, monospace',
+      class: '12px "SF Mono", Consolas, monospace',
+      small: '11px "SF Mono", Consolas, monospace',
     };
-    
-    ctx.fillStyle = 'rgba(4, 12, 18, 0.94)';
-    ctx.fillRect(3, panelY, panelW, panelH);
-    ctx.strokeStyle = COLORS.TEXT_PRIMARY;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(3, panelY, panelW, panelH);
+
+    fillMetricPanel(ctx, 3, panelY, panelW, panelH, 'rgba(34, 211, 238, 0.55)');
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.85)';
+    ctx.fillRect(6, panelY + 2, panelW - 12, 3);
+
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.95)';
     ctx.textAlign = 'left';
-    ctx.fillText('FRECUENCIA', 12, panelY + 26);
+    ctx.fillText('FRECUENCIA CARDIACA', 14, panelY + 22);
     ctx.font = fontSize.value;
     ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
-    ctx.fillText(bpm > 0 ? bpm.toString() : '—', 12, panelY + 88);
+    ctx.fillText(bpm > 0 ? bpm.toString() : '—', 14, panelY + 86);
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('BPM', panelW - 44, panelY + 88);
+    ctx.fillText('BPM', panelW - 40, panelY + 86);
     if (bpm > 0) {
       ctx.font = fontSize.class;
       let hrLabel = '';
@@ -450,26 +521,25 @@ const PPGSignalMeter = ({
       else if (bpm <= 100) { hrLabel = 'NORMAL'; hrColor = COLORS.TEXT_PRIMARY; }
       else { hrLabel = 'TAQUICARDIA'; hrColor = COLORS.TEXT_WARNING; }
       ctx.fillStyle = hrColor;
-      ctx.fillText(hrLabel, 12, panelY + 116);
+      ctx.fillText(hrLabel, 14, panelY + 114);
     }
-    
-    ctx.fillStyle = 'rgba(4, 12, 22, 0.94)';
-    ctx.fillRect(W - panelW - 3, panelY, panelW, panelH);
-    const spo2Border = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.strokeStyle = spo2Border;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(W - panelW - 3, panelY, panelW, panelH);
+
+    const spo2Border = spo2 >= 95 ? 'rgba(45, 212, 191, 0.65)' : spo2 >= 90 ? 'rgba(251, 191, 36, 0.65)' : 'rgba(248, 113, 113, 0.65)';
+    fillMetricPanel(ctx, W - panelW - 3, panelY, panelW, panelH, spo2Border);
+    ctx.fillStyle = spo2 >= 95 ? 'rgba(45, 212, 191, 0.85)' : spo2 >= 90 ? 'rgba(251, 191, 36, 0.85)' : spo2 > 0 ? 'rgba(248, 113, 113, 0.85)' : 'rgba(34, 211, 238, 0.35)';
+    ctx.fillRect(W - panelW + 3, panelY + 2, panelW - 12, 3);
+
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.95)';
     ctx.textAlign = 'left';
-    ctx.fillText('SpO₂', W - panelW + 12, panelY + 26);
+    ctx.fillText('SATURACION O2', W - panelW + 14, panelY + 22);
     ctx.font = fontSize.value;
     const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
     ctx.fillStyle = spo2Color;
-    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '—', W - panelW + 12, panelY + 88);
+    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '—', W - panelW + 14, panelY + 86);
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('%', W - 22, panelY + 88);
+    ctx.fillText('%', W - 24, panelY + 86);
     if (spo2 > 0) {
       ctx.font = fontSize.class;
       let spLabel = '';
@@ -478,20 +548,19 @@ const PPGSignalMeter = ({
       else if (spo2 >= 90) { spLabel = 'HIPOXEMIA LEVE'; spColor = COLORS.TEXT_WARNING; }
       else { spLabel = 'HIPOXEMIA'; spColor = COLORS.TEXT_DANGER; }
       ctx.fillStyle = spColor;
-      ctx.fillText(spLabel, W - panelW + 12, panelY + 116);
+      ctx.fillText(spLabel, W - panelW + 14, panelY + 114);
     }
-    
+
     const centerX = W / 2;
     const centerW = 340;
-    ctx.fillStyle = 'rgba(12, 14, 22, 0.94)';
-    ctx.fillRect(centerX - centerW / 2, panelY, centerW, panelH);
-    ctx.strokeStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(centerX - centerW / 2, panelY, centerW, panelH);
-    ctx.font = '15px "SF Mono", Consolas, monospace';
+    const qAccent = quality > 60 ? 'rgba(45, 212, 191, 0.6)' : quality > 30 ? 'rgba(251, 191, 36, 0.6)' : 'rgba(248, 113, 113, 0.55)';
+    fillMetricPanel(ctx, centerX - centerW / 2, panelY, centerW, panelH, qAccent);
+    ctx.fillStyle = quality > 60 ? 'rgba(45, 212, 191, 0.85)' : quality > 30 ? 'rgba(251, 191, 36, 0.75)' : 'rgba(248, 113, 113, 0.75)';
+    ctx.fillRect(centerX - centerW / 2 + 3, panelY + 2, centerW - 6, 3);
+    ctx.font = '600 11px "SF Mono", Consolas, monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('CALIDAD DE SEÑAL', centerX, panelY + 24);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.95)';
+    ctx.fillText('INDICE DE CALIDAD DE SEÑAL (SQI)', centerX, panelY + 22);
     const barWidth = 300;
     const barHeight = 14;
     const barX = centerX - barWidth / 2;
@@ -499,9 +568,9 @@ const PPGSignalMeter = ({
     ctx.fillStyle = 'rgba(255,255,255,0.1)';
     ctx.fillRect(barX, barY, barWidth, barHeight);
     const qGrad = ctx.createLinearGradient(barX, 0, barX + (quality / 100) * barWidth, 0);
-    if (quality > 60) { qGrad.addColorStop(0, '#166534'); qGrad.addColorStop(1, '#22c55e'); }
-    else if (quality > 30) { qGrad.addColorStop(0, '#854d0e'); qGrad.addColorStop(1, '#f59e0b'); }
-    else { qGrad.addColorStop(0, '#991b1b'); qGrad.addColorStop(1, '#ef4444'); }
+    if (quality > 60) { qGrad.addColorStop(0, '#0d9488'); qGrad.addColorStop(1, '#5eead4'); }
+    else if (quality > 30) { qGrad.addColorStop(0, '#b45309'); qGrad.addColorStop(1, '#fbbf24'); }
+    else { qGrad.addColorStop(0, '#b91c1c'); qGrad.addColorStop(1, '#f87171'); }
     ctx.fillStyle = qGrad;
     ctx.fillRect(barX, barY, (quality / 100) * barWidth, barHeight);
     ctx.font = 'bold 18px "SF Mono", Consolas, monospace';
@@ -665,9 +734,9 @@ const PPGSignalMeter = ({
           ctx.lineTo(pathCoords[pathCoords.length - 1].x, plot.centerY);
           ctx.closePath();
           const fillGrad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-          fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.18)');
-          fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.07)');
-          fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+          fillGrad.addColorStop(0, 'rgba(45, 212, 191, 0.2)');
+          fillGrad.addColorStop(0.5, 'rgba(52, 211, 153, 0.08)');
+          fillGrad.addColorStop(1, 'rgba(52, 211, 153, 0)');
           ctx.fillStyle = fillGrad;
           ctx.fill();
           ctx.restore();
@@ -722,15 +791,13 @@ const PPGSignalMeter = ({
         const plotTelemetryY = plot.y + 10;
         const telH = 40;
         ctx.save();
-        ctx.fillStyle = 'rgba(6, 10, 18, 0.94)';
-        ctx.fillRect(plot.x, plotTelemetryY, plot.width, telH);
-        ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(plot.x, plotTelemetryY, plot.width, telH);
-        ctx.font = 'bold 15px "SF Mono", Consolas, monospace';
+        fillMetricPanel(ctx, plot.x, plotTelemetryY, plot.width, telH, 'rgba(34, 211, 238, 0.35)');
+        ctx.fillStyle = 'rgba(34, 211, 238, 0.5)';
+        ctx.fillRect(plot.x + 2, plotTelemetryY + 2, plot.width - 4, 2);
+        ctx.font = '600 13px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_PRIMARY;
         ctx.textAlign = 'left';
-        ctx.fillText('PPG · fotoplesmografía', plot.x + 14, plotTelemetryY + 26);
+        ctx.fillText('CANAL PPG · fotopletismografía', plot.x + 16, plotTelemetryY + 26);
         ctx.font = '13px "SF Mono", Consolas, monospace';
         ctx.fillStyle = 'rgba(203, 213, 225, 0.95)';
         const ampTxt = stats.range > 1 ? `${Math.round(stats.range)} u.a.` : '—';
@@ -1039,59 +1106,121 @@ const PPGSignalMeter = ({
   }, [onReset]);
 
   return (
-    <div className="fixed inset-0 bg-gradient-to-b from-slate-950 via-[#0c1220] to-slate-950">
+    <div className="fixed inset-0 bg-[#020617]">
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.45]"
+        style={{
+          backgroundImage: `radial-gradient(ellipse 90% 55% at 50% -15%, rgba(34,211,238,0.14), transparent), radial-gradient(ellipse 50% 35% at 100% 100%, rgba(16,185,129,0.1), transparent)`,
+        }}
+      />
       <canvas
         ref={canvasRef}
         className="w-full h-full absolute inset-0 z-0 block touch-none"
         style={{ imageRendering: 'auto' }}
       />
-      <div
-        className="absolute left-0 right-0 z-[100] flex flex-row flex-wrap items-start justify-between gap-3 border-b border-emerald-500/15 bg-gradient-to-b from-black/50 to-black/20 px-3 backdrop-blur-xl sm:px-4 pointer-events-none shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
-        style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))', paddingBottom: '0.75rem' }}
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
-          <div
-            className={`flex-shrink-0 rounded-2xl p-3 shadow-lg ring-1 transition-all duration-100 ${
-              showPulse ? 'scale-105 bg-red-500/35 ring-red-400/40' : 'bg-emerald-500/25 ring-emerald-500/30'
-            }`}
-          >
-            <Heart
-              className={`h-8 w-8 sm:h-9 sm:w-9 transition-all duration-100 ${showPulse ? 'text-red-300' : 'text-emerald-400'}`}
-              fill={showPulse ? 'currentColor' : 'none'}
-              strokeWidth={2}
-            />
+
+      <header className="monitor-header-grid pointer-events-none absolute left-0 right-0 top-0 z-[100] border-b border-cyan-500/20 bg-gradient-to-b from-[#020617]/98 via-[#0f172a]/93 to-transparent backdrop-blur-2xl">
+        <div className="flex flex-col gap-3 px-3 pb-4 pt-[max(12px,env(safe-area-inset-top))] sm:flex-row sm:items-start sm:justify-between sm:px-5">
+          <div className="flex min-w-0 flex-1 items-start gap-3 sm:gap-4">
+            <div
+              className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-cyan-400/25 bg-gradient-to-br from-cyan-500/15 via-slate-900/80 to-emerald-900/30 shadow-[0_0_40px_rgba(34,211,238,0.12),inset_0_1px_0_rgba(255,255,255,0.06)] transition-transform duration-150 ${
+                showPulse ? 'scale-105 ring-2 ring-rose-400/50' : ''
+              }`}
+            >
+              <Heart
+                className={`h-7 w-7 sm:h-8 sm:w-8 ${showPulse ? 'fill-rose-400/90 text-rose-200' : 'text-cyan-300'}`}
+                fill={showPulse ? 'currentColor' : 'none'}
+                strokeWidth={2}
+              />
+              {isMonitoring && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-60" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(34,211,238,0.9)]" />
+                </span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-cyan-500/90">Imaging PPG</p>
+                <span className="hidden h-3 w-px bg-cyan-500/30 sm:block" aria-hidden />
+                <Radio className="h-3.5 w-3.5 text-cyan-500/70" aria-hidden />
+              </div>
+              <h1 className="monitor-glow-text truncate text-lg font-bold tracking-tight text-white sm:text-xl">
+                Monitor hemodinámico
+              </h1>
+              <p className="mt-0.5 text-xs text-slate-400">Fotopletismografía · tiempo real</p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Activity className="h-5 w-5 flex-shrink-0 text-emerald-400" strokeWidth={2.5} />
-              <span className="truncate text-base font-bold tracking-wide text-white drop-shadow-md sm:text-lg">
-                MONITOR CARDÍACO
+
+          <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:min-w-[200px] sm:items-end">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest ${
+                  isFingerDetected
+                    ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-400/35'
+                    : 'bg-slate-800/90 text-slate-500 ring-1 ring-white/10'
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${isFingerDetected ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-slate-600'}`}
+                />
+                {isFingerDetected ? 'Señal válida' : 'Sin contacto'}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-widest ring-1 ${
+                  isMonitoring
+                    ? 'bg-rose-500/15 text-rose-200 ring-rose-400/40'
+                    : 'bg-slate-800/90 text-slate-500 ring-white/10'
+                }`}
+              >
+                {isMonitoring ? '● Adquisición' : 'En espera'}
               </span>
             </div>
-            <span className="mt-0.5 block text-sm font-medium text-emerald-300/95">
-              Onda PPG en tiempo real
-            </span>
+            <div className="w-full sm:w-48">
+              <div className="mb-1 flex justify-between text-[9px] font-medium uppercase tracking-wider text-slate-500">
+                <span>SQI</span>
+                <span className="font-mono text-cyan-200/90">{quality.toFixed(0)}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-900 ring-1 ring-white/5">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-600 via-teal-400 to-emerald-400 transition-[width] duration-300"
+                  style={{ width: `${Math.min(100, Math.max(0, quality))}%` }}
+                />
+              </div>
+            </div>
+            {diagnosticMessage ? (
+              <p className="max-h-10 w-full overflow-hidden text-right font-mono text-[10px] leading-snug text-cyan-200/60 sm:max-w-[20rem]">
+                {diagnosticMessage}
+              </p>
+            ) : null}
           </div>
         </div>
-      </div>
-      <div className="fixed bottom-0 left-0 right-0 z-50 grid h-16 grid-cols-2 border-t border-emerald-500/20 bg-slate-950/70 pb-[max(0.25rem,env(safe-area-inset-bottom))] shadow-[0_-12px_40px_rgba(0,0,0,0.45)] backdrop-blur-lg sm:h-[4.25rem]">
+      </header>
+
+      <div className="fixed bottom-0 left-0 right-0 z-50 grid h-[4.25rem] grid-cols-2 gap-px rounded-t-2xl border border-cyan-500/15 bg-slate-950/90 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-16px_48px_rgba(0,0,0,0.55)] backdrop-blur-xl sm:h-[4.5rem]">
         <button
           type="button"
           onClick={onStartMeasurement}
-          className={`min-h-[3.5rem] text-base font-bold transition-colors sm:text-lg ${
+          className={`monitor-dock-btn flex min-h-[3.75rem] flex-col items-center justify-center gap-0.5 rounded-tl-2xl border-0 sm:flex-row sm:gap-2 ${
             isMonitoring
-              ? 'border-r border-white/10 bg-red-600/30 text-red-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:bg-red-600/40 active:bg-red-600/50'
-              : 'border-r border-white/10 bg-emerald-600/35 text-emerald-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:bg-emerald-600/45 active:bg-emerald-600/55'
+              ? 'bg-gradient-to-b from-rose-600/35 to-rose-950/45 text-rose-50'
+              : 'bg-gradient-to-b from-emerald-600/45 to-emerald-950/55 text-emerald-50'
           }`}
         >
-          {isMonitoring ? 'DETENER' : 'INICIAR'}
+          {isMonitoring ? (
+            <Square className="h-5 w-5 opacity-90 sm:h-6 sm:w-6" strokeWidth={2.5} />
+          ) : (
+            <Play className="h-5 w-5 opacity-90 sm:h-6 sm:w-6" strokeWidth={2.5} />
+          )}
+          <span className="text-sm font-bold tracking-wide sm:text-base">{isMonitoring ? 'Detener' : 'Iniciar'}</span>
         </button>
         <button
           type="button"
           onClick={handleReset}
-          className="min-h-[3.5rem] bg-slate-800/40 text-base font-bold text-slate-100 hover:bg-slate-700/50 active:bg-slate-700/60 sm:text-lg"
+          className="monitor-dock-btn flex min-h-[3.75rem] flex-col items-center justify-center gap-0.5 rounded-tr-2xl border-0 bg-gradient-to-b from-slate-800/95 to-slate-950/95 text-slate-100 sm:flex-row sm:gap-2"
         >
-          RESET
+          <Activity className="h-5 w-5 opacity-80 sm:h-6 sm:w-6" strokeWidth={2} />
+          <span className="text-sm font-bold tracking-wide sm:text-base">Reiniciar</span>
         </button>
       </div>
     </div>
