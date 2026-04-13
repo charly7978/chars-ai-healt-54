@@ -118,11 +118,13 @@ export class BandpassFilter {
     let output = 0;
     const len = this.ORDER + 1;
     // history.get(0) is the oldest, history.get(len-1) is the newest.
+
     // Convolution: sum(coeff[i] * x[n - i])
     for (let i = 0; i < len; i++) {
       // history.get(len - 1 - i) gets the sample delayed by 'i'
       output += this.coefficients[i] * this.history.get(len - 1 - i);
     }
+
 
     return output;
   }
