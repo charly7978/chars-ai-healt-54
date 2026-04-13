@@ -94,6 +94,37 @@ function strokeForWaveClass(wc: BeatWaveClass, COLORS: typeof CONFIG.COLORS) {
   }
 }
 
+/** Máximo local de la PPG (máx. valor = pico sistólico) entre dos tiempos de latido. */
+function refineSystolicPeak(
+  points: readonly PPGDataPoint[],
+  beatTime: number,
+  prevBeatTime: number | undefined,
+  now: number,
+  plot: { x: number; y: number; width: number; height: number },
+  windowMs: number,
+  stats: { min: number; max: number; range: number }
+): { x: number; y: number; amp: number } | null {
+  const tLo = prevBeatTime != null ? prevBeatTime + 40 : beatTime - 720;
+  const tHi = beatTime + 100;
+  let best: PPGDataPoint | null = null;
+  let bestV = -Infinity;
+  for (let i = 0; i < points.length; i++) {
+    const pt = points[i]!;
+    if (pt.time < tLo || pt.time > tHi) continue;
+    if (pt.value > bestV) {
+      bestV = pt.value;
+      best = pt;
+    }
+  }
+  if (!best) return null;
+  const age = now - best.time;
+  if (age > windowMs || age < 0) return null;
+  const x = plot.x + plot.width - (age * plot.width / windowMs);
+  const y = plot.y + ((stats.max - best.value) / stats.range) * plot.height;
+  if (x < plot.x || x > plot.x + plot.width) return null;
+  return { x, y, amp: best.value };
+}
+
 const PPGSignalMeter = ({ 
   value, 
   quality, 
@@ -122,7 +153,12 @@ const PPGSignalMeter = ({
   const lastRhythmCountSeenRef = useRef(0);
   const lastProcessedPeakSeqRef = useRef(0);
   const lastPulsePeakSeqRef = useRef(0);
-  const beatHistoryRef = useRef<{ waveClass: BeatWaveClass; time: number }[]>([]);
+  const beatHistoryRef = useRef<{
+    waveClass: BeatWaveClass;
+    time: number;
+    ibiMs?: number;
+    morph?: number | null;
+  }[]>([]);
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
@@ -471,7 +507,12 @@ const PPGSignalMeter = ({
           buffer.markWaveClassBack(retroDuration, 'weak');
         }
         const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
-        beatHistoryRef.current.push({ waveClass, time: beatTime });
+        beatHistoryRef.current.push({
+          waveClass,
+          time: beatTime,
+          ibiMs: lastRR,
+          morph: pe.morphologyScore ?? null,
+        });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
 
@@ -489,7 +530,8 @@ const PPGSignalMeter = ({
         stats.range = stats.max - stats.min;
       }
       const stats = amplitudeStatsRef.current;
-      
+      const { isFingerDetected: fingerOk, bpm: bpmLive, rrIntervals: rrLive } = propsRef.current;
+
       if (points.length > 2) {
         ctx.lineJoin = 'round';
         ctx.lineCap = 'round';
@@ -578,27 +620,57 @@ const PPGSignalMeter = ({
           ctx.stroke();
           ctx.shadowBlur = 0;
         }
-        const peaks: { x: number; y: number; waveClass: BeatWaveClass; time: number }[] = [];
+
+        const plotTelemetryY = plot.y + 6;
+        ctx.save();
+        ctx.fillStyle = 'rgba(8, 12, 24, 0.88)';
+        ctx.fillRect(plot.x, plotTelemetryY, plot.width, 26);
+        ctx.strokeStyle = 'rgba(34, 197, 94, 0.45)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(plot.x, plotTelemetryY, plot.width, 26);
+        ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_PRIMARY;
+        ctx.textAlign = 'left';
+        ctx.fillText('PPG · CÁMARA + LED', plot.x + 10, plotTelemetryY + 17);
+        ctx.font = '10px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_SECONDARY;
+        const ampTxt = stats.range > 1 ? `${Math.round(stats.range)} u.a.` : '—';
+        const lastRr = rrLive && rrLive.length > 0 ? `${Math.round(rrLive[rrLive.length - 1]!)} ms` : '—';
+        ctx.fillText(
+          `Ventana ${(WINDOW_MS / 1000).toFixed(1)} s  ·  Rango amp. ${ampTxt}  ·  FC ${bpmLive > 0 ? Math.round(bpmLive) : '—'} bpm  ·  IBI ${lastRr}  ·  ${fingerOk ? 'CONTACTO' : 'SIN CONTACTO'}`,
+          plot.x + 168,
+          plotTelemetryY + 17
+        );
+        ctx.restore();
+
+        const peaks: {
+          x: number;
+          y: number;
+          waveClass: BeatWaveClass;
+          time: number;
+          ibiMs?: number;
+          morph?: number | null;
+        }[] = [];
         const valleys: { x: number; y: number }[] = [];
         const history = beatHistoryRef.current;
         const visibleBeats: { time: number; x: number; y: number; waveClass: BeatWaveClass }[] = [];
-        for (const beat of history) {
+        for (let idx = 0; idx < history.length; idx++) {
+          const beat = history[idx]!;
           const age = now - beat.time;
           if (age > WINDOW_MS || age < 0) continue;
-          const x = plot.x + plot.width - (age * plot.width / WINDOW_MS);
-          if (x < plot.x || x > plot.x + plot.width) continue;
-          let closestPt: PPGDataPoint | null = null;
-          let minDist = Infinity;
-          for (const pt of points) {
-            const dist = Math.abs(pt.time - beat.time);
-            if (dist < minDist) { minDist = dist; closestPt = pt; }
-          }
-          if (closestPt && minDist < 200) {
-            const normalizedY = (stats.max - closestPt.value) / stats.range;
-            const y = plot.y + normalizedY * plot.height;
-            peaks.push({ x, y, waveClass: beat.waveClass, time: beat.time });
-            visibleBeats.push({ time: beat.time, x, y, waveClass: beat.waveClass });
-          }
+          const prevT = idx > 0 ? history[idx - 1]!.time : undefined;
+          const refined = refineSystolicPeak(points, beat.time, prevT, now, plot, WINDOW_MS, stats);
+          if (!refined) continue;
+          const { x, y } = refined;
+          peaks.push({
+            x,
+            y,
+            waveClass: beat.waveClass,
+            time: beat.time,
+            ibiMs: beat.ibiMs,
+            morph: beat.morph,
+          });
+          visibleBeats.push({ time: beat.time, x, y, waveClass: beat.waveClass });
         }
         for (let b = 0; b < visibleBeats.length - 1; b++) {
           const t0 = visibleBeats[b].time;
@@ -619,72 +691,109 @@ const PPGSignalMeter = ({
           }
         }
         for (let i = 0; i < peaks.length - 1; i++) {
-          const p1 = peaks[i];
-          const p2 = peaks[i + 1];
+          const p1 = peaks[i]!;
+          const p2 = peaks[i + 1]!;
           const ibiMs = Math.abs(p1.time - p2.time);
           if (ibiMs > 0 && ibiMs < 3000) {
             const midX = (p1.x + p2.x) / 2;
-            const topY = Math.min(p1.y, p2.y) - 28;
-            ctx.strokeStyle = 'rgba(103, 232, 249, 0.4)';
-            ctx.lineWidth = 1;
+            const topY = Math.min(p1.y, p2.y) - 36;
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([]);
             ctx.beginPath();
-            ctx.moveTo(p1.x, topY + 8);
+            ctx.moveTo(p1.x, topY + 10);
             ctx.lineTo(p1.x, topY);
             ctx.lineTo(p2.x, topY);
-            ctx.lineTo(p2.x, topY + 8);
+            ctx.lineTo(p2.x, topY + 10);
             ctx.stroke();
-            ctx.font = '9px "SF Mono", Consolas, monospace';
-            ctx.fillStyle = COLORS.IBI_TEXT;
+            ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+            ctx.fillStyle = 'rgba(103, 232, 249, 0.95)';
             ctx.textAlign = 'center';
-            ctx.fillText(`${ibiMs}ms`, midX, topY - 3);
+            ctx.fillText(`RR ${ibiMs} ms`, midX, topY - 6);
           }
         }
-        peaks.forEach(p => {
+        const lastPeakIdx = peaks.length - 1;
+        peaks.forEach((p, pi) => {
           const peakColor =
             p.waveClass === 'arrhythmia' ? COLORS.PEAK_ARRHYTHMIA :
             p.waveClass === 'weak' ? COLORS.PEAK_WEAK :
-            COLORS.SIGNAL_NORMAL;
-          const dashStroke =
-            p.waveClass === 'arrhythmia' ? 'rgba(239, 68, 68, 0.35)' :
-            p.waveClass === 'weak' ? 'rgba(245, 158, 11, 0.35)' :
-            'rgba(34, 197, 94, 0.25)';
+            COLORS.PEAK_NORMAL;
+          const vLineStroke =
+            p.waveClass === 'arrhythmia' ? 'rgba(248, 113, 113, 0.85)' :
+            p.waveClass === 'weak' ? 'rgba(251, 191, 36, 0.9)' :
+            'rgba(96, 165, 250, 0.9)';
           const label = p.waveClass === 'arrhythmia' ? 'A' : p.waveClass === 'weak' ? 'W' : 'N';
           const textCol =
             p.waveClass === 'arrhythmia' ? COLORS.TEXT_DANGER :
             p.waveClass === 'weak' ? COLORS.TEXT_WARNING :
-            COLORS.SIGNAL_NORMAL;
+            COLORS.TEXT_PRIMARY;
+          const pr = p.waveClass === 'arrhythmia' ? 13 : p.waveClass === 'weak' ? 11 : 10;
+          const isLatest = pi === lastPeakIdx && lastPeakIdx >= 0;
+
           ctx.save();
-          ctx.strokeStyle = dashStroke;
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 4]);
+          ctx.setLineDash([]);
+          ctx.strokeStyle = vLineStroke;
+          ctx.lineWidth = 3;
+          ctx.shadowColor = peakColor;
+          ctx.shadowBlur = isLatest ? 14 : 8;
           ctx.beginPath();
           ctx.moveTo(p.x, plot.y);
           ctx.lineTo(p.x, plot.y + plot.height);
           ctx.stroke();
+          ctx.shadowBlur = 0;
           ctx.restore();
+
+          if (isLatest) {
+            const pulse = (Math.sin(now / 120) + 1) / 2;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, pr + 10 + pulse * 6, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(255,255,255,${0.12 + pulse * 0.2})`;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+
           ctx.beginPath();
-          ctx.arc(p.x, p.y, p.waveClass === 'arrhythmia' ? 8 : p.waveClass === 'weak' ? 7 : 6, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, pr + 3, 0, Math.PI * 2);
+          ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, pr, 0, Math.PI * 2);
           ctx.fillStyle = peakColor;
           ctx.fill();
           ctx.beginPath();
-          ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, pr * 0.35, 0, Math.PI * 2);
           ctx.fillStyle = '#fff';
           ctx.fill();
-          ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
-          ctx.fillStyle = textCol;
+
+          ctx.font = 'bold 9px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = 'rgba(226, 232, 240, 0.95)';
           ctx.textAlign = 'center';
-          ctx.fillText(label, p.x, p.y - 16);
+          ctx.fillText('P', p.x, p.y - pr - 10);
+          ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = textCol;
+          ctx.fillText(label, p.x, p.y - pr - 22);
+
+          const tagY = p.y + pr + 14;
+          let tagLine = 0;
+          ctx.font = '9px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = COLORS.IBI_TEXT;
+          if (p.ibiMs != null && p.ibiMs > 0) {
+            ctx.fillText(`IBI ${Math.round(p.ibiMs)}`, p.x, tagY + tagLine * 12);
+            tagLine++;
+          }
+          if (p.morph != null && p.morph >= 0) {
+            ctx.font = '8px "SF Mono", Consolas, monospace';
+            ctx.fillStyle = COLORS.TEXT_SECONDARY;
+            ctx.fillText(`Morf ${Math.round(p.morph)}`, p.x, tagY + tagLine * 12);
+          }
+
           if (p.waveClass === 'arrhythmia') {
             const alpha = (Math.sin(now / 80) + 1) / 2;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 16, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(239, 68, 68, ${0.3 + alpha * 0.5})`;
-            ctx.lineWidth = 2.5;
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 22, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(239, 68, 68, ${0.1 + alpha * 0.2})`;
-            ctx.lineWidth = 1.5;
+            ctx.arc(p.x, p.y, pr + 18, 0, Math.PI * 2);
+            ctx.strokeStyle = `rgba(239, 68, 68, ${0.25 + alpha * 0.45})`;
+            ctx.lineWidth = 3;
             ctx.stroke();
           }
         });
@@ -830,7 +939,7 @@ const PPGSignalMeter = ({
           <Heart className={`w-4 h-4 transition-all duration-100 ${showPulse ? 'text-red-400 scale-110' : 'text-emerald-400'}`} fill={showPulse ? 'currentColor' : 'none'} />
         </div>
         <Activity className="w-3.5 h-3.5 text-emerald-400" />
-        <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
+        <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v4</span>
       </div>
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button onClick={onStartMeasurement} className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${isMonitoring ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r' : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'}`}>
