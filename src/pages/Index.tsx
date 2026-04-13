@@ -18,7 +18,9 @@ const NON_ALERT_RHYTHMS = new Set([
   'SINUS_STABLE',
   'SINUS_VARIABLE',
   'CALIBRANDO...',
-  'UNDETERMINED_LOW_QUALITY'
+  'CALIBRANDO',
+  'UNDETERMINED_LOW_QUALITY',
+  'INSUFFICIENT_DATA',
 ]);
 
 const Index = () => {
@@ -29,7 +31,7 @@ const Index = () => {
     glucose: 0,
     pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
     arrhythmiaCount: 0,
-    arrhythmiaStatus: "SIN ARRITMIAS|0",
+    arrhythmiaStatus: "SINUS_STABLE|0",
     lipids: { totalCholesterol: 0, triglycerides: 0 },
     isCalibrating: false,
     calibrationProgress: 0,
@@ -134,7 +136,9 @@ const Index = () => {
     lastValidResults,
     startCalibration,
     forceCalibrationCompletion,
-    getCalibrationProgress
+    getCalibrationProgress,
+    setHeartRuntime,
+    ingestBeatOpticalRatio,
   } = useVitalSignsProcessor();
   
   const { saveMeasurement } = useSaveMeasurement();
@@ -284,7 +288,7 @@ const Index = () => {
     arrhythmiaBeatsRef.current = 0;
     lastArrhythmiaCountForBeatsRef.current = 0;
     frameTimestampHistoryRef.current = [];
-    setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SIN ARRITMIAS|0" }));
+    setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SINUS_STABLE|0" }));
     startProcessing();
     setIsCameraOn(true);
     setIsMonitoring(true);
@@ -395,7 +399,7 @@ const Index = () => {
       glucose: 0,
       pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
       arrhythmiaCount: 0,
-      arrhythmiaStatus: "SIN ARRITMIAS|0",
+      arrhythmiaStatus: "SINUS_STABLE|0",
       lipids: { totalCholesterol: 0, triglycerides: 0 },
       isCalibrating: false,
       calibrationProgress: 0,
@@ -420,15 +424,32 @@ const Index = () => {
     
     const signalValue = lastSignal.filteredValue;
     const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
+    const ls = lastSignal as typeof lastSignal & {
+      clipHighRatio?: number;
+      clipLowRatio?: number;
+      pressureState?: 'LOW_PRESSURE' | 'OPTIMAL_PRESSURE' | 'HIGH_PRESSURE';
+      estimatedSampleRate?: number;
+      sourceStability?: number;
+    };
     const positionQuality = getPositionQuality();
     const stableHumanSignal =
       contactState === 'STABLE_CONTACT' &&
       (lastSignal.quality || 0) >= 12 &&
       (lastSignal.perfusionIndex || 0) >= 0.005;
 
-    const pressureOptimal = positionQuality.locked && !positionQuality.drifting && positionQuality.qualityScore >= 0.55;
-    const sourceStability = Math.max(0, Math.min(1, positionQuality.qualityScore || 0));
-    const sampleRate = estimateSampleRateFromFrames(lastSignal.timestamp);
+    const clipHigh = ls.clipHighRatio ?? 0;
+    const clipLow = ls.clipLowRatio ?? 0;
+    const ppgPressure = ls.pressureState;
+    const pressureOptimal =
+      ppgPressure === 'OPTIMAL_PRESSURE' ||
+      (positionQuality.locked && !positionQuality.drifting && positionQuality.qualityScore >= 0.55);
+    const sourceStability = Math.max(
+      0,
+      Math.min(1, (ls.sourceStability ?? positionQuality.qualityScore) || 0)
+    );
+    const sampleRate =
+      (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
+      estimateSampleRateFromFrames(lastSignal.timestamp);
 
     const heartBeatResult = processHeartBeat(
       signalValue,
@@ -438,9 +459,9 @@ const Index = () => {
         quality: lastSignal.quality,
         contactState,
         motionArtifact: lastSignal.motionArtifact,
-        pressureState: pressureOptimal ? 'OPTIMAL_PRESSURE' : 'LOW_PRESSURE',
-        clipHigh: 0,
-        clipLow: 0,
+        pressureState: ppgPressure ?? (pressureOptimal ? 'OPTIMAL_PRESSURE' : 'LOW_PRESSURE'),
+        clipHigh,
+        clipLow,
         perfusionIndex: lastSignal.perfusionIndex,
         positionDrifting: positionQuality.drifting,
       }
@@ -469,7 +490,7 @@ const Index = () => {
                 glucose: 0,
                 pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
                 arrhythmiaCount: 0,
-                arrhythmiaStatus: "SIN ARRITMIAS|0",
+                arrhythmiaStatus: "SINUS_STABLE|0",
                 lipids: { totalCholesterol: 0, triglycerides: 0 },
                 lastArrhythmiaData: undefined,
                 signalQuality: 0,
@@ -486,6 +507,7 @@ const Index = () => {
     setHeartRate(smoothedBPM);
 
     if (heartBeatResult.isPeak) {
+      ingestBeatOpticalRatio();
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 300);
       totalBeatsRef.current++;
@@ -526,7 +548,7 @@ const Index = () => {
       setUpstreamContext({
         contactStable: stableHumanSignal,
         pressureOptimal,
-        clipHighRatio: 0,
+        clipHighRatio: clipHigh,
         sourceStability,
         avgBeatSQI: heartBeatResult.beatSQI || heartBeatResult.debug.lastBeatSQI || 0,
         beatCount: heartBeatResult.debug.beatsAccepted || heartBeatResult.rrData?.intervals.length || 0,
@@ -547,6 +569,12 @@ const Index = () => {
       const usableRRData = heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.bpmConfidence > 0.18
         ? heartBeatResult.rrData
         : undefined;
+
+      setHeartRuntime({
+        bpm: heartBeatResult.bpm,
+        bpmConfidence: heartBeatResult.bpmConfidence,
+        beatCount: heartBeatResult.debug.beatsAccepted,
+      });
 
       const vitals = processVitalSigns(lastSignal.filteredValue, usableRRData, beatInputs);
 
@@ -579,7 +607,7 @@ const Index = () => {
         if (arrhythmiaStatus) {
           lastArrhythmiaData.current = vitals.lastArrhythmiaData || null;
           const parts = arrhythmiaStatus.split('|');
-          const rhythmLabel = vitals.rhythm?.label || parts[0] || 'SIN ARRITMIAS';
+          const rhythmLabel = vitals.rhythm?.label || parts[0] || 'SINUS_STABLE';
           const count = parseInt(parts[1] || '0', 10) || 0;
           setArrhythmiaCount(count > 0 ? count : rhythmLabel.split('_').join(' '));
 
@@ -601,7 +629,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, setUpstreamContext, getRGBStats, getPositionQuality, estimateSampleRateFromFrames, computeRRStability, applyEMA, vitalSigns.arrhythmiaCount]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, setUpstreamContext, setHeartRuntime, ingestBeatOpticalRatio, getRGBStats, getPositionQuality, estimateSampleRateFromFrames, computeRRStability, applyEMA, vitalSigns.arrhythmiaCount]);
 
   useEffect(() => {
     if (isMonitoring && elapsedTime >= 60) {

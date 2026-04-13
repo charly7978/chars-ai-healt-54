@@ -51,6 +51,9 @@ export class LipidResearchProcessor {
     piGreen: number;
     contactStable: boolean;
     signalQuality: number;
+    longitudinalChol?: number;
+    longitudinalTrig?: number;
+    personalizationState?: 'NONE' | 'INITIALIZED' | 'PARTIAL' | 'STRONG';
   }): LipidResult {
     const withheld: LipidResult = {
       totalCholesterol: 0, triglycerides: 0, confidence: 0,
@@ -98,6 +101,15 @@ export class LipidResearchProcessor {
     trig += (f.stiffnessIndex - 6) * 3.5;
     if (input.rrVar.sdnn > 0 && input.rrVar.sdnn < 40) trig += (40 - input.rrVar.sdnn) * 0.5;
     trig += this.trigOffset;
+
+    if (input.longitudinalChol && input.longitudinalChol > 80 && input.longitudinalChol < 400) {
+      const w = input.personalizationState === 'STRONG' ? 0.18 : input.personalizationState === 'PARTIAL' ? 0.11 : 0.06;
+      chol = chol * (1 - w) + input.longitudinalChol * w;
+    }
+    if (input.longitudinalTrig && input.longitudinalTrig > 40 && input.longitudinalTrig < 800) {
+      const w = input.personalizationState === 'STRONG' ? 0.18 : input.personalizationState === 'PARTIAL' ? 0.11 : 0.06;
+      trig = trig * (1 - w) + input.longitudinalTrig * w;
+    }
 
     // Reject impossible
     if (chol < 60 || chol > 500) return withheld;

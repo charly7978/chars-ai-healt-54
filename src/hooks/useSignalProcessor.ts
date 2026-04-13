@@ -146,6 +146,11 @@ export const useSignalProcessor = () => {
     return processorRef.current.getPositionQuality();
   }, []);
 
+  const getPPGDebugInfo = useCallback(() => {
+    if (!processorRef.current) return null;
+    return processorRef.current.getDebugInfo();
+  }, []);
+
   return {
     isProcessing,
     lastSignal,
@@ -157,6 +162,7 @@ export const useSignalProcessor = () => {
     processFrame,
     getRGBStats,
     getPositionQuality,
+    getPPGDebugInfo,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,

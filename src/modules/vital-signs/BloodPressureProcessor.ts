@@ -8,6 +8,10 @@ export interface BPEstimate {
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
   cyclesUsed: number;
   featureQuality: number;
+  /** Cuando la morfología es débil pero hay forma útil: tendencia relativa */
+  trendFirst?: boolean;
+  trendLabel?: 'UP' | 'DOWN' | 'STABLE';
+  modelAgreement?: number;
 }
 
 const SBP_COEFF = {
@@ -41,12 +45,20 @@ export class BloodPressureProcessor {
   private readonly MAX_CYCLES = 15;
   private lastSBP = 0;
   private lastDBP = 0;
+  /** Último valor reportado (tras offsets) para tendencia relativa */
+  private lastReportedSbp = 0;
   private readonly EMA_ALPHA = 0.22;
 
-  estimate(signalBuffer: number[], rrIntervals: number[], sampleRate: number = 30): BPEstimate {
+  estimate(
+    signalBuffer: number[],
+    rrIntervals: number[],
+    sampleRate: number = 30,
+    opts?: { systolicOffset?: number; diastolicOffset?: number }
+  ): BPEstimate {
     const insufficient: BPEstimate = {
       systolic: 0, diastolic: 0, map: 0, pulsePressure: 0,
-      confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
+      confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0,
+      trendFirst: false,
     };
 
     if (signalBuffer.length < 30 || rrIntervals.length < 2) return insufficient;
@@ -85,18 +97,38 @@ export class BloodPressureProcessor {
 
     sbp = Math.max(85, Math.min(180, sbp));
     dbp = Math.max(50, Math.min(110, dbp));
-    const map = dbp + (sbp - dbp) / 3;
     const featureQuality = this.assessFeatureQuality(mf, useCycles.length);
     const confidence = this.assessConfidence(featureQuality, useCycles.length);
 
+    const offS = opts?.systolicOffset ?? 0;
+    const offD = opts?.diastolicOffset ?? 0;
+    sbp = Math.max(70, Math.min(200, sbp + offS));
+    dbp = Math.max(45, Math.min(120, dbp + offD));
+    const map = dbp + (sbp - dbp) / 3;
+
+    const trendFirst = confidence === 'INSUFFICIENT' && featureQuality >= 22 && useCycles.length >= 2;
+    let trendLabel: BPEstimate['trendLabel'] = 'STABLE';
+    if (trendFirst && this.lastReportedSbp > 0) {
+      const ds = sbp - this.lastReportedSbp;
+      if (ds > 4) trendLabel = 'UP';
+      else if (ds < -4) trendLabel = 'DOWN';
+    }
+
+    if (!trendFirst && sbp > 0) {
+      this.lastReportedSbp = sbp;
+    }
+
     return {
-      systolic: sbp,
-      diastolic: dbp,
-      map,
-      pulsePressure: sbp - dbp,
-      confidence,
+      systolic: trendFirst ? 0 : sbp,
+      diastolic: trendFirst ? 0 : dbp,
+      map: trendFirst ? 0 : map,
+      pulsePressure: trendFirst ? 0 : sbp - dbp,
+      confidence: trendFirst ? 'INSUFFICIENT' : confidence,
       cyclesUsed: useCycles.length,
-      featureQuality
+      featureQuality,
+      trendFirst,
+      trendLabel,
+      modelAgreement: Math.min(1, featureQuality / 100 * 0.7 + (useCycles.length / 15) * 0.3),
     };
   }
 
@@ -175,6 +207,7 @@ export class BloodPressureProcessor {
   reset(): void {
     this.lastSBP = 0;
     this.lastDBP = 0;
+    this.lastReportedSbp = 0;
   }
 
   fullReset(): void {

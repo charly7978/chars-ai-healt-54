@@ -101,6 +101,9 @@ export class GlucoseResearchProcessor {
     contactStable: boolean;
     signalQuality: number;
     beatCount: number;
+    /** Baseline longitudinal del usuario (mg/dL) */
+    longitudinalBaseline?: number;
+    personalizationState?: 'NONE' | 'INITIALIZED' | 'PARTIAL' | 'STRONG';
   }): GlucoseResult {
     const withheld: GlucoseResult = {
       value: 0, confidence: 0, trend: 'UNKNOWN',
@@ -156,6 +159,11 @@ export class GlucoseResearchProcessor {
     // ── Subject adaptation ──
     if (this.isCalibrated) {
       glucose = glucose * this.subjectScale + this.subjectOffset;
+    }
+
+    if (input.longitudinalBaseline && input.longitudinalBaseline > 40 && input.longitudinalBaseline < 400) {
+      const w = input.personalizationState === 'STRONG' ? 0.22 : input.personalizationState === 'PARTIAL' ? 0.14 : 0.08;
+      glucose = glucose * (1 - w) + input.longitudinalBaseline * w;
     }
 
     // Reject physiologically impossible

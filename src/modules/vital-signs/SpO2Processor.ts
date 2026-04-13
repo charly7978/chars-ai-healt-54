@@ -1,73 +1,44 @@
 /**
- * SpO2 PROCESSOR — CALIBRATED PIPELINE
- * 
- * Replaces naive single-formula SpO2 with a proper calibration-aware pipeline.
- * 
- * Pipeline:
- * 1. Raw ratio features from AC/DC per channel
- * 2. Beat-aligned ratio stabilization (median over valid beats)
- * 3. Session calibration state tracking
- * 4. Quadratic calibration curve with device profile support
- * 5. Quality + confidence gating
- * 
- * References:
- * - van Gastel et al. 2016 (Philips): Camera SpO2 calibration
- * - Sensors 2023: Quadratic R-ratio → SpO2 mapping
- * - Tremper 1989, Webster 1997: Ratio-of-ratios foundation
- * - Nature npj Digital Medicine 2022: Smartphone SpO2 validation 70-100%
+ * SpO2 PROCESSOR — calibración real vía SpO2Calibrator + ratios ópticos.
  */
 
+import { SpO2Calibrator } from './SpO2Calibrator';
+import { ratioOfRatios, trimmedMedian } from './OpticalRatioEngine';
+
 export interface SpO2Result {
-  value: number;            // 0 = unavailable
-  confidence: number;       // 0-1
-  quality: number;          // 0-100
+  value: number;
+  confidence: number;
+  quality: number;
   calibrationState: 'UNCALIBRATED' | 'SESSION_CALIBRATED' | 'DEVICE_CALIBRATED';
   enabledState: 'ENABLED_HIGH_CONFIDENCE' | 'ENABLED_MEDIUM_CONFIDENCE' | 'ENABLED_LOW_CONFIDENCE' | 'WITHHELD_LOW_QUALITY';
-  rawR: number;             // raw ratio-of-ratios
-  medianR: number;          // median-filtered R
-  piRed: number;            // perfusion index red
-  piGreen: number;          // perfusion index green
-  validBeatRatios: number;  // how many beat-aligned ratios contributed
-}
-
-interface CalibrationProfile {
-  A: number;    // intercept
-  B: number;    // linear
-  C: number;    // quadratic
-  deviceId: string;
-  timestamp: number;
+  rawR: number;
+  medianR: number;
+  piRed: number;
+  piGreen: number;
+  validBeatRatios: number;
 }
 
 export class SpO2Processor {
-  // Rolling R-ratio buffer for median filtering
   private rBuffer: number[] = [];
   private readonly R_BUF_SIZE = 12;
-
-  // Beat-aligned ratios (higher quality than frame-level)
   private beatRatios: number[] = [];
   private readonly BEAT_RATIO_BUF = 8;
-
-  // Calibration
-  private calibration: CalibrationProfile = {
-    A: 104.0,    // Default quadratic: SpO2 = 104 + 4.2R - 28.5R²
-    B: 4.2,
-    C: -28.5,
-    deviceId: 'default',
-    timestamp: 0,
-  };
-  private calibrationState: SpO2Result['calibrationState'] = 'UNCALIBRATED';
   private sessionRatioHistory: number[] = [];
   private readonly SESSION_HISTORY_SIZE = 60;
+  private sessionCalibrated = false;
 
-  // Quality tracking
   private consecutiveValidFrames = 0;
-  private readonly MIN_VALID_FRAMES = 5;
   private lastValue = 0;
-  private lastConfidence = 0;
 
-  /**
-   * Process one frame of RGB AC/DC data
-   */
+  constructor(private readonly calibrator: SpO2Calibrator = new SpO2Calibrator()) {}
+
+  private resolveCalibrationState(): SpO2Result['calibrationState'] {
+    const c = this.calibrator.getCurve();
+    if (c.deviceId !== 'default') return 'DEVICE_CALIBRATED';
+    if (this.sessionCalibrated) return 'SESSION_CALIBRATED';
+    return 'UNCALIBRATED';
+  }
+
   process(input: {
     redAC: number;
     redDC: number;
@@ -80,22 +51,20 @@ export class SpO2Processor {
     avgBeatSQI: number;
     sourceStability: number;
   }): SpO2Result {
+    const calState = this.resolveCalibrationState();
     const withheld: SpO2Result = {
       value: 0, confidence: 0, quality: 0,
-      calibrationState: this.calibrationState,
+      calibrationState: calState,
       enabledState: 'WITHHELD_LOW_QUALITY',
       rawR: 0, medianR: 0, piRed: 0, piGreen: 0, validBeatRatios: 0,
     };
 
     const { redAC, redDC, greenAC, greenDC } = input;
 
-    // Gate: minimum DC (tissue present)
     if (redDC < 8 || greenDC < 8) {
       this.consecutiveValidFrames = 0;
       return withheld;
     }
-
-    // Gate: minimum AC pulsatility
     if (redAC < 0.03 || greenAC < 0.03) {
       this.consecutiveValidFrames = 0;
       return withheld;
@@ -104,52 +73,40 @@ export class SpO2Processor {
     const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
 
-    // Gate: minimum perfusion
     if (piRed < 0.03 || piGreen < 0.03) {
       this.consecutiveValidFrames = 0;
       return withheld;
     }
 
-    // Compute ratio-of-ratios
-    const ratioRed = redAC / redDC;
-    const ratioGreen = greenAC / greenDC;
-    const R = ratioRed / ratioGreen;
-
+    const R = ratioOfRatios(redAC, redDC, greenAC, greenDC);
     if (!isFinite(R) || R <= 0.1 || R > 3.0) {
       this.consecutiveValidFrames = 0;
       return withheld;
     }
 
-    // Push to rolling buffer
     this.rBuffer.push(R);
     if (this.rBuffer.length > this.R_BUF_SIZE) this.rBuffer.shift();
 
-    // Need minimum buffer for median
     if (this.rBuffer.length < 3) {
-      return { ...withheld, rawR: R, piRed, piGreen };
+      return { ...withheld, rawR: R, piRed, piGreen, calibrationState: calState };
     }
 
-    // Median R (robust to single-frame noise)
     const sorted = [...this.rBuffer].sort((a, b) => a - b);
-    const medianR = sorted[Math.floor(sorted.length / 2)];
+    let medianR = sorted[Math.floor(sorted.length / 2)];
 
-    // Session tracking
-    this.sessionRatioHistory.push(medianR);
-    if (this.sessionRatioHistory.length > this.SESSION_HISTORY_SIZE) {
-      this.sessionRatioHistory.shift();
+    if (this.beatRatios.length >= 3) {
+      const br = trimmedMedian(this.beatRatios, 0.12);
+      if (isFinite(br)) medianR = medianR * 0.65 + br * 0.35;
     }
 
-    // ── Quality assessment ──
-    let quality = 0;
+    this.sessionRatioHistory.push(medianR);
+    if (this.sessionRatioHistory.length > this.SESSION_HISTORY_SIZE) this.sessionRatioHistory.shift();
 
-    // Contact & pressure
+    let quality = 0;
     if (input.contactStable) quality += 20;
     if (input.pressureOptimal) quality += 10;
-
-    // Perfusion
     quality += Math.min(15, piGreen * 5);
 
-    // Ratio stability (CV of R buffer)
     if (this.rBuffer.length >= 4) {
       const rMean = this.rBuffer.reduce((a, b) => a + b, 0) / this.rBuffer.length;
       const rStd = Math.sqrt(this.rBuffer.reduce((s, v) => s + (v - rMean) ** 2, 0) / this.rBuffer.length);
@@ -157,32 +114,22 @@ export class SpO2Processor {
       quality += Math.max(0, Math.min(20, (1 - rCV * 5) * 20));
     }
 
-    // Clipping penalty
-    quality -= input.clipHighRatio * 30;
-
-    // Beat count bonus
+    quality -= input.clipHighRatio * 28;
     quality += Math.min(15, input.beatCount * 1.5);
-
-    // Source stability
     quality += input.sourceStability * 10;
-
-    // Beat SQI
     quality += Math.min(10, input.avgBeatSQI * 0.1);
-
     quality = Math.max(0, Math.min(100, Math.round(quality)));
 
-    // ── Apply calibration ──
-    const spo2Raw = this.calibration.A + this.calibration.B * medianR + this.calibration.C * medianR * medianR;
+    const spo2Raw = this.calibrator.estimateSpO2(medianR);
 
     if (!isFinite(spo2Raw) || spo2Raw < 50 || spo2Raw > 105) {
-      return { ...withheld, rawR: R, medianR, piRed, piGreen, quality };
+      return { ...withheld, rawR: R, medianR, piRed, piGreen, quality, calibrationState: calState };
     }
 
-    // ── Gate: contact, quality, stability ──
     if (!input.contactStable) {
       return {
         value: 0, confidence: 0, quality,
-        calibrationState: this.calibrationState,
+        calibrationState: calState,
         enabledState: 'WITHHELD_LOW_QUALITY',
         rawR: R, medianR, piRed, piGreen, validBeatRatios: this.beatRatios.length,
       };
@@ -190,78 +137,77 @@ export class SpO2Processor {
 
     this.consecutiveValidFrames++;
 
-    if (this.consecutiveValidFrames < this.MIN_VALID_FRAMES || quality < 25) {
+    const strongContext =
+      input.contactStable && input.pressureOptimal && input.beatCount >= 5 && input.avgBeatSQI >= 38;
+    const minFrames = strongContext ? 3 : 5;
+    const qTh = strongContext ? 20 : 24;
+
+    if (this.consecutiveValidFrames < minFrames || quality < qTh) {
       return {
         value: 0, confidence: 0, quality,
-        calibrationState: this.calibrationState,
+        calibrationState: calState,
         enabledState: 'WITHHELD_LOW_QUALITY',
         rawR: R, medianR, piRed, piGreen, validBeatRatios: this.beatRatios.length,
       };
     }
 
-    // ── Confidence ──
     let confidence = 0;
-    confidence += quality / 100 * 0.4;
+    confidence += quality / 100 * 0.42;
     confidence += Math.min(0.2, this.consecutiveValidFrames * 0.01);
-    confidence += (this.calibrationState !== 'UNCALIBRATED' ? 0.15 : 0);
-    confidence += (this.rBuffer.length >= 6 ? 0.1 : 0);
-    confidence += input.sourceStability * 0.1;
-    confidence += (input.avgBeatSQI > 40 ? 0.05 : 0);
+    confidence += calState !== 'UNCALIBRATED' ? 0.14 : 0;
+    confidence += this.rBuffer.length >= 6 ? 0.1 : 0;
+    confidence += input.sourceStability * 0.11;
+    confidence += input.avgBeatSQI > 40 ? 0.06 : 0;
+    confidence += this.beatRatios.length >= 4 ? 0.07 : 0;
     confidence = Math.min(1, Math.max(0, confidence));
 
-    // ── EMA smoothing ──
     let value = Math.round(spo2Raw);
     if (this.lastValue > 0) {
-      const alpha = confidence > 0.6 ? 0.25 : 0.15;
+      const alpha = confidence > 0.6 ? 0.26 : 0.16;
       value = Math.round(this.lastValue * (1 - alpha) + spo2Raw * alpha);
     }
     this.lastValue = value;
-    this.lastConfidence = confidence;
 
-    // ── Enabled state ──
     let enabledState: SpO2Result['enabledState'];
-    if (confidence >= 0.65 && quality >= 60) enabledState = 'ENABLED_HIGH_CONFIDENCE';
-    else if (confidence >= 0.4 && quality >= 35) enabledState = 'ENABLED_MEDIUM_CONFIDENCE';
-    else if (confidence >= 0.2) enabledState = 'ENABLED_LOW_CONFIDENCE';
+    if (confidence >= 0.62 && quality >= 55) enabledState = 'ENABLED_HIGH_CONFIDENCE';
+    else if (confidence >= 0.38 && quality >= 32) enabledState = 'ENABLED_MEDIUM_CONFIDENCE';
+    else if (confidence >= 0.18) enabledState = 'ENABLED_LOW_CONFIDENCE';
     else enabledState = 'WITHHELD_LOW_QUALITY';
 
     return {
-      value, confidence, quality,
-      calibrationState: this.calibrationState,
+      value,
+      confidence,
+      quality,
+      calibrationState: calState,
       enabledState,
-      rawR: R, medianR, piRed, piGreen,
+      rawR: R,
+      medianR,
+      piRed,
+      piGreen,
       validBeatRatios: this.beatRatios.length,
     };
   }
 
-  /**
-   * Ingest a beat-aligned R ratio (computed at beat boundaries for better SNR)
-   */
   addBeatRatio(R: number): void {
     if (!isFinite(R) || R <= 0.1 || R > 3.0) return;
     this.beatRatios.push(R);
     if (this.beatRatios.length > this.BEAT_RATIO_BUF) this.beatRatios.shift();
   }
 
-  /**
-   * Set device-specific calibration coefficients
-   */
   setCalibration(A: number, B: number, C: number, deviceId: string): void {
-    this.calibration = { A, B, C, deviceId, timestamp: Date.now() };
-    this.calibrationState = 'DEVICE_CALIBRATED';
+    this.calibrator.setDeviceCurve(A, B, C, deviceId);
+    this.sessionCalibrated = false;
   }
 
-  /**
-   * Session calibration with known SpO2 reference
-   */
   calibrateWithReference(knownSpO2: number): void {
     if (this.sessionRatioHistory.length < 5) return;
     const medR = this.median(this.sessionRatioHistory.slice(-10));
-    // Adjust intercept to match known value at current R
-    const currentEstimate = this.calibration.A + this.calibration.B * medR + this.calibration.C * medR * medR;
-    const offset = knownSpO2 - currentEstimate;
-    this.calibration.A += offset;
-    this.calibrationState = 'SESSION_CALIBRATED';
+    this.calibrator.applySessionOffsetFromReference(knownSpO2, medR);
+    this.sessionCalibrated = true;
+  }
+
+  getCalibrator(): SpO2Calibrator {
+    return this.calibrator;
   }
 
   private median(arr: number[]): number {
@@ -274,13 +220,12 @@ export class SpO2Processor {
     this.beatRatios = [];
     this.consecutiveValidFrames = 0;
     this.lastValue = 0;
-    this.lastConfidence = 0;
     this.sessionRatioHistory = [];
   }
 
   fullReset(): void {
     this.reset();
-    this.calibrationState = 'UNCALIBRATED';
-    this.calibration = { A: 104.0, B: 4.2, C: -28.5, deviceId: 'default', timestamp: 0 };
+    this.sessionCalibrated = false;
+    this.calibrator.setDeviceCurve(104.0, 4.2, -28.5, 'default');
   }
 }

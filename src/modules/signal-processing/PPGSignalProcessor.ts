@@ -175,24 +175,35 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     if (this.exportedContactState === 'NO_CONTACT') {
       this.signalQuality = 0;
-      this.onSignalReady({
-        timestamp,
-        rawValue: 0,
-        filteredValue: 0,
-        quality: 0,
-        fingerDetected: false,
-        contactState: 'NO_CONTACT',
-        motionArtifact,
-        roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
-        perfusionIndex: 0,
-        rawRed: roi.rawRed,
-        rawGreen: roi.rawGreen,
-        diagnostics: {
-          message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}% P:${pressure.state}`,
-          hasPulsatility: false,
-          pulsatilityValue: 0,
-        },
-      });
+    this.onSignalReady({
+      timestamp,
+      rawValue: 0,
+      filteredValue: 0,
+      quality: 0,
+      fingerDetected: false,
+      contactState: 'NO_CONTACT',
+      extendedContactState: 'NO_CONTACT',
+      motionArtifact,
+      roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
+      perfusionIndex: 0,
+      rawRed: roi.rawRed,
+      rawGreen: roi.rawGreen,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      roiCoverage: roi.coverageRatio,
+      pressureState: pressure.state,
+      activeSource: this.activeSourceLabel,
+      sourceStability: this.sourceStability,
+      sqiBySource: { ...this.allSourceSQI },
+      estimatedSampleRate: this.estimatedSampleRate,
+      realFps: this.realFps,
+      processingDurationMs: performance.now() - t0,
+      diagnostics: {
+        message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}% P:${pressure.state}`,
+        hasPulsatility: false,
+        pulsatilityValue: 0,
+      },
+    });
       this.processingTimeMs = performance.now() - t0;
       return;
     }
@@ -294,11 +305,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       quality: gatedQuality,
       fingerDetected: this.fingerDetected,
       contactState: this.exportedContactState,
+      extendedContactState: this.contactState,
       motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
       perfusionIndex,
       rawRed: roi.rawRed,
       rawGreen: roi.rawGreen,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      roiCoverage: this.smoothedCoverage,
+      pressureState: this.pressureState,
+      activeSource: source.label,
+      sourceStability: this.sourceStability,
+      sqiBySource: { ...this.allSourceSQI },
+      estimatedSampleRate: this.estimatedSampleRate,
+      realFps: this.realFps,
+      processingDurationMs: performance.now() - t0,
       diagnostics: {
         message:
           `${source.label} PI:${perfusionIndex.toFixed(2)} P:${this.pressureState.charAt(0)} ` +

@@ -59,7 +59,7 @@ export const useVitalSignsProcessor = () => {
     const defaultResult: VitalSignsResult = {
       spo2: 0, glucose: 0,
       pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
-      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+      arrhythmiaCount: 0, arrhythmiaStatus: "SINUS_STABLE|0",
       lipids: { totalCholesterol: 0, triglycerides: 0 },
       isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined,
       signalQuality: 0, measurementConfidence: 'INVALID' as const,
@@ -100,10 +100,20 @@ export const useVitalSignsProcessor = () => {
     return processorRef.current?.hasValidPressureEstimate() ?? false;
   }, []);
 
+  const setHeartRuntime = useCallback((ctx: { bpm?: number; bpmConfidence?: number; beatCount?: number }) => {
+    processorRef.current?.setHeartRuntime(ctx);
+  }, []);
+
+  const ingestBeatOpticalRatio = useCallback(() => {
+    processorRef.current?.ingestBeatOpticalRatio();
+  }, []);
+
   return {
     processSignal,
     setRGBData,
     setUpstreamContext,
+    setHeartRuntime,
+    ingestBeatOpticalRatio,
     reset,
     fullReset,
     startCalibration,

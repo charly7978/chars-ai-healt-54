@@ -1,11 +1,18 @@
-import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessor } from './BloodPressureProcessor';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
 import { SpO2Processor, type SpO2Result } from './SpO2Processor';
+import { SpO2Calibrator } from './SpO2Calibrator';
+import { ratioOfRatios } from './OpticalRatioEngine';
 import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
 import { LipidResearchProcessor, type LipidResult } from '../biomarkers/LipidResearchProcessor';
-import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
+import type { OutputState } from '../core/MeasurementGate';
+import { UncertaintyRouter } from '../core/UncertaintyRouter';
+import { DeviceProfileManager, deviceFingerprint } from '../calibration/DeviceProfileManager';
+import { DeviceCalibrationEngine } from '../calibration/DeviceCalibrationEngine';
+import { BPCalibrationManager } from './BPCalibrationManager';
+import { UserBaselineEngine } from '../personalization/UserBaselineEngine';
+import { LongitudinalDatasetStore } from '../personalization/LongitudinalDatasetStore';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -15,8 +22,11 @@ export interface VitalSignsResult {
     diastolic: number;
     confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
     featureQuality: number;
+    trendFirst?: boolean;
+    trendLabel?: 'UP' | 'DOWN' | 'STABLE';
   };
   arrhythmiaCount: number;
+  /** Primario: etiqueta RhythmClassifier + conteo de eventos recientes */
   arrhythmiaStatus: string;
   lipids: {
     totalCholesterol: number;
@@ -58,15 +68,23 @@ export interface RGBData {
 }
 
 export class VitalSignsProcessor {
-  private arrhythmiaProcessor: ArrhythmiaProcessor;
   private bloodPressureProcessor: BloodPressureProcessor;
   private rhythmClassifier: RhythmClassifier;
   private spo2Processor: SpO2Processor;
+  private spo2Calibrator: SpO2Calibrator;
   private glucoseProcessor: GlucoseResearchProcessor;
   private lipidProcessor: LipidResearchProcessor;
+  private deviceProfiles: DeviceProfileManager;
+  private deviceCalibrationEngine: DeviceCalibrationEngine;
+  private bpCalibrationManager: BPCalibrationManager;
+  private userBaseline: UserBaselineEngine;
+  private longitudinal: LongitudinalDatasetStore;
 
   private lastBPConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT' = 'INSUFFICIENT';
   private lastBPFeatureQuality = 0;
+  private lastBpCycles = 0;
+  private lastBpTrendFirst = false;
+  private lastBpTrendLabel: 'UP' | 'DOWN' | 'STABLE' | undefined;
   private calibrationSamples = 0;
   private readonly CALIBRATION_REQUIRED = 25;
   private isCalibrating = false;
@@ -74,7 +92,7 @@ export class VitalSignsProcessor {
   private measurements = {
     spo2: 0, glucose: 0,
     systolicPressure: 0, diastolicPressure: 0,
-    arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+    arrhythmiaCount: 0, arrhythmiaStatus: 'SINUS_STABLE|0',
     totalCholesterol: 0, triglycerides: 0,
     lastArrhythmiaData: null as { timestamp: number; rmssd: number; rrVariation: number } | null,
     signalQuality: 0,
@@ -97,6 +115,8 @@ export class VitalSignsProcessor {
     rrStability: 0,
   };
 
+  private heartRuntime = { bpm: 0, bpmConfidence: 0, beatCount: 0 };
+
   private lastRhythm: RhythmResult | null = null;
   private lastSpo2: SpO2Result | null = null;
   private lastGlucose: GlucoseResult | null = null;
@@ -106,12 +126,40 @@ export class VitalSignsProcessor {
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
 
   constructor() {
-    this.arrhythmiaProcessor = new ArrhythmiaProcessor();
+    const fp = deviceFingerprint();
+    this.deviceProfiles = new DeviceProfileManager(fp);
+    this.deviceProfiles.bumpSession();
+    const profile = this.deviceProfiles.get();
+    this.spo2Calibrator = new SpO2Calibrator({
+      ...profile.spo2Curve,
+      deviceId: profile.deviceProfileId,
+    });
+    this.spo2Calibrator.setOpticalBiasR(profile.opticalBiasR);
+    this.spo2Processor = new SpO2Processor(this.spo2Calibrator);
+    this.deviceCalibrationEngine = new DeviceCalibrationEngine(this.deviceProfiles, profile);
+    this.bpCalibrationManager = new BPCalibrationManager();
+    this.userBaseline = new UserBaselineEngine();
+    this.longitudinal = new LongitudinalDatasetStore();
+
     this.bloodPressureProcessor = new BloodPressureProcessor();
     this.rhythmClassifier = new RhythmClassifier();
-    this.spo2Processor = new SpO2Processor();
     this.glucoseProcessor = new GlucoseResearchProcessor();
     this.lipidProcessor = new LipidResearchProcessor();
+  }
+
+  setHeartRuntime(ctx: { bpm?: number; bpmConfidence?: number; beatCount?: number }): void {
+    if (ctx.bpm !== undefined) this.heartRuntime.bpm = ctx.bpm;
+    if (ctx.bpmConfidence !== undefined) this.heartRuntime.bpmConfidence = ctx.bpmConfidence;
+    if (ctx.beatCount !== undefined) this.heartRuntime.beatCount = ctx.beatCount;
+  }
+
+  /** En ventana de pico cardíaco: refuerza SpO2 con ratio alineado a latido */
+  ingestBeatOpticalRatio(): void {
+    const R = ratioOfRatios(
+      this.rgbData.redAC, this.rgbData.redDC,
+      this.rgbData.greenAC, this.rgbData.greenDC
+    );
+    if (isFinite(R)) this.spo2Processor.addBeatRatio(R);
   }
 
   startCalibration(): void {
@@ -120,7 +168,7 @@ export class VitalSignsProcessor {
     this.validPulseCount = 0;
     this.measurements = {
       spo2: 0, glucose: 0, systolicPressure: 0, diastolicPressure: 0,
-      arrhythmiaCount: 0, arrhythmiaStatus: "CALIBRANDO...|0",
+      arrhythmiaCount: 0, arrhythmiaStatus: 'CALIBRANDO|0',
       totalCholesterol: 0, triglycerides: 0, lastArrhythmiaData: null, signalQuality: 0,
     };
     this.signalHistory = [];
@@ -257,6 +305,18 @@ export class VitalSignsProcessor {
       sourceStability: this.upstreamContext.sourceStability,
     });
     this.lastSpo2 = spo2Result;
+
+    if (spo2Result.medianR > 0) {
+      this.deviceCalibrationEngine.ingestFrameStats({
+        medianR: spo2Result.medianR,
+        rVariance: Math.max(0, 1 - (spo2Result.quality / 100)) * 0.05,
+        clipHighEma: this.upstreamContext.clipHighRatio,
+        frameIntervalMs: 1000 / sampleRate,
+        sourceLabel: 'RG',
+      });
+      this.spo2Calibrator.setOpticalBiasR(this.deviceCalibrationEngine.getOpticalBiasR());
+    }
+
     if (spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
     }
@@ -270,10 +330,20 @@ export class VitalSignsProcessor {
 
     const medianF = validCycleFeatures.length >= 1 ? this.medianCycleFeatures(validCycleFeatures) : null;
 
+    const bpOff = this.bpCalibrationManager.getOffsets();
+    const devBp = this.deviceCalibrationEngine.getBpOffset();
+
     if (validRR.length >= 2) {
-      const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, sampleRate);
+      const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, sampleRate, {
+        systolicOffset: bpOff.systolic + devBp.systolic,
+        diastolicOffset: bpOff.diastolic + devBp.diastolic,
+      });
       this.lastBPConfidence = bpEstimate.confidence;
       this.lastBPFeatureQuality = bpEstimate.featureQuality;
+      this.lastBpCycles = bpEstimate.cyclesUsed;
+      this.lastBpTrendFirst = !!bpEstimate.trendFirst;
+      this.lastBpTrendLabel = bpEstimate.trendLabel;
+
       if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
         this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
         this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
@@ -282,6 +352,8 @@ export class VitalSignsProcessor {
 
     const piGreen = this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0;
     const rgACRatio = this.rgbData.greenAC > 0 ? this.rgbData.redAC / this.rgbData.greenAC : 0;
+
+    const base = this.userBaseline.get();
 
     if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 10) {
       const glucoseResult = this.glucoseProcessor.process({
@@ -297,10 +369,13 @@ export class VitalSignsProcessor {
         contactStable: this.upstreamContext.contactStable,
         signalQuality: this.measurements.signalQuality,
         beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
+        longitudinalBaseline: base.glucoseEma > 0 ? base.glucoseEma : undefined,
+        personalizationState: base.personalizationState,
       });
       this.lastGlucose = glucoseResult;
       if (glucoseResult.value > 0 && glucoseResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
         this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseResult.value, 'dynamic');
+        this.userBaseline.updateFromSession({ glucoseEma: this.measurements.glucose });
       }
 
       const lipidResult = this.lipidProcessor.process({
@@ -316,49 +391,57 @@ export class VitalSignsProcessor {
         hr, rrVar, piGreen,
         contactStable: this.upstreamContext.contactStable,
         signalQuality: this.measurements.signalQuality,
+        longitudinalChol: base.cholesterolEma > 0 ? base.cholesterolEma : undefined,
+        longitudinalTrig: base.triglyceridesEma > 0 ? base.triglyceridesEma : undefined,
+        personalizationState: base.personalizationState,
       });
       this.lastLipids = lipidResult;
       if (lipidResult.totalCholesterol > 0 && lipidResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
         this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipidResult.totalCholesterol, 'dynamic');
         this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipidResult.triglycerides, 'dynamic');
+        this.userBaseline.updateFromSession({
+          cholesterolEma: this.measurements.totalCholesterol,
+          triglyceridesEma: this.measurements.triglycerides,
+        });
       }
     }
 
-    if (beatInputs && beatInputs.length >= 4) {
+    if (beatInputs && beatInputs.length >= 8) {
       const rhythmResult = this.rhythmClassifier.classify(
         beatInputs,
         Math.max(this.upstreamContext.avgBeatSQI, 20),
         Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement)
       );
       this.lastRhythm = rhythmResult;
-    }
 
-    const arrhythmiaRR = validRR.slice(-10);
-    const arrhythmiaInput = (arrhythmiaRR.length >= 4 && this.measurements.signalQuality >= 18 && hr >= 35 && hr <= 180)
-      ? { ...rrData, intervals: arrhythmiaRR } : undefined;
-    const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(arrhythmiaInput);
-    this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
-    this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
-    const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
-    this.measurements.arrhythmiaCount = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
-
-    if (this.lastRhythm && this.lastRhythm.rhythmConfidence >= 0.2) {
-      const rhythmLabel = this.lastRhythm.rhythmLabel;
-      const rhythmCount = this.lastRhythm.recentEvents?.length ?? this.measurements.arrhythmiaCount ?? 0;
-      this.measurements.arrhythmiaStatus = `${rhythmLabel}|${rhythmCount}`;
-      this.measurements.arrhythmiaCount = rhythmCount;
+      const ev = rhythmResult.recentEvents?.length ?? 0;
+      this.measurements.arrhythmiaStatus = `${rhythmResult.rhythmLabel}|${ev}`;
+      this.measurements.arrhythmiaCount = ev;
+      this.measurements.lastArrhythmiaData = {
+        timestamp: Date.now(),
+        rmssd: rhythmResult.features.rmssd,
+        rrVariation: rhythmResult.features.rrCV * 100,
+      };
     }
   }
 
   private getFormattedResult(): VitalSignsResult {
-    const spo2State = this.lastSpo2?.enabledState ?? 'WITHHELD_LOW_QUALITY';
-    const glucoseState = this.lastGlucose?.enabledState ?? 'WITHHELD_LOW_QUALITY';
-    const lipidsState = this.lastLipids?.enabledState ?? 'WITHHELD_LOW_QUALITY';
-
-    const bpGated = MeasurementGate.gateBP(
-      this.measurements.systolicPressure, this.measurements.diastolicPressure,
-      this.lastBPConfidence, this.lastBPFeatureQuality, 0
-    );
+    const routed = UncertaintyRouter.route({
+      spo2Detail: this.lastSpo2,
+      glucoseDetail: this.lastGlucose,
+      lipidsDetail: this.lastLipids,
+      rhythm: this.lastRhythm,
+      bpSystolic: this.measurements.systolicPressure,
+      bpDiastolic: this.measurements.diastolicPressure,
+      bpConfidence: this.lastBPConfidence,
+      bpFeatureQuality: this.lastBPFeatureQuality,
+      bpCycles: this.lastBpCycles,
+      bpm: this.heartRuntime.bpm,
+      bpmConfidence: this.heartRuntime.bpmConfidence,
+      beatCount: this.heartRuntime.beatCount || this.upstreamContext.beatCount,
+      signalQuality: this.measurements.signalQuality,
+      bpTrendOnly: this.lastBpTrendFirst,
+    });
 
     return {
       spo2: Math.round(this.measurements.spo2),
@@ -368,6 +451,8 @@ export class VitalSignsProcessor {
         diastolic: Math.round(this.measurements.diastolicPressure),
         confidence: this.lastBPConfidence,
         featureQuality: this.lastBPFeatureQuality,
+        trendFirst: this.lastBpTrendFirst,
+        trendLabel: this.lastBpTrendLabel,
       },
       arrhythmiaCount: this.measurements.arrhythmiaCount,
       arrhythmiaStatus: this.measurements.arrhythmiaStatus,
@@ -389,14 +474,7 @@ export class VitalSignsProcessor {
       spo2Detail: this.lastSpo2 ?? undefined,
       glucoseDetail: this.lastGlucose ?? undefined,
       lipidsDetail: this.lastLipids ?? undefined,
-      outputStates: {
-        bpm: 'ENABLED_MEDIUM_CONFIDENCE',
-        spo2: spo2State,
-        bp: bpGated.state,
-        glucose: glucoseState,
-        lipids: lipidsState,
-        rhythm: this.lastRhythm ? (this.lastRhythm.rhythmQuality > 40 ? 'ENABLED_MEDIUM_CONFIDENCE' : 'ENABLED_LOW_CONFIDENCE') : 'WITHHELD_LOW_QUALITY',
-      },
+      outputStates: routed,
     };
   }
 
@@ -442,6 +520,22 @@ export class VitalSignsProcessor {
     };
   }
 
+  appendSessionSummary(): void {
+    this.longitudinal.append({
+      ts: Date.now(),
+      signalQuality: this.measurements.signalQuality,
+      rhythmLabel: this.lastRhythm?.rhythmLabel,
+      spo2: this.measurements.spo2 || undefined,
+      bp: this.measurements.systolicPressure > 0
+        ? { sys: this.measurements.systolicPressure, dia: this.measurements.diastolicPressure }
+        : undefined,
+      glucose: this.measurements.glucose || undefined,
+      lipids: this.measurements.totalCholesterol > 0
+        ? { tc: this.measurements.totalCholesterol, tg: this.measurements.triglycerides }
+        : undefined,
+    });
+  }
+
   getCalibrationProgress(): number {
     return Math.min(100, Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100));
   }
@@ -450,14 +544,14 @@ export class VitalSignsProcessor {
     const result = this.getFormattedResult();
     this.signalHistory = [];
     this.validPulseCount = 0;
-    this.arrhythmiaProcessor.reset();
     this.spo2Processor.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
     this.rhythmClassifier.reset();
     this.measurements.arrhythmiaCount = 0;
-    this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
+    this.measurements.arrhythmiaStatus = 'SINUS_STABLE|0';
     this.measurements.lastArrhythmiaData = null;
+    this.appendSessionSummary();
     return result.spo2 !== 0 ? result : null;
   }
 
@@ -470,15 +564,17 @@ export class VitalSignsProcessor {
     this.validPulseCount = 0;
     this.measurements = {
       spo2: 0, glucose: 0, systolicPressure: 0, diastolicPressure: 0,
-      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
+      arrhythmiaCount: 0, arrhythmiaStatus: 'SINUS_STABLE|0',
       totalCholesterol: 0, triglycerides: 0, lastArrhythmiaData: null, signalQuality: 0,
     };
     this.rgbData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
     this.isCalibrating = false;
     this.calibrationSamples = 0;
-    this.arrhythmiaProcessor.reset();
     this.bloodPressureProcessor.fullReset();
     this.spo2Processor.fullReset();
+    const p = this.deviceProfiles.get();
+    this.spo2Calibrator.setDeviceCurve(p.spo2Curve.A, p.spo2Curve.B, p.spo2Curve.C, p.deviceProfileId);
+    this.spo2Calibrator.setOpticalBiasR(p.opticalBiasR);
     this.glucoseProcessor.fullReset();
     this.lipidProcessor.fullReset();
     this.rhythmClassifier.reset();
