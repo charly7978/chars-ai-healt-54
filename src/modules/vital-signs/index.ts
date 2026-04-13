@@ -3,6 +3,8 @@
  */
 
 export { AdvancedArrhythmiaDetector } from './AdvancedArrhythmiaDetector';
+export { HRVNonlinearAnalyzer, type NonlinearHRVResult } from './HRVNonlinearAnalyzer';
+export { HRVFrequencyAnalyzer, type FrequencyHRVResult } from './HRVFrequencyAnalyzer';
 export { ArrhythmiaProcessor } from './arrhythmia-processor';
 export { RhythmClassifier, type RhythmLabel, type RhythmEvent, type RhythmResult, type RhythmFeatures } from './RhythmClassifier';
 export { VitalSignsProcessor, type VitalSignsResult, type RGBData } from './VitalSignsProcessor';

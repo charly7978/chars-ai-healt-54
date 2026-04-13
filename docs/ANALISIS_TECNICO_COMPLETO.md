@@ -2,7 +2,9 @@
 
 ## RESUMEN EJECUTIVO
 
-Este documento presenta un análisis técnico exhaustivo del sistema PPG (Photoplethysmography) para medición de signos vitales mediante cámara de smartphone, con implementaciones avanzadas que elevan el sistema al estado del arte 2024.
+**CÓDIGO 100% REAL - SIN SIMULACIÓN:** Este sistema procesa datos EXCLUSIVAMENTE de la cámara trasera del smartphone. Ningún valor es generado aleatoriamente, simulado o estimado fuera de los cálculos matemáticos rigurosos sobre los datos PPG reales capturados.
+
+Sistema PPG (Photoplethysmography) para medición de signos vitales mediante cámara de smartphone, implementado con algoritmos de procesamiento de señal biomédica de estado del arte 2024.
 
 ---
 
