@@ -32,8 +32,9 @@ const CONFIG = {
   CANVAS_WIDTH: 1800,
   CANVAS_HEIGHT: 3200,
   WINDOW_MS: 2800,
-  TARGET_FPS: 36,
-  BUFFER_SIZE: 480,
+  /** ~30 FPS: equilibrio fluidez / CPU en canvas grande + sombras. */
+  TARGET_FPS: 30,
+  BUFFER_SIZE: 400,
   PLOT_AREA: {
     LEFT: 96,
     RIGHT: 96,
@@ -87,12 +88,55 @@ const parseRhythmStatus = (statusString?: string) => {
 function strokeForWaveClass(wc: BeatWaveClass, COLORS: typeof CONFIG.COLORS) {
   switch (wc) {
     case 'arrhythmia':
-      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 22, width: 5 };
+      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 20, width: 5 };
     case 'weak':
-      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 18, width: 4 };
+      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 16, width: 4 };
     default:
-      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 15, width: 3.5 };
+      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 13, width: 3.5 };
   }
+}
+
+/**
+ * Cada segmento (entre vértices i-1 e i) usa el color de pathCoords[i].wc (como el bucle original).
+ * Agrupa segmentos consecutivos con el mismo wc de destino → un stroke + sombra por grupo.
+ */
+function strokeWaveformRuns(
+  pathCoords: { x: number; y: number; wc: BeatWaveClass }[],
+  COLORS: typeof CONFIG.COLORS,
+  ctx: CanvasRenderingContext2D
+) {
+  if (pathCoords.length < 2) return;
+  let runSegLo = 1;
+  for (let i = 2; i < pathCoords.length; i++) {
+    if (pathCoords[i - 1]!.wc !== pathCoords[i]!.wc) {
+      strokeMergedSegments(pathCoords, runSegLo, i - 1, COLORS, ctx);
+      runSegLo = i;
+    }
+  }
+  strokeMergedSegments(pathCoords, runSegLo, pathCoords.length - 1, COLORS, ctx);
+}
+
+function strokeMergedSegments(
+  pathCoords: { x: number; y: number; wc: BeatWaveClass }[],
+  segLo: number,
+  segHi: number,
+  COLORS: typeof CONFIG.COLORS,
+  ctx: CanvasRenderingContext2D
+) {
+  if (segHi < segLo) return;
+  const wc = pathCoords[segLo]!.wc;
+  const st = strokeForWaveClass(wc, COLORS);
+  ctx.beginPath();
+  ctx.moveTo(pathCoords[segLo - 1]!.x, pathCoords[segLo - 1]!.y);
+  for (let k = segLo; k <= segHi; k++) ctx.lineTo(pathCoords[k]!.x, pathCoords[k]!.y);
+  ctx.strokeStyle = st.stroke;
+  ctx.shadowColor = st.glow;
+  ctx.shadowBlur = st.blur;
+  ctx.lineWidth = st.width;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
+  ctx.shadowBlur = 0;
 }
 
 /** Máximo local de la PPG (máx. valor = pico sistólico) entre dos tiempos de latido. */
@@ -109,9 +153,12 @@ function refineSystolicPeak(
   const tHi = beatTime + 100;
   let best: PPGDataPoint | null = null;
   let bestV = -Infinity;
-  for (let i = 0; i < points.length; i++) {
-    const pt = points[i]!;
-    if (pt.time < tLo || pt.time > tHi) continue;
+  const n = points.length;
+  let idx = 0;
+  while (idx < n && points[idx]!.time < tLo) idx++;
+  for (; idx < n; idx++) {
+    const pt = points[idx]!;
+    if (pt.time > tHi) break;
     if (pt.value > bestV) {
       bestV = pt.value;
       best = pt;
@@ -145,6 +192,9 @@ const PPGSignalMeter = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   /** Escala física para nitidez en pantallas retina (coordenadas lógicas sin cambiar). */
   const dprRef = useRef(1);
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  /** Rejilla + escala temporal: se redibuja solo al cambiar tamaño/DPR (no cada frame). */
+  const staticLayerRef = useRef<HTMLCanvasElement | null>(null);
   const animationRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
@@ -192,25 +242,6 @@ const PPGSignalMeter = ({
       }
     }
   }, [peakEvent?.seq, isFingerDetected]);
-
-  useLayoutEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const applySize = () => {
-      const dpr = Math.min(typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1, 2.5);
-      dprRef.current = dpr;
-      canvas.width = Math.round(CONFIG.CANVAS_WIDTH * dpr);
-      canvas.height = Math.round(CONFIG.CANVAS_HEIGHT * dpr);
-      const c2 = canvas.getContext('2d', { alpha: false, desynchronized: true });
-      if (c2) {
-        c2.imageSmoothingEnabled = true;
-        c2.imageSmoothingQuality = 'high';
-      }
-    };
-    applySize();
-    window.addEventListener('resize', applySize);
-    return () => window.removeEventListener('resize', applySize);
-  }, []);
 
   useEffect(() => {
     if (!dataBufferRef.current) dataBufferRef.current = new CircularBuffer(CONFIG.BUFFER_SIZE);
@@ -339,6 +370,46 @@ const PPGSignalMeter = ({
     ctx.font = '11px "SF Mono", Consolas, monospace';
     ctx.fillText('escala 25 mm/s', plot.x + plot.width, plot.y + plot.height + 48);
   }, [getPlotArea]);
+
+  const paintStaticLayer = useCallback(() => {
+    let sc = staticLayerRef.current;
+    if (!sc) {
+      sc = document.createElement('canvas');
+      staticLayerRef.current = sc;
+    }
+    const dpr = dprRef.current;
+    sc.width = Math.round(CONFIG.CANVAS_WIDTH * dpr);
+    sc.height = Math.round(CONFIG.CANVAS_HEIGHT * dpr);
+    const sctx = sc.getContext('2d', { alpha: false, desynchronized: true });
+    if (!sctx) return;
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = 'high';
+    drawGrid(sctx);
+    drawTimeScale(sctx);
+  }, [drawGrid, drawTimeScale]);
+
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const applySize = () => {
+      const raw = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
+      const dpr = Math.min(raw, 2);
+      dprRef.current = dpr;
+      canvas.width = Math.round(CONFIG.CANVAS_WIDTH * dpr);
+      canvas.height = Math.round(CONFIG.CANVAS_HEIGHT * dpr);
+      const c2 = canvas.getContext('2d', { alpha: false, desynchronized: true });
+      if (c2) {
+        c2.imageSmoothingEnabled = true;
+        c2.imageSmoothingQuality = 'high';
+        ctxRef.current = c2;
+      }
+      paintStaticLayer();
+    };
+    applySize();
+    window.addEventListener('resize', applySize);
+    return () => window.removeEventListener('resize', applySize);
+  }, [paintStaticLayer]);
 
   const drawVitalInfo = useCallback((ctx: CanvasRenderingContext2D, now: number) => {
     const { CANVAS_WIDTH: W, COLORS } = CONFIG;
@@ -482,15 +553,29 @@ const PPGSignalMeter = ({
         animationRef.current = requestAnimationFrame(render);
         return;
       }
-      const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+      let ctx = ctxRef.current;
       if (!ctx) {
-        animationRef.current = requestAnimationFrame(render);
-        return;
+        const c2 = canvas.getContext('2d', { alpha: false, desynchronized: true });
+        if (!c2) {
+          animationRef.current = requestAnimationFrame(render);
+          return;
+        }
+        c2.imageSmoothingEnabled = true;
+        c2.imageSmoothingQuality = 'high';
+        ctxRef.current = c2;
+        ctx = c2;
       }
       const dpr = dprRef.current;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
+      const staticCanvas = staticLayerRef.current;
+      if (staticCanvas && staticCanvas.width > 0) {
+        ctx.drawImage(staticCanvas, 0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+      } else {
+        drawGrid(ctx);
+        drawTimeScale(ctx);
+      }
       const now = Date.now();
       if (now - lastRenderTime < frameTime) {
         animationRef.current = requestAnimationFrame(render);
@@ -503,9 +588,7 @@ const PPGSignalMeter = ({
       const plot = getPlotArea();
       const { WINDOW_MS, COLORS } = CONFIG;
       
-      drawGrid(ctx);
       drawAmplitudeScale(ctx);
-      drawTimeScale(ctx);
       drawVitalInfo(ctx, now);
       
       if (preserve && !detected) {
@@ -633,20 +716,7 @@ const PPGSignalMeter = ({
             ctx.restore();
           }
         }
-        for (let i = 1; i < pathCoords.length; i++) {
-          const prev = pathCoords[i - 1]!;
-          const curr = pathCoords[i]!;
-          ctx.beginPath();
-          ctx.moveTo(prev.x, prev.y);
-          ctx.lineTo(curr.x, curr.y);
-          const st = strokeForWaveClass(curr.wc, COLORS);
-          ctx.strokeStyle = st.stroke;
-          ctx.shadowColor = st.glow;
-          ctx.shadowBlur = st.blur;
-          ctx.lineWidth = st.width;
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-        }
+        strokeWaveformRuns(pathCoords, COLORS, ctx);
 
         const plotTelemetryY = plot.y + 8;
         const telH = 32;
@@ -700,17 +770,24 @@ const PPGSignalMeter = ({
           });
           visibleBeats.push({ time: beat.time, x, y, waveClass: beat.waveClass });
         }
+        let valleyScan = 0;
+        const nPts = points.length;
         for (let b = 0; b < visibleBeats.length - 1; b++) {
           const t0 = visibleBeats[b].time;
           const t1 = visibleBeats[b + 1].time;
+          while (valleyScan < nPts && points[valleyScan]!.time <= t0) valleyScan++;
           let minVal = Infinity;
           let minPt: PPGDataPoint | null = null;
-          for (const pt of points) {
-            if (pt.time > t0 && pt.time < t1 && pt.value < minVal) {
+          let k = valleyScan;
+          while (k < nPts && points[k]!.time < t1) {
+            const pt = points[k]!;
+            if (pt.time > t0 && pt.value < minVal) {
               minVal = pt.value;
               minPt = pt;
             }
+            k++;
           }
+          valleyScan = k;
           if (minPt) {
             const age2 = now - minPt.time;
             const vx = plot.x + plot.width - (age2 * plot.width / WINDOW_MS);
@@ -764,7 +841,7 @@ const PPGSignalMeter = ({
           ctx.strokeStyle = vLineStroke;
           ctx.lineWidth = 4;
           ctx.shadowColor = peakColor;
-          ctx.shadowBlur = isLatest ? 18 : 10;
+          ctx.shadowBlur = isLatest ? 14 : 8;
           ctx.beginPath();
           ctx.moveTo(p.x, traceTop);
           ctx.lineTo(p.x, plot.y + plot.height);
