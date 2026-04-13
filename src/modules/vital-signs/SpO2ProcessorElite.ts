@@ -6,11 +6,14 @@
  * - Webster 1997: Pulse oximetry principles (original)
  * - De Jesus et al. 2020: Smartphone SpO2 validation
  * - CHROM algorithm: De Haan & Jeanne 2013 (motion robustness)
+ * - Multi-channel ratio-of-ratios / meta-ROI: ver docs/REFERENCIAS_PPG.md
  * 
  * Mide: SaO2 real a partir de absorción diferencial R/G
  * Cálculo: SpO2 = 110 - 25 × R (calibrado empíricamente)
  * donde R = (ACr/DCr) / (ACg/DCg) × compensación
  */
+
+import { trimmedMedian } from './OpticalRatioEngine';
 
 export interface SpO2ResultElite {
   value: number;                    // % SpO2 (95-100 normal)
@@ -50,6 +53,9 @@ export class SpO2ProcessorElite {
   private ratioBuffer: number[] = [];
   private readonly RATIO_BUFFER_SIZE = 20;
   private ratioQualityBuffer: number[] = [];
+  /** Ratios alineados a latido (refuerzo temporal, mismo rol que SpO2Processor.addBeatRatio) */
+  private beatRatioBuffer: number[] = [];
+  private readonly BEAT_RATIO_BUF = 8;
   
   // Estado
   private consecutiveValidFrames = 0;
@@ -128,9 +134,13 @@ export class SpO2ProcessorElite {
       this.ratioBuffer.shift();
     }
     
-    // Calcular R mediano (robusto a outliers)
+    // Calcular R mediano (robusto a outliers); fusionar con ratios por latido si hay suficientes
     const sortedRatios = [...this.ratioBuffer].sort((a, b) => a - b);
-    const medianR = sortedRatios[Math.floor(sortedRatios.length / 2)];
+    let medianR = sortedRatios[Math.floor(sortedRatios.length / 2)];
+    if (this.beatRatioBuffer.length >= 3) {
+      const br = trimmedMedian(this.beatRatioBuffer, 0.12);
+      if (isFinite(br)) medianR = medianR * 0.65 + br * 0.35;
+    }
     
     // ========== CONVERSIÓN A SpO2 ==========
     // Modelo calibrado: SpO2 = intercept - slope × R
@@ -210,6 +220,13 @@ export class SpO2ProcessorElite {
     
     this.lastValidValue = result.value;
     return result;
+  }
+
+  /** Llamar en cada pico cardíaco con ratio R/G del frame del latido */
+  ingestBeatRatio(R: number): void {
+    if (!isFinite(R) || R < 0.05 || R > 2.0) return;
+    this.beatRatioBuffer.push(R);
+    if (this.beatRatioBuffer.length > this.BEAT_RATIO_BUF) this.beatRatioBuffer.shift();
   }
   
   // ============ MÉTODOS PRIVADOS ============
@@ -301,6 +318,7 @@ export class SpO2ProcessorElite {
   reset(): void {
     this.ratioBuffer = [];
     this.ratioQualityBuffer = [];
+    this.beatRatioBuffer = [];
     this.consecutiveValidFrames = 0;
     this.valueHistory = [];
   }

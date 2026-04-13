@@ -1,5 +1,5 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
-import { BloodPressureProcessor } from './BloodPressureProcessor';
+import { BloodPressureProcessorElite } from './BloodPressureProcessorElite';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
 
 type BeatInputRow = {
@@ -10,7 +10,9 @@ type BeatInputRow = {
   amplitude?: number;
   flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
 };
-import { SpO2Processor, type SpO2Result } from './SpO2Processor';
+import type { SpO2Result } from './SpO2Processor';
+import { SpO2ProcessorElite } from './SpO2ProcessorElite';
+import { mapEliteSpO2ToDetail } from './spo2EliteAdapter';
 import { SpO2Calibrator } from './SpO2Calibrator';
 import { ratioOfRatios } from './OpticalRatioEngine';
 import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
@@ -77,9 +79,9 @@ export interface RGBData {
 }
 
 export class VitalSignsProcessor {
-  private bloodPressureProcessor: BloodPressureProcessor;
+  private bloodPressureProcessor: BloodPressureProcessorElite;
   private rhythmClassifier: RhythmClassifier;
-  private spo2Processor: SpO2Processor;
+  private spo2Processor: SpO2ProcessorElite;
   private spo2Calibrator: SpO2Calibrator;
   private glucoseProcessor: GlucoseResearchProcessor;
   private lipidProcessor: LipidResearchProcessor;
@@ -108,6 +110,7 @@ export class VitalSignsProcessor {
   };
 
   private signalHistory: number[] = [];
+  private timestampHistory: number[] = [];
   private readonly HISTORY_SIZE = 90;
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   private validPulseCount = 0;
@@ -144,13 +147,13 @@ export class VitalSignsProcessor {
       deviceId: profile.deviceProfileId,
     });
     this.spo2Calibrator.setOpticalBiasR(profile.opticalBiasR);
-    this.spo2Processor = new SpO2Processor(this.spo2Calibrator);
+    this.spo2Processor = new SpO2ProcessorElite();
     this.deviceCalibrationEngine = new DeviceCalibrationEngine(this.deviceProfiles, profile);
     this.bpCalibrationManager = new BPCalibrationManager();
     this.userBaseline = new UserBaselineEngine();
     this.longitudinal = new LongitudinalDatasetStore();
 
-    this.bloodPressureProcessor = new BloodPressureProcessor();
+    this.bloodPressureProcessor = new BloodPressureProcessorElite();
     this.rhythmClassifier = new RhythmClassifier();
     this.glucoseProcessor = new GlucoseResearchProcessor();
     this.lipidProcessor = new LipidResearchProcessor();
@@ -168,7 +171,7 @@ export class VitalSignsProcessor {
       this.rgbData.redAC, this.rgbData.redDC,
       this.rgbData.greenAC, this.rgbData.greenDC
     );
-    if (isFinite(R)) this.spo2Processor.addBeatRatio(R);
+    if (isFinite(R)) this.spo2Processor.ingestBeatRatio(R);
   }
 
   startCalibration(): void {
@@ -181,6 +184,7 @@ export class VitalSignsProcessor {
       totalCholesterol: 0, triglycerides: 0, lastArrhythmiaData: null, signalQuality: 0,
     };
     this.signalHistory = [];
+    this.timestampHistory = [];
   }
 
   forceCalibrationCompletion(): void {
@@ -219,10 +223,16 @@ export class VitalSignsProcessor {
       ibiMs: number; beatSQI: number; morphologyScore: number;
       detectorAgreement: number; amplitude?: number;
       flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
-    }>
+    }>,
+    frameTimestamp?: number
   ): VitalSignsResult {
+    const ts = frameTimestamp ?? performance.now();
     this.signalHistory.push(signalValue);
-    if (this.signalHistory.length > this.HISTORY_SIZE) this.signalHistory.shift();
+    this.timestampHistory.push(ts);
+    if (this.signalHistory.length > this.HISTORY_SIZE) {
+      this.signalHistory.shift();
+      this.timestampHistory.shift();
+    }
 
     if (this.isCalibrating) {
       this.calibrationSamples++;
@@ -282,6 +292,12 @@ export class VitalSignsProcessor {
     return Math.min(100, Math.max(0, snr * 16));
   }
 
+  private resolveSpo2CalState(): SpO2Result['calibrationState'] {
+    const c = this.spo2Calibrator.getCurve();
+    if (c.deviceId !== 'default') return 'DEVICE_CALIBRATED';
+    return 'UNCALIBRATED';
+  }
+
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
     if (sq >= 45 && this.validPulseCount >= 4) return 'HIGH';
@@ -303,22 +319,35 @@ export class VitalSignsProcessor {
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
     const sampleRate = this.upstreamContext.sampleRate || 30;
 
-    const spo2Result = this.spo2Processor.process({
-      redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
-      greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
-      contactStable: this.upstreamContext.contactStable,
+    const contactQ = Math.max(this.measurements.signalQuality, this.upstreamContext.avgBeatSQI);
+    const spo2Elite = this.spo2Processor.process({
+      redAC: this.rgbData.redAC,
+      redDC: this.rgbData.redDC,
+      greenAC: this.rgbData.greenAC,
+      greenDC: this.rgbData.greenDC,
+      contactQuality: contactQ,
+      beatSQI: this.upstreamContext.avgBeatSQI,
       pressureOptimal: this.upstreamContext.pressureOptimal,
       clipHighRatio: this.upstreamContext.clipHighRatio,
-      beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
-      avgBeatSQI: this.upstreamContext.avgBeatSQI,
-      sourceStability: this.upstreamContext.sourceStability,
+      clipLowRatio: 0,
     });
-    this.lastSpo2 = spo2Result;
 
-    if (spo2Result.medianR > 0) {
+    const calState = this.resolveSpo2CalState();
+    let spo2Detail = mapEliteSpO2ToDetail(spo2Elite, calState);
+
+    if (spo2Elite.opticalMetrics.ratioR > 0) {
+      const calSpo2 = this.spo2Calibrator.estimateSpO2(spo2Elite.opticalMetrics.ratioR);
+      if (isFinite(calSpo2) && calSpo2 >= 70 && calSpo2 <= 100) {
+        const w = calState === 'DEVICE_CALIBRATED' ? 0.42 : 0.18;
+        spo2Detail = {
+          ...spo2Detail,
+          value: Math.round(spo2Elite.value * (1 - w) + calSpo2 * w),
+          confidence: Math.min(1, spo2Detail.confidence + (calState === 'DEVICE_CALIBRATED' ? 0.06 : 0.02)),
+        };
+      }
       this.deviceCalibrationEngine.ingestFrameStats({
-        medianR: spo2Result.medianR,
-        rVariance: Math.max(0, 1 - (spo2Result.quality / 100)) * 0.05,
+        medianR: spo2Elite.opticalMetrics.ratioR,
+        rVariance: Math.max(0, 1 - spo2Elite.quality / 100) * 0.05,
         clipHighEma: this.upstreamContext.clipHighRatio,
         frameIntervalMs: 1000 / sampleRate,
         sourceLabel: 'RG',
@@ -326,8 +355,10 @@ export class VitalSignsProcessor {
       this.spo2Calibrator.setOpticalBiasR(this.deviceCalibrationEngine.getOpticalBiasR());
     }
 
-    if (spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
-      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
+    this.lastSpo2 = spo2Detail;
+
+    if (spo2Detail.value > 0 && spo2Detail.enabledState !== 'WITHHELD_LOW_QUALITY') {
+      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Detail.value, 'stable');
     }
 
     const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, sampleRate);
@@ -342,20 +373,33 @@ export class VitalSignsProcessor {
     const bpOff = this.bpCalibrationManager.getOffsets();
     const devBp = this.deviceCalibrationEngine.getBpOffset();
 
-    if (validRR.length >= 2) {
-      const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, sampleRate, {
-        systolicOffset: bpOff.systolic + devBp.systolic,
-        diastolicOffset: bpOff.diastolic + devBp.diastolic,
-      });
-      this.lastBPConfidence = bpEstimate.confidence;
-      this.lastBPFeatureQuality = bpEstimate.featureQuality;
-      this.lastBpCycles = bpEstimate.cyclesUsed;
-      this.lastBpTrendFirst = !!bpEstimate.trendFirst;
-      this.lastBpTrendLabel = bpEstimate.trendLabel;
+    if (validRR.length >= 2 && this.signalHistory.length >= 60) {
+      const bpElite = this.bloodPressureProcessor.process(
+        [...this.signalHistory],
+        validRR,
+        [...this.timestampHistory],
+        sampleRate
+      );
+      this.lastBPConfidence = bpElite.confidenceLevel;
+      this.lastBPFeatureQuality = bpElite.featureQuality;
+      this.lastBpCycles = bpElite.cyclesValid;
 
-      if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
-        this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
-        this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
+      const trendFirst =
+        bpElite.confidenceLevel === 'INSUFFICIENT' &&
+        bpElite.featureQuality >= 22 &&
+        bpElite.cyclesValid >= 2;
+      this.lastBpTrendFirst = trendFirst;
+      if (!trendFirst) {
+        this.lastBpTrendLabel = 'STABLE';
+      }
+
+      if (bpElite.confidenceLevel !== 'INSUFFICIENT') {
+        let sbp = bpElite.systolic + bpOff.systolic + devBp.systolic;
+        let dbp = bpElite.diastolic + bpOff.diastolic + devBp.diastolic;
+        sbp = Math.max(70, Math.min(200, sbp));
+        dbp = Math.max(45, Math.min(120, dbp));
+        this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, sbp, 'stable');
+        this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, dbp, 'stable');
       }
     }
 
@@ -564,6 +608,7 @@ export class VitalSignsProcessor {
   reset(): VitalSignsResult | null {
     const result = this.getFormattedResult();
     this.signalHistory = [];
+    this.timestampHistory = [];
     this.validPulseCount = 0;
     this.spo2Processor.reset();
     this.glucoseProcessor.reset();
@@ -582,6 +627,7 @@ export class VitalSignsProcessor {
 
   fullReset(): void {
     this.signalHistory = [];
+    this.timestampHistory = [];
     this.validPulseCount = 0;
     this.measurements = {
       spo2: 0, glucose: 0, systolicPressure: 0, diastolicPressure: 0,
@@ -591,8 +637,8 @@ export class VitalSignsProcessor {
     this.rgbData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
     this.isCalibrating = false;
     this.calibrationSamples = 0;
-    this.bloodPressureProcessor.fullReset();
-    this.spo2Processor.fullReset();
+    this.bloodPressureProcessor.reset();
+    this.spo2Processor.reset();
     const p = this.deviceProfiles.get();
     this.spo2Calibrator.setDeviceCurve(p.spo2Curve.A, p.spo2Curve.B, p.spo2Curve.C, p.deviceProfileId);
     this.spo2Calibrator.setOpticalBiasR(p.opticalBiasR);

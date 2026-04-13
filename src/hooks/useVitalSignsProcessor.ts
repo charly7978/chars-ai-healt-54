@@ -54,7 +54,8 @@ export const useVitalSignsProcessor = () => {
       ibiMs: number; beatSQI: number; morphologyScore: number;
       detectorAgreement: number; amplitude?: number;
       flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
-    }>
+    }>,
+    frameTimestamp?: number
   ): VitalSignsResult => {
     const defaultResult: VitalSignsResult = {
       spo2: 0, glucose: 0,
@@ -68,7 +69,7 @@ export const useVitalSignsProcessor = () => {
     if (!processorRef.current) return defaultResult;
     
     processedSignals.current++;
-    const result = processorRef.current.processSignal(value, rrData, beatInputs);
+    const result = processorRef.current.processSignal(value, rrData, beatInputs, frameTimestamp);
     
     if (
       result.measurementConfidence !== 'INVALID' ||

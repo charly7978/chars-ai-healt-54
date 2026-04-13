@@ -15,12 +15,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { NON_ALERT_RHYTHM_LABELS } from "@/constants/rhythmAlert";
 import type { BeatFlags } from "@/types/beat";
 
-// Élite processors
-import { SpO2ProcessorElite } from "@/modules/vital-signs/SpO2ProcessorElite";
-import { BloodPressureProcessorElite } from "@/modules/vital-signs/BloodPressureProcessorElite";
-import { HRVNonlinearAnalyzer } from "@/modules/vital-signs/HRVNonlinearAnalyzer";
-import { HRVFrequencyAnalyzer } from "@/modules/vital-signs/HRVFrequencyAnalyzer";
-
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -76,14 +70,6 @@ const Index = () => {
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
   const frameTimestampHistoryRef = useRef<number[]>([]);
-  
-  // Élite processors refs
-  const spo2EliteRef = useRef<SpO2ProcessorElite | null>(null);
-  const bpEliteRef = useRef<BloodPressureProcessorElite | null>(null);
-  const hrvNonlinearRef = useRef<HRVNonlinearAnalyzer | null>(null);
-  const hrvFrequencyRef = useRef<HRVFrequencyAnalyzer | null>(null);
-  const signalBufferRef = useRef<number[]>([]);
-  const timestampBufferRef = useRef<number[]>([]);
 
   const EMA_ALPHA = 0.3;
   const emaRef = useRef({
@@ -123,21 +109,6 @@ const Index = () => {
     const variance = recent.reduce((sum, rr) => sum + (rr - mean) ** 2, 0) / recent.length;
     const cv = Math.sqrt(variance) / Math.max(1, mean);
     return Math.max(0, Math.min(1, 1 - cv * 2));
-  }, []);
-
-  // Inicializar procesadores élite
-  useEffect(() => {
-    spo2EliteRef.current = new SpO2ProcessorElite();
-    bpEliteRef.current = new BloodPressureProcessorElite();
-    hrvNonlinearRef.current = new HRVNonlinearAnalyzer();
-    hrvFrequencyRef.current = new HRVFrequencyAnalyzer();
-    
-    return () => {
-      spo2EliteRef.current = null;
-      bpEliteRef.current = null;
-      hrvNonlinearRef.current = null;
-      hrvFrequencyRef.current = null;
-    };
   }, []);
 
   const { 
@@ -611,61 +582,12 @@ const Index = () => {
         beatCount: heartBeatResult.debug.beatsAccepted,
       });
 
-      const vitals = processVitalSigns(lastSignal.filteredValue, usableRRData, beatInputs);
-
-      // Procesadores élite - Integración sin romper flujo existente
-      signalBufferRef.current.push(lastSignal.filteredValue);
-      timestampBufferRef.current.push(lastSignal.timestamp);
-      if (signalBufferRef.current.length > 360) {
-        signalBufferRef.current.shift();
-        timestampBufferRef.current.shift();
-      }
-
-      // SpO2 élite
-      if (spo2EliteRef.current && rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
-        const spo2Elite = spo2EliteRef.current.process({
-          redAC: rgbStats.redAC,
-          redDC: rgbStats.redDC,
-          greenAC: rgbStats.greenAC,
-          greenDC: rgbStats.greenDC,
-          contactQuality: lastSignal.quality || 0,
-          beatSQI: heartBeatResult.beatSQI || 0,
-          pressureOptimal: true,
-          clipHighRatio: 0,
-          clipLowRatio: 0
-        });
-        if (spo2Elite.value > 0) {
-          vitals.spo2 = spo2Elite.value;
-        }
-      }
-
-      // Blood Pressure élite
-      if (bpEliteRef.current && usableRRData && signalBufferRef.current.length > 90) {
-        const bpElite = bpEliteRef.current.process(
-          signalBufferRef.current,
-          usableRRData.intervals,
-          timestampBufferRef.current,
-          30
-        );
-        if (bpElite.confidenceLevel !== 'INSUFFICIENT') {
-          vitals.pressure.systolic = bpElite.systolic;
-          vitals.pressure.diastolic = bpElite.diastolic;
-          vitals.pressure.confidence = bpElite.confidenceLevel === 'HIGH' ? 'HIGH' as const : 'MEDIUM' as const;
-          vitals.pressure.featureQuality = bpElite.featureQuality;
-        }
-      }
-
-      // HRV élite
-      if (usableRRData && usableRRData.intervals.length >= 20) {
-        if (hrvNonlinearRef.current) {
-          const hrvNonlinear = hrvNonlinearRef.current.analyze(usableRRData.intervals.slice(-64));
-          // HRV non-linear disponible para análisis futuro
-        }
-        if (hrvFrequencyRef.current) {
-          const hrvFrequency = hrvFrequencyRef.current.analyze(usableRRData.intervals.slice(-128));
-          // HRV frequency disponible para análisis futuro
-        }
-      }
+      const vitals = processVitalSigns(
+        lastSignal.filteredValue,
+        usableRRData,
+        beatInputs,
+        lastSignal.timestamp
+      );
 
       const e = emaRef.current;
       const smoothed: typeof vitals = {
