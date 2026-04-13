@@ -21,7 +21,6 @@ import {
 } from "@/modules/personalization/userPhysiology";
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
     spo2: 0,
     glucose: 0,
@@ -308,7 +307,6 @@ const Index = () => {
     frameTimestampHistoryRef.current = [];
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SINUS_STABLE|0" }));
     startProcessing();
-    setIsCameraOn(true);
     setIsMonitoring(true);
     if (measurementTimerRef.current) clearInterval(measurementTimerRef.current);
     measurementTimerRef.current = window.setInterval(() => setElapsedTime(prev => prev + 1), 1000);
@@ -360,7 +358,6 @@ const Index = () => {
         signalQuality: lastSignal?.quality || 0
       });
     }
-    setIsCameraOn(false);
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
@@ -394,7 +391,6 @@ const Index = () => {
     resetHeartBeat();
     emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, cholesterol: 0, triglycerides: 0 };
     frameTimestampHistoryRef.current = [];
-    setIsCameraOn(false);
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
@@ -766,8 +762,12 @@ const Index = () => {
 
       <div className="flex-1 relative">
         <div className="absolute inset-0">
-          <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isCameraOn} />
+          <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
         </div>
+        <div
+          className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/40 via-transparent to-black/50"
+          aria-hidden
+        />
 
         {isMonitoring && (() => {
           const pq = getPositionQuality();
@@ -832,8 +832,9 @@ const Index = () => {
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[55%] bottom-[72px] bg-black/10 px-4 py-6 sm:bottom-20">
-            <div className="grid grid-cols-3 gap-4 place-items-center">
+          <div className="pointer-events-none absolute inset-x-0 top-[55%] bottom-[72px] px-3 py-5 sm:bottom-20 sm:px-4">
+            <div className="mx-auto max-w-4xl rounded-2xl border border-white/10 bg-black/35 px-3 py-5 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:px-5">
+            <div className="grid grid-cols-3 gap-3 place-items-center sm:gap-4">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
               <VitalSign 
@@ -852,6 +853,7 @@ const Index = () => {
                 highlighted={showResults}
               />
               <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
+            </div>
             </div>
           </div>
 

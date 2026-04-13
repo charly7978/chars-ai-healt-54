@@ -91,6 +91,13 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         console.log('📷 Cameras:', videoDevices.map(d => d.label || d.deviceId));
 
+        // Una sola cámara (p. ej. webcam en PC): evita abrir/cerrar varios streams de prueba → menos parpadeo LED/OS.
+        if (videoDevices.length === 1) {
+          const d = videoDevices[0]!;
+          diagnosticsRef.current.deviceLabel = d.label || 'Cámara';
+          return d.deviceId;
+        }
+
         // Try each back camera to find one with torch
         for (const device of videoDevices) {
           const label = device.label.toLowerCase();
@@ -136,6 +143,34 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     };
 
     const startCamera = async () => {
+      // Si el track sigue vivo (re-ejecución del efecto sin cleanup real, o reconexión del <video>), no reiniciar getUserMedia.
+      const existing = streamRef.current;
+      const existingTrack = existing?.getVideoTracks?.()[0];
+      if (existing && existingTrack && existingTrack.readyState === 'live' && mounted) {
+        const video = videoRef.current;
+        if (video) {
+          if (video.srcObject !== existing) {
+            video.srcObject = existing;
+            try {
+              await new Promise<void>((resolve) => {
+                const v = video;
+                const done = async () => {
+                  v.removeEventListener('loadedmetadata', done);
+                  try { await v.play(); } catch {}
+                  resolve();
+                };
+                v.addEventListener('loadedmetadata', done);
+                if (v.readyState >= 1) void done();
+              });
+            } catch {}
+          } else {
+            try { await video.play(); } catch {}
+          }
+        }
+        onStreamReadyRef.current?.(existing);
+        return;
+      }
+
       if (isStartingRef.current) return;
       isStartingRef.current = true;
       await stopCamera();

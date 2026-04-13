@@ -1045,15 +1045,15 @@ const PPGSignalMeter = ({
   }, [onReset]);
 
   return (
-    <div className="fixed inset-0 bg-slate-950">
+    <div className="fixed inset-0 bg-gradient-to-b from-slate-950 via-slate-900/98 to-slate-950">
       <canvas
         ref={canvasRef}
         className="w-full h-full absolute inset-0 z-0 block touch-none"
         style={{ imageRendering: 'auto' }}
       />
       <div
-        className="absolute left-0 right-0 z-[100] flex flex-row flex-wrap items-start justify-between gap-3 px-3 sm:px-4 pointer-events-none"
-        style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))' }}
+        className="absolute left-0 right-0 z-[100] flex flex-row flex-wrap items-start justify-between gap-3 border-b border-white/5 bg-black/25 px-3 backdrop-blur-xl sm:px-4 pointer-events-none"
+        style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))', paddingBottom: '0.75rem' }}
       >
         <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
           <div
@@ -1106,14 +1106,14 @@ const PPGSignalMeter = ({
           </div>
         )}
       </div>
-      <div className="fixed bottom-0 left-0 right-0 z-50 grid h-16 grid-cols-2 border-t border-slate-600/50 pb-[max(0.25rem,env(safe-area-inset-bottom))] sm:h-[4.25rem]">
+      <div className="fixed bottom-0 left-0 right-0 z-50 grid h-16 grid-cols-2 border-t border-white/10 bg-slate-950/55 pb-[max(0.25rem,env(safe-area-inset-bottom))] backdrop-blur-lg sm:h-[4.25rem]">
         <button
           type="button"
           onClick={onStartMeasurement}
           className={`min-h-[3.5rem] text-base font-bold transition-colors sm:text-lg ${
             isMonitoring
-              ? 'border-r border-slate-600/60 bg-red-600/25 text-red-100 hover:bg-red-600/35 active:bg-red-600/45'
-              : 'border-r border-slate-600/60 bg-emerald-600/35 text-emerald-50 hover:bg-emerald-600/45 active:bg-emerald-600/55'
+              ? 'border-r border-white/10 bg-red-600/30 text-red-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:bg-red-600/40 active:bg-red-600/50'
+              : 'border-r border-white/10 bg-emerald-600/35 text-emerald-50 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] hover:bg-emerald-600/45 active:bg-emerald-600/55'
           }`}
         >
           {isMonitoring ? 'DETENER' : 'INICIAR'}
@@ -1121,7 +1121,7 @@ const PPGSignalMeter = ({
         <button
           type="button"
           onClick={handleReset}
-          className="min-h-[3.5rem] bg-slate-800/50 text-base font-bold text-slate-100 hover:bg-slate-700/55 active:bg-slate-700/65 sm:text-lg"
+          className="min-h-[3.5rem] bg-slate-800/40 text-base font-bold text-slate-100 hover:bg-slate-700/50 active:bg-slate-700/60 sm:text-lg"
         >
           RESET
         </button>
