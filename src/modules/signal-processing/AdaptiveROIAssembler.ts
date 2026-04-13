@@ -7,6 +7,8 @@ import type { TileSnapshot } from './TilePulsatilityMap';
 
 export interface AdaptiveROIResult {
   bbox: { sx: number; sy: number; ex: number; ey: number };
+  /** Centroide ponderado del tejido en espacio de grid normalizado [0,1]² (para servo del ROI) */
+  centroidNorm: { x: number; y: number };
   /** Peso elíptico por tile (0..1) alineado con grid */
   ellipseMask: Float32Array;
   activeTiles: Uint8Array;
@@ -44,6 +46,15 @@ export class AdaptiveROIAssembler {
   private readonly scratchScores: Float64Array;
   private readonly scratchIdx: Uint16Array;
   private ellipseBuf: Float32Array;
+  private readonly candidateBuf: Uint8Array;
+  private readonly activeBuf: Uint8Array;
+  private readonly discardedBuf: Uint8Array;
+  /** Buffers fijos para trimmed mean (sin alloc por frame) */
+  private readonly trimR: Float64Array;
+  private readonly trimG: Float64Array;
+  private readonly trimB: Float64Array;
+  private readonly trimW: Float64Array;
+  private readonly trimOrder: Uint16Array;
 
   constructor(config: AssemblerConfig) {
     this.cols = config.cols;
@@ -59,6 +70,14 @@ export class AdaptiveROIAssembler {
     this.scratchScores = new Float64Array(n);
     this.scratchIdx = new Uint16Array(n);
     this.ellipseBuf = new Float32Array(n);
+    this.candidateBuf = new Uint8Array(n);
+    this.activeBuf = new Uint8Array(n);
+    this.discardedBuf = new Uint8Array(n);
+    this.trimR = new Float64Array(n);
+    this.trimG = new Float64Array(n);
+    this.trimB = new Float64Array(n);
+    this.trimW = new Float64Array(n);
+    this.trimOrder = new Uint16Array(n);
   }
 
   reset(): void {
@@ -134,13 +153,13 @@ export class AdaptiveROIAssembler {
     }
 
     const k = Math.min(this.topK, n);
-    const candidate = new Uint8Array(n);
+    this.candidateBuf.fill(0);
     for (let i = 0; i < k; i++) {
-      candidate[this.scratchIdx[i]!] = 1;
+      this.candidateBuf[this.scratchIdx[i]!] = 1;
     }
 
     for (let i = 0; i < n; i++) {
-      if (candidate[i]) {
+      if (this.candidateBuf[i]) {
         this.tileOnCount[i]++;
         this.tileOffCount[i] = 0;
       } else {
@@ -200,29 +219,25 @@ export class AdaptiveROIAssembler {
       ey: Math.round(roiSy + (maxY + 1) * th),
     };
 
-    // Weighted trimmed mean on active tile means
-    const valsR: number[] = [];
-    const valsG: number[] = [];
-    const valsB: number[] = [];
-    const wts: number[] = [];
+    let trimN = 0;
     for (let i = 0; i < n; i++) {
       if (!this.stableActive[i]) continue;
       const t = tiles[i];
       if (!t || t.meanR < 1) continue;
       const wt = t.weight * this.ellipseBuf[i]!;
-      valsR.push(t.meanR);
-      valsG.push(t.meanG);
-      valsB.push(t.meanB);
-      wts.push(wt);
+      this.trimR[trimN] = t.meanR;
+      this.trimG[trimN] = t.meanG;
+      this.trimB[trimN] = t.meanB;
+      this.trimW[trimN] = wt;
+      this.trimOrder[trimN] = trimN;
+      trimN++;
     }
 
-    const trimmedMean = this.trimmedWeightedMean3(valsR, valsG, valsB, wts);
+    const trimmedMean = this.trimmedWeightedMeanInPlace(trimN);
 
-    const discarded = new Uint8Array(n);
-    const active = new Uint8Array(n);
     for (let i = 0; i < n; i++) {
-      active[i] = this.stableActive[i];
-      discarded[i] = this.stableActive[i] ? 0 : candidate[i] ? 1 : 0;
+      this.activeBuf[i] = this.stableActive[i];
+      this.discardedBuf[i] = this.stableActive[i] ? 0 : this.candidateBuf[i] ? 1 : 0;
     }
 
     const globalScore =
@@ -230,11 +245,17 @@ export class AdaptiveROIAssembler {
         ? Math.max(0, Math.min(1, (activeW / n) * 0.55 + spatialStab * 0.25 + (this.bboxStableFrames / 120) * 0.2))
         : 0;
 
+    const centroidNorm = {
+      x: cols > 0 ? cx / cols : 0.5,
+      y: rows > 0 ? cy / rows : 0.5,
+    };
+
     return {
       bbox,
+      centroidNorm,
       ellipseMask: this.ellipseBuf,
-      activeTiles: active,
-      discardedTiles: discarded,
+      activeTiles: this.activeBuf,
+      discardedTiles: this.discardedBuf,
       trimmedMean,
       coverageEffective,
       globalScore,
@@ -242,12 +263,20 @@ export class AdaptiveROIAssembler {
     };
   }
 
-  private trimmedWeightedMean3(r: number[], g: number[], b: number[], w: number[]): { r: number; g: number; b: number } {
-    const m = r.length;
+  /** Ordenación por brillo R con insertion sort sobre permutación idx → trimR[idx[k]] creciente */
+  private trimmedWeightedMeanInPlace(m: number): { r: number; g: number; b: number } {
     if (m === 0) return { r: 0, g: 0, b: 0 };
-    const idx: number[] = new Array(m);
-    for (let i = 0; i < m; i++) idx[i] = i;
-    idx.sort((a, b) => r[a]! - r[b]!);
+    const idx = this.trimOrder;
+    for (let i = 1; i < m; i++) {
+      const key = idx[i]!;
+      const rKey = this.trimR[key]!;
+      let j = i - 1;
+      while (j >= 0 && this.trimR[idx[j]!]! > rKey) {
+        idx[j + 1] = idx[j]!;
+        j--;
+      }
+      idx[j + 1] = key;
+    }
     const drop = Math.floor(m * this.trimFraction);
     let s0 = drop;
     let s1 = m - drop;
@@ -261,10 +290,10 @@ export class AdaptiveROIAssembler {
     let wt = 0;
     for (let i = s0; i < s1; i++) {
       const j = idx[i]!;
-      const ww = w[j]!;
-      wr += r[j]! * ww;
-      wg += g[j]! * ww;
-      wb += b[j]! * ww;
+      const ww = this.trimW[j]!;
+      wr += this.trimR[j]! * ww;
+      wg += this.trimG[j]! * ww;
+      wb += this.trimB[j]! * ww;
       wt += ww;
     }
     if (wt <= 1e-9) return { r: 0, g: 0, b: 0 };

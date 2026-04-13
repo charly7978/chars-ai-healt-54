@@ -109,8 +109,13 @@ export class FrameAnalysisEngine {
   private prevMaskChangeRate = 0;
 
   private lumaPrev: Float32Array | null = null;
+  private lumaScratch: Float32Array | null = null;
   private readonly lumaW = 24;
   private readonly lumaH = 18;
+
+  /** Servo espacial del ROI hacia el centroide del tejido (meta-ROI; px, referidos al centro del frame) */
+  private roiBiasPx = 0;
+  private roiBiasPy = 0;
 
   private estimatedSampleRate = 30;
   private lastTs = 0;
@@ -192,6 +197,9 @@ export class FrameAnalysisEngine {
     this.lastRawRedForMeta = 0;
     this.prevMaskChangeRate = 0;
     this.lumaPrev = null;
+    this.lumaScratch = null;
+    this.roiBiasPx = 0;
+    this.roiBiasPy = 0;
     this.lastTs = 0;
     for (const b of this.sourceBuffers.values()) b.clear();
     this.lastAllSQI = {};
@@ -218,14 +226,27 @@ export class FrameAnalysisEngine {
     const metaQ = 0.5 * this.metaStabilityEma + 0.5 * this.pulsatilityEma;
     const roiFrac = Math.max(0.58, Math.min(0.88, 0.63 + 0.2 * metaQ));
     const roiSize = Math.min(w, h) * roiFrac;
-    const sx = Math.floor((w - roiSize) / 2);
-    const sy = Math.floor((h - roiSize) / 2);
-    const ex = sx + Math.floor(roiSize);
-    const ey = sy + Math.floor(roiSize);
+    const roiInt = Math.floor(roiSize);
+    const maxShift = Math.min(w, h) * 0.14;
+    let sx = Math.floor((w - roiInt) / 2 + this.roiBiasPx);
+    let sy = Math.floor((h - roiInt) / 2 + this.roiBiasPy);
+    sx = Math.max(0, Math.min(sx, w - roiInt));
+    sy = Math.max(0, Math.min(sy, h - roiInt));
+    const ex = sx + roiInt;
+    const ey = sy + roiInt;
 
     this.tileMap.processFrame(data, w, h, sx, sy, ex, ey, this.tileSnapshots, globalMotion);
 
     const assembled = this.assembler.assemble(this.tileSnapshots, w, h, sx, sy, ex, ey);
+
+    const roiW = ex - sx;
+    const roiH = ey - sy;
+    const errX = (assembled.centroidNorm.x - 0.5) * roiW;
+    const errY = (assembled.centroidNorm.y - 0.5) * roiH;
+    this.roiBiasPx = this.roiBiasPx * 0.84 + errX * 0.16;
+    this.roiBiasPy = this.roiBiasPy * 0.84 + errY * 0.16;
+    this.roiBiasPx = Math.max(-maxShift, Math.min(maxShift, this.roiBiasPx));
+    this.roiBiasPy = Math.max(-maxShift, Math.min(maxShift, this.roiBiasPy));
 
     let totalClipHi = 0;
     let totalClipLo = 0;
@@ -508,13 +529,15 @@ export class FrameAnalysisEngine {
       this.fillLumaDownsample(data, w, h, this.lumaPrev, lw, lh);
       return 0;
     }
-    const next = new Float32Array(lw * lh);
-    this.fillLumaDownsample(data, w, h, next, lw, lh);
+    if (!this.lumaScratch) this.lumaScratch = new Float32Array(lw * lh);
+    this.fillLumaDownsample(data, w, h, this.lumaScratch, lw, lh);
     let sum = 0;
     for (let i = 0; i < lw * lh; i++) {
-      sum += Math.abs(next[i]! - this.lumaPrev[i]!);
+      sum += Math.abs(this.lumaScratch[i]! - this.lumaPrev[i]!);
     }
-    this.lumaPrev.set(next);
+    const swap = this.lumaPrev;
+    this.lumaPrev = this.lumaScratch;
+    this.lumaScratch = swap;
     return Math.min(1, (sum / (lw * lh)) / 32);
   }
 

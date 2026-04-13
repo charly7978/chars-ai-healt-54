@@ -47,11 +47,12 @@ export class AdvancedFingerTracker {
       frame && 'width' in frame
         ? { width: frame.width, height: frame.height }
         : { width: 320, height: 240 };
-    const cx = width * 0.5;
-    const cy = height * 0.5;
 
     if (pipelineSnapshot) {
       const p = pipelineSnapshot;
+      const bb = p.roiBBox;
+      const cx = bb.ex > bb.sx ? (bb.sx + bb.ex) * 0.5 : width * 0.5;
+      const cy = bb.ey > bb.sy ? (bb.sy + bb.ey) * 0.5 : height * 0.5;
       const pi = p.perfusionIndex;
       this.signalHistory[this.historyIndex] = pi;
       this.historyIndex = (this.historyIndex + 1) % this.HISTORY;
@@ -104,6 +105,9 @@ export class AdvancedFingerTracker {
         segmentationConfidence: tissueInstant,
       };
     }
+
+    const cx = width * 0.5;
+    const cy = height * 0.5;
 
     if (!frame || frame instanceof ImageBitmap) {
       return {
