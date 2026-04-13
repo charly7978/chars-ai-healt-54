@@ -68,6 +68,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private readonly STABLE_THRESHOLD = 64; // ~2.1s contacto estable + perfusión
   private readonly UNSTABLE_GRACE = 160;
 
+  /** Histéresis: una sola salida estable para medición (evita parpadeo y criterios duplicados en UI). */
+  private measurementReadyLatched = false;
+  private measurementReadyHoldFrames = 0;
+  private measurementReadyLostFrames = 0;
+  private readonly MEASUREMENT_READY_ON_FRAMES = 18;
+  private readonly MEASUREMENT_READY_OFF_FRAMES = 8;
+
   // --- Smoothed metrics (EWMA) ---
   private smoothedRed = 0;
   private smoothedGreen = 0;
@@ -175,12 +182,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     if (this.exportedContactState === 'NO_CONTACT') {
       this.signalQuality = 0;
+      this.measurementReadyHoldFrames = 0;
+      this.measurementReadyLostFrames = 0;
+      this.measurementReadyLatched = false;
     this.onSignalReady({
       timestamp,
       rawValue: 0,
       filteredValue: 0,
       quality: 0,
       fingerDetected: false,
+      measurementReady: false,
       contactState: 'NO_CONTACT',
       extendedContactState: 'NO_CONTACT',
       motionArtifact,
@@ -285,6 +296,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ? this.signalQuality * driftPenalty
       : Math.min(18, this.signalQuality * 0.45);
 
+    const measurementReadyRaw = this.computeMeasurementReadyRaw(
+      perfusionIndex,
+      gatedQuality,
+      periodicityScore,
+      motionArtifact
+    );
+    const measurementReady = this.updateMeasurementReadyLatch(measurementReadyRaw);
+
     // --- LOGGING ---
     const now = performance.now();
     this.processingTimeMs = now - t0;
@@ -304,6 +323,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       filteredValue: filtered,
       quality: gatedQuality,
       fingerDetected: this.fingerDetected,
+      measurementReady,
       contactState: this.exportedContactState,
       extendedContactState: this.contactState,
       motionArtifact,
@@ -326,10 +346,57 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           `${source.label} PI:${perfusionIndex.toFixed(2)} P:${this.pressureState.charAt(0)} ` +
           `C:${(this.smoothedCoverage * 100).toFixed(0)} ${this.exportedContactState}` +
           `${motionArtifact ? ' MOV' : ''}`,
-        hasPulsatility: this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05,
-        pulsatilityValue: this.exportedContactState === 'STABLE_CONTACT' ? perfusionIndex : 0,
+        hasPulsatility: measurementReady,
+        pulsatilityValue: measurementReady ? perfusionIndex : 0,
       },
     });
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  MEDICIÓN ÚNICA (toda la UI usa solo `measurementReady` + histéresis)
+  // ══════════════════════════════════════════════════════
+
+  private computeMeasurementReadyRaw(
+    perfusionIndex: number,
+    gatedQuality: number,
+    periodicityScore: number,
+    motionArtifact: boolean
+  ): boolean {
+    if (motionArtifact) return false;
+    if (this.motionScore > 0.42) return false;
+    if (this.exportedContactState !== 'STABLE_CONTACT' || this.contactState !== 'STABLE_CONTACT') return false;
+    if (!this.fingerDetected) return false;
+    if (!this.positionLocked || this.positionDrifting) return false;
+    if (this.pressureState === 'HIGH_PRESSURE') return false;
+    if (perfusionIndex < 0.05) return false;
+    if (gatedQuality < 22) return false;
+    if (periodicityScore < 0.16) return false;
+    if (this.smoothedCoverage < 0.34) return false;
+    if (this.sourceStability < 0.32) return false;
+    return true;
+  }
+
+  private updateMeasurementReadyLatch(raw: boolean): boolean {
+    if (this.exportedContactState === 'NO_CONTACT') {
+      this.measurementReadyHoldFrames = 0;
+      this.measurementReadyLostFrames = 0;
+      this.measurementReadyLatched = false;
+      return false;
+    }
+    if (raw) {
+      this.measurementReadyHoldFrames++;
+      this.measurementReadyLostFrames = 0;
+      if (this.measurementReadyHoldFrames >= this.MEASUREMENT_READY_ON_FRAMES) {
+        this.measurementReadyLatched = true;
+      }
+    } else {
+      this.measurementReadyLostFrames++;
+      this.measurementReadyHoldFrames = 0;
+      if (this.measurementReadyLostFrames >= this.MEASUREMENT_READY_OFF_FRAMES) {
+        this.measurementReadyLatched = false;
+      }
+    }
+    return this.measurementReadyLatched;
   }
 
   // ══════════════════════════════════════════════════════
@@ -676,6 +743,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.positionDrift = 0; this.positionDrifting = false;
     this.positionQualityScore = 0;
     this.positionGuidance = 'COLOQUE SU DEDO';
+    this.measurementReadyLatched = false;
+    this.measurementReadyHoldFrames = 0;
+    this.measurementReadyLostFrames = 0;
   }
 
   // ══════════════════════════════════════════════════════

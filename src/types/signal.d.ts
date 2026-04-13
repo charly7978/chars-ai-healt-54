@@ -20,6 +20,11 @@ export interface ProcessedSignal {
   quality: number;
   fingerDetected: boolean;
   contactState: ContactState;
+  /**
+   * Única condición autoritativa para medir (dedo + pulso + posición + estabilidad).
+   * Calculada solo en PPGSignalProcessor con histéresis — la UI no debe reinterpretar contacto.
+   */
+  measurementReady: boolean;
   /** Estado fino del contacto (para gating biomarcadores) */
   extendedContactState?: ExtendedContactState;
   motionArtifact?: boolean;

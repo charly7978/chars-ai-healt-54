@@ -19,27 +19,6 @@ import {
   DEFAULT_USER_HEIGHT_M,
   clampUserHeightM,
 } from "@/modules/personalization/userPhysiology";
-import type { ProcessedSignal } from "@/types/signal";
-
-/** Solo contacto real con pulso verificable — evita "medición" con fondo/luz sin dedo. */
-function isValidMeasurementSignal(
-  sig: ProcessedSignal | null | undefined,
-  pq: { locked: boolean; drifting: boolean; qualityScore: number }
-): boolean {
-  if (!sig) return false;
-  return (
-    sig.contactState === "STABLE_CONTACT" &&
-    sig.fingerDetected === true &&
-    sig.extendedContactState === "STABLE_CONTACT" &&
-    sig.diagnostics?.hasPulsatility === true &&
-    (sig.perfusionIndex ?? 0) >= 0.05 &&
-    (sig.quality ?? 0) >= 20 &&
-    pq.locked &&
-    !pq.drifting &&
-    pq.qualityScore >= 0.48
-  );
-}
-
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -466,7 +445,6 @@ const Index = () => {
     lastProcessedSignalTsRef.current = lastSignal.timestamp;
 
     const signalValue = lastSignal.filteredValue;
-    const contactState = lastSignal.contactState;
     const ls = lastSignal as typeof lastSignal & {
       clipHighRatio?: number;
       clipLowRatio?: number;
@@ -475,7 +453,8 @@ const Index = () => {
       sourceStability?: number;
     };
     const positionQuality = getPositionQuality();
-    const stableHumanSignal = isValidMeasurementSignal(lastSignal, positionQuality);
+    /** Una sola fuente: PPGSignalProcessor.measurementReady (histérisis incluida). */
+    const stableHumanSignal = lastSignal.measurementReady === true;
 
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
@@ -491,13 +470,15 @@ const Index = () => {
       (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
       estimateSampleRateFromFrames(lastSignal.timestamp);
 
+    const contactForBeat = lastSignal.measurementReady ? "STABLE_CONTACT" : "NO_CONTACT";
+
     const heartBeatResult = processHeartBeat(
       signalValue,
-      contactState,
+      contactForBeat,
       lastSignal.timestamp,
       {
         quality: lastSignal.quality,
-        contactState,
+        contactState: contactForBeat,
         motionArtifact: lastSignal.motionArtifact,
         pressureState: ppgPressure ?? (pressureOptimal ? 'OPTIMAL_PRESSURE' : 'LOW_PRESSURE'),
         clipHigh,
@@ -812,7 +793,7 @@ const Index = () => {
             <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
-              isFingerDetected={isValidMeasurementSignal(lastSignal ?? undefined, getPositionQuality())}
+              isFingerDetected={lastSignal?.measurementReady ?? false}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
               {...(isFullscreen
