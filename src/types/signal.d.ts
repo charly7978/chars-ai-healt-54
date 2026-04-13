@@ -58,6 +58,8 @@ export interface ProcessedSignal {
   processedFps?: number;
   droppedFrames?: number;
   frameLatencyMs?: number;
+  roiValidPixelRatio?: number;
+  maskIoU?: number;
 }
 
 export interface ProcessingError {

@@ -33,6 +33,8 @@ export interface ContactScoreInput {
   pressureProxy: number;
   /** Detección instantánea tejido vs fondo 0..1 */
   tissueInstant: number;
+  /** Clasificador explícito: bloquea STABLE si hay aplastamiento hemodinámico */
+  highPressure: boolean;
 }
 
 export interface ContactStateOutput {
@@ -94,6 +96,10 @@ export class ContactStateMachine {
   }
 
   private desiredState(i: ContactScoreInput, agg: number): ContactMachineState {
+    if (i.highPressure) {
+      if (i.clipHigh > 0.1 || i.pressureProxy > 0.62) return 'EXCESS_PRESSURE';
+      return 'CONTACT_UNSTABLE';
+    }
     if (i.clipHigh > 0.38 || (i.clipHigh > 0.28 && i.redDominance < 0.08)) return 'SATURATED';
     if (i.pressureProxy > 0.78 && i.clipHigh > 0.12) return 'EXCESS_PRESSURE';
     if (i.pulsatilityQuality < 0.06 && i.coverage > 0.14 && i.tissueInstant > 0.35) return 'LOW_PERFUSION';

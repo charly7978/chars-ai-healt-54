@@ -31,7 +31,22 @@ export interface ROIMaskResult {
   debugBbox?: { sx: number; sy: number; ex: number; ey: number };
 }
 
-const LABELS = ['R', 'G', 'RG', 'CHROM', 'POS', 'ICA_APPROX', 'ROT', 'W_TILE', 'R_G', 'LOG_RG'] as const;
+const LABELS = [
+  'R',
+  'G',
+  'RG',
+  'CHROM',
+  'POS',
+  'ICA_APPROX',
+  'ROT',
+  'W_TILE',
+  'R_G',
+  'LOG_RG',
+  'LOG_R',
+  'LOG_G',
+  'DIFF_R',
+  'ROBUST',
+] as const;
 
 export interface FrameAnalysisResult {
   timestamp: number;
@@ -75,6 +90,12 @@ export interface FrameAnalysisResult {
   activeTileSample: number[];
   /** Fs estimada en el núcleo (Δt entre frames); alinear filtro en PPGSignalProcessor */
   sampleRateHint: number;
+  /** Intersección máscara tile activa vs frame anterior [0,1] */
+  maskIoU: number;
+  /** Fracción de píxeles válidos (no saturados/cut-off) en tiles ponderados */
+  roiValidPixelRatio: number;
+  gridCols: number;
+  gridRows: number;
 }
 
 export class FrameAnalysisEngine {
@@ -126,15 +147,19 @@ export class FrameAnalysisEngine {
 
   private lastAllSQI: Record<string, number> = {};
 
+  /** EMA brillo R para umbrales adaptativos por sesión */
+  private sessionRedEma = 88;
+  private prevStableMask: Uint8Array | null = null;
+
   constructor() {
-    this.tileMap = new TilePulsatilityMap({ cols: 12, rows: 16, pixelStep: 2 });
+    this.tileMap = new TilePulsatilityMap({ cols: 9, rows: 9, pixelStep: 2 });
     this.assembler = new AdaptiveROIAssembler({
-      cols: 12,
-      rows: 16,
-      topK: 28,
-      trimFraction: 0.12,
-      tileHysteresisOn: 4,
-      tileHysteresisOff: 8,
+      cols: 9,
+      rows: 9,
+      topK: 42,
+      trimFraction: 0.11,
+      tileHysteresisOn: 5,
+      tileHysteresisOff: 9,
     });
     this.contactMachine = new ContactStateMachine();
     this.pressureEstimator = new PressureProxyEstimator();
@@ -162,6 +187,7 @@ export class FrameAnalysisEngine {
         motionProxy: 0,
         weight: 0,
         spectralTissueScore: 0,
+        validPixelRatio: 0,
       };
     }
 
@@ -204,6 +230,8 @@ export class FrameAnalysisEngine {
     this.lastTs = 0;
     for (const b of this.sourceBuffers.values()) b.clear();
     this.lastAllSQI = {};
+    this.sessionRedEma = 88;
+    this.prevStableMask = null;
   }
 
   processFrame(imageData: ImageData, timestamp: number, motionArtifact: boolean): FrameAnalysisResult {
@@ -249,6 +277,28 @@ export class FrameAnalysisEngine {
     this.roiBiasPx = Math.max(-maxShift, Math.min(maxShift, this.roiBiasPx));
     this.roiBiasPy = Math.max(-maxShift, Math.min(maxShift, this.roiBiasPy));
 
+    this.sessionRedEma = this.sessionRedEma * 0.985 + assembled.trimmedMean.r * 0.015;
+
+    const nMask = this.tileMap.tileCount;
+    let maskIoU = 1;
+    if (this.prevStableMask && this.prevStableMask.length === nMask) {
+      let inter = 0;
+      let uni = 0;
+      for (let i = 0; i < nMask; i++) {
+        const a = assembled.activeTiles[i] ? 1 : 0;
+        const b = this.prevStableMask[i] ? 1 : 0;
+        if (a || b) uni++;
+        if (a && b) inter++;
+      }
+      maskIoU = uni > 0 ? inter / uni : 0;
+    }
+    if (!this.prevStableMask || this.prevStableMask.length !== nMask) {
+      this.prevStableMask = new Uint8Array(nMask);
+    }
+    for (let i = 0; i < nMask; i++) {
+      this.prevStableMask[i] = assembled.activeTiles[i] ? 1 : 0;
+    }
+
     let totalClipHi = 0;
     let totalClipLo = 0;
     let totalW = 0;
@@ -287,7 +337,10 @@ export class FrameAnalysisEngine {
       if (assembled.discardedTiles[i]) maskChanges++;
     }
     this.prevMaskChangeRate = maskChanges / this.tileMap.tileCount;
-    this.metaStabilityEma = this.metaStabilityEma * 0.9 + (1 - Math.min(1, this.prevMaskChangeRate * 2.2)) * 0.1;
+    const maskStab = 0.55 + 0.45 * maskIoU;
+    this.metaStabilityEma =
+      this.metaStabilityEma * 0.9 +
+      (1 - Math.min(1, this.prevMaskChangeRate * 2.2)) * 0.1 * maskStab;
 
     this.updateBaselines(tr, tg, tb);
     this.redBuf.push(tr);
@@ -343,6 +396,16 @@ export class FrameAnalysisEngine {
     const pulsatilityQuality = Math.max(0, Math.min(1, perfusionIndex / 8));
     const dcDriftPenalty = Math.max(0, Math.min(1, baselineDrift * 4));
 
+    let validNum = 0;
+    let validDen = 0;
+    for (let i = 0; i < this.tileMap.tileCount; i++) {
+      const t = this.tileSnapshots[i]!;
+      const ww = Math.max(1e-6, t.weight);
+      validNum += t.validPixelRatio * ww;
+      validDen += ww;
+    }
+    const roiValidPixelRatio = validDen > 0 ? validNum / validDen : 0;
+
     const contactInput: ContactScoreInput = {
       coverage: assembled.coverageEffective,
       redDominance: tr - (tg + tb) / 2,
@@ -355,6 +418,7 @@ export class FrameAnalysisEngine {
       dcDriftPenalty,
       pressureProxy: pressure.score,
       tissueInstant,
+      highPressure: pressure.state === 'HIGH_PRESSURE',
     };
 
     const contactOut = this.contactMachine.update(contactInput);
@@ -403,13 +467,13 @@ export class FrameAnalysisEngine {
         this.estimatedSampleRate
       ).sqi;
 
-      if (best !== this.activeSource && bestScore > cur * 1.12) {
+      if (best !== this.activeSource && bestScore > cur * 1.1) {
         if (best === this.lastBestLabel) this.bestStreak++;
         else {
           this.lastBestLabel = best;
           this.bestStreak = 1;
         }
-        if (this.bestStreak >= 5) {
+        if (this.bestStreak >= 6) {
           this.activeSource = best;
           this.bestStreak = 0;
         }
@@ -442,7 +506,9 @@ export class FrameAnalysisEngine {
       centerCoverage,
       brightness,
       brightnessVariance,
-      validPixelCount: Math.floor(assembled.coverageEffective * this.tileMap.tileCount * 64),
+      validPixelCount: Math.floor(
+        roiValidPixelRatio * assembled.coverageEffective * (ex - sx) * (ey - sy)
+      ),
       totalPixelCount: (ex - sx) * (ey - sy),
       tileScores,
     };
@@ -492,6 +558,10 @@ export class FrameAnalysisEngine {
       discardedTileCount: discarded,
       activeTileSample,
       sampleRateHint: this.estimatedSampleRate,
+      maskIoU,
+      roiValidPixelRatio,
+      gridCols: this.tileMap.cols,
+      gridRows: this.tileMap.rows,
     };
   }
 

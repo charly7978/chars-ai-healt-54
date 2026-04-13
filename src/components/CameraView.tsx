@@ -24,6 +24,8 @@ export interface CameraDiagnostics {
   supportedConstraints: string[];
   effectiveSettings: EffectiveCameraSettings | null;
   capabilities: CameraCapabilitiesSnapshot | null;
+  /** Fases de constraints que se aplicaron correctamente (torch, fps, AE, etc.) */
+  phasesApplied: string[];
 }
 
 interface CameraViewProps {
@@ -63,6 +65,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     supportedConstraints: [],
     effectiveSettings: null,
     capabilities: null,
+    phasesApplied: [],
   });
 
   const cameraEngineRef = useRef<CameraControlEngine | null>(null);
@@ -267,7 +270,8 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         const engine = cameraEngineRef.current!;
         engine.attachTrack(track);
         await new Promise((r) => setTimeout(r, 400));
-        await engine.applyIdealConstraints();
+        const phases = await engine.applyIdealConstraints();
+        diagnosticsRef.current.phasesApplied = phases;
 
         const capSnap = engine.getCapabilities();
         diagnosticsRef.current.capabilities = capSnap;

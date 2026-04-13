@@ -29,6 +29,30 @@ export interface EffectiveCameraSettings {
   zoom: number;
 }
 
+/**
+ * Capabilities con extensiones no tipadas al completo en lib.dom
+ * (zoom, ISO, compensación de exposición en Image Capture / móvil).
+ */
+type ExtendedMediaTrackCapabilities = MediaTrackCapabilities & {
+  torch?: boolean;
+  exposureMode?: string[];
+  focusMode?: string[];
+  whiteBalanceMode?: string[];
+  zoom?: { min: number; max: number; step: number };
+  iso?: { min: number; max: number };
+  exposureCompensation?: { min: number; max: number; step: number };
+};
+
+type ExtendedMediaTrackSettings = MediaTrackSettings & {
+  exposureMode?: string;
+  focusMode?: string;
+  whiteBalanceMode?: string;
+  exposureCompensation?: number;
+  torch?: boolean;
+  iso?: number;
+  zoom?: number;
+};
+
 export class CameraControlEngine {
   private track: MediaStreamTrack | null = null;
   private lastAdjustAt = 0;
@@ -56,12 +80,7 @@ export class CameraControlEngine {
   getCapabilities(): CameraCapabilitiesSnapshot | null {
     const track = this.track;
     if (!track?.getCapabilities) return null;
-    const c = track.getCapabilities() as MediaTrackCapabilities & {
-      torch?: boolean;
-      exposureMode?: string[];
-      focusMode?: string[];
-      whiteBalanceMode?: string[];
-    };
+    const c = track.getCapabilities() as ExtendedMediaTrackCapabilities;
     return {
       torch: c.torch === true,
       exposureMode: (c.exposureMode as string[] | undefined) ?? [],
@@ -83,13 +102,7 @@ export class CameraControlEngine {
   getEffectiveSettings(): EffectiveCameraSettings | null {
     const track = this.track;
     if (!track?.getSettings) return null;
-    const s = track.getSettings() as MediaTrackSettings & {
-      exposureMode?: string;
-      focusMode?: string;
-      whiteBalanceMode?: string;
-      exposureCompensation?: number;
-      torch?: boolean;
-    };
+    const s = track.getSettings() as ExtendedMediaTrackSettings;
     return {
       width: s.width ?? 0,
       height: s.height ?? 0,
@@ -106,22 +119,20 @@ export class CameraControlEngine {
 
   /**
    * Aplica constraints iniciales por fases con backoff si fallan.
+   * Devuelve lista de fases aplicadas con éxito (telemetría).
    */
-  async applyIdealConstraints(): Promise<void> {
+  async applyIdealConstraints(): Promise<string[]> {
+    const phases: string[] = [];
     const track = this.track;
-    if (!track?.applyConstraints) return;
+    if (!track?.applyConstraints) return phases;
 
-    const caps = track.getCapabilities?.() as MediaTrackCapabilities & {
-      torch?: boolean;
-      exposureMode?: string[];
-      focusMode?: string[];
-      whiteBalanceMode?: string[];
-    };
-    if (!caps) return;
+    const caps = track.getCapabilities?.() as ExtendedMediaTrackCapabilities;
+    if (!caps) return phases;
 
-    const tryAdv = async (adv: Record<string, unknown>) => {
+    const tryAdv = async (adv: Record<string, unknown>, label: string) => {
       try {
         await track.applyConstraints({ advanced: [adv] } as MediaTrackConstraints);
+        phases.push(label);
         return true;
       } catch {
         return false;
@@ -131,46 +142,48 @@ export class CameraControlEngine {
     const backoff = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     if (caps.frameRate) {
-      const ok = await tryAdv({ frameRate: Math.min(30, caps.frameRate.max) });
+      const ok = await tryAdv({ frameRate: Math.min(30, caps.frameRate.max) }, 'frameRate_max30');
       if (!ok) {
         this.pendingBackoff++;
         await backoff(120 + this.pendingBackoff * 80);
-        await tryAdv({ frameRate: Math.min(24, caps.frameRate.max) });
+        await tryAdv({ frameRate: Math.min(24, caps.frameRate.max) }, 'frameRate_max24');
       }
     }
 
     if (caps.torch) {
       for (let i = 0; i < 5; i++) {
-        if (await tryAdv({ torch: true } as Record<string, unknown>)) break;
+        if (await tryAdv({ torch: true } as Record<string, unknown>, 'torch_on')) break;
         await backoff(200 + i * 60);
       }
     }
 
     if (caps.exposureMode?.includes('continuous')) {
-      await tryAdv({ exposureMode: 'continuous' });
+      await tryAdv({ exposureMode: 'continuous' }, 'exposure_continuous');
     } else if (caps.exposureMode?.includes('manual')) {
-      await tryAdv({ exposureMode: 'manual' });
+      await tryAdv({ exposureMode: 'manual' }, 'exposure_manual');
     }
 
     if (caps.exposureCompensation) {
       const min = caps.exposureCompensation.min ?? -2;
       const max = caps.exposureCompensation.max ?? 2;
       const target = Math.max(min, Math.min(max, -0.28));
-      await tryAdv({ exposureCompensation: target });
+      await tryAdv({ exposureCompensation: target }, 'exposureCompensation');
     }
 
     if (caps.whiteBalanceMode?.includes('continuous')) {
-      await tryAdv({ whiteBalanceMode: 'continuous' });
+      await tryAdv({ whiteBalanceMode: 'continuous' }, 'wb_continuous');
     }
 
     if (caps.iso) {
       const t = Math.max(caps.iso.min, Math.min(caps.iso.max, 140));
-      await tryAdv({ iso: t });
+      await tryAdv({ iso: t }, 'iso');
     }
 
     if (caps.focusMode?.includes('continuous')) {
-      await tryAdv({ focusMode: 'continuous' });
+      await tryAdv({ focusMode: 'continuous' }, 'focus_continuous');
     }
+
+    return phases;
   }
 
   /**
@@ -190,10 +203,7 @@ export class CameraControlEngine {
     const key = `${clipHigh.toFixed(2)}_${clipLow.toFixed(2)}_${signalWeak ? 1 : 0}`;
     if (key === this.lastFeedbackKey) return;
 
-    const caps = track.getCapabilities() as MediaTrackCapabilities & {
-      exposureCompensation?: { min: number; max: number; step: number };
-      zoom?: { min: number; max: number; step: number };
-    };
+    const caps = track.getCapabilities() as ExtendedMediaTrackCapabilities;
 
     const tryZoomOut = (): boolean => {
       if (!caps.zoom || this.highClipStreak < 6 || clipHigh < 0.32) return false;
@@ -206,7 +216,7 @@ export class CameraControlEngine {
       this.lastFeedbackKey = `zoom_${nz.toFixed(3)}`;
       this.lastAdjustAt = now;
       void track
-        .applyConstraints({ advanced: [{ zoom: nz }] } as MediaTrackConstraints)
+        .applyConstraints({ advanced: [{ zoom: nz }] } as unknown as MediaTrackConstraints)
         .then(() => {
           this.lastFeedbackEffective = this.getEffectiveSettings();
         })
@@ -242,7 +252,7 @@ export class CameraControlEngine {
 
     this.lastAdjustAt = now;
     void track
-      .applyConstraints({ advanced: [{ exposureCompensation: ec }] } as MediaTrackConstraints)
+      .applyConstraints({ advanced: [{ exposureCompensation: ec }] } as unknown as MediaTrackConstraints)
       .then(() => {
         this.lastFeedbackEffective = this.getEffectiveSettings();
       })

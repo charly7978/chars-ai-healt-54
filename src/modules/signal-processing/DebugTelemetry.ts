@@ -33,6 +33,8 @@ export interface DebugTelemetry {
   spatialStability: number;
   /** Resultado de análisis puede corresponder a frame previo (cola worker) */
   stalePipeline?: boolean;
+  roiValidPixelRatio?: number;
+  maskIoU?: number;
 }
 
 export function emptyTiming(): PipelineTimingStats {

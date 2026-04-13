@@ -29,6 +29,8 @@ export interface TileSnapshot {
   weight: number;
   /** Coherencia con firma espectral tejido + flash (R domina G/B; hemoglobina atenúa azul) */
   spectralTissueScore: number;
+  /** Fracción de píxeles muestreados válidos (excluye saturación/cut-off por canal) */
+  validPixelRatio: number;
 }
 
 const CLIP_HI = 250;
@@ -75,6 +77,7 @@ export class TilePulsatilityMap {
   private cnt: Int32Array;
   private nClipHi: Int32Array;
   private nClipLo: Int32Array;
+  private nInvalid: Int32Array;
 
   private prevMeanR: Float32Array;
   private prevMeanG: Float32Array;
@@ -96,6 +99,7 @@ export class TilePulsatilityMap {
     this.cnt = new Int32Array(n);
     this.nClipHi = new Int32Array(n);
     this.nClipLo = new Int32Array(n);
+    this.nInvalid = new Int32Array(n);
     this.prevMeanR = new Float32Array(n);
     this.prevMeanG = new Float32Array(n);
     this.emaPeriodicity = new Float32Array(n);
@@ -112,6 +116,7 @@ export class TilePulsatilityMap {
     this.cnt.fill(0);
     this.nClipHi.fill(0);
     this.nClipLo.fill(0);
+    this.nInvalid.fill(0);
     this.prevMeanR.fill(0);
     this.prevMeanG.fill(0);
     this.emaPeriodicity.fill(0);
@@ -153,18 +158,31 @@ export class TilePulsatilityMap {
     this.cnt.fill(0);
     this.nClipHi.fill(0);
     this.nClipLo.fill(0);
+    this.nInvalid.fill(0);
 
     const step = this.pixelStep;
     for (let y = sy; y < ey; y += step) {
       const row = y * width;
       for (let x = sx; x < ex; x += step) {
         const i = (row + x) << 2;
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
+        const r = data[i]!;
+        const g = data[i + 1]!;
+        const b = data[i + 2]!;
         const tx = Math.min(cols - 1, (((x - sx) * cols) / roiW) | 0);
         const ty = Math.min(rows - 1, (((y - sy) * rows) / roiH) | 0);
         const ti = ty * cols + tx;
+
+        const ch = r >= CLIP_HI || g >= CLIP_HI || b >= CLIP_HI;
+        const cl = r <= CLIP_LO && g <= CLIP_LO && b <= CLIP_LO;
+        if (ch) this.nClipHi[ti]++;
+        if (cl) this.nClipLo[ti]++;
+
+        /** Saturación por canal o negro total: no entra en medias (evita 255/0 en PPG) */
+        const invalid = r >= 250 || g >= 250 || b >= 250 || (r <= 6 && g <= 6 && b <= 6);
+        if (invalid) {
+          this.nInvalid[ti]++;
+          continue;
+        }
 
         const c = this.cnt[ti] + 1;
         this.cnt[ti] = c;
@@ -174,11 +192,6 @@ export class TilePulsatilityMap {
         this.sumR2[ti] += r * r;
         this.sumG2[ti] += g * g;
         this.sumB2[ti] += b * b;
-
-        const ch = r >= CLIP_HI || g >= CLIP_HI || b >= CLIP_HI;
-        const cl = r <= CLIP_LO && g <= CLIP_LO && b <= CLIP_LO;
-        if (ch) this.nClipHi[ti]++;
-        if (cl) this.nClipLo[ti]++;
       }
     }
 
@@ -198,9 +211,11 @@ export class TilePulsatilityMap {
       const tot = meanR + meanG + meanB + 1e-6;
       const redRatio = meanR / tot;
       const redDom = meanR - (meanG + meanB) / 2;
-      const clipHigh = this.nClipHi[ti] / c;
-      const clipLow = this.nClipLo[ti] / c;
+      const sampled = c + this.nInvalid[ti];
+      const clipHigh = sampled > 0 ? this.nClipHi[ti] / sampled : 0;
+      const clipLow = sampled > 0 ? this.nClipLo[ti] / sampled : 0;
       const sat = Math.max(clipHigh, clipLow);
+      const validPixelRatio = sampled > 0 ? c / sampled : 0;
 
       const rg = meanG > 1 ? meanR / meanG : 0;
       const spectral = tissueSpectralScore(meanR, meanG, meanB);
@@ -236,6 +251,7 @@ export class TilePulsatilityMap {
       w *= Math.max(0.2, 1 - clipLow * 1.8);
       if (meanR < 18 || meanR > 245) w *= 0.35;
       w *= Math.max(0.35, 1 - globalMotionHint);
+      w *= Math.max(0.08, validPixelRatio);
 
       /** Gating duro: sin firma tejido+flash el tile no aporta */
       if (spectral < 0.035) w = 0;
@@ -262,6 +278,7 @@ export class TilePulsatilityMap {
         motionProxy: globalMotionHint,
         weight,
         spectralTissueScore: spectral,
+        validPixelRatio,
       };
     }
   }
@@ -285,6 +302,7 @@ export class TilePulsatilityMap {
       motionProxy: 0,
       weight: 0,
       spectralTissueScore: 0,
+      validPixelRatio: 0,
     };
   }
 }

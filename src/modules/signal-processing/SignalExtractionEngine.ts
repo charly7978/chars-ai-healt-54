@@ -1,6 +1,6 @@
 /**
- * Extrae múltiples señales candidatas por frame a partir de RGB ROI y baselines running.
- * Escala de salida compatible con el pipeline existente (~ miles).
+ * Multi-fuente PPG: medias normalizadas, absorbancia -log, diferencias temporales, CHROM/POS.
+ * Escala compatible con pipeline existente (~ miles).
  */
 
 import { RingBuffer } from './RingBuffer';
@@ -22,6 +22,10 @@ export class SignalExtractionEngine {
   private rNormBuf = new RingBuffer(64);
   private gNormBuf = new RingBuffer(64);
   private bNormBuf = new RingBuffer(64);
+  private prevRawR = 0;
+  private prevRawG = 0;
+  private prevRawB = 0;
+  private hasPrev = false;
 
   extract(
     rawR: number,
@@ -126,6 +130,20 @@ export class SignalExtractionEngine {
 
     const logRatio = Math.log((wR + 30) / (wG + 30));
 
+    /** Absorbancia tipo Beer–Lambert sobre DC local (estable) */
+    const br = Math.max(12, base.r);
+    const bg = Math.max(12, base.g);
+    const absorbR = -Math.log((rawR + 18) / (br + 18));
+    const absorbG = -Math.log((rawG + 18) / (bg + 18));
+
+    /** Diferencia temporal acotada (pulso frame-a-frame) */
+    let diffR = 0;
+    if (this.hasPrev) {
+      diffR = Math.max(-40, Math.min(40, rawR - this.prevRawR));
+    }
+
+    const robust = -(rP * 0.42 + gP * 0.58);
+
     const candidates: CandidateVector[] = [
       { label: 'R', value: -rP * SCALE },
       { label: 'G', value: -gP * SCALE },
@@ -137,7 +155,16 @@ export class SignalExtractionEngine {
       { label: 'W_TILE', value: -(wRot - 0.33) * SCALE * 2.2 },
       { label: 'R_G', value: -(rP - gP) * SCALE },
       { label: 'LOG_RG', value: -logRatio * 800 },
+      { label: 'LOG_R', value: absorbR * SCALE * 2.2 },
+      { label: 'LOG_G', value: absorbG * SCALE * 2.2 },
+      { label: 'DIFF_R', value: diffR * 120 },
+      { label: 'ROBUST', value: robust * SCALE },
     ];
+
+    this.prevRawR = rawR;
+    this.prevRawG = rawG;
+    this.prevRawB = rawB;
+    this.hasPrev = true;
 
     return candidates;
   }
@@ -146,5 +173,9 @@ export class SignalExtractionEngine {
     this.rNormBuf.clear();
     this.gNormBuf.clear();
     this.bNormBuf.clear();
+    this.prevRawR = 0;
+    this.prevRawG = 0;
+    this.prevRawB = 0;
+    this.hasPrev = false;
   }
 }

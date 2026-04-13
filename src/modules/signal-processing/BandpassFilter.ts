@@ -144,7 +144,7 @@ export class BandpassFilter {
   setSampleRate(rate: number): void {
     const prev = this.lastComputedRate || this.sampleRate;
     const rel = prev > 1e-6 ? Math.abs(rate - prev) / prev : 1;
-    if (rel < 0.06 && Math.abs(rate - prev) < 1.5) return;
+    if (rel < 0.045 && Math.abs(rate - prev) < 1.2) return;
     this.sampleRate = rate;
     this.computeCoefficients();
   }

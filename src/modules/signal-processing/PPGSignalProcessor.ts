@@ -193,6 +193,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       redDominance,
       contactState: this.exportedContactState,
       sourceStability: this.sourceStability,
+      roiValidRatio: analysis.roiValidPixelRatio,
+      maskIoU: analysis.maskIoU,
     });
 
     const driftPenalty = this.positionDrifting ? 0.14 : 1.0;
@@ -241,6 +243,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           globalScore: analysis.fingerScore,
           spatialStability: analysis.spatialStabilityROI,
           stalePipeline: pipeStats.staleResult,
+          roiValidPixelRatio: analysis.roiValidPixelRatio,
+          maskIoU: analysis.maskIoU,
         }
       : undefined;
 
@@ -288,6 +292,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       processedFps: pipeStats.processedFps,
       droppedFrames: pipeStats.droppedFrames,
       frameLatencyMs: pipeStats.lastFrameLatencyMs,
+      roiValidPixelRatio: analysis.roiValidPixelRatio,
+      maskIoU: analysis.maskIoU,
     });
   }
 

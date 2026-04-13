@@ -20,6 +20,7 @@ import {
   clampUserHeightM,
 } from "@/modules/personalization/userPhysiology";
 import { FrameCaptureScheduler } from "@/modules/camera/FrameCaptureScheduler";
+import { PPGPipelineDebugOverlay } from "@/components/PPGPipelineDebugOverlay";
 import { ClinicalTopBar } from "@/components/visual/ClinicalTopBar";
 import { MedicalAmbient3D } from "@/components/visual/MedicalAmbient3D";
 import { cn } from "@/lib/utils";
@@ -131,7 +132,6 @@ const Index = () => {
     framesProcessed,
     getRGBStats,
     getPositionQuality,
-    getPPGDebugInfo,
     resetProcessingEngine,
     setCameraControl,
     setPPGDebugMode,
@@ -245,22 +245,17 @@ const Index = () => {
       });
     }
 
-    const captureOneFrame = (nowOrMetadata?: number | any) => {
+    const captureOneFrame = (presentationTime?: number) => {
       if (!isProcessingRef.current) return;
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
         return;
       }
 
-      let frameTimestamp: number | undefined;
-      if (typeof nowOrMetadata === 'object' && nowOrMetadata?.mediaTime != null) {
-        frameTimestamp = performance.now();
-      } else if (typeof nowOrMetadata === 'number') {
-        frameTimestamp = nowOrMetadata;
-      } else {
-        frameTimestamp = performance.now();
-      }
+      const frameTimestamp =
+        typeof presentationTime === 'number' && isFinite(presentationTime) ? presentationTime : performance.now();
+      captureSchedulerRef.current?.recordPresentationTimestamp(frameTimestamp);
 
       if (captureBusyRef.current) {
         scheduleNext(video);
@@ -287,9 +282,14 @@ const Index = () => {
     const scheduleNext = (video: HTMLVideoElement) => {
       if (!isProcessingRef.current) return;
       if ('requestVideoFrameCallback' in video) {
-        (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: (n: number, m?: { presentationTime?: number }) => void) => void }).requestVideoFrameCallback(
-          (now: number, metadata?: { presentationTime?: number }) => captureOneFrame(metadata?.presentationTime ?? now)
-        );
+        const v = video as HTMLVideoElement & {
+          requestVideoFrameCallback: (
+            cb: (now: number, metadata?: { presentationTime?: number; expectedDisplayTime?: number }) => void
+          ) => void;
+        };
+        v.requestVideoFrameCallback((now) => {
+          captureOneFrame(now);
+        });
       } else {
         frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
       }
@@ -770,39 +770,13 @@ const Index = () => {
         </div>
         <MedicalAmbient3D />
         {ppgDebug && isMonitoring && (
-          <div
-            className="pointer-events-none absolute left-1 bottom-28 z-[40] max-w-[min(96vw,22rem)] rounded-md border border-lime-500/35 bg-black/75 px-2 py-1.5 font-mono text-[9px] leading-snug text-lime-100/95 shadow-lg"
-            aria-hidden
-          >
-            <div>
-              inFPS {lastSignal?.inputFps != null ? Math.round(lastSignal.inputFps) : '—'} | proc{' '}
-              {lastSignal?.processedFps != null ? Math.round(lastSignal.processedFps) : '—'} | drop{' '}
-              {lastSignal?.droppedFrames ?? 0}
-            </div>
-            <div>
-              lat {lastSignal?.frameLatencyMs != null ? lastSignal.frameLatencyMs.toFixed(1) : '—'}ms | Q{' '}
-              {lastSignal?.quality != null ? lastSignal.quality.toFixed(0) : '—'} |{' '}
-              {(lastSignal?.diagnostics?.message ?? '').slice(0, 72)}
-            </div>
-            <div>
-              {(getPPGDebugInfo()?.contactState as string) ?? '—'} | src {lastSignal?.activeSource ?? '—'} | ready{' '}
-              {lastSignal?.measurementReady ? '1' : '0'}
-            </div>
-            <div>
-              tiles {lastSignal?.pipelineDebug?.activeTileCount ?? '—'} / −{lastSignal?.pipelineDebug?.discardedTileCount ?? '—'} | px{' '}
-              {lastSignal?.pipelineDebug?.pressureProxy != null
-                ? lastSignal.pipelineDebug.pressureProxy.toFixed(2)
-                : '—'}{' '}
-              | {lastSignal?.pipelineDebug?.readinessReason ?? '—'}
-            </div>
-            <div>
-              stale {lastSignal?.pipelineDebug?.stalePipeline ? '1' : '0'} | cap{' '}
-              {captureSchedulerRef.current?.getMetrics().strategy ?? '—'}
-            </div>
-            <div className="break-all opacity-90">
-              idx [{lastSignal?.pipelineDebug?.activeTileSample?.slice(0, 20).join(',') ?? '—'}]
-            </div>
-          </div>
+          <PPGPipelineDebugOverlay
+            signal={lastSignal}
+            positionQuality={getPositionQuality()}
+            captureMetrics={captureSchedulerRef.current?.getMetrics() ?? null}
+            cameraDiag={cameraRef.current?.getDiagnostics() ?? null}
+            framesProcessed={framesProcessed}
+          />
         )}
         <div
           className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/60 via-black/15 to-[#020617]/88"

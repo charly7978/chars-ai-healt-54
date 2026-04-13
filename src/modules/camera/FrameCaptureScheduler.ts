@@ -12,6 +12,10 @@ export interface CaptureFrameMetrics {
   strategy: 'bitmap' | 'buffer_pool';
   /** Solo path pool: getImageData en main */
   readbackMs?: number;
+  /** Δt mediano entre timestamps de presentación (RVFC), ms */
+  presentationMedianDeltaMs: number;
+  /** Jitter (MAD) de Δt, ms */
+  presentationJitterMs: number;
 }
 
 export type FrameForPipeline = ImageData | ImageBitmap;
@@ -32,14 +36,18 @@ export class FrameCaptureScheduler {
 
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
-  private bufferPool: Uint8ClampedArray[] = [];
+  private bufferPool: Uint8ClampedArray<ArrayBuffer>[] = [];
   private poolIndex = 0;
 
   private lastInputTs: number[] = [];
+  /** DOMHighResTimeStamp de requestVideoFrameCallback (o performance.now fallback) */
+  private presentationTs: number[] = [];
   private metrics: CaptureFrameMetrics = {
     inputFps: 0,
     captureLatencyMs: 0,
     strategy: 'buffer_pool',
+    presentationMedianDeltaMs: 0,
+    presentationJitterMs: 0,
   };
 
   constructor(options: FrameCaptureSchedulerOptions) {
@@ -48,12 +56,37 @@ export class FrameCaptureScheduler {
     this.preferBitmapPath = options.preferBitmapPath;
     const px = this.targetWidth * this.targetHeight * 4;
     for (let i = 0; i < POOL_SIZE; i++) {
-      this.bufferPool.push(new Uint8ClampedArray(px));
+      this.bufferPool.push(new Uint8ClampedArray(new ArrayBuffer(px)));
     }
   }
 
   getMetrics(): CaptureFrameMetrics {
     return { ...this.metrics };
+  }
+
+  /** Llamar con el `now` de requestVideoFrameCallback para estimar Fs real sin Date.now */
+  recordPresentationTimestamp(ts: number): void {
+    if (!isFinite(ts)) return;
+    this.presentationTs.push(ts);
+    if (this.presentationTs.length > 48) this.presentationTs.shift();
+    const d = this.deltaStats(this.presentationTs);
+    this.metrics.presentationMedianDeltaMs = d.med;
+    this.metrics.presentationJitterMs = d.jitter;
+  }
+
+  private deltaStats(ts: number[]): { med: number; jitter: number } {
+    if (ts.length < 4) return { med: 0, jitter: 0 };
+    const deltas: number[] = [];
+    for (let i = 1; i < ts.length; i++) {
+      const dt = ts[i]! - ts[i - 1]!;
+      if (dt >= 4 && dt <= 120) deltas.push(dt);
+    }
+    if (deltas.length < 3) return { med: 0, jitter: 0 };
+    deltas.sort((a, b) => a - b);
+    const med = deltas[Math.floor(deltas.length / 2)] ?? 0;
+    const dev = deltas.map((x) => Math.abs(x - med)).sort((a, b) => a - b);
+    const jitter = dev[Math.floor(dev.length / 2)] ?? 0;
+    return { med, jitter };
   }
 
   private ensureCanvas(): CanvasRenderingContext2D {

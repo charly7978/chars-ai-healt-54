@@ -36,12 +36,18 @@ export function computeGlobalSQI(params: {
   redDominance: number;
   contactState: string;
   sourceStability: number;
+  /** Fracción de píxeles útiles en ROI (sin sat/cut-off) */
+  roiValidRatio?: number;
+  /** Estabilidad máscara dedo frame a frame */
+  maskIoU?: number;
 }): number {
   const {
     perfusionIndex, periodicityScore, coverageRatio,
     spatialUniformity, pressurePenalty, motionScore,
     clipHighRatio, clipLowRatio, positionDrift,
-    signalRange, redDominance, contactState, sourceStability
+    signalRange, redDominance, contactState, sourceStability,
+    roiValidRatio = 1,
+    maskIoU = 1,
   } = params;
 
   if (contactState === 'NO_CONTACT') return 0;
@@ -52,6 +58,9 @@ export function computeGlobalSQI(params: {
   // Gate: no perfusion = no signal
   if (perfusionIndex < 0.003) return Math.min(8, coverageRatio * 15);
 
+  // ROI casi todo inválido → SQI severo
+  if (roiValidRatio < 0.22) return Math.max(0, Math.min(12, roiValidRatio * 40));
+
   // --- Component scores ---
   const perfScore = Math.min(22, perfusionIndex * 10);
   const periodicScore = Math.min(20, periodicityScore * 25);
@@ -59,16 +68,19 @@ export function computeGlobalSQI(params: {
   const uniformityScore = Math.min(8, spatialUniformity * 10);
   const rangeScore = Math.min(10, (signalRange / 5) * 10);
   const stabilityScore = Math.min(8, sourceStability * 10);
+  const validScore = Math.min(10, roiValidRatio * 11);
+  const maskScore = Math.min(8, maskIoU * 9);
 
   // --- Penalties ---
   const motionPenalty = Math.min(20, motionScore * 16);
-  const clipPenalty = Math.min(25, (clipHighRatio + clipLowRatio) * 40);
+  const clipPenalty = Math.min(28, (clipHighRatio + clipLowRatio) * 44);
   const driftPenalty = Math.min(15, positionDrift * 50);
+  const maskPenalty = Math.min(12, (1 - maskIoU) * 22);
 
   // Pressure multiplier (0.3-1.0)
   const base = perfScore + periodicScore + coverageScore +
-    uniformityScore + rangeScore + stabilityScore -
-    motionPenalty - clipPenalty - driftPenalty;
+    uniformityScore + rangeScore + stabilityScore + validScore + maskScore -
+    motionPenalty - clipPenalty - driftPenalty - maskPenalty;
 
   // Stable contact bonus
   const stableBonus = contactState === 'STABLE_CONTACT' ? 5 : 0;
