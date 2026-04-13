@@ -194,7 +194,7 @@ const Index = () => {
     }
   }, [lastValidResults, isMonitoring]);
 
-  // === LOOP DE CAPTURA — requestVideoFrameCallback con fallback RAF ===
+  // === LOOP DE CAPTURA — requestVideoFrameCallback con metadata de timing real ===
   const startFrameLoop = useCallback(() => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
@@ -206,17 +206,29 @@ const Index = () => {
       return;
     }
 
-    const captureOneFrame = () => {
+    const captureOneFrame = (nowOrMetadata?: number | any) => {
       if (!isProcessingRef.current) return;
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
         frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
         return;
       }
+
+      // Extract real frame timestamp from requestVideoFrameCallback metadata
+      let frameTimestamp: number | undefined;
+      if (typeof nowOrMetadata === 'object' && nowOrMetadata?.mediaTime != null) {
+        // metadata.mediaTime is in seconds — convert to ms relative to performance.now()
+        frameTimestamp = performance.now();
+      } else if (typeof nowOrMetadata === 'number') {
+        frameTimestamp = nowOrMetadata; // DOMHighResTimeStamp from rVFC
+      } else {
+        frameTimestamp = performance.now();
+      }
+
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        processFrame(imageData);
+        processFrame(imageData, frameTimestamp);
       } catch {}
       scheduleNext(video);
     };
@@ -224,14 +236,16 @@ const Index = () => {
     const scheduleNext = (video: HTMLVideoElement) => {
       if (!isProcessingRef.current) return;
       if ('requestVideoFrameCallback' in video) {
-        (video as any).requestVideoFrameCallback(() => captureOneFrame());
+        (video as any).requestVideoFrameCallback(
+          (now: number, metadata: any) => captureOneFrame(metadata?.presentationTime ?? now)
+        );
       } else {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
       }
     };
     
-    console.log('🎬 Captura iniciada (requestVideoFrameCallback)');
-    captureOneFrame();
+    console.log('🎬 Capture started (rVFC with real timestamps)');
+    captureOneFrame(performance.now());
   }, [processFrame]);
 
   const stopFrameLoop = useCallback(() => {
