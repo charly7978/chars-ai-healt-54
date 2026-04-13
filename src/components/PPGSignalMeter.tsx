@@ -42,7 +42,7 @@ const CONFIG = {
   PLOT_AREA: {
     LEFT: 96,
     RIGHT: 96,
-    TOP: 122,
+    TOP: 152,
     BOTTOM: 76
   },
   COLORS: {
@@ -92,11 +92,11 @@ const parseRhythmStatus = (statusString?: string) => {
 function strokeForWaveClass(wc: BeatWaveClass, COLORS: typeof CONFIG.COLORS) {
   switch (wc) {
     case 'arrhythmia':
-      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 20, width: 5 };
+      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 26, width: 6.5 };
     case 'weak':
-      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 16, width: 4 };
+      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 20, width: 5.5 };
     default:
-      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 13, width: 3.5 };
+      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 18, width: 5.2 };
   }
 }
 
@@ -441,13 +441,13 @@ const PPGSignalMeter = ({
     ctx.font = fontSize.label;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.textAlign = 'left';
-    ctx.fillText('FRECUENCIA', 12, panelY + 22);
+    ctx.fillText('FRECUENCIA', 12, panelY + 26);
     ctx.font = fontSize.value;
     ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
-    ctx.fillText(bpm > 0 ? bpm.toString() : '—', 12, panelY + 78);
+    ctx.fillText(bpm > 0 ? bpm.toString() : '—', 12, panelY + 88);
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('BPM', panelW - 44, panelY + 78);
+    ctx.fillText('BPM', panelW - 44, panelY + 88);
     if (bpm > 0) {
       ctx.font = fontSize.class;
       let hrLabel = '';
@@ -456,7 +456,7 @@ const PPGSignalMeter = ({
       else if (bpm <= 100) { hrLabel = 'NORMAL'; hrColor = COLORS.TEXT_PRIMARY; }
       else { hrLabel = 'TAQUICARDIA'; hrColor = COLORS.TEXT_WARNING; }
       ctx.fillStyle = hrColor;
-      ctx.fillText(hrLabel, 12, panelY + 100);
+      ctx.fillText(hrLabel, 12, panelY + 116);
     }
     
     ctx.fillStyle = 'rgba(4, 12, 22, 0.94)';
@@ -468,14 +468,14 @@ const PPGSignalMeter = ({
     ctx.font = fontSize.label;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.textAlign = 'left';
-    ctx.fillText('SpO₂', W - panelW + 12, panelY + 22);
+    ctx.fillText('SpO₂', W - panelW + 12, panelY + 26);
     ctx.font = fontSize.value;
     const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
     ctx.fillStyle = spo2Color;
-    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '—', W - panelW + 12, panelY + 78);
+    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '—', W - panelW + 12, panelY + 88);
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('%', W - 22, panelY + 78);
+    ctx.fillText('%', W - 22, panelY + 88);
     if (spo2 > 0) {
       ctx.font = fontSize.class;
       let spLabel = '';
@@ -484,24 +484,24 @@ const PPGSignalMeter = ({
       else if (spo2 >= 90) { spLabel = 'HIPOXEMIA LEVE'; spColor = COLORS.TEXT_WARNING; }
       else { spLabel = 'HIPOXEMIA'; spColor = COLORS.TEXT_DANGER; }
       ctx.fillStyle = spColor;
-      ctx.fillText(spLabel, W - panelW + 12, panelY + 100);
+      ctx.fillText(spLabel, W - panelW + 12, panelY + 116);
     }
     
     const centerX = W / 2;
-    const centerW = 308;
+    const centerW = 340;
     ctx.fillStyle = 'rgba(12, 14, 22, 0.94)';
     ctx.fillRect(centerX - centerW / 2, panelY, centerW, panelH);
     ctx.strokeStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
     ctx.lineWidth = 2;
     ctx.strokeRect(centerX - centerW / 2, panelY, centerW, panelH);
-    ctx.font = '13px "SF Mono", Consolas, monospace';
+    ctx.font = '15px "SF Mono", Consolas, monospace';
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.fillText('CALIDAD DE SEÑAL', centerX, panelY + 22);
-    const barWidth = 260;
-    const barHeight = 12;
+    ctx.fillText('CALIDAD DE SEÑAL', centerX, panelY + 24);
+    const barWidth = 300;
+    const barHeight = 14;
     const barX = centerX - barWidth / 2;
-    const barY = panelY + 28;
+    const barY = panelY + 32;
     ctx.fillStyle = 'rgba(255,255,255,0.1)';
     ctx.fillRect(barX, barY, barWidth, barHeight);
     const qGrad = ctx.createLinearGradient(barX, 0, barX + (quality / 100) * barWidth, 0);
@@ -510,21 +510,21 @@ const PPGSignalMeter = ({
     else { qGrad.addColorStop(0, '#991b1b'); qGrad.addColorStop(1, '#ef4444'); }
     ctx.fillStyle = qGrad;
     ctx.fillRect(barX, barY, (quality / 100) * barWidth, barHeight);
-    ctx.font = 'bold 15px "SF Mono", Consolas, monospace';
+    ctx.font = 'bold 18px "SF Mono", Consolas, monospace';
     ctx.fillStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.fillText(`${quality.toFixed(0)}%`, centerX, panelY + 58);
+    ctx.fillText(`${quality.toFixed(0)}%`, centerX, panelY + 64);
     const ibi = ibiDisplayRef.current;
     const hrv = hrvDisplayRef.current;
     ctx.font = fontSize.small;
     ctx.textAlign = 'left';
     ctx.fillStyle = COLORS.IBI_TEXT;
-    ctx.fillText(`IBI ${ibi > 0 ? ibi + ' ms' : '—'}`, centerX - centerW / 2 + 12, panelY + 82);
+    ctx.fillText(`IBI ${ibi > 0 ? ibi + ' ms' : '—'}`, centerX - centerW / 2 + 12, panelY + 94);
     ctx.fillStyle = rhythm.color;
-    ctx.fillText(`RITMO  ${rhythm.display}`, centerX - centerW / 2 + 12, panelY + 100);
+    ctx.fillText(`RITMO  ${rhythm.display}`, centerX - centerW / 2 + 12, panelY + 114);
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.textAlign = 'right';
-    ctx.fillText(`SDNN ${hrv.sdnn > 0 ? hrv.sdnn + ' ms' : '—'}`, centerX + centerW / 2 - 12, panelY + 82);
-    ctx.fillText(`RMSSD ${hrv.rmssd > 0 ? hrv.rmssd + ' ms' : '—'}`, centerX + centerW / 2 - 12, panelY + 100);
+    ctx.fillText(`SDNN ${hrv.sdnn > 0 ? hrv.sdnn + ' ms' : '—'}`, centerX + centerW / 2 - 12, panelY + 94);
+    ctx.fillText(`RMSSD ${hrv.rmssd > 0 ? hrv.rmssd + ' ms' : '—'}`, centerX + centerW / 2 - 12, panelY + 114);
     
     if (rhythm.isAlert) {
       const pulse = (Math.sin(now / 100) + 1) / 2;
@@ -602,7 +602,7 @@ const PPGSignalMeter = ({
         animationRef.current = requestAnimationFrame(render);
         return;
       }
-      const scaledValue = signalValue * 2;
+      const scaledValue = signalValue * 2.45;
       
       const peakSeq = pe?.seq ?? 0;
       if (peakSeq > 0 && peakSeq !== lastProcessedPeakSeqRef.current) {
@@ -671,8 +671,8 @@ const PPGSignalMeter = ({
           ctx.lineTo(pathCoords[pathCoords.length - 1].x, plot.centerY);
           ctx.closePath();
           const fillGrad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-          fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
-          fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
+          fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.18)');
+          fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.07)');
           fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
           ctx.fillStyle = fillGrad;
           ctx.fill();
@@ -725,26 +725,26 @@ const PPGSignalMeter = ({
         }
         strokeWaveformRuns(pathCoords, COLORS, ctx);
 
-        const plotTelemetryY = plot.y + 8;
-        const telH = 32;
+        const plotTelemetryY = plot.y + 10;
+        const telH = 40;
         ctx.save();
-        ctx.fillStyle = 'rgba(6, 10, 18, 0.92)';
+        ctx.fillStyle = 'rgba(6, 10, 18, 0.94)';
         ctx.fillRect(plot.x, plotTelemetryY, plot.width, telH);
-        ctx.strokeStyle = 'rgba(52, 211, 153, 0.5)';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.55)';
+        ctx.lineWidth = 2;
         ctx.strokeRect(plot.x, plotTelemetryY, plot.width, telH);
-        ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
+        ctx.font = 'bold 15px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_PRIMARY;
         ctx.textAlign = 'left';
-        ctx.fillText('PPG  ·  FOTOPLESMOGRAFÍA', plot.x + 12, plotTelemetryY + 21);
-        ctx.font = '12px "SF Mono", Consolas, monospace';
-        ctx.fillStyle = 'rgba(203, 213, 225, 0.92)';
+        ctx.fillText('PPG · fotoplesmografía', plot.x + 14, plotTelemetryY + 26);
+        ctx.font = '13px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = 'rgba(203, 213, 225, 0.95)';
         const ampTxt = stats.range > 1 ? `${Math.round(stats.range)} u.a.` : '—';
         const lastRr = rrLive && rrLive.length > 0 ? `${Math.round(rrLive[rrLive.length - 1]!)} ms` : '—';
         ctx.fillText(
-          `T ${(WINDOW_MS / 1000).toFixed(1)} s   ·   Amp ${ampTxt}   ·   FC ${bpmLive > 0 ? Math.round(bpmLive) : '—'} bpm   ·   IBI ${lastRr}   ·   ${fingerOk ? 'CONTACTO ESTABLE' : 'SIN CONTACTO'}`,
-          plot.x + 220,
-          plotTelemetryY + 21
+          `Ventana ${(WINDOW_MS / 1000).toFixed(1)} s  ·  Amp ${ampTxt}  ·  FC ${bpmLive > 0 ? Math.round(bpmLive) : '—'}  ·  IBI ${lastRr}  ·  ${fingerOk ? 'LISTO' : 'ESPERANDO'}`,
+          plot.x + 260,
+          plotTelemetryY + 26
         );
         ctx.restore();
 
@@ -978,8 +978,8 @@ const PPGSignalMeter = ({
         });
       }
       
-      const legendY = CONFIG.CANVAS_HEIGHT - 18;
-      ctx.font = '11px "SF Mono", Consolas, monospace';
+      const legendY = CONFIG.CANVAS_HEIGHT - 22;
+      ctx.font = '13px "SF Mono", Consolas, monospace';
       ctx.textAlign = 'left';
       const lx = CONFIG.PLOT_AREA.LEFT;
       ctx.fillStyle = COLORS.SIGNAL_NORMAL;
@@ -1051,46 +1051,78 @@ const PPGSignalMeter = ({
         className="w-full h-full absolute inset-0 z-0 block touch-none"
         style={{ imageRendering: 'auto' }}
       />
-      {userHeightInput !== undefined && onUserHeightInputChange && onUserHeightSave && (
-        <div
-          className="absolute top-2 left-2 z-[100] flex flex-wrap items-center gap-1.5 rounded-xl bg-slate-950/92 px-2.5 py-2 border border-emerald-500/35 shadow-xl max-w-[min(92vw,340px)] pointer-events-auto"
-          role="region"
-          aria-label="Altura para estimación de presión arterial"
-        >
-          <span className="text-slate-300 text-[10px] font-mono whitespace-nowrap">Altura (TA) (m)</span>
-          <input
-            type="number"
-            step={0.01}
-            min={1.2}
-            max={2.15}
-            value={userHeightInput}
-            onChange={(e) => onUserHeightInputChange(e.target.value)}
-            className="w-[4.5rem] bg-slate-900 border border-slate-600 rounded-md px-1.5 py-1 text-white text-xs font-mono"
-          />
-          <button
-            type="button"
-            onClick={onUserHeightSave}
-            className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold font-mono"
+      <div
+        className="absolute left-0 right-0 z-[100] flex flex-row flex-wrap items-start justify-between gap-3 px-3 sm:px-4 pointer-events-none"
+        style={{ paddingTop: 'max(10px, env(safe-area-inset-top, 0px))' }}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-4">
+          <div
+            className={`flex-shrink-0 rounded-2xl p-3 shadow-lg ring-1 transition-all duration-100 ${
+              showPulse ? 'scale-105 bg-red-500/35 ring-red-400/40' : 'bg-emerald-500/25 ring-emerald-500/30'
+            }`}
           >
-            Guardar
-          </button>
+            <Heart
+              className={`h-8 w-8 sm:h-9 sm:w-9 transition-all duration-100 ${showPulse ? 'text-red-300' : 'text-emerald-400'}`}
+              fill={showPulse ? 'currentColor' : 'none'}
+              strokeWidth={2}
+            />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Activity className="h-5 w-5 flex-shrink-0 text-emerald-400" strokeWidth={2.5} />
+              <span className="truncate text-base font-bold tracking-wide text-white drop-shadow-md sm:text-lg">
+                MONITOR CARDÍACO
+              </span>
+            </div>
+            <span className="mt-0.5 block text-sm font-medium text-emerald-300/95">
+              Onda PPG en tiempo real
+            </span>
+          </div>
         </div>
-      )}
-      <div className="absolute top-0 left-0 p-2 z-10 flex items-center gap-2 pointer-events-none" style={{ top: '8px', left: '200px' }}>
-        <div className={`p-2 rounded-full transition-all duration-100 ${showPulse ? 'bg-red-500/30 scale-110' : 'bg-emerald-500/20'}`}>
-          <Heart className={`w-5 h-5 transition-all duration-100 ${showPulse ? 'text-red-400 scale-110' : 'text-emerald-400'}`} fill={showPulse ? 'currentColor' : 'none'} />
-        </div>
-        <Activity className="w-4 h-4 text-emerald-400" />
-        <div className="flex flex-col leading-tight">
-          <span className="text-[11px] font-semibold font-mono tracking-wide text-slate-200">MONITOR CARDÍACO</span>
-          <span className="text-[10px] font-mono text-emerald-400/85">PPG v5 · alta densidad</span>
-        </div>
+        {userHeightInput !== undefined && onUserHeightInputChange && onUserHeightSave && (
+          <div
+            className="pointer-events-auto flex max-w-full flex-wrap items-center gap-2 rounded-2xl border border-emerald-500/40 bg-slate-950/95 px-3 py-2.5 shadow-2xl ring-1 ring-white/5 backdrop-blur-md sm:gap-3 sm:px-4 sm:py-3"
+            role="region"
+            aria-label="Altura para estimación de presión arterial"
+          >
+            <span className="whitespace-nowrap text-sm font-semibold text-slate-200">Altura (TA)</span>
+            <input
+              type="number"
+              step={0.01}
+              min={1.2}
+              max={2.15}
+              value={userHeightInput}
+              onChange={(e) => onUserHeightInputChange(e.target.value)}
+              className="w-[5.5rem] rounded-lg border border-slate-500 bg-slate-900/95 px-2 py-2 text-center text-base font-mono text-white shadow-inner sm:w-24"
+            />
+            <span className="text-slate-400 text-sm">m</span>
+            <button
+              type="button"
+              onClick={onUserHeightSave}
+              className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-md hover:bg-emerald-500 active:scale-[0.98]"
+            >
+              Guardar
+            </button>
+          </div>
+        )}
       </div>
-      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
-        <button onClick={onStartMeasurement} className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${isMonitoring ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r' : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'}`}>
+      <div className="fixed bottom-0 left-0 right-0 z-50 grid h-16 grid-cols-2 border-t border-slate-600/50 pb-[max(0.25rem,env(safe-area-inset-bottom))] sm:h-[4.25rem]">
+        <button
+          type="button"
+          onClick={onStartMeasurement}
+          className={`min-h-[3.5rem] text-base font-bold transition-colors sm:text-lg ${
+            isMonitoring
+              ? 'border-r border-slate-600/60 bg-red-600/25 text-red-100 hover:bg-red-600/35 active:bg-red-600/45'
+              : 'border-r border-slate-600/60 bg-emerald-600/35 text-emerald-50 hover:bg-emerald-600/45 active:bg-emerald-600/55'
+          }`}
+        >
           {isMonitoring ? 'DETENER' : 'INICIAR'}
         </button>
-        <button onClick={handleReset} className="bg-slate-700/20 hover:bg-slate-700/30 active:bg-slate-700/40 text-slate-300 font-semibold text-sm transition-colors border-t border-slate-700/50">
+        <button
+          type="button"
+          onClick={handleReset}
+          className="min-h-[3.5rem] bg-slate-800/50 text-base font-bold text-slate-100 hover:bg-slate-700/55 active:bg-slate-700/65 sm:text-lg"
+        >
           RESET
         </button>
       </div>

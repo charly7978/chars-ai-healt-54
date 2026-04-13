@@ -128,6 +128,9 @@ const Index = () => {
     getRGBStats,
     getPositionQuality,
   } = useSignalProcessor();
+
+  const processFrameRef = useRef(processFrame);
+  processFrameRef.current = processFrame;
   
   const { 
     processSignal: processHeartBeat, 
@@ -266,7 +269,7 @@ const Index = () => {
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        processFrame(imageData, frameTimestamp);
+        processFrameRef.current(imageData, frameTimestamp);
       } catch {}
       scheduleNext(video);
     };
@@ -281,7 +284,7 @@ const Index = () => {
     };
     
     captureOneFrame(performance.now());
-  }, [processFrame]);
+  }, []);
 
   const stopFrameLoop = useCallback(() => {
     isProcessingRef.current = false;
@@ -334,7 +337,7 @@ const Index = () => {
         setTimeout(() => clearInterval(checkReady), 5000);
       }
     }, 500);
-  }, [startFrameLoop]);
+  }, []);
 
   const finalizeMeasurement = useCallback(async () => {
     if (!isMonitoring) return;
@@ -772,16 +775,24 @@ const Index = () => {
           const isLocked = pq.locked && !isDrifting;
           const showGuidance = !isLocked || isDrifting;
           return showGuidance || isLocked ? (
-            <div className="absolute top-1 left-0 right-0 z-20 flex justify-center pointer-events-none">
-              <div className={`px-3 py-1.5 rounded-full text-[11px] font-bold tracking-wider shadow-lg backdrop-blur-md border ${
-                isLocked ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300' :
-                isDrifting ? 'bg-red-500/20 border-red-500/40 text-red-300 animate-pulse' :
-                pq.qualityScore > 0.4 ? 'bg-amber-500/20 border-amber-500/40 text-amber-300' :
-                'bg-red-500/20 border-red-500/40 text-red-300'
-              }`}>
-                <span className="flex items-center gap-1.5">
-                  {isLocked ? <Shield className="w-3 h-3" /> : isDrifting ? <AlertTriangle className="w-3 h-3" /> : <Activity className="w-3 h-3 animate-pulse" />}
-                  {pq.guidance}
+            <div
+              className="pointer-events-none absolute left-2 right-2 z-30 flex justify-center px-1"
+              style={{ top: 'max(7.5rem, min(22vh, 200px))' }}
+            >
+              <div
+                className={`max-w-[min(100%,28rem)] rounded-2xl border px-4 py-2.5 text-center text-sm font-semibold leading-snug shadow-xl backdrop-blur-md sm:text-base ${
+                  isLocked
+                    ? 'border-emerald-500/50 bg-emerald-950/80 text-emerald-100'
+                    : isDrifting
+                      ? 'animate-pulse border-red-500/50 bg-red-950/85 text-red-100'
+                      : pq.qualityScore > 0.4
+                        ? 'border-amber-500/50 bg-amber-950/80 text-amber-100'
+                        : 'border-red-500/50 bg-red-950/85 text-red-100'
+                }`}
+              >
+                <span className="flex items-center justify-center gap-2">
+                  {isLocked ? <Shield className="h-5 w-5 flex-shrink-0" /> : isDrifting ? <AlertTriangle className="h-5 w-5 flex-shrink-0" /> : <Activity className="h-5 w-5 flex-shrink-0 animate-pulse" />}
+                  <span className="text-balance">{pq.guidance}</span>
                 </span>
               </div>
             </div>
@@ -821,7 +832,7 @@ const Index = () => {
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
+          <div className="absolute inset-x-0 top-[55%] bottom-[72px] bg-black/10 px-4 py-6 sm:bottom-20">
             <div className="grid grid-cols-3 gap-4 place-items-center">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />

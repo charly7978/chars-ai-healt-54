@@ -38,6 +38,9 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  /** Evita reiniciar la cámara cuando el padre re-crea el callback (p. ej. al cambiar processFrame). */
+  const onStreamReadyRef = useRef(onStreamReady);
+  onStreamReadyRef.current = onStreamReady;
   const isStartingRef = useRef(false);
   const diagnosticsRef = useRef<CameraDiagnostics>({
     deviceLabel: '',
@@ -286,7 +289,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           '| WB:', diagnosticsRef.current.wbLocked,
           '| ISO:', diagnosticsRef.current.isoValue);
 
-        onStreamReady?.(stream);
+        onStreamReadyRef.current?.(stream);
         isStartingRef.current = false;
       } catch (err) {
         console.error('❌ Camera error:', err);
@@ -304,7 +307,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       mounted = false;
       stopCamera();
     };
-  }, [isMonitoring, onStreamReady]);
+  }, [isMonitoring]);
 
   return (
     <video
