@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2, Brain, Loader2 } from "lucide-react";
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
@@ -21,10 +21,7 @@ import {
 } from "@/modules/personalization/userPhysiology";
 import { FrameCaptureScheduler } from "@/modules/camera/FrameCaptureScheduler";
 import { ClinicalTopBar } from "@/components/visual/ClinicalTopBar";
-
-const MedicalAmbient3D = lazy(() =>
-  import("@/components/visual/MedicalAmbient3D").then((m) => ({ default: m.MedicalAmbient3D }))
-);
+import { MedicalAmbient3D } from "@/components/visual/MedicalAmbient3D";
 import { cn } from "@/lib/utils";
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
@@ -771,9 +768,7 @@ const Index = () => {
         <div className="absolute inset-0 z-0">
           <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
         </div>
-        <Suspense fallback={null}>
-          <MedicalAmbient3D />
-        </Suspense>
+        <MedicalAmbient3D />
         {ppgDebug && isMonitoring && (
           <div
             className="pointer-events-none absolute left-1 bottom-28 z-[40] max-w-[min(96vw,22rem)] rounded-md border border-lime-500/35 bg-black/75 px-2 py-1.5 font-mono text-[9px] leading-snug text-lime-100/95 shadow-lg"

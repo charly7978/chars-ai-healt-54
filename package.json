@@ -30,6 +30,9 @@
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.183.2"
   },
+  "overrides": {
+    "three-mesh-bvh": "^0.9.9"
+  },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
     "@types/node": "^22.16.0",
