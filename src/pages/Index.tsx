@@ -4,7 +4,7 @@ import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
+import { stableForBeatsFromSignal, emptyHeartBeatResult } from "@/modules/signal-processing/beatContactGating";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
@@ -121,21 +121,17 @@ const Index = () => {
     stopProcessing,
     lastSignal,
     getLastSignal,
+    getLastBeatResult,
     processFrame,
     isProcessing,
     framesProcessed,
     getRGBStats,
     getPositionQuality,
+    resetProcessingEngine,
   } = useSignalProcessor();
 
   const processFrameRef = useRef(processFrame);
   processFrameRef.current = processFrame;
-  
-  const { 
-    processSignal: processHeartBeat, 
-    setArrhythmiaState,
-    reset: resetHeartBeat,
-  } = useHeartBeatProcessor();
   
   const { 
     processSignal: processVitalSigns, 
@@ -385,7 +381,7 @@ const Index = () => {
     }
     stopProcessing();
     fullResetVitalSigns();
-    resetHeartBeat();
+    resetProcessingEngine();
     emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, cholesterol: 0, triglycerides: 0 };
     frameTimestampHistoryRef.current = [];
     setIsMonitoring(false);
@@ -421,7 +417,7 @@ const Index = () => {
     arrhythmiaToastPendingRef.current = false;
     lastArrhythmiaToastRef.current = { t: 0, label: '' };
     console.log('✅ Reset completado');
-  }, [stopFrameLoop, stopProcessing, fullResetVitalSigns, resetHeartBeat]);
+  }, [stopFrameLoop, stopProcessing, fullResetVitalSigns, resetProcessingEngine]);
 
   const vitalSignsFrameCounter = useRef<number>(0);
   const unstableFrameCounter = useRef<number>(0);
@@ -436,7 +432,6 @@ const Index = () => {
     if (lastSignal.timestamp === lastProcessedSignalTsRef.current) return;
     lastProcessedSignalTsRef.current = lastSignal.timestamp;
 
-    const signalValue = lastSignal.filteredValue;
     const ls = lastSignal as typeof lastSignal & {
       clipHighRatio?: number;
       clipLowRatio?: number;
@@ -445,15 +440,7 @@ const Index = () => {
       sourceStability?: number;
     };
     const positionQuality = getPositionQuality();
-    const perf = lastSignal.perfusionIndex ?? 0;
-    /** Medición estricta: measurementReady. Latidos/onda: contacto estable + perfusión (evita silencio con dedo bueno). */
-    const stableForBeats =
-      lastSignal.measurementReady === true ||
-      (lastSignal.contactState === 'STABLE_CONTACT' &&
-        lastSignal.fingerDetected &&
-        !lastSignal.motionArtifact &&
-        (lastSignal.quality ?? 0) >= 14 &&
-        perf > 0.024);
+    const stableForBeats = stableForBeatsFromSignal(lastSignal);
     const stableHumanSignal = stableForBeats;
 
     const clipHigh = ls.clipHighRatio ?? 0;
@@ -470,23 +457,8 @@ const Index = () => {
       (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
       estimateSampleRateFromFrames(lastSignal.timestamp);
 
-    const contactForBeat = stableForBeats ? "STABLE_CONTACT" : "NO_CONTACT";
-
-    const heartBeatResult = processHeartBeat(
-      signalValue,
-      contactForBeat,
-      lastSignal.timestamp,
-      {
-        quality: lastSignal.quality,
-        contactState: contactForBeat,
-        motionArtifact: lastSignal.motionArtifact,
-        pressureState: ppgPressure ?? (pressureOptimal ? 'OPTIMAL_PRESSURE' : 'LOW_PRESSURE'),
-        clipHigh,
-        clipLow,
-        perfusionIndex: lastSignal.perfusionIndex,
-        positionDrifting: positionQuality.drifting,
-      }
-    );
+    const heartBeatResult =
+      getLastBeatResult() ?? emptyHeartBeatResult(0);
 
     setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
 
@@ -501,7 +473,6 @@ const Index = () => {
         setArrhythmiaCount("--");
         if (arrhythmiaDetectedRef.current) {
           arrhythmiaDetectedRef.current = false;
-          setArrhythmiaState(false);
         }
         setVitalSigns(prev => (
           prev.measurementConfidence === 'INVALID' && prev.spo2 === 0 && prev.glucose === 0 && prev.pressure.systolic === 0 && prev.pressure.diastolic === 0
@@ -646,7 +617,6 @@ const Index = () => {
             const isArrhythmiaDetected = !NON_ALERT_RHYTHM_LABELS.has(rhythmLabel);
             if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
               arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-              setArrhythmiaState(isArrhythmiaDetected);
 
               if (isArrhythmiaDetected) {
                 const minEvents = 2;

@@ -13,6 +13,7 @@
  */
 
 import { AdvancedFingerTracker, type FingerTrackingResult } from '../signal-processing/AdvancedFingerTracker';
+import { beatContactFromSignal, emptyHeartBeatResult } from '../signal-processing/beatContactGating';
 import { PPGSignalProcessor } from '../signal-processing/PPGSignalProcessor';
 import { HeartBeatProcessor } from '../HeartBeatProcessor';
 import type { HeartBeatResult } from '../../types/beat';
@@ -115,12 +116,16 @@ export class ElitePPGProcessor {
   private frameCount = 0;
   private lastResult: ElitePPGResult | null = null;
   private rrHistory: number[] = [];
-  
+  /** Alineado con useHeartBeatProcessor: muchos frames sin contacto → reset del detector */
+  private noContactBeatFrames = 0;
+  private readonly NO_CONTACT_BEAT_RESET = 90;
+
   private onResult?: (result: ElitePPGResult) => void;
   private onArrhythmia?: (result: ArrhythmiaResult) => void;
-  
+
   private lastSignal: ProcessedSignal | null = null;
   private lastBeatResult: HeartBeatResult | null = null;
+  private lastFingerResult: FingerTrackingResult | null = null;
   
   constructor(config: Partial<EliteConfig> = {}) {
     this.config = {
@@ -168,6 +173,8 @@ export class ElitePPGProcessor {
     this.lastResult = null;
     this.lastSignal = null;
     this.lastBeatResult = null;
+    this.lastFingerResult = null;
+    this.noContactBeatFrames = 0;
     this.fingerTracker.reset();
     this.ppgProcessor.reset?.();
     this.beatProcessor.reset?.();
@@ -184,30 +191,53 @@ export class ElitePPGProcessor {
     
     // FASE 1: TRACKING DE DEDO
     const fingerResult = this.fingerTracker.processFrame(imageData);
-    
+    this.lastFingerResult = fingerResult;
+
     // FASE 2: PROCESAMIENTO PPG (callback-based)
     this.ppgProcessor.processFrame(imageData, timestamp);
-    
-    // Obtener señal del callback
+
     const ppgSignal = this.lastSignal;
-    
-    // FASE 3: DETECCIÓN DE LATIDOS
+
+    // FASE 3: LATIDOS — misma regla que Index (beatContactGating); sin procesar sin contacto estable
     let beatResult: HeartBeatResult | null = null;
-    
-    if (ppgSignal) {
-      const beatContact = ppgSignal.measurementReady ? "STABLE_CONTACT" : "NO_CONTACT";
-      beatResult = this.beatProcessor.processSignal(
-        ppgSignal.filteredValue ?? ppgSignal.rawValue ?? 0,
-        timestamp,
-        {
-          quality: ppgSignal.quality,
-          contactState: beatContact,
-          motionArtifact: ppgSignal.motionArtifact ?? false,
-          pressureState: ppgSignal.pressureState ?? "LOW_PRESSURE",
-          perfusionIndex: ppgSignal.perfusionIndex
+
+    if (!ppgSignal) {
+      this.lastBeatResult = null;
+    } else {
+      const beatContact = beatContactFromSignal(ppgSignal);
+      if (beatContact === 'STABLE_CONTACT') {
+        this.noContactBeatFrames = 0;
+        const pq = this.ppgProcessor.getPositionQuality();
+        const ppgPressure = ppgSignal.pressureState;
+        const pressureOptimal =
+          ppgPressure === 'OPTIMAL_PRESSURE' ||
+          (pq.locked && !pq.drifting && pq.qualityScore >= 0.55);
+        const resolvedPressure =
+          ppgPressure ?? (pressureOptimal ? 'OPTIMAL_PRESSURE' : 'LOW_PRESSURE');
+
+        beatResult = this.beatProcessor.processSignal(
+          ppgSignal.filteredValue ?? ppgSignal.rawValue ?? 0,
+          timestamp,
+          {
+            quality: ppgSignal.quality,
+            contactState: beatContact,
+            motionArtifact: ppgSignal.motionArtifact ?? false,
+            pressureState: resolvedPressure,
+            clipHigh: ppgSignal.clipHighRatio ?? 0,
+            clipLow: ppgSignal.clipLowRatio ?? 0,
+            activeSource: ppgSignal.activeSource,
+            perfusionIndex: ppgSignal.perfusionIndex,
+            positionDrifting: pq.drifting,
+          }
+        );
+      } else {
+        this.noContactBeatFrames++;
+        if (this.noContactBeatFrames >= this.NO_CONTACT_BEAT_RESET) {
+          this.beatProcessor.reset();
+          this.noContactBeatFrames = 0;
         }
-      );
-      
+        beatResult = emptyHeartBeatResult(0);
+      }
       this.lastBeatResult = beatResult;
     }
     
@@ -387,11 +417,40 @@ export class ElitePPGProcessor {
   getLastResult(): ElitePPGResult | null {
     return this.lastResult;
   }
-  
+
+  /** Misma instancia PPG que la UI principal — sin duplicar procesadores. */
+  getLastProcessedSignal(): ProcessedSignal | null {
+    return this.lastSignal;
+  }
+
+  getLastBeatResult(): HeartBeatResult | null {
+    return this.lastBeatResult;
+  }
+
+  getLastFingerResult(): FingerTrackingResult | null {
+    return this.lastFingerResult;
+  }
+
+  getRGBStats() {
+    return this.ppgProcessor.getRGBStats();
+  }
+
+  getPositionQuality() {
+    return this.ppgProcessor.getPositionQuality();
+  }
+
+  getPPGDebugInfo() {
+    return this.ppgProcessor.getDebugInfo();
+  }
+
+  async calibrate(): Promise<boolean> {
+    return this.ppgProcessor.calibrate();
+  }
+
   isActive(): boolean {
     return this.isRunning;
   }
-  
+
   private estimateSampleRate(): number {
     const ts = this.timestampBuffer;
     if (ts.length < 6) return 30;
