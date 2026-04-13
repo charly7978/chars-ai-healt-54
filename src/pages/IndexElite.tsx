@@ -1187,8 +1187,10 @@ const IndexElite: React.FC = () => {
           ref={cameraRef}
           isMonitoring={isMonitoring}
           onStreamReady={(stream) => {
+            console.log('📹 Stream received from CameraView');
             streamRef.current = stream;
             setCameraDiagnostics(cameraRef.current?.getDiagnostics() || null);
+            setIsStreamReady(true);
           }}
         />
       </div>
