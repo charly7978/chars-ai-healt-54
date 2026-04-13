@@ -782,14 +782,14 @@ const Index = () => {
               style={{ top: 'max(7.5rem, min(22vh, 200px))' }}
             >
               <div
-                className={`max-w-[min(100%,28rem)] rounded-2xl border px-4 py-2.5 text-center text-sm font-semibold leading-snug shadow-xl backdrop-blur-md sm:text-base ${
+                className={`max-w-[min(100%,28rem)] rounded-2xl border px-4 py-2.5 text-center text-sm font-semibold leading-snug shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:text-base ${
                   isLocked
-                    ? 'border-emerald-500/50 bg-emerald-950/80 text-emerald-100'
+                    ? 'border-teal-400/40 bg-teal-950/90 text-teal-50 ring-1 ring-teal-500/20'
                     : isDrifting
-                      ? 'animate-pulse border-red-500/50 bg-red-950/85 text-red-100'
+                      ? 'animate-pulse border-rose-500/45 bg-rose-950/90 text-rose-50 ring-1 ring-rose-400/20'
                       : pq.qualityScore > 0.4
-                        ? 'border-amber-500/50 bg-amber-950/80 text-amber-100'
-                        : 'border-red-500/50 bg-red-950/85 text-red-100'
+                        ? 'border-amber-500/45 bg-amber-950/90 text-amber-50 ring-1 ring-amber-400/15'
+                        : 'border-orange-500/40 bg-orange-950/90 text-orange-50 ring-1 ring-orange-400/15'
                 }`}
               >
                 <span className="flex items-center justify-center gap-2">
