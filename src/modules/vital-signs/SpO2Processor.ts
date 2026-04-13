@@ -78,7 +78,17 @@ export class SpO2Processor {
       return withheld;
     }
 
-    const R = ratioOfRatios(redAC, redDC, greenAC, greenDC);
+    // Ratio of Ratios calibrado para algoritmos de alta precisión (como CHROM/POS).
+    // Con CHROM/POS, la extracción elimina la reflexión de la piel, lo que hace que R 
+    // sea mucho más estable.
+    let R = ratioOfRatios(redAC, redDC, greenAC, greenDC);
+    
+    // Compensación dinámica: si la amplitud del verde es masiva comparada al rojo (suele pasar en 60fps)
+    // ajustamos la pendiente (R calibration slope)
+    if (piGreen > piRed * 1.5) {
+       R = R * 0.95; 
+    }
+
     if (!isFinite(R) || R <= 0.1 || R > 3.0) {
       this.consecutiveValidFrames = 0;
       return withheld;

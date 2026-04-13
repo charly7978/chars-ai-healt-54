@@ -278,123 +278,136 @@ export class RhythmClassifier {
     };
   }
 
+  private computeFeatures(
+    ibis: number[],
+    recentBeats: BeatInput[],
+    sourceStability: number
+  ): RhythmFeatures {
+    // 1. Time-domain HRV (RMSSD, SDNN, pNN50)
+    let rmssd = 0, sdnn = 0, pnn50 = 0, rrCV = 0;
+    const diffs: number[] = [];
+    let pnnCount = 0;
+
+    if (ibis.length > 1) {
+      const mean = ibis.reduce((a, b) => a + b, 0) / ibis.length;
+      sdnn = Math.sqrt(ibis.reduce((s, x) => s + Math.pow(x - mean, 2), 0) / (ibis.length - 1));
+      rrCV = mean > 0 ? (sdnn / mean) * 100 : 0;
+
+      let sumSq = 0;
+      for (let i = 1; i < ibis.length; i++) {
+        const d = Math.abs(ibis[i] - ibis[i - 1]);
+        diffs.push(d);
+        sumSq += d * d;
+        if (d > 50) pnnCount++;
+      }
+      rmssd = Math.sqrt(sumSq / diffs.length);
+      pnn50 = (pnnCount / diffs.length) * 100;
+    }
+
+    // 2. Non-linear HRV (Poincaré SD1/SD2)
+    // SD1 = standard deviation of instantaneous beat-to-beat variability (short-term)
+    // SD2 = standard deviation of continuous long-term variability
+    let sd1 = 0, sd2 = 0, sd1sd2Ratio = 0;
+    if (diffs.length > 0) {
+      sd1 = Math.sqrt(0.5) * rmssd;
+      // SD2 calculation approximated via SDNN and SD1: SDNN^2 = 0.5 * SD1^2 + 0.5 * SD2^2
+      const sd2Sq = 2 * (sdnn * sdnn) - (sd1 * sd1);
+      sd2 = sd2Sq > 0 ? Math.sqrt(sd2Sq) : 0;
+      sd1sd2Ratio = sd2 > 0 ? sd1 / sd2 : 0;
+    }
+
+    // 3. Shannon Entropy (complexity of RR distribution)
+    let shannonEntropy = 0;
+    if (ibis.length > 3) {
+      const binSize = 50; // 50ms bins
+      const bins = new Map<number, number>();
+      for (const rr of ibis) {
+        const b = Math.floor(rr / binSize);
+        bins.set(b, (bins.get(b) || 0) + 1);
+      }
+      for (const count of bins.values()) {
+        const p = count / ibis.length;
+        shannonEntropy -= p * Math.log2(p);
+      }
+    }
+
+    const medianHR = ibis.length > 0 ? 60000 / ibis[Math.floor(ibis.length / 2)] : 0;
+
+    // 4. Morphology Instability
+    const morphScores = recentBeats.map(b => b.morphologyScore);
+    const mMean = morphScores.reduce((a, b) => a + b, 0) / (morphScores.length || 1);
+    const mVar = morphScores.reduce((s, x) => s + Math.pow(x - mMean, 2), 0) / (morphScores.length || 1);
+    const morphologyInstabilityScore = Math.min(100, Math.sqrt(mVar) * 2);
+
+    // 5. AFib Likelihood Scoring (Based on SD1/SD2, Entropy, RMSSD, and irregular burden)
+    const irrBurden = recentBeats.filter(b => b.flags.isPremature || b.flags.isSuspicious).length / (recentBeats.length || 1);
+    
+    let afLikeScore = 0;
+    if (shannonEntropy > 1.2) afLikeScore += 25; // High complexity
+    if (rrCV > 15) afLikeScore += 25;           // High variability
+    if (sd1sd2Ratio > 0.8) afLikeScore += 25;   // Spherical Poincaré plot (typical of AFib)
+    if (irrBurden > 0.3) afLikeScore += 25;     // High irregular burden
+
+    // 6. Ectopy (PAC/PVC) Scoring
+    let ectopySuspicionScore = 0;
+    if (pnn50 > 10 && afLikeScore < 50) ectopySuspicionScore += 40; // Isolated large jumps
+    if (irrBurden > 0.1 && irrBurden <= 0.3) ectopySuspicionScore += 40;
+    if (sd1 > 20 && sd2 < 50) ectopySuspicionScore += 20; // Torpedo-shaped Poincaré
+
+    return {
+      rmssd,
+      sdnn,
+      pnn50,
+      shannonEntropy,
+      sampleEntropy: 0, // Placeholder
+      sd1,
+      sd2,
+      sd1sd2Ratio,
+      rrCV,
+      medianHR,
+      rrIrregularityScore: Math.min(100, rrCV * 3),
+      morphologyInstabilityScore,
+      detectorDisagreementBurden: 0, // Simplified
+      sourceSwitchBurden: 1 - sourceStability,
+      beatAmplitudeCV: 0, // Simplified
+      ectopySuspicionScore: Math.min(100, ectopySuspicionScore),
+      afLikeScore: Math.min(100, afLikeScore),
+    };
+  }
+
   private classifyRhythm(f: RhythmFeatures, ibis: number[]): RhythmLabel {
-    const hr = f.medianHR;
+    if (ibis.length < 5) return 'INSUFFICIENT_DATA';
 
-    // ── Rate-based patterns ──
-    if (hr < 50 && f.rrCV < 0.12) return 'BRADYCARDIA_PATTERN';
-    if (hr > 110 && f.rrCV < 0.12) return 'TACHYCARDIA_PATTERN';
-
-    // ── AF-like: irregularly irregular + high entropy ──
-    if (f.afLikeScore > 0.65 && f.rrCV > 0.12 && f.shannonEntropy > 1.8 && f.pnn50 > 0.30) {
+    // 1. High confidence Atrial Fibrillation (AF) pattern
+    if (f.afLikeScore >= 75 && f.shannonEntropy > 1.5 && f.rrCV > 18) {
       return 'POSSIBLE_AF';
     }
 
-    // ── Bigeminy/Trigeminy pattern ──
-    if (this.detectBigeminyTrigeminy(ibis)) {
-      return 'BIGEMINY_TRIGEMINY_PATTERN';
-    }
-
-    // ── Ectopy ──
-    if (f.ectopySuspicionScore > 0.5 && f.morphologyInstabilityScore > 0.4) {
-      return 'POSSIBLE_ECTOPY';
-    }
-
-    // ── General irregularity ──
-    if (f.rrIrregularityScore > 0.5 && f.rmssd > 60 && f.rrCV > 0.10) {
+    // 2. High irregular burden (Undetermined highly irregular)
+    if (f.rrIrregularityScore > 70 && f.afLikeScore >= 50) {
       return 'IRREGULAR_RHYTHM';
     }
 
-    // ── Sinus with variability ──
-    if (f.rrCV > 0.08 || f.rmssd > 40) {
-      return 'SINUS_VARIABLE';
+    // 3. Ectopic beats (PACs / PVCs)
+    if (f.ectopySuspicionScore >= 60) {
+      // Check for bigeminy/trigeminy patterns (alternating long-short RR)
+      let alternatingCount = 0;
+      for (let i = 2; i < ibis.length; i++) {
+        const d1 = ibis[i-1] - ibis[i-2];
+        const d2 = ibis[i] - ibis[i-1];
+        if (d1 * d2 < 0 && Math.abs(d1) > 100 && Math.abs(d2) > 100) alternatingCount++;
+      }
+      if (alternatingCount >= 3) return 'BIGEMINY_TRIGEMINY_PATTERN';
+      return 'POSSIBLE_ECTOPY';
     }
 
+    // 4. Stable but abnormal rates
+    if (f.medianHR > 100) return 'TACHYCARDIA_PATTERN';
+    if (f.medianHR < 50) return 'BRADYCARDIA_PATTERN';
+
+    // 5. Sinus patterns
+    if (f.rrCV > 5 && f.rrCV <= 12) return 'SINUS_VARIABLE';
     return 'SINUS_STABLE';
-  }
-
-  private computeFeatures(ibis: number[], beats: BeatInput[], sourceStab: number): RhythmFeatures {
-    const n = ibis.length;
-    const mean = ibis.reduce((a, b) => a + b, 0) / n;
-    const sdnn = Math.sqrt(ibis.reduce((s, i) => s + (i - mean) ** 2, 0) / n);
-    const rrCV = sdnn / Math.max(1, mean);
-
-    // RMSSD
-    let ssd = 0;
-    let pnn50Count = 0;
-    for (let i = 1; i < n; i++) {
-      const d = ibis[i] - ibis[i - 1];
-      ssd += d * d;
-      if (Math.abs(d) > 50) pnn50Count++;
-    }
-    const rmssd = Math.sqrt(ssd / Math.max(1, n - 1));
-    const pnn50 = pnn50Count / Math.max(1, n - 1);
-
-    // Shannon entropy
-    const bins: Record<number, number> = {};
-    const binW = 30;
-    for (const i of ibis) {
-      const k = Math.floor(i / binW);
-      bins[k] = (bins[k] || 0) + 1;
-    }
-    let shannonEntropy = 0;
-    for (const c of Object.values(bins)) {
-      const p = c / n;
-      shannonEntropy -= p * Math.log2(p);
-    }
-
-    // Sample entropy (simplified)
-    const sampleEntropy = this.computeSampleEntropy(ibis);
-
-    // Poincaré
-    const { sd1, sd2 } = this.poincare(ibis);
-
-    // Morphology instability
-    const morphScores = beats.map(b => b.morphologyScore);
-    const morphMean = morphScores.reduce((a, b) => a + b, 0) / morphScores.length;
-    const morphVar = morphScores.reduce((s, v) => s + (v - morphMean) ** 2, 0) / morphScores.length;
-    const morphologyInstabilityScore = Math.min(1, Math.sqrt(morphVar) / 30);
-
-    // Detector disagreement burden
-    const disagreeCount = beats.filter(b => b.detectorAgreement < 0.5).length;
-    const detectorDisagreementBurden = disagreeCount / beats.length;
-
-    // Source switch burden (inverse of stability)
-    const sourceSwitchBurden = 1 - sourceStab;
-
-    // Beat amplitude CV
-    const amps = beats.filter(b => b.amplitude && b.amplitude > 0).map(b => b.amplitude!);
-    let beatAmplitudeCV = 0;
-    if (amps.length > 2) {
-      const ampMean = amps.reduce((a, b) => a + b, 0) / amps.length;
-      const ampStd = Math.sqrt(amps.reduce((s, v) => s + (v - ampMean) ** 2, 0) / amps.length);
-      beatAmplitudeCV = ampMean > 0 ? ampStd / ampMean : 0;
-    }
-
-    // Ectopy suspicion
-    const prematureCount = beats.filter(b => b.flags.isPremature).length;
-    const ectopySuspicionScore = Math.min(1, prematureCount / Math.max(1, beats.length) * 3);
-
-    // AF-like score: combine irregularity metrics
-    const rrIrregularityScore = this.computeIrregularityScore(ibis);
-    const afLikeScore = Math.min(1,
-      (rrIrregularityScore * 0.3) +
-      (Math.min(1, shannonEntropy / 3) * 0.25) +
-      (Math.min(1, pnn50 / 0.5) * 0.2) +
-      (Math.min(1, rrCV / 0.2) * 0.15) +
-      (sd1 > 0 && sd2 > 0 ? Math.min(1, sd1 / sd2) * 0.1 : 0)
-    );
-
-    const medianHR = 60000 / this.median(ibis);
-
-    return {
-      rmssd, sdnn, pnn50, shannonEntropy, sampleEntropy,
-      sd1, sd2, sd1sd2Ratio: sd2 > 0 ? sd1 / sd2 : 0,
-      rrCV, medianHR, rrIrregularityScore,
-      morphologyInstabilityScore, detectorDisagreementBurden,
-      sourceSwitchBurden, beatAmplitudeCV,
-      ectopySuspicionScore, afLikeScore,
-    };
   }
 
   private computeIrregularityScore(ibis: number[]): number {
