@@ -665,6 +665,45 @@ const IndexElite: React.FC = () => {
   }, []);
   
   // -------------------------------------------------
+  // INICIO DE CAPTURA CUANDO STREAM ESTÁ LISTO
+  // -------------------------------------------------
+  
+  const startCaptureLoop = useCallback(() => {
+    const video = cameraRef.current?.getVideoElement();
+    
+    if (!video) {
+      console.error('❌ No video element available');
+      return;
+    }
+    
+    // Verificar que el video esté realmente listo
+    if (video.readyState < 2 || video.videoWidth === 0) {
+      console.log('⏳ Video not ready yet, waiting...');
+      setTimeout(startCaptureLoop, 100);
+      return;
+    }
+    
+    console.log('✅ Video ready:', video.videoWidth, 'x', video.videoHeight);
+    
+    // Iniciar loop
+    isProcessingRef.current = true;
+    animationFrameRef.current = requestAnimationFrame(captureLoop);
+    
+    toast({
+      title: "🔴 Recording Started",
+      description: `Session: ${SESSION_DURATION_SECONDS}s`
+    });
+  }, [captureLoop]);
+  
+  // Efecto: Iniciar captura cuando stream esté listo
+  useEffect(() => {
+    if (isStreamReady && isMonitoring && !isPaused) {
+      console.log('🎬 Stream ready, starting capture...');
+      startCaptureLoop();
+    }
+  }, [isStreamReady, isMonitoring, isPaused, startCaptureLoop]);
+  
+  // -------------------------------------------------
   // TIMER DE SESIÓN
   // -------------------------------------------------
   
