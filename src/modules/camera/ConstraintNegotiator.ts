@@ -53,7 +53,8 @@ export async function buildProgressiveConstraints(
     frameRate: { ideal: 30, min: 15, max: 60 },
   };
 
-  if (preferredDeviceId) {
+  // Solo incluir deviceId si es un ID real (no vacío)
+  if (preferredDeviceId && preferredDeviceId.length > 4) {
     video.deviceId = { ideal: preferredDeviceId };
   }
 
