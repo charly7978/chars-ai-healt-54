@@ -505,26 +505,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.lastAnalysis?.pressureState === 'HIGH_PRESSURE') return false;
     if (clipHighRatio > 0.22) return false;
     if (!this.lastCanonicalPose.ok) return false;
-    if (perfusionIndexNorm < 0.034) return false;
-    if (gatedQuality < 19) return false;
-    if (periodicityScore < 0.13) return false;
-    if ((this.lastAnalysis?.coverageRatio ?? 0) < 0.2) return false;
-    if (this.sourceStability < 0.2) return false;
-    if (spatialUniformity < 0.22) return false;
+    // V2: Relajar umbrales de perfusión y calidad para compatibilidad con nuevo SignalExtractionEngine
+    if (perfusionIndexNorm < 0.024) return false;
+    if (gatedQuality < 14) return false;
+    if (periodicityScore < 0.10) return false;
+    if ((this.lastAnalysis?.coverageRatio ?? 0) < 0.18) return false;
+    if (this.sourceStability < 0.12) return false;
+    if (spatialUniformity < 0.18) return false;
 
     const a = this.lastAnalysis;
     if (a) {
       const rr = a.rawRed;
       const gg = a.rawGreen;
-      if (rr < 48 || gg < 7 || rr / Math.max(gg, 1) < 1.04) return false;
-      if (a.fingerScore < 0.14) return false;
+      if (rr < 42 || gg < 5 || rr / Math.max(gg, 1) < 1.03) return false;
+      if (a.fingerScore < 0.10) return false;
       const sq = Object.values(a.allSQI);
-      // SQI por fuente está en 0..1 (SignalQualityScorer)
-      if (sq.length === 0 || Math.max(...sq) < 0.14) return false;
+      if (sq.length === 0 || Math.max(...sq) < 0.10) return false;
       if (a.readinessReason !== 'ok') return false;
       const tb = a.rawBlue ?? 0;
-      if (tb > 2 && a.rawRed / tb < 1.03) return false;
-      if ((a.maskIoU ?? 0) < 0.22) return false;
+      if (tb > 2 && a.rawRed / tb < 1.02) return false;
+      if ((a.maskIoU ?? 0) < 0.18) return false;
     }
     return true;
   }

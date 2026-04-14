@@ -63,26 +63,27 @@ export function stableForBeatsFromSignal(s: ProcessedSignal): boolean {
    */
   if (s.measurementReady !== true) return false;
 
+  // V2: Umbrales relajados para compatibilidad con SignalExtractionEngine V4
   const perf = s.perfusionIndex ?? 0;
-  if (perf < 1.95) return false;
-  if ((s.quality ?? 0) < 19) return false;
+  if (perf < 1.4) return false;
+  if ((s.quality ?? 0) < 14) return false;
 
   const rr = s.rawRed ?? 0;
   const gg = s.rawGreen ?? 1;
   const bb = s.rawBlue ?? 0;
-  if (rr < 52 || gg < 7) return false;
-  if (rr / Math.max(gg, 1) < 1.08) return false;
+  if (rr < 42 || gg < 5) return false;
+  if (rr / Math.max(gg, 1) < 1.04) return false;
   /** Rechazo objetos neutros (R≈G≈B) — tejido+flash suele R/B > 1 */
-  if (bb > 3 && rr / bb < 1.04) return false;
+  if (bb > 3 && rr / bb < 1.02) return false;
 
   const ch = s.clipHighRatio ?? 0;
-  if (ch > 0.22) return false;
+  if (ch > 0.25) return false;
 
   const cov = s.roiCoverage ?? 0;
-  if (cov < 0.2) return false;
+  if (cov < 0.16) return false;
 
   const iou = s.maskIoU ?? 1;
-  if (iou < 0.22) return false;
+  if (iou < 0.18) return false;
 
   return true;
 }
