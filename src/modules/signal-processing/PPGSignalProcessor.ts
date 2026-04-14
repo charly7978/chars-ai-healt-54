@@ -102,9 +102,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastLogTime = 0;
   private processingTimeMs = 0;
 
-  /** Reserva para paso bajo respiratorio futuro (misma Fs estimada) */
-  private readonly _respirationScratch = new RingBuffer(512);
-
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
@@ -222,7 +219,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.rawSignalBuf.push(rawDenoised);
     const filtered = this.bandpassFilter.filter(rawDenoised);
     this.filteredBuf.push(filtered);
-    this._respirationScratch.push(filtered * 0.02);
 
     const perfusionIndex = analysis.perfusionIndex;
     const signalRange = this.getSignalRange();
@@ -862,6 +858,5 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastCanonicalPose = { ok: false, issue: 'PRESSURE_LOW' };
     this.lastLogTime = 0;
     this.processingTimeMs = 0;
-    this._respirationScratch.clear();
   }
 }
