@@ -507,7 +507,7 @@ export class FrameAnalysisEngine {
 
     const contactOut = this.contactMachine.update(contactInput);
 
-    const candidates = this.extraction.extract(
+    const extractionResult = this.extraction.extract(
       tr,
       tg,
       tb,
@@ -518,6 +518,7 @@ export class FrameAnalysisEngine {
       tg,
       tb
     );
+    const candidates = extractionResult.candidates;
 
     const sqiDetail: Record<string, SourceSQIDetail> = {};
     const allSQI: Record<string, number> = {};
