@@ -298,14 +298,14 @@ const PPGSignalMeter = ({
     };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
-      ibiDisplayRef.current = Math.round(last);
-      const mean = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
-      const variance = rrIntervals.reduce((sum, rr) => sum + (rr - mean) ** 2, 0) / rrIntervals.length;
-      hrvDisplayRef.current.sdnn = Math.round(Math.sqrt(variance));
-      let sumSqDiffs = 0;
-      for (let i = 1; i < rrIntervals.length; i++) sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
-      hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
+      const prev = rrIntervals[rrIntervals.length - 2];
+      const ibi = last - prev;
+      if (ibi >= 280 && ibi <= 2200) {
+        ibiDisplayRef.current = ibi;
+      }
     }
+    // Limpiar buffer para eliminar waveClass persistentes de antes
+    dataBufferRef.current?.clear();
   }, [
     value,
     quality,
