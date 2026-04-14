@@ -58,6 +58,8 @@ const Index = () => {
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  /** Tras el primer intento (éxito o fallo), no volver a tapar la UI — la API fullscreen suele fallar en iOS/Android. */
+  const [fullscreenPromptDismissed, setFullscreenPromptDismissed] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [measurementSummary, setMeasurementSummary] = useState<{
     totalBeats: number;
@@ -168,20 +170,28 @@ const Index = () => {
   vitalSignsRef.current = vitalSigns;
 
   const enterFullScreen = async () => {
-    if (isFullscreen) return;
     try {
-      const docEl = document.documentElement;
-      if (docEl.requestFullscreen) {
-        await docEl.requestFullscreen();
-      } else if ((docEl as any).webkitRequestFullscreen) {
-        await (docEl as any).webkitRequestFullscreen();
+      if (isFullscreen) {
+        setFullscreenPromptDismissed(true);
+        return;
       }
-      if (screen.orientation?.lock) {
-        await screen.orientation.lock('portrait').catch(() => {});
+      try {
+        const docEl = document.documentElement;
+        if (docEl.requestFullscreen) {
+          await docEl.requestFullscreen();
+        } else if ((docEl as any).webkitRequestFullscreen) {
+          await (docEl as any).webkitRequestFullscreen();
+        }
+        if (screen.orientation?.lock) {
+          await screen.orientation.lock('portrait').catch(() => {});
+        }
+        setIsFullscreen(true);
+      } catch (err) {
+        console.log('Error pantalla completa:', err);
+        setIsFullscreen(true);
       }
-      setIsFullscreen(true);
-    } catch (err) {
-      console.log('Error pantalla completa:', err);
+    } finally {
+      setFullscreenPromptDismissed(true);
     }
   };
   
@@ -765,15 +775,30 @@ const Index = () => {
       WebkitTouchCallout: 'none',
       WebkitUserSelect: 'none'
     }}>
-      {!isFullscreen && (
-        <button onClick={enterFullScreen} className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/90 text-white">
-          <div className="text-center p-4 bg-primary/20 rounded-lg backdrop-blur-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5m11 5v-4m0 4h-4m4 0l-5-5" />
-            </svg>
-            <p className="text-lg font-semibold">Toca para modo pantalla completa</p>
+      {!isFullscreen && !fullscreenPromptDismissed && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="pointer-events-auto mb-3 flex max-w-lg flex-col gap-2 rounded-2xl border border-cyan-500/35 bg-slate-950/92 px-4 py-3 shadow-[0_-8px_40px_rgba(0,0,0,0.55)] backdrop-blur-md sm:flex-row sm:items-center">
+            <p className="text-center text-xs leading-snug text-cyan-50/95 sm:text-left sm:text-sm">
+              Pantalla completa mejora la medición. Si no está disponible en tu navegador, puedes continuar igual.
+            </p>
+            <div className="flex shrink-0 items-center justify-center gap-2 sm:ml-2">
+              <button
+                type="button"
+                onClick={() => void enterFullScreen()}
+                className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-cyan-500"
+              >
+                Pantalla completa
+              </button>
+              <button
+                type="button"
+                onClick={() => setFullscreenPromptDismissed(true)}
+                className="rounded-lg px-3 py-2 text-xs font-medium text-slate-400 underline decoration-slate-500 hover:text-slate-200"
+              >
+                Omitir
+              </button>
+            </div>
           </div>
-        </button>
+        </div>
       )}
 
       <div className="flex-1 relative">
