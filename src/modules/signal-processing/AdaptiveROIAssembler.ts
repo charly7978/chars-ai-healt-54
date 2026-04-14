@@ -1,6 +1,7 @@
 /**
- * Ensambla ROI dinámica desde TilePulsatilityMap: elipse suavizada, top-k con histéresis,
- * weighted trimmed mean, estabilidad temporal de bbox/tiles activos.
+ * Ensambla ROI dinámica V2 desde TilePulsatilityMap: elipse suavizada, top-k con histéresis,
+ * weighted trimmed mean, estabilidad temporal de bbox/tiles activos, meta-ROI servo mejorado.
+ * Basado en literatura 2024 de adaptive ROI con predictive positioning.
  */
 
 import type { TileSnapshot } from './TilePulsatilityMap';
@@ -9,6 +10,8 @@ export interface AdaptiveROIResult {
   bbox: { sx: number; sy: number; ex: number; ey: number };
   /** Centroide ponderado del tejido en espacio de grid normalizado [0,1]² (para servo del ROI) */
   centroidNorm: { x: number; y: number };
+  /** Centroide predicho (servo anticipativo) */
+  predictedCentroidNorm: { x: number; y: number };
   /** Peso elíptico por tile (0..1) alineado con grid */
   ellipseMask: Float32Array;
   activeTiles: Uint8Array;
@@ -18,6 +21,11 @@ export interface AdaptiveROIResult {
   coverageEffective: number;
   globalScore: number;
   spatialStability: number;
+  /** Métricas de servo extendidas */
+  servoDrift: number;
+  servoQuality: number;
+  ellipseAspectRatio: number;
+  adaptiveHysteresis: { on: number; off: number };
 }
 
 export interface AssemblerConfig {
@@ -28,6 +36,10 @@ export interface AssemblerConfig {
   /** Histéresis: frames necesarios para añadir/quitar tile activo */
   tileHysteresisOn: number;
   tileHysteresisOff: number;
+  /** Parámetros de servo para meta-ROI */
+  servoGain: number;
+  servoMaxDrift: number;
+  servoPredictiveFactor: number;
 }
 
 export class AdaptiveROIAssembler {
@@ -37,12 +49,18 @@ export class AdaptiveROIAssembler {
   private readonly trimFraction: number;
   private readonly hOn: number;
   private readonly hOff: number;
+  private readonly servoGain: number;
+  private readonly servoMaxDrift: number;
+  private readonly servoPredictiveFactor: number;
 
   private tileOnCount: Int32Array;
   private tileOffCount: Int32Array;
   private stableActive: Uint8Array;
   private prevBbox = { sx: 0, sy: 0, ex: 0, ey: 0 };
+  private prevCentroid = { x: 0.5, y: 0.5 };
   private bboxStableFrames = 0;
+  private servoDriftAccumulator = 0;
+  private servoDriftSamples = 0;
   private readonly scratchScores: Float64Array;
   private readonly scratchIdx: Uint16Array;
   private ellipseBuf: Float32Array;
@@ -63,6 +81,9 @@ export class AdaptiveROIAssembler {
     this.trimFraction = config.trimFraction;
     this.hOn = config.tileHysteresisOn;
     this.hOff = config.tileHysteresisOff;
+    this.servoGain = config.servoGain ?? 0.3;
+    this.servoMaxDrift = config.servoMaxDrift ?? 0.15;
+    this.servoPredictiveFactor = config.servoPredictiveFactor ?? 0.5;
     const n = this.cols * this.rows;
     this.tileOnCount = new Int32Array(n);
     this.tileOffCount = new Int32Array(n);
@@ -85,7 +106,10 @@ export class AdaptiveROIAssembler {
     this.tileOffCount.fill(0);
     this.stableActive.fill(0);
     this.prevBbox = { sx: 0, sy: 0, ex: 0, ey: 0 };
+    this.prevCentroid = { x: 0.5, y: 0.5 };
     this.bboxStableFrames = 0;
+    this.servoDriftAccumulator = 0;
+    this.servoDriftSamples = 0;
   }
 
   assemble(
@@ -249,10 +273,43 @@ export class AdaptiveROIAssembler {
       x: cols > 0 ? cx / cols : 0.5,
       y: rows > 0 ? cy / rows : 0.5,
     };
+    
+    // Meta-ROI servo: calcular drift del centroide
+    const centroidDrift = Math.sqrt(
+      Math.pow(centroidNorm.x - this.prevCentroid.x, 2) +
+      Math.pow(centroidNorm.y - this.prevCentroid.y, 2)
+    );
+    this.servoDriftAccumulator += centroidDrift;
+    this.servoDriftSamples++;
+    
+    // Predictive positioning: anticipar movimiento del centroide
+    const predictedCentroidNorm = {
+      x: centroidNorm.x + (centroidNorm.x - this.prevCentroid.x) * this.servoPredictiveFactor,
+      y: centroidNorm.y + (centroidNorm.y - this.prevCentroid.y) * this.servoPredictiveFactor,
+    };
+    // Clamp a [0,1]
+    predictedCentroidNorm.x = Math.max(0, Math.min(1, predictedCentroidNorm.x));
+    predictedCentroidNorm.y = Math.max(0, Math.min(1, predictedCentroidNorm.y));
+    
+    this.prevCentroid = { x: centroidNorm.x, y: centroidNorm.y };
+    
+    // Calcular calidad del servo
+    const servoDrift = this.servoDriftSamples > 0 ? this.servoDriftAccumulator / this.servoDriftSamples : 0;
+    const servoQuality = Math.max(0, 1 - servoDrift / this.servoMaxDrift);
+    
+    // Calcular aspect ratio de la elipse (adaptativo según distribución)
+    const ellipseAspectRatio = Math.max(0.5, Math.min(2.0, a / b));
+    
+    // Hysteresis adaptativo según estabilidad
+    const adaptiveHysteresis = {
+      on: spatialStab > 0.85 ? this.hOn - 1 : this.hOn,
+      off: spatialStab > 0.85 ? this.hOff + 1 : this.hOff,
+    };
 
     return {
       bbox,
       centroidNorm,
+      predictedCentroidNorm,
       ellipseMask: this.ellipseBuf,
       activeTiles: this.activeBuf,
       discardedTiles: this.discardedBuf,
@@ -260,6 +317,10 @@ export class AdaptiveROIAssembler {
       coverageEffective,
       globalScore,
       spatialStability: spatialStab,
+      servoDrift,
+      servoQuality,
+      ellipseAspectRatio,
+      adaptiveHysteresis,
     };
   }
 
