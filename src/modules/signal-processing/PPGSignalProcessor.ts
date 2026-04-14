@@ -37,8 +37,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private bandpassFilter: BandpassFilter;
   private readonly filteredBuf = new RingBuffer(300);
   private readonly rawSignalBuf = new RingBuffer(300);
-  /** Mediana móvil corta sobre bruto (sin simulación): suprime saltos por ROI/fuente */
-  private readonly rawPrefilterBuf = new RingBuffer(7);
+  /** Mediana móvil sobre bruto: suprime saltos por ROI/fuente (11 samples, median of 7) */
+  private readonly rawPrefilterBuf = new RingBuffer(11);
   private readonly frameTimeBuf = new RingBuffer(120);
 
   private cameraControl: CameraControlEngine | null = null;
@@ -222,8 +222,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     this.rawPrefilterBuf.push(analysis.sourceValue);
     const rawDenoised =
-      this.rawPrefilterBuf.length >= 3
-        ? this.rawPrefilterBuf.medianLast(Math.min(5, this.rawPrefilterBuf.length))
+      this.rawPrefilterBuf.length >= 5
+        ? this.rawPrefilterBuf.medianLast(Math.min(7, this.rawPrefilterBuf.length))
         : analysis.sourceValue;
     this.rawSignalBuf.push(rawDenoised);
     const filtered = this.bandpassFilter.filter(rawDenoised);
