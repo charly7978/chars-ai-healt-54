@@ -158,6 +158,8 @@ export class VitalSignsProcessor {
     });
     this.spo2Calibrator.setOpticalBiasR(profile.opticalBiasR);
     this.spo2Processor = new SpO2ProcessorElite();
+    // V2: Inyectar calibrador cuadrático por dispositivo
+    this.spo2Processor.setCalibrator(this.spo2Calibrator);
     this.deviceCalibrationEngine = new DeviceCalibrationEngine(this.deviceProfiles, profile);
     this.bpCalibrationManager = new BPCalibrationManager();
     this.userBaseline = new UserBaselineEngine();
