@@ -1,62 +1,53 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PPGSignalProcessor } from '../modules/signal-processing/PPGSignalProcessor';
+import { ElitePPGProcessor, type ElitePPGResult } from '../modules/integration/ElitePPGProcessor';
+import type { ProcessFrameOptions } from '../modules/signal-processing/PPGSignalProcessor';
+import type { HeartBeatResult } from '../types/beat';
 import { ProcessedSignal, ProcessingError } from '../types/signal';
 
-/**
- * HOOK ÚNICO Y DEFINITIVO - ELIMINADAS TODAS LAS DUPLICIDADES
- * Sistema completamente unificado con prevención absoluta de múltiples instancias
- */
+/** ~25 Hz UI: la ref lleva cada frame; React se actualiza a ritmo moderado. */
+const UI_SIGNAL_INTERVAL_MS = 40;
+
 export const useSignalProcessor = () => {
-  const processorRef = useRef<PPGSignalProcessor | null>(null);
+  const processorRef = useRef<ElitePPGProcessor | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSignal, setLastSignal] = useState<ProcessedSignal | null>(null);
+  /** Alineado con `lastSignal` (mismo throttle UI); telemetría opcional / depuración. */
+  const [lastEliteResult, setLastEliteResult] = useState<ElitePPGResult | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
-  
-  // CONTROL ÚNICO DE INSTANCIA - PREVENIR DUPLICIDADES ABSOLUTAMENTE
+  const lastSignalRef = useRef<ProcessedSignal | null>(null);
+  const lastBeatRef = useRef<HeartBeatResult | null>(null);
+  const lastUiEmitAtRef = useRef(0);
+
   const instanceLock = useRef<boolean>(false);
-  const sessionIdRef = useRef<string>("");
+  const sessionIdRef = useRef<string>('');
   const initializationState = useRef<'IDLE' | 'INITIALIZING' | 'READY' | 'ERROR'>('IDLE');
-  
-  // INICIALIZACIÓN ÚNICA Y DEFINITIVA
+
   useEffect(() => {
-    // BLOQUEO DE MÚLTIPLES INSTANCIAS
     if (instanceLock.current || initializationState.current !== 'IDLE') {
       return;
     }
-    
+
     instanceLock.current = true;
     initializationState.current = 'INITIALIZING';
-    
+
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `sig_${t}_${p}`;
 
-    // CALLBACKS ÚNICOS SIN MEMORY LEAKS
-    const onSignalReady = (signal: ProcessedSignal) => {
-      if (initializationState.current !== 'READY') return;
-      
-      setLastSignal(signal);
-      setError(null);
-      // CRÍTICO: Limitar contador para evitar números infinitos que afectan rendimiento
-      setFramesProcessed(prev => (prev + 1) % 10000);
-    };
-
-    const onError = (error: ProcessingError) => {
-      console.error(`Error procesador: ${error.code}`);
-      setError(error);
-    };
-
-    // CREAR PROCESADOR ÚNICO
     try {
-      processorRef.current = new PPGSignalProcessor(onSignalReady, onError);
+      processorRef.current = new ElitePPGProcessor({
+        enableNonlinearHRV: true,
+        enableFrequencyHRV: true,
+        enableArrhythmiaDetection: true,
+      });
       initializationState.current = 'READY';
-    } catch (err) {
+    } catch {
       initializationState.current = 'ERROR';
       instanceLock.current = false;
     }
-    
+
     return () => {
       if (processorRef.current) {
         processorRef.current.stop();
@@ -67,7 +58,18 @@ export const useSignalProcessor = () => {
     };
   }, []);
 
-  // INICIO ÚNICO SIN DUPLICIDADES
+  const emitSignalUi = useCallback((signal: ProcessedSignal) => {
+    lastSignalRef.current = signal;
+    setError(null);
+    setFramesProcessed((prev) => (prev + 1) % 10000);
+    const now = performance.now();
+    if (now - lastUiEmitAtRef.current >= UI_SIGNAL_INTERVAL_MS) {
+      lastUiEmitAtRef.current = now;
+      setLastSignal(signal);
+      setLastEliteResult(processorRef.current?.getLastResult() ?? null);
+    }
+  }, []);
+
   const startProcessing = useCallback(() => {
     if (!processorRef.current || initializationState.current !== 'READY') {
       return;
@@ -76,55 +78,88 @@ export const useSignalProcessor = () => {
     if (isProcessing) {
       return;
     }
-    
+
     setIsProcessing(true);
     setFramesProcessed(0);
     setError(null);
-    
+
     processorRef.current.start();
   }, [isProcessing]);
 
-  // PARADA ÚNICA Y LIMPIA - SIN DEPENDER DE isProcessing STATE
   const stopProcessing = useCallback(() => {
     if (!processorRef.current) {
       return;
     }
-    
-    // Primero detener el procesador, luego actualizar estado
+
     processorRef.current.stop();
     setIsProcessing(false);
+    lastSignalRef.current = null;
+    lastBeatRef.current = null;
+    lastUiEmitAtRef.current = 0;
     setLastSignal(null);
+    setLastEliteResult(null);
     setFramesProcessed(0);
   }, []);
 
-  // CALIBRACIÓN ÚNICA
+  /** Reset completo del motor (PPG + latidos + dedo + HRV internos). */
+  const resetProcessingEngine = useCallback(() => {
+    processorRef.current?.reset();
+    lastSignalRef.current = null;
+    lastBeatRef.current = null;
+    lastUiEmitAtRef.current = 0;
+    setLastSignal(null);
+    setLastEliteResult(null);
+    setFramesProcessed(0);
+  }, []);
+
+  const setCameraControl = useCallback(
+    (engine: import('@/modules/signal-processing/CameraControlEngine').CameraControlEngine | null) => {
+      processorRef.current?.setCameraControl?.(engine);
+    },
+    []
+  );
+
+  const setPPGDebugMode = useCallback((enabled: boolean) => {
+    processorRef.current?.setPPGDebugMode?.(enabled);
+  }, []);
+
+  const getLastSignal = useCallback((): ProcessedSignal | null => lastSignalRef.current, []);
+
+  const getLastBeatResult = useCallback((): HeartBeatResult | null => lastBeatRef.current, []);
+
   const calibrate = useCallback(async () => {
     if (!processorRef.current || initializationState.current !== 'READY') {
       return false;
     }
 
     try {
-      const success = await processorRef.current.calibrate();
-      return success;
-    } catch (error) {
+      return await processorRef.current.calibrate();
+    } catch {
       return false;
     }
   }, []);
 
-  // PROCESAMIENTO DE FRAME ÚNICO
-  const processFrame = useCallback((imageData: ImageData) => {
-    if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
-      return;
-    }
-    
-    try {
-      processorRef.current.processFrame(imageData);
-    } catch (error) {
-      // Error silenciado para rendimiento
-    }
-  }, [isProcessing]);
+  const processFrame = useCallback(
+    (frame: ImageData | ImageBitmap, frameTimestamp?: number, opts?: ProcessFrameOptions) => {
+      if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
+        return;
+      }
 
-  // OBTENER ESTADÍSTICAS RGB REALES PARA SpO2
+      try {
+        const ts = frameTimestamp ?? performance.now();
+        processorRef.current.processFrame(frame, ts, opts);
+        const signal = processorRef.current.getLastProcessedSignal();
+        lastBeatRef.current = processorRef.current.getLastBeatResult();
+        if (signal) {
+          emitSignalUi(signal);
+        }
+      } catch {
+        // hot path: silenciar
+      }
+    },
+    [isProcessing, emitSignalUi]
+  );
+
   const getRGBStats = useCallback(() => {
     if (!processorRef.current) {
       return {
@@ -133,26 +168,63 @@ export const useSignalProcessor = () => {
         greenAC: 0,
         greenDC: 0,
         rgRatio: 0,
-        ratioOfRatios: 0
+        ratioOfRatios: 0,
       };
     }
     return processorRef.current.getRGBStats();
   }, []);
 
+  const getPositionQuality = useCallback(() => {
+    if (!processorRef.current) {
+      return {
+        locked: false,
+        drifting: false,
+        spatialUniformity: 0,
+        centerCoverage: 0,
+        positionDrift: 0,
+        guidance: 'COLOQUE SU DEDO',
+        qualityScore: 0,
+        poseAngleDrift: 0,
+        poseOptimal: false,
+        canonicalPoseOk: false,
+        canonicalPoseIssue: 'PRESSURE_LOW',
+      };
+    }
+    return processorRef.current.getPositionQuality();
+  }, []);
+
+  const getPPGDebugInfo = useCallback(() => {
+    if (!processorRef.current) return null;
+    return processorRef.current.getPPGDebugInfo();
+  }, []);
+
+  const getBeatMeasurementActive = useCallback((): boolean => {
+    return processorRef.current?.isBeatMeasurementActive() ?? false;
+  }, []);
+
   return {
     isProcessing,
     lastSignal,
+    lastEliteResult,
+    getLastSignal,
+    getLastBeatResult,
+    getBeatMeasurementActive,
     error,
     framesProcessed,
     startProcessing,
     stopProcessing,
+    resetProcessingEngine,
     calibrate,
     processFrame,
     getRGBStats,
+    getPositionQuality,
+    getPPGDebugInfo,
+    setCameraControl,
+    setPPGDebugMode,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,
-      instanceLocked: instanceLock.current
-    }
+      instanceLocked: instanceLock.current,
+    },
   };
 };

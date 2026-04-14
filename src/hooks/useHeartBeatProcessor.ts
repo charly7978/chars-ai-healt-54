@@ -1,26 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 import type { ContactState } from '../types/signal';
-
-interface HeartBeatResult {
-  bpm: number;
-  confidence: number;
-  isPeak: boolean;
-  filteredValue: number;
-  arrhythmiaCount: number;
-  signalQuality: number;
-  rrData?: {
-    intervals: number[];
-    lastPeakTime: number | null;
-  };
-}
+import type { HeartBeatResult } from '../types/beat';
 
 /**
- * HOOK DE PROCESAMIENTO CARDÍACO - ALINEADO CON CONTACTSTATE
+ * HOOK DE PROCESAMIENTO CARDÍACO V2
  * 
- * - Usa ContactState del PPGSignalProcessor en vez de su propia lógica de reset
- * - Solo resetea cuando NO_CONTACT sostenido
- * - En UNSTABLE_CONTACT sigue procesando sin resetear historial
+ * - Expone richer beat results (beatSQI, hypothesis, flags, debug)
+ * - Alineado con ContactState del PPGSignalProcessor
+ * - Pasa upstream context al procesador
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
@@ -32,11 +20,9 @@ export const useHeartBeatProcessor = () => {
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
   const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
-  // Track sustained NO_CONTACT to align with PPGSignalProcessor
   const noContactFramesRef = useRef<number>(0);
-  const NO_CONTACT_RESET_THRESHOLD = 90; // ~3s @ 30fps
+  const NO_CONTACT_RESET_THRESHOLD = 90;
 
-  // Refs for stable callback
   const currentBPMRef = useRef(0);
   const confidenceRef = useRef(0);
   const signalQualityRef = useRef(0);
@@ -57,85 +43,90 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  // Keep refs in sync
   currentBPMRef.current = currentBPM;
   confidenceRef.current = confidence;
   signalQualityRef.current = signalQuality;
 
+  const emptyResult = (bpm: number): HeartBeatResult => ({
+    bpm, bpmConfidence: 0, isPeak: false,
+    filteredValue: 0, arrhythmiaCount: 0, sqi: 0, beatSQI: 0,
+    rrData: { intervals: [], lastPeakTime: null },
+    hypothesis: null, detectorAgreement: 0,
+    rejectionReason: '', beatFlags: null,
+    debug: {
+      instantBpm: 0, medianRRBpm: 0, autocorrBpm: 0, spectralBpm: 0,
+      lastBeatSQI: 0, detectorAgreement: 0, expectedRR: 0,
+      refractoryState: 'open', beatsAccepted: 0, beatsRejected: 0,
+      lastRejectionReason: '', doublePeakCount: 0, missedBeatCount: 0,
+      suspiciousCount: 0, templateCorrelation: 0, morphologyScore: 0,
+      consecutivePeaks: 0,
+    },
+  });
+
   const processSignal = useCallback((
     value: number,
     contactState: ContactState = 'STABLE_CONTACT',
-    timestamp?: number
+    timestamp?: number,
+    upstreamContext?: {
+      quality?: number;
+      contactState?: string;
+      motionArtifact?: boolean;
+      pressureState?: string;
+      clipHigh?: number;
+      clipLow?: number;
+      activeSource?: string;
+      perfusionIndex?: number;
+      positionDrifting?: boolean;
+      estimatedSampleRate?: number;
+      maskIoU?: number;
+    }
   ): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
-      return {
-        bpm: currentBPMRef.current, confidence: 0, isPeak: false,
-        filteredValue: 0, arrhythmiaCount: 0, signalQuality: 0,
-        rrData: { intervals: [], lastPeakTime: null },
-      };
+      return emptyResult(currentBPMRef.current);
     }
 
-    const currentTime = timestamp ?? Date.now();
+    const currentTime = timestamp ?? performance.now();
 
-    // === CONTACT STATE HANDLING ===
-    // NO_CONTACT must bypass throttle so stale BPM cannot leak into the UI
     if (contactState === 'NO_CONTACT') {
       noContactFramesRef.current += 1;
-
       if (noContactFramesRef.current >= NO_CONTACT_RESET_THRESHOLD) {
         processorRef.current.reset();
       }
-
       if (currentBPMRef.current !== 0) setCurrentBPM(0);
       if (confidenceRef.current !== 0) setConfidence(0);
       if (signalQualityRef.current !== 0) setSignalQuality(0);
-
-      return {
-        bpm: 0, confidence: 0, isPeak: false,
-        filteredValue: 0, arrhythmiaCount: 0, signalQuality: 0,
-        rrData: { intervals: [], lastPeakTime: null },
-      };
+      return emptyResult(0);
     }
 
-    // Throttle to ~80fps max
+    if (contactState !== 'STABLE_CONTACT') {
+      noContactFramesRef.current = 0;
+      if (currentBPMRef.current !== 0) setCurrentBPM(0);
+      if (confidenceRef.current !== 0) setConfidence(0);
+      if (signalQualityRef.current !== 0) setSignalQuality(0);
+      return emptyResult(0);
+    }
+
     if (currentTime - lastProcessTimeRef.current < 12) {
-      return {
-        bpm: currentBPMRef.current, confidence: confidenceRef.current,
-        isPeak: false, filteredValue: 0, arrhythmiaCount: 0,
-        signalQuality: signalQualityRef.current,
-        rrData: { intervals: [], lastPeakTime: null },
-      };
+      return emptyResult(currentBPMRef.current);
     }
     lastProcessTimeRef.current = currentTime;
 
-    // UNSTABLE_CONTACT or STABLE_CONTACT — process normally
     noContactFramesRef.current = 0;
     processedSignalsRef.current++;
 
-    const result = processorRef.current.processSignal(value, timestamp);
-    const rrIntervals = processorRef.current.getRRIntervals();
-    const lastPeakTime = processorRef.current.getLastPeakTime();
-    const rrData = { intervals: rrIntervals, lastPeakTime: lastPeakTime || null };
+    const result = processorRef.current.processSignal(value, timestamp, upstreamContext);
     const roundedSQI = Math.round(result.sqi);
 
     setSignalQuality(roundedSQI);
 
-    if (result.bpm > 0 && result.confidence >= 0.15) {
+    if (result.bpm > 0 && result.bpmConfidence >= 0.12) {
       setCurrentBPM(Math.round(result.bpm));
-      setConfidence(result.confidence);
-    } else if (result.confidence > 0) {
-      setConfidence(result.confidence);
+      setConfidence(result.bpmConfidence);
+    } else if (result.bpmConfidence > 0) {
+      setConfidence(result.bpmConfidence);
     }
 
-    return {
-      bpm: Math.round(result.bpm),
-      confidence: result.confidence,
-      isPeak: result.isPeak,
-      filteredValue: result.filteredValue,
-      arrhythmiaCount: result.arrhythmiaCount,
-      signalQuality: roundedSQI,
-      rrData,
-    };
+    return result;
   }, []);
 
   const reset = useCallback(() => {
@@ -154,9 +145,7 @@ export const useHeartBeatProcessor = () => {
     processingStateRef.current = 'ACTIVE';
   }, []);
 
-  const setArrhythmiaState = useCallback((_isArrhythmiaDetected: boolean) => {
-    // No-op: arrhythmia state is managed by ArrhythmiaProcessor directly
-  }, []);
+  const setArrhythmiaState = useCallback((_isArrhythmiaDetected: boolean) => {}, []);
 
   return {
     currentBPM,

@@ -1,7 +1,50 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import {
+  CameraControlEngine,
+  type EffectiveCameraSettings,
+  type CameraCapabilitiesSnapshot,
+} from "@/modules/signal-processing/CameraControlEngine";
+import { buildProgressiveConstraints, type NegotiatedConstraints } from "@/modules/camera/ConstraintNegotiator";
 
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
+  getDiagnostics: () => CameraDiagnostics;
+  getCameraControl: () => CameraControlEngine;
+}
+
+export interface CameraDiagnostics {
+  deviceLabel: string;
+  hasTorch: boolean;
+  torchActive: boolean;
+  realFrameRate: number;
+  resolution: { width: number; height: number };
+  exposureLocked: boolean;
+  wbLocked: boolean;
+  focusLocked: boolean;
+  isoValue: number;
+  supportedConstraints: string[];
+  effectiveSettings: EffectiveCameraSettings | null;
+  capabilities: CameraCapabilitiesSnapshot | null;
+  /** Fases de constraints que se aplicaron correctamente (torch, fps, AE, etc.) */
+  phasesApplied: string[];
+  /** Métricas de negociación de constraints adaptativa */
+  negotiationMetrics?: {
+    phaseAttempted: string;
+    phaseSucceeded: string;
+    attempts: number;
+    finalResolution: { width: number; height: number } | null;
+    finalFramerate: number | null;
+    negotiationTimeMs: number;
+  };
+  /** Capabilities del dispositivo detectadas */
+  deviceCapabilities?: {
+    maxWidth: number;
+    maxHeight: number;
+    maxFramerate: number;
+    supportsExposureMode: boolean;
+    supportsWhiteBalanceMode: boolean;
+    supportsFocusMode: boolean;
+  };
 }
 
 interface CameraViewProps {
@@ -10,13 +53,13 @@ interface CameraViewProps {
 }
 
 /**
- * CÁMARA PPG OPTIMIZADA - SELECCIÓN AUTOMÁTICA DE CÁMARA TRASERA PRINCIPAL
+ * CAMERA PPG V2 — PHASED CONSTRAINT APPLICATION
  * 
- * CARACTERÍSTICAS:
- * 1. Enumera dispositivos y selecciona la cámara trasera principal (con torch)
- * 2. Activa flash LED de forma robusta con reintentos
- * 3. Expone el video element para captura externa
- * 4. Configuración optimizada para PPG: 30fps, resolución moderada
+ * Phase 1: Find best back camera with torch
+ * Phase 2: Open stream with stable base constraints
+ * Phase 3: Activate torch
+ * Phase 4: Lock fine controls (exposure, WB, focus, ISO) with graceful degradation
+ * Phase 5: Export diagnostics for processor
  */
 const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   onStreamReady,
@@ -24,18 +67,43 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  /** Evita reiniciar la cámara cuando el padre re-crea el callback (p. ej. al cambiar processFrame). */
+  const onStreamReadyRef = useRef(onStreamReady);
+  onStreamReadyRef.current = onStreamReady;
   const isStartingRef = useRef(false);
+  const diagnosticsRef = useRef<CameraDiagnostics>({
+    deviceLabel: '',
+    hasTorch: false,
+    torchActive: false,
+    realFrameRate: 30,
+    resolution: { width: 0, height: 0 },
+    exposureLocked: false,
+    wbLocked: false,
+    focusLocked: false,
+    isoValue: 0,
+    supportedConstraints: [],
+    effectiveSettings: null,
+    capabilities: null,
+    phasesApplied: [],
+  });
+
+  const cameraEngineRef = useRef<CameraControlEngine | null>(null);
+  if (!cameraEngineRef.current) {
+    cameraEngineRef.current = new CameraControlEngine();
+  }
 
   useImperativeHandle(ref, () => ({
-    getVideoElement: () => videoRef.current
+    getVideoElement: () => videoRef.current,
+    getDiagnostics: () => ({ ...diagnosticsRef.current }),
+    getCameraControl: () => cameraEngineRef.current!,
   }), []);
 
   useEffect(() => {
     let mounted = true;
-    
+
     const stopCamera = async () => {
+      cameraEngineRef.current?.attachTrack(null);
       if (streamRef.current) {
-        // Apagar flash primero
         for (const track of streamRef.current.getVideoTracks()) {
           try {
             const caps = track.getCapabilities?.() as any;
@@ -47,246 +115,200 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         }
         streamRef.current = null;
       }
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
+      if (videoRef.current) videoRef.current.srcObject = null;
       isStartingRef.current = false;
     };
 
     /**
-     * ENCONTRAR CÁMARA TRASERA PRINCIPAL
-     * Prioriza la cámara que tenga torch (flash) disponible
+     * Adquisición de video con negociación adaptativa multi-fase (Etapa 1).
+     * Usa ConstraintNegotiator para detectar capabilities y negociar progresivamente.
      */
-    const findMainBackCamera = async (): Promise<string | null> => {
+    const acquireVideoStream = async (): Promise<MediaStream> => {
+      const tryVideo = (video: MediaTrackConstraints | boolean) =>
+        navigator.mediaDevices.getUserMedia({ audio: false, video: video as MediaTrackConstraints });
+
+      let devices: MediaDeviceInfo[] = [];
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-        
-        console.log('📷 Cámaras encontradas:', videoDevices.map(d => d.label || d.deviceId));
-        
-        // Buscar cámara trasera con torch
-        for (const device of videoDevices) {
-          const label = device.label.toLowerCase();
-          
-          // Priorizar cámara trasera principal (back, rear, environment)
-          if (label.includes('back') || label.includes('rear') || label.includes('environment') || 
-              label.includes('trasera') || label.includes('camera 0') || label.includes('camera0')) {
-            
-            // Verificar si tiene torch
-            try {
-              const testStream = await navigator.mediaDevices.getUserMedia({
-                video: { deviceId: { exact: device.deviceId } }
-              });
-              
-              const track = testStream.getVideoTracks()[0];
-              const caps = track.getCapabilities?.() as any;
-              const hasTorch = caps?.torch === true;
-              
-              testStream.getTracks().forEach(t => t.stop());
-              
-              if (hasTorch) {
-                console.log('✅ Cámara principal encontrada:', device.label);
-                return device.deviceId;
-              }
-            } catch {}
-          }
-        }
-        
-        // Fallback: buscar cualquier cámara con torch
-        for (const device of videoDevices) {
-          try {
-            const testStream = await navigator.mediaDevices.getUserMedia({
-              video: { deviceId: { exact: device.deviceId } }
-            });
-            
-            const track = testStream.getVideoTracks()[0];
-            const caps = track.getCapabilities?.() as any;
-            const hasTorch = caps?.torch === true;
-            
-            testStream.getTracks().forEach(t => t.stop());
-            
-            if (hasTorch) {
-              console.log('✅ Cámara con torch encontrada:', device.label);
-              return device.deviceId;
-            }
-          } catch {}
-        }
-        
-        return null;
-      } catch (e) {
-        console.warn('No se pudo enumerar dispositivos:', e);
-        return null;
+        devices = await navigator.mediaDevices.enumerateDevices();
+      } catch {
+        /* continuar con fallback genérico */
       }
+      const videoInputs = devices.filter((d) => d.kind === 'videoinput');
+      console.log('📷 Dispositivos video:', videoInputs.length, videoInputs.map((d) => d.label || d.deviceId));
+
+      // ═══ V3: Flujo robusto de adquisición de cámara ═══
+      // Prioridad: facingMode:'environment' (trasera) → deviceId específico → fallback genérico
+      // NO usar deviceId vacío (enumerateDevices sin permisos devuelve "")
+      
+      const firstDevice = videoInputs.length > 0 ? videoInputs[0]! : null;
+      const hasValidDeviceId = firstDevice?.deviceId != null && firstDevice.deviceId.length > 4;
+      if (firstDevice?.label) {
+        diagnosticsRef.current.deviceLabel = firstDevice.label;
+      }
+
+      // Intento 1: facingMode environment (cámara trasera) — funciona sin deviceId
+      try {
+        console.log('📷 Intentando cámara trasera (facingMode: environment)...');
+        return await tryVideo({
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 480, max: 720 },
+          frameRate: { ideal: 30, min: 15, max: 60 },
+        });
+      } catch (e1) {
+        console.warn('📷 facingMode environment falló:', e1);
+      }
+
+      // Intento 2: deviceId específico si está disponible y no es vacío
+      if (hasValidDeviceId) {
+        try {
+          console.log('📷 Intentando deviceId específico:', firstDevice!.deviceId.slice(0, 8) + '...');
+          return await tryVideo({
+            deviceId: { exact: firstDevice!.deviceId },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 30, min: 15, max: 30 },
+          });
+        } catch (e2) {
+          console.warn('📷 deviceId específico falló:', e2);
+        }
+      }
+
+      // Intento 3: constraints mínimos
+      try {
+        console.log('📷 Intentando constraints mínimos...');
+        return await tryVideo({
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+          frameRate: { ideal: 24 },
+        });
+      } catch (e3) {
+        console.warn('📷 Constraints mínimos fallaron:', e3);
+      }
+
+      // Intento 4: sin constraints (acepta cualquier cámara)
+      console.log('📷 Último intento: sin constraints...');
+      return await tryVideo(true);
     };
 
     const startCamera = async () => {
-      if (isStartingRef.current) return;
-      isStartingRef.current = true;
-      
-      await stopCamera();
-      if (!mounted) {
-        isStartingRef.current = false;
+      // Si el track sigue vivo (re-ejecución del efecto sin cleanup real, o reconexión del <video>), no reiniciar getUserMedia.
+      const existing = streamRef.current;
+      const existingTrack = existing?.getVideoTracks?.()[0];
+      if (existing && existingTrack && existingTrack.readyState === 'live' && mounted) {
+        const video = videoRef.current;
+        if (video) {
+          if (video.srcObject !== existing) {
+            video.srcObject = existing;
+            try {
+              await new Promise<void>((resolve) => {
+                const v = video;
+                const done = async () => {
+                  v.removeEventListener('loadedmetadata', done);
+                  try { await v.play(); } catch {}
+                  resolve();
+                };
+                v.addEventListener('loadedmetadata', done);
+                if (v.readyState >= 1) void done();
+              });
+            } catch {}
+          } else {
+            try { await video.play(); } catch {}
+          }
+        }
+        onStreamReadyRef.current?.(existing);
         return;
       }
 
+      if (isStartingRef.current) return;
+      isStartingRef.current = true;
+      await stopCamera();
+      if (!mounted) { isStartingRef.current = false; return; }
+
       try {
-        // PASO 1: Buscar cámara trasera principal
-        const mainCameraId = await findMainBackCamera();
-        
-        // PASO 2: Configurar constraints
-        // Para finger-PPG priorizamos 30 fps estables y más luz por frame sobre 60 fps nominales.
-        const preferredFrameRate = 30;
-        const videoConstraints: MediaTrackConstraints = mainCameraId
-          ? {
-              deviceId: { exact: mainCameraId },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
-              frameRate: { ideal: preferredFrameRate, min: 24, max: 30 }
-            }
-          : {
-              facingMode: { ideal: "environment" },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
-              frameRate: { ideal: preferredFrameRate, min: 24, max: 30 }
-            };
-        
-        // PASO 3: Obtener stream
-        let stream: MediaStream;
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: videoConstraints
-          });
-        } catch (e) {
-          // Fallback sin exact
-          console.warn('Fallback a constraints simples');
-          stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: {
-              facingMode: { ideal: "environment" },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
-            }
-          });
-        }
-        
-        if (!mounted) {
-          stream.getTracks().forEach(t => t.stop());
-          isStartingRef.current = false;
-          return;
-        }
+        const stream = await acquireVideoStream();
 
+        if (!mounted) { stream.getTracks().forEach(t => t.stop()); isStartingRef.current = false; return; }
         streamRef.current = stream;
-        
-        // PASO 4: Conectar video
+
+        // Connect video — si metadata ya cargó, onloadedmetadata no dispara: hay que reproducir igual.
         if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          
-          await new Promise<void>((resolve) => {
-            const video = videoRef.current!;
-            video.onloadedmetadata = async () => {
-              try {
-                await video.play();
-              } catch {}
-              resolve();
-            };
-          });
+          const video = videoRef.current;
+          video.srcObject = stream;
+          const playSafe = async () => {
+            try { await video.play(); } catch {}
+          };
+          if (video.readyState >= 1) {
+            await playSafe();
+          } else {
+            await new Promise<void>((resolve) => {
+              const onMeta = () => {
+                video.removeEventListener('loadedmetadata', onMeta);
+                void playSafe().then(() => resolve());
+              };
+              video.addEventListener('loadedmetadata', onMeta);
+            });
+          }
         }
 
-        // PASO 5: ACTIVAR FLASH - Crítico para PPG
         const track = stream.getVideoTracks()[0];
-        if (track) {
-          // Esperar estabilización de cámara
-          await new Promise(r => setTimeout(r, 500));
-          
-          let flashActivated = false;
-          for (let attempt = 0; attempt < 5 && !flashActivated; attempt++) {
-            try {
-              const caps = track.getCapabilities?.() as any;
-              if (caps?.torch) {
-                await track.applyConstraints({ advanced: [{ torch: true } as any] });
-                
-                const settings = track.getSettings() as any;
-                if (settings?.torch === true) {
-                  flashActivated = true;
-                  console.log('🔦 Flash ACTIVADO (verificado)');
-                } else {
-                  console.log(`🔦 Intento ${attempt + 1}: Flash aplicado, verificando...`);
-                  flashActivated = true;
-                }
-              } else {
-                console.warn('⚠️ Esta cámara no soporta torch');
-                break;
-              }
-            } catch (e) {
-              console.warn(`🔦 Intento ${attempt + 1} fallido:`, e);
-              await new Promise(r => setTimeout(r, 300));
-            }
-          }
-          
-          if (!flashActivated) {
-            console.warn('⚠️ No se pudo activar el flash después de 5 intentos');
-          }
+        if (!track) { isStartingRef.current = false; return; }
 
-          // PASO 6: Estabilizar frame rate/exposición/ISO/WB para fortalecer señal PPG útil
-          await new Promise(r => setTimeout(r, 300));
-          try {
-            const caps = track.getCapabilities?.() as any;
-            const lockConstraints: any[] = [];
-            
-            if (caps?.frameRate) {
-              lockConstraints.push({ frameRate: 30 });
-            }
-
-            if (caps?.exposureMode?.includes('manual')) {
-              lockConstraints.push({ exposureMode: 'manual' });
-            } else if (caps?.exposureMode?.includes('continuous')) {
-              lockConstraints.push({ exposureMode: 'continuous' });
-            }
-            
-            if (caps?.exposureCompensation) {
-              const minExp = caps.exposureCompensation.min ?? -2;
-              const maxExp = caps.exposureCompensation.max ?? 2;
-              const targetExp = Math.max(minExp, Math.min(maxExp, -0.35));
-              lockConstraints.push({ exposureCompensation: targetExp });
-              console.log(`📷 Exposición compensada: ${targetExp}`);
-            }
-            
-            if (caps?.whiteBalanceMode?.includes('manual')) {
-              lockConstraints.push({ whiteBalanceMode: 'manual' });
-            }
-            
-            if (caps?.iso) {
-              const minISO = caps.iso.min ?? 50;
-              const maxISO = caps.iso.max ?? 400;
-              const targetISO = Math.max(minISO, Math.min(maxISO, 140));
-              lockConstraints.push({ iso: targetISO });
-              console.log(`📷 ISO fijado: ${targetISO}`);
-            }
-            
-            if (caps?.focusMode?.includes('manual')) {
-              lockConstraints.push({ focusMode: 'manual' });
-            } else if (caps?.focusMode?.includes('continuous')) {
-              lockConstraints.push({ focusMode: 'continuous' });
-            }
-            
-            if (lockConstraints.length > 0) {
-              await track.applyConstraints({ advanced: lockConstraints });
-              console.log('✅ Parámetros de cámara estabilizados para PPG');
-            }
-          } catch (lockErr) {
-            console.warn('⚠️ No se pudieron estabilizar parámetros de cámara:', lockErr);
-          }
+        if (!diagnosticsRef.current.deviceLabel && track.label) {
+          diagnosticsRef.current.deviceLabel = track.label;
         }
 
-        console.log('📹 Cámara lista:', videoRef.current?.videoWidth, 'x', videoRef.current?.videoHeight);
-        onStreamReady?.(stream);
-        isStartingRef.current = false;
+        // Record supported constraints
+        const supported = navigator.mediaDevices.getSupportedConstraints?.() || {};
+        diagnosticsRef.current.supportedConstraints = Object.keys(supported).filter(k => (supported as any)[k]);
 
+        // Record real settings
+        const settings = track.getSettings() as any;
+        diagnosticsRef.current.resolution = {
+          width: settings.width || 0,
+          height: settings.height || 0
+        };
+        diagnosticsRef.current.realFrameRate = settings.frameRate || 30;
+
+        const engine = cameraEngineRef.current!;
+        engine.attachTrack(track);
+        await new Promise((r) => setTimeout(r, 400));
+        const phases = await engine.applyIdealConstraints();
+        diagnosticsRef.current.phasesApplied = phases;
+
+        const capSnap = engine.getCapabilities();
+        diagnosticsRef.current.capabilities = capSnap;
+        diagnosticsRef.current.hasTorch = capSnap?.torch ?? false;
+
+        const eff = engine.getEffectiveSettings();
+        diagnosticsRef.current.effectiveSettings = eff;
+        if (eff) {
+          diagnosticsRef.current.resolution = { width: eff.width, height: eff.height };
+          diagnosticsRef.current.realFrameRate = eff.frameRate;
+          diagnosticsRef.current.torchActive = eff.torch;
+          diagnosticsRef.current.isoValue = eff.iso;
+          diagnosticsRef.current.exposureLocked = eff.exposureMode === 'manual';
+          diagnosticsRef.current.wbLocked = eff.whiteBalanceMode === 'manual';
+          diagnosticsRef.current.focusLocked = eff.focusMode === 'manual';
+        }
+
+        console.log(
+          '📹 CameraControlEngine ready:',
+          eff?.width,
+          'x',
+          eff?.height,
+          '@',
+          eff?.frameRate,
+          'torch=',
+          eff?.torch,
+          'ec=',
+          eff?.exposureCompensation
+        );
+
+        onStreamReadyRef.current?.(stream);
+        isStartingRef.current = false;
       } catch (err) {
-        console.error('❌ Error cámara:', err);
+        console.error('❌ Camera error:', err);
         isStartingRef.current = false;
       }
     };
@@ -296,12 +318,12 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     } else {
       stopCamera();
     }
-    
+
     return () => {
       mounted = false;
       stopCamera();
     };
-  }, [isMonitoring, onStreamReady]);
+  }, [isMonitoring]);
 
   return (
     <video
@@ -323,5 +345,4 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 });
 
 CameraView.displayName = 'CameraView';
-
 export default CameraView;

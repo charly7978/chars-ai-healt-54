@@ -1,154 +1,151 @@
 /**
- * FILTRO PASABANDA IIR BUTTERWORTH 0.3-5Hz - OPTIMIZADO PARA PPG
+ * BANDPASS FILTER V3 — LINEAR PHASE FIR (WINDOWED-SINC)
  * 
- * CRÍTICO PARA DETECCIÓN DE LATIDOS:
- * - Frecuencia cardíaca: 18-300 BPM = 0.3-5 Hz (rango amplio para robustez)
- * - Elimina DC (línea base, cambios lentos de iluminación)
- * - Elimina alta frecuencia (ruido eléctrico, vibraciones, movimiento)
+ * Replaces IIR Butterworth with a Finite Impulse Response (FIR) filter using a Hamming window.
  * 
- * IMPLEMENTACIÓN: Biquad IIR con cascada de pasa-altos + pasa-bajos
+ * WHY FIR?
+ * - Zero phase distortion (Linear Phase): IIR filters distort the phase, moving the
+ *   dicrotic notch and systolic peaks out of their true temporal locations. FIR keeps
+ *   the entire wave shape intact, which is mathematically CRITICAL for Stiffness Index,
+ *   Augmentation Index, and Blood Pressure estimation.
+ * - Stability: FIR filters are inherently stable (no feedback loop).
  * 
- * Referencias:
- * - De Haan & Jeanne 2013: CHROM/POS para rPPG
- * - webcam-pulse-detector de thearn (GitHub 3.2k stars)
- * - https://scipy-cookbook.readthedocs.io/items/ButterworthBandpass.html
+ * Bandpass: ~0.5 Hz (30 BPM) to ~4.5 Hz (270 BPM)
  */
+import { RingBuffer } from './RingBuffer';
+
 export class BandpassFilter {
-  // Coeficientes del filtro pasa-altos 0.5Hz (elimina DC)
-  private hpfB: number[];
-  private hpfA: number[];
-  
-  // Coeficientes del filtro pasa-bajos 4Hz (elimina ruido HF)
-  private lpfB: number[];
-  private lpfA: number[];
-  
-  // Estados internos del filtro
-  private hpfState: { x: number[], y: number[] };
-  private lpfState: { x: number[], y: number[] };
-  
   private sampleRate: number;
-  private initialized: boolean = false;
+  private lastComputedRate = 0;
   
+  // FIR Filter specifications (ligeramente mayor = transiciones más limpias en 30–60 Hz)
+  private readonly ORDER = 44;
+  private coefficients: Float64Array;
+  private history: RingBuffer;
+
+  // Detrending state (exponential moving average baseline)
+  private baselineEWMA = 0;
+  private baselineInitialized = false;
+  private readonly DETREND_ALPHA = 0.019; // baseline un poco más reactivo = más contraste AC con dedo+flash
+
   constructor(sampleRate: number = 30) {
     this.sampleRate = sampleRate;
-    
-    // Inicializar coeficientes
-    this.hpfB = [0, 0, 0];
-    this.hpfA = [1, 0, 0];
-    this.lpfB = [0, 0, 0];
-    this.lpfA = [1, 0, 0];
-    
-    // Estados
-    this.hpfState = { x: [0, 0, 0], y: [0, 0, 0] };
-    this.lpfState = { x: [0, 0, 0], y: [0, 0, 0] };
-    
+    this.coefficients = new Float64Array(this.ORDER + 1);
+    this.history = new RingBuffer(this.ORDER + 1);
     this.computeCoefficients();
   }
-  
+
   /**
-   * Calcula coeficientes Butterworth 2do orden usando transformación bilineal
-   * Basado en la fórmula estándar de filtros digitales IIR
+   * Generates Bandpass FIR coefficients using the Windowed-Sinc method (Hamming Window)
    */
   private computeCoefficients(): void {
     const fs = this.sampleRate;
-    
-    // === PASA-ALTOS a 0.3Hz (más permisivo para señales débiles) ===
-    const fcHp = 0.3;
-    const wcHp = Math.tan(Math.PI * fcHp / fs);
-    const kHp = wcHp;
-    const normHp = 1 / (1 + Math.sqrt(2) * kHp + kHp * kHp);
-    
-    this.hpfB[0] = normHp;
-    this.hpfB[1] = -2 * normHp;
-    this.hpfB[2] = normHp;
-    this.hpfA[0] = 1;
-    this.hpfA[1] = 2 * (kHp * kHp - 1) * normHp;
-    this.hpfA[2] = (1 - Math.sqrt(2) * kHp + kHp * kHp) * normHp;
-    
-    // === PASA-BAJOS a 5Hz (captura hasta 300 BPM por seguridad) ===
-    const fcLp = 5.0;
-    const wcLp = Math.tan(Math.PI * fcLp / fs);
-    const kLp = wcLp;
-    const normLp = 1 / (1 + Math.sqrt(2) * kLp + kLp * kLp);
-    
-    this.lpfB[0] = kLp * kLp * normLp;
-    this.lpfB[1] = 2 * kLp * kLp * normLp;
-    this.lpfB[2] = kLp * kLp * normLp;
-    this.lpfA[0] = 1;
-    this.lpfA[1] = 2 * (kLp * kLp - 1) * normLp;
-    this.lpfA[2] = (1 - Math.sqrt(2) * kLp + kLp * kLp) * normLp;
-    
-    this.initialized = true;
-  }
-  
-  /**
-   * Aplica filtro biquad IIR
-   */
-  private applyBiquad(
-    input: number,
-    b: number[],
-    a: number[],
-    state: { x: number[], y: number[] }
-  ): number {
-    // Desplazar historial
-    state.x[2] = state.x[1];
-    state.x[1] = state.x[0];
-    state.x[0] = input;
-    
-    state.y[2] = state.y[1];
-    state.y[1] = state.y[0];
-    
-    // Ecuación de diferencia IIR:
-    // y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
-    state.y[0] = b[0] * state.x[0] + 
-                 b[1] * state.x[1] + 
-                 b[2] * state.x[2] - 
-                 a[1] * state.y[1] - 
-                 a[2] * state.y[2];
-    
-    // Protección contra overflow
-    if (!isFinite(state.y[0]) || Math.abs(state.y[0]) > 1e10) {
-      state.y[0] = 0;
+    this.lastComputedRate = fs;
+
+    // Banda cardíaca ~36–220 lpm a Fs típico; más estrecha que antes = menos deriva sub-Hz y ruido >4 Hz
+    const fLow = 0.58;
+    const fHigh = 4.15;
+
+    // Normalized angular frequencies (0 to PI)
+    const w1 = 2 * Math.PI * (fLow / fs);
+    const w2 = 2 * Math.PI * (fHigh / fs);
+
+    const M = this.ORDER / 2;
+    let sum = 0;
+
+    for (let i = 0; i <= this.ORDER; i++) {
+      const n = i - M;
+      let h = 0;
+
+      // Ideal bandpass impulse response: Lowpass(w2) - Lowpass(w1)
+      if (n === 0) {
+        h = (w2 - w1) / Math.PI;
+      } else {
+        h = (Math.sin(w2 * n) - Math.sin(w1 * n)) / (Math.PI * n);
+      }
+
+      // Hamming window
+      const window = 0.54 - 0.46 * Math.cos((2 * Math.PI * i) / this.ORDER);
+      h = h * window;
+
+      this.coefficients[i] = h;
+      sum += h;
+    }
+
+    // Optional: Normalization to preserve amplitude scale
+    // For a bandpass, we normalize by the gain at the center frequency
+    const wCenter = (w1 + w2) / 2;
+    let gain = 0;
+    for (let i = 0; i <= this.ORDER; i++) {
+      const n = i - M;
+      gain += this.coefficients[i] * Math.cos(wCenter * n);
     }
     
-    return state.y[0];
+    if (Math.abs(gain) > 0.001) {
+      for (let i = 0; i <= this.ORDER; i++) {
+        this.coefficients[i] /= gain;
+      }
+    }
   }
-  
-  /**
-   * FILTRO PASABANDA COMPLETO
-   * Aplica HPF 0.5Hz -> LPF 4Hz en cascada
-   * 
-   * @param value Valor crudo de entrada (ej: intensidad rojo promedio)
-   * @returns Valor filtrado con solo componentes de frecuencia cardíaca
-   */
-  filter(value: number): number {
-    if (!this.initialized || !isFinite(value)) {
+
+  /** Detrend: remove slow baseline wander */
+  detrend(value: number): number {
+    if (!this.baselineInitialized) {
+      this.baselineEWMA = value;
+      this.baselineInitialized = true;
       return 0;
     }
-    
-    // Paso 1: Pasa-altos (elimina DC y deriva lenta)
-    const hpFiltered = this.applyBiquad(value, this.hpfB, this.hpfA, this.hpfState);
-    
-    // Paso 2: Pasa-bajos (elimina ruido de alta frecuencia)
-    const bpFiltered = this.applyBiquad(hpFiltered, this.lpfB, this.lpfA, this.lpfState);
-    
-    return bpFiltered;
+    this.baselineEWMA = this.baselineEWMA * (1 - this.DETREND_ALPHA) + value * this.DETREND_ALPHA;
+    return value - this.baselineEWMA;
   }
-  
-  /**
-   * Resetear estados del filtro
-   */
+
+  /** Full pipeline: detrend → FIR Bandpass */
+  filter(value: number): number {
+    if (!isFinite(value)) return 0;
+    
+    // 1. Remove massive DC wandering
+    const detrended = this.detrend(value);
+    
+    // 2. Push to history buffer
+    this.history.push(detrended);
+
+    // 3. Wait until buffer is full enough to filter
+    if (this.history.length < this.ORDER + 1) {
+      return 0; // Pre-roll phase
+    }
+
+    // 4. Apply FIR Filter (Convolution)
+    let output = 0;
+    const len = this.ORDER + 1;
+    // history.get(0) is the oldest, history.get(len-1) is the newest.
+
+    // Convolution: sum(coeff[i] * x[n - i])
+    for (let i = 0; i < len; i++) {
+      // history.get(len - 1 - i) gets the sample delayed by 'i'
+      output += this.coefficients[i] * this.history.get(len - 1 - i);
+    }
+
+
+    return output;
+  }
+
+  /** Get detrended value only (no bandpass) */
+  getDetrended(value: number): number {
+    return this.detrend(value);
+  }
+
   reset(): void {
-    this.hpfState = { x: [0, 0, 0], y: [0, 0, 0] };
-    this.lpfState = { x: [0, 0, 0], y: [0, 0, 0] };
+    this.history.clear();
+    this.baselineEWMA = 0;
+    this.baselineInitialized = false;
   }
-  
-  /**
-   * Cambiar frecuencia de muestreo
-   */
+
+  /** Recompute si cambia Fs de forma relativa (~6%) o >1.5 Hz absoluto en baja Fs */
   setSampleRate(rate: number): void {
+    const prev = this.lastComputedRate || this.sampleRate;
+    const rel = prev > 1e-6 ? Math.abs(rate - prev) / prev : 1;
+    if (rel < 0.045 && Math.abs(rate - prev) < 1.2) return;
     this.sampleRate = rate;
     this.computeCoefficients();
-    this.reset();
   }
 }
