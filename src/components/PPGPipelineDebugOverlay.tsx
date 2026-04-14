@@ -49,11 +49,13 @@ export const PPGPipelineDebugOverlay: React.FC<PPGPipelineDebugOverlayProps> = (
       cap && cap.presentationMedianDeltaMs > 0
         ? (1000 / cap.presentationMedianDeltaMs).toFixed(1)
         : '—';
+    const tConf =
+      cap && typeof cap.timingConfidence === 'number' ? cap.timingConfidence.toFixed(2) : '—';
     return [
       `contact(ext): ${s?.contactState ?? '—'} / ${s?.extendedContactState ?? '—'}`,
       `pressure: ${s?.pressureState ?? '—'}`,
       `source: ${s?.activeSource ?? '—'}  stab ${((s?.sourceStability ?? 0) * 100).toFixed(0)}%`,
-      `FPS proc ${fs} Hz  cap Δ ${cap?.presentationMedianDeltaMs?.toFixed(1) ?? '—'}ms (~${capHz} Hz) jitter ${cap?.presentationJitterMs?.toFixed(2) ?? '—'}ms`,
+      `FPS proc ${fs} Hz  cap Δ ${cap?.presentationMedianDeltaMs?.toFixed(1) ?? '—'}ms (~${capHz} Hz) jitter ${cap?.presentationJitterMs?.toFixed(2) ?? '—'}ms conf ${tConf} drops ${cap?.frameDropCount ?? '—'}`,
       `capture ${cap?.strategy ?? '—'} lat ${cap?.captureLatencyMs?.toFixed(1) ?? '—'}ms read ${cap?.readbackMs?.toFixed(1) ?? '—'}ms`,
       `SQI ${s?.quality?.toFixed(0) ?? '—'}  PI ${s?.perfusionIndex?.toFixed(2) ?? '—'}`,
       `clip H/L ${((s?.clipHighRatio ?? 0) * 100).toFixed(0)} / ${((s?.clipLowRatio ?? 0) * 100).toFixed(0)}%`,

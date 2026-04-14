@@ -28,6 +28,7 @@ import { SpO2ProcessorElite } from '../vital-signs/SpO2ProcessorElite';
 import { BloodPressureProcessorElite } from '../vital-signs/BloodPressureProcessorElite';
 import { getUserHeightMFromStorage } from '../personalization/userPhysiology';
 import type { ProcessedSignal } from '../../types/signal';
+import type { ProcessFrameOptions } from '../signal-processing/PPGSignalProcessor';
 
 export type BpConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
 
@@ -193,12 +194,12 @@ export class ElitePPGProcessor {
     this.bpProcessor.reset();
   }
   
-  processFrame(frame: ImageData | ImageBitmap, timestamp: number): ElitePPGResult {
+  processFrame(frame: ImageData | ImageBitmap, timestamp: number, opts?: ProcessFrameOptions): ElitePPGResult {
     const startTime = performance.now();
     this.frameCount++;
     
     // FASE 1: PPG etapa 1 (ROI/contacto/extracción); modo sync: análisis del mismo frame disponible después
-    this.ppgProcessor.processFrame(frame, timestamp);
+    this.ppgProcessor.processFrame(frame, timestamp, opts);
 
     const pipelineSnap = this.ppgProcessor.getLastFrameAnalysis?.() ?? null;
 
@@ -494,17 +495,7 @@ export class ElitePPGProcessor {
   }
 
   private estimateSampleRate(): number {
-    const ts = this.timestampBuffer;
-    if (ts.length < 6) return 30;
-    const deltas: number[] = [];
-    for (let i = 1; i < ts.length; i++) {
-      const d = ts[i] - ts[i - 1];
-      if (d >= 8 && d <= 120) deltas.push(d);
-    }
-    if (deltas.length < 4) return 30;
-    deltas.sort((a, b) => a - b);
-    const median = deltas[Math.floor(deltas.length / 2)];
-    return Math.max(15, Math.min(60, 1000 / Math.max(1, median)));
+    return this.ppgProcessor.getEstimatedSampleRate();
   }
 
   private determineSeverity(type: ArrhythmiaType | null): 'info' | 'warning' | 'alert' | 'critical' | null {

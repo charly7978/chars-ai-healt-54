@@ -1,6 +1,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ElitePPGProcessor } from '../modules/integration/ElitePPGProcessor';
+import type { ProcessFrameOptions } from '../modules/signal-processing/PPGSignalProcessor';
 import type { HeartBeatResult } from '../types/beat';
 import { ProcessedSignal, ProcessingError } from '../types/signal';
 
@@ -133,23 +134,26 @@ export const useSignalProcessor = () => {
     }
   }, []);
 
-  const processFrame = useCallback((frame: ImageData | ImageBitmap, frameTimestamp?: number) => {
-    if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
-      return;
-    }
-
-    try {
-      const ts = frameTimestamp ?? performance.now();
-      processorRef.current.processFrame(frame, ts);
-      const signal = processorRef.current.getLastProcessedSignal();
-      lastBeatRef.current = processorRef.current.getLastBeatResult();
-      if (signal) {
-        emitSignalUi(signal);
+  const processFrame = useCallback(
+    (frame: ImageData | ImageBitmap, frameTimestamp?: number, opts?: ProcessFrameOptions) => {
+      if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
+        return;
       }
-    } catch {
-      // hot path: silenciar
-    }
-  }, [isProcessing, emitSignalUi]);
+
+      try {
+        const ts = frameTimestamp ?? performance.now();
+        processorRef.current.processFrame(frame, ts, opts);
+        const signal = processorRef.current.getLastProcessedSignal();
+        lastBeatRef.current = processorRef.current.getLastBeatResult();
+        if (signal) {
+          emitSignalUi(signal);
+        }
+      } catch {
+        // hot path: silenciar
+      }
+    },
+    [isProcessing, emitSignalUi]
+  );
 
   const getRGBStats = useCallback(() => {
     if (!processorRef.current) {

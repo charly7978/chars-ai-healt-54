@@ -25,6 +25,8 @@ type WorkerInboundFrame = {
   timestamp: number;
   motion: boolean;
   buffer: ArrayBuffer;
+  /** Fs nominal alineado con PPG / metrología RVFC (Etapa A) */
+  sampleRateHz: number;
 };
 
 type WorkerInboundBitmap = {
@@ -33,6 +35,7 @@ type WorkerInboundBitmap = {
   timestamp: number;
   motion: boolean;
   bitmap: ImageBitmap;
+  sampleRateHz: number;
 };
 
 type WorkerInbound = WorkerInboundFrame | WorkerInboundBitmap;
@@ -73,6 +76,9 @@ export class WorkerizedFramePipeline {
   private bitmapCanvas: HTMLCanvasElement | null = null;
   private bitmapCtx: CanvasRenderingContext2D | null = null;
 
+  /** Fs nominal [15,60] — debe coincidir con PPGSignalProcessor.estimatedSampleRate */
+  private engineFrameSr = 30;
+
   constructor(options?: { preferWorker?: boolean }) {
     this.engine = new FrameAnalysisEngine();
     const prefer = options?.preferWorker ?? true;
@@ -112,12 +118,24 @@ export class WorkerizedFramePipeline {
     return this.lastResult;
   }
 
+  /** Llamar desde PPG antes de process por frame; sincroniza núcleo main y worker. */
+  setFrameSampleRate(sr: number): void {
+    if (!isFinite(sr)) return;
+    this.engineFrameSr = Math.max(15, Math.min(60, sr));
+  }
+
+  private applyEngineSampleRate(): void {
+    this.engine.setSampleRate(this.engineFrameSr);
+  }
+
   /** Procesa frame RGBA: con worker transfiere buffer; resultado puede ser N−1. */
   process(imageData: ImageData, timestamp: number, motionArtifact: boolean): FrameAnalysisResult | null {
     const t0 = performance.now();
     this.lastInputTs.push(t0);
     if (this.lastInputTs.length > 40) this.lastInputTs.shift();
     this.stats.inputFps = this.estimateFps(this.lastInputTs);
+
+    this.applyEngineSampleRate();
 
     if (!this.useWorker || !this.worker) {
       const r = this.engine.processFrame(imageData, timestamp, motionArtifact);
@@ -147,6 +165,7 @@ export class WorkerizedFramePipeline {
       timestamp,
       motion: motionArtifact,
       buffer: buf,
+      sampleRateHz: this.engineFrameSr,
     };
 
     try {
@@ -154,6 +173,7 @@ export class WorkerizedFramePipeline {
     } catch {
       const copy = new Uint8ClampedArray(imageData.data);
       const idata = new ImageData(copy, imageData.width, imageData.height);
+      this.applyEngineSampleRate();
       const r = this.engine.processFrame(idata, timestamp, motionArtifact);
       this.lastResult = r;
       this.stats.lastFrameLatencyMs = performance.now() - t0;
@@ -178,6 +198,8 @@ export class WorkerizedFramePipeline {
     this.lastInputTs.push(t0);
     if (this.lastInputTs.length > 40) this.lastInputTs.shift();
     this.stats.inputFps = this.estimateFps(this.lastInputTs);
+
+    this.applyEngineSampleRate();
 
     if (!this.useWorker || !this.worker) {
       const w = bitmap.width;
@@ -221,6 +243,7 @@ export class WorkerizedFramePipeline {
       timestamp,
       motion: motionArtifact,
       bitmap,
+      sampleRateHz: this.engineFrameSr,
     };
 
     try {
@@ -240,6 +263,7 @@ export class WorkerizedFramePipeline {
 
   reset(): void {
     this.engine.reset();
+    this.engineFrameSr = 30;
     this.lastResult = null;
     this.pending = 0;
     this.stats.droppedFrames = 0;

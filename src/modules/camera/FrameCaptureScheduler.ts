@@ -4,6 +4,7 @@
  */
 
 import { supportsCreateImageBitmap } from './offscreenSupport';
+import { CaptureMetrology, type CaptureTimingContext } from './CaptureMetrology';
 
 export interface CaptureFrameMetrics {
   inputFps: number;
@@ -16,6 +17,11 @@ export interface CaptureFrameMetrics {
   presentationMedianDeltaMs: number;
   /** Jitter (MAD) de Δt, ms */
   presentationJitterMs: number;
+  /** Fs efectivo robusto (Etapa A), Hz */
+  effectiveSampleRateHz: number;
+  /** Confianza metrología [0,1] */
+  timingConfidence: number;
+  frameDropCount: number;
 }
 
 export type FrameForPipeline = ImageData | ImageBitmap;
@@ -40,14 +46,16 @@ export class FrameCaptureScheduler {
   private poolIndex = 0;
 
   private lastInputTs: number[] = [];
-  /** DOMHighResTimeStamp de requestVideoFrameCallback (o performance.now fallback) */
-  private presentationTs: number[] = [];
+  private readonly metrology = new CaptureMetrology();
   private metrics: CaptureFrameMetrics = {
     inputFps: 0,
     captureLatencyMs: 0,
     strategy: 'buffer_pool',
     presentationMedianDeltaMs: 0,
     presentationJitterMs: 0,
+    effectiveSampleRateHz: 30,
+    timingConfidence: 0,
+    frameDropCount: 0,
   };
 
   constructor(options: FrameCaptureSchedulerOptions) {
@@ -64,29 +72,25 @@ export class FrameCaptureScheduler {
     return { ...this.metrics };
   }
 
+  /** Snapshot Etapa A (misma base que métricas expuestas). */
+  getTimingSnapshot(): CaptureTimingContext {
+    return this.metrology.getSnapshot();
+  }
+
+  resetMetrology(): void {
+    this.metrology.reset();
+  }
+
   /** Llamar con el `now` de requestVideoFrameCallback para estimar Fs real sin Date.now */
   recordPresentationTimestamp(ts: number): void {
     if (!isFinite(ts)) return;
-    this.presentationTs.push(ts);
-    if (this.presentationTs.length > 48) this.presentationTs.shift();
-    const d = this.deltaStats(this.presentationTs);
-    this.metrics.presentationMedianDeltaMs = d.med;
-    this.metrics.presentationJitterMs = d.jitter;
-  }
-
-  private deltaStats(ts: number[]): { med: number; jitter: number } {
-    if (ts.length < 4) return { med: 0, jitter: 0 };
-    const deltas: number[] = [];
-    for (let i = 1; i < ts.length; i++) {
-      const dt = ts[i]! - ts[i - 1]!;
-      if (dt >= 4 && dt <= 120) deltas.push(dt);
-    }
-    if (deltas.length < 3) return { med: 0, jitter: 0 };
-    deltas.sort((a, b) => a - b);
-    const med = deltas[Math.floor(deltas.length / 2)] ?? 0;
-    const dev = deltas.map((x) => Math.abs(x - med)).sort((a, b) => a - b);
-    const jitter = dev[Math.floor(dev.length / 2)] ?? 0;
-    return { med, jitter };
+    this.metrology.recordPresentationTime(ts);
+    const snap = this.metrology.getSnapshot();
+    this.metrics.presentationMedianDeltaMs = snap.medianaDeltaMs;
+    this.metrics.presentationJitterMs = snap.jitterMadMs;
+    this.metrics.effectiveSampleRateHz = snap.sampleRateHz;
+    this.metrics.timingConfidence = snap.timingConfidence;
+    this.metrics.frameDropCount = snap.frameDropCount;
   }
 
   private ensureCanvas(): CanvasRenderingContext2D {

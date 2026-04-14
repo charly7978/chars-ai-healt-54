@@ -30,6 +30,7 @@ type InboundFrame = {
   timestamp: number;
   motion: boolean;
   buffer: ArrayBuffer;
+  sampleRateHz: number;
 };
 
 type InboundBitmap = {
@@ -38,6 +39,7 @@ type InboundBitmap = {
   timestamp: number;
   motion: boolean;
   bitmap: ImageBitmap;
+  sampleRateHz: number;
 };
 
 type Inbound = InboundFrame | InboundBitmap;
@@ -59,6 +61,8 @@ self.onmessage = (ev: MessageEvent<Inbound>) => {
     const imageData = ctx.getImageData(0, 0, w, h);
     const readbackMs = performance.now() - readT0;
     const t0 = performance.now();
+    const sr = typeof m.sampleRateHz === 'number' && isFinite(m.sampleRateHz) ? m.sampleRateHz : 30;
+    engine.setSampleRate(sr);
     const payload = engine.processFrame(imageData, m.timestamp, m.motion);
     const dt = performance.now() - t0;
     (self as unknown as DedicatedWorkerGlobalScope).postMessage({
@@ -75,6 +79,8 @@ self.onmessage = (ev: MessageEvent<Inbound>) => {
   const data = new Uint8ClampedArray(m.buffer);
   const imageData = new ImageData(data, m.width, m.height);
   const t0 = performance.now();
+  const sr = typeof m.sampleRateHz === 'number' && isFinite(m.sampleRateHz) ? m.sampleRateHz : 30;
+  engine.setSampleRate(sr);
   const payload = engine.processFrame(imageData, m.timestamp, m.motion);
   const dt = performance.now() - t0;
   (self as unknown as DedicatedWorkerGlobalScope).postMessage({

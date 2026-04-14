@@ -47,6 +47,10 @@ export interface ProcessedSignal {
   sqiBySource?: Record<string, number>;
   estimatedSampleRate?: number;
   realFps?: number;
+  /** Etapa A: confianza metrología RVFC [0,1] */
+  captureTimingConfidence?: number;
+  /** Etapa A: jitter MAD de Δt entre frames (ms) */
+  presentationJitterMs?: number;
   processingDurationMs?: number;
   diagnostics?: {
     message: string;

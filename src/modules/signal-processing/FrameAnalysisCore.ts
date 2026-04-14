@@ -147,8 +147,8 @@ export class FrameAnalysisEngine {
   private roiBiasPx = 0;
   private roiBiasPy = 0;
 
+  /** Fs nominal: lo fija WorkerizedFramePipeline/PPG antes de cada processFrame (Etapa A). */
   private estimatedSampleRate = 30;
-  private lastTs = 0;
 
   private readonly redBuf = new RingBuffer(320);
   private readonly greenBuf = new RingBuffer(320);
@@ -296,7 +296,6 @@ export class FrameAnalysisEngine {
     this.lumaScratch = null;
     this.roiBiasPx = 0;
     this.roiBiasPy = 0;
-    this.lastTs = 0;
     for (const b of this.sourceBuffers.values()) b.clear();
     this.lastAllSQI = {};
     this.sessionRedEma = 88;
@@ -306,14 +305,6 @@ export class FrameAnalysisEngine {
   processFrame(imageData: ImageData, timestamp: number, motionArtifact: boolean): FrameAnalysisResult {
     const t0 = performance.now();
     this.frameCount++;
-    if (this.lastTs > 0) {
-      const dt = timestamp - this.lastTs;
-      if (dt >= 8 && dt <= 120) {
-        const fps = 1000 / dt;
-        this.estimatedSampleRate = this.estimatedSampleRate * 0.9 + Math.max(15, Math.min(60, fps)) * 0.1;
-      }
-    }
-    this.lastTs = timestamp;
 
     const w = imageData.width;
     const h = imageData.height;

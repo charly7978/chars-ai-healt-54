@@ -19,6 +19,12 @@ import {
   canonicalPoseGuidance,
   type CanonicalPoseResult,
 } from './CanonicalFingerPose';
+import type { CaptureTimingContext } from '../camera/CaptureMetrology';
+
+export type ProcessFrameOptions = {
+  /** Metrología RVFC (Etapa A); si confianza suficiente, gobierna Fs y filtro */
+  captureTiming?: CaptureTimingContext;
+};
 
 /**
  * PPG etapa 1: delega ROI/contacto/extracción/SQI a FrameAnalysisCore (main o Worker),
@@ -90,6 +96,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private lastAnalysis: FrameAnalysisResult | null = null;
   private lastCanonicalPose: CanonicalPoseResult = { ok: false, issue: 'PRESSURE_LOW' };
+  private lastCaptureTiming: CaptureTimingContext | null = null;
   private debugMode = false;
 
   private lastLogTime = 0;
@@ -138,13 +145,31 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return true;
   }
 
-  processFrame(frame: ImageData | ImageBitmap, frameTimestamp?: number): void {
+  processFrame(frame: ImageData | ImageBitmap, frameTimestamp?: number, opts?: ProcessFrameOptions): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
     const t0 = performance.now();
     this.frameCount++;
     const timestamp = frameTimestamp ?? performance.now();
-    this.updateSampleRate(timestamp);
+    const ct = opts?.captureTiming;
+    if (
+      ct &&
+      ct.timingConfidence >= 0.22 &&
+      ct.sampleRateHz >= 15 &&
+      ct.sampleRateHz <= 60 &&
+      ct.intervalCount >= 4
+    ) {
+      this.estimatedSampleRate = ct.sampleRateHz;
+      this.realFps = ct.sampleRateHz;
+      this.bandpassFilter.setSampleRate(ct.sampleRateHz);
+      this.lastFrameTime = timestamp;
+      this.lastCaptureTiming = ct;
+    } else {
+      this.updateSampleRate(timestamp);
+      this.lastCaptureTiming = null;
+    }
+
+    this.pipeline.setFrameSampleRate(this.estimatedSampleRate);
 
     this.motionScoreSmoothed = this.motionScoreSmoothed * 0.82 + this.motionScore * 0.18;
     const motionArtifact = this.motionScoreSmoothed > this.MOTION_THRESH;
@@ -159,8 +184,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.emitEmpty(timestamp, dims.width, dims.height, motionArtifact, t0);
       return;
     }
-
-    this.syncSampleRateFromEngine(analysis);
 
     this.lastAnalysis = analysis;
     this.applyContactMapping(analysis.contactRaw);
@@ -311,6 +334,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       sqiBySource: this.allSourceSQI,
       estimatedSampleRate: this.estimatedSampleRate,
       realFps: this.realFps,
+      captureTimingConfidence: this.lastCaptureTiming?.timingConfidence,
+      presentationJitterMs: this.lastCaptureTiming?.jitterMadMs,
       processingDurationMs: this.processingTimeMs,
       diagnostics: {
         message: `${this.activeSourceLabel} PI:${perfusionIndex.toFixed(2)} ${this.exportedContactState} ${analysis.readinessReason}`,
@@ -361,6 +386,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       sqiBySource: {},
       estimatedSampleRate: this.estimatedSampleRate,
       realFps: this.realFps,
+      captureTimingConfidence: this.lastCaptureTiming?.timingConfidence,
+      presentationJitterMs: this.lastCaptureTiming?.jitterMadMs,
       processingDurationMs: this.processingTimeMs,
       diagnostics: {
         message: 'PIPELINE_INIT',
@@ -624,16 +651,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
   }
 
-  private syncSampleRateFromEngine(analysis: FrameAnalysisResult): void {
-    const h = analysis.sampleRateHint;
-    if (h < 15 || h > 60 || !isFinite(h)) return;
-    const base = Math.max(this.estimatedSampleRate, 1e-6);
-    if (Math.abs(h - this.estimatedSampleRate) / base > 0.05) {
-      this.estimatedSampleRate = h;
-      this.bandpassFilter.setSampleRate(h);
-    }
-  }
-
   private getSignalRange(): number {
     if (this.filteredBuf.length < 28) return 0;
     const mm = this.filteredBuf.minMax(90);
@@ -734,6 +751,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     };
   }
 
+  getEstimatedSampleRate(): number {
+    return this.estimatedSampleRate;
+  }
+
   getDebugInfo() {
     const a = this.lastAnalysis;
     const ps = this.pipeline.getStats();
@@ -779,6 +800,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.bandpassFilter.reset();
     this.bandpassFilter.setSampleRate(30);
     this.estimatedSampleRate = 30;
+    this.lastCaptureTiming = null;
     this.realFps = 0;
     this.lastFrameTime = 0;
     this.frameCount = 0;

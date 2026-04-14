@@ -20,6 +20,7 @@ import {
   clampUserHeightM,
 } from "@/modules/personalization/userPhysiology";
 import { FrameCaptureScheduler } from "@/modules/camera/FrameCaptureScheduler";
+import type { CaptureTimingContext } from "@/modules/camera/CaptureMetrology";
 import { PPGPipelineDebugOverlay } from "@/components/PPGPipelineDebugOverlay";
 import { ClinicalTopBar } from "@/components/visual/ClinicalTopBar";
 import { MedicalAmbient3D } from "@/components/visual/MedicalAmbient3D";
@@ -81,8 +82,6 @@ const Index = () => {
   const captureBusyRef = useRef(false);
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
-  const frameTimestampHistoryRef = useRef<number[]>([]);
-
   const EMA_ALPHA = 0.22;
   const emaRef = useRef({
     bpm: 0, spo2: 0, systolic: 0, diastolic: 0,
@@ -93,25 +92,6 @@ const Index = () => {
     if (next === 0) return 0;
     if (prev === 0) return next;
     return Math.round(prev * (1 - EMA_ALPHA) + next * EMA_ALPHA);
-  }, []);
-
-  const estimateSampleRateFromFrames = useCallback((timestamp?: number): number => {
-    if (!timestamp || !isFinite(timestamp)) return 30;
-    const history = frameTimestampHistoryRef.current;
-    if (history.length === 0 || timestamp > history[history.length - 1]) {
-      history.push(timestamp);
-      if (history.length > 24) history.shift();
-    }
-    if (history.length < 6) return 30;
-    const deltas: number[] = [];
-    for (let i = 1; i < history.length; i++) {
-      const d = history[i] - history[i - 1];
-      if (d >= 8 && d <= 120) deltas.push(d);
-    }
-    if (deltas.length < 4) return 30;
-    deltas.sort((a, b) => a - b);
-    const median = deltas[Math.floor(deltas.length / 2)];
-    return Math.max(15, Math.min(60, 1000 / Math.max(1, median)));
   }, []);
 
   const computeRRStability = useCallback((intervals: number[]): number => {
@@ -254,6 +234,8 @@ const Index = () => {
         targetHeight: 240,
         preferBitmapPath: true,
       });
+    } else {
+      captureSchedulerRef.current.resetMetrology();
     }
 
     const captureOneFrame = (presentationTime?: number) => {
@@ -266,20 +248,21 @@ const Index = () => {
 
       const frameTimestamp =
         typeof presentationTime === 'number' && isFinite(presentationTime) ? presentationTime : performance.now();
-      captureSchedulerRef.current?.recordPresentationTimestamp(frameTimestamp);
+      const sched = captureSchedulerRef.current!;
+      sched.recordPresentationTimestamp(frameTimestamp);
+      const timingSnap: CaptureTimingContext = sched.getTimingSnapshot();
 
       if (captureBusyRef.current) {
         scheduleNext(video);
         return;
       }
 
-      const sched = captureSchedulerRef.current!;
       captureBusyRef.current = true;
       void (async () => {
         try {
           const frame = await sched.captureFromVideo(video);
           if (frame && isProcessingRef.current) {
-            processFrameRef.current(frame, frameTimestamp);
+            processFrameRef.current(frame, frameTimestamp, { captureTiming: timingSnap });
           }
         } catch {
           /* noop */
@@ -328,7 +311,7 @@ const Index = () => {
     totalBeatsRef.current = 0;
     arrhythmiaBeatsRef.current = 0;
     lastArrhythmiaCountForBeatsRef.current = 0;
-    frameTimestampHistoryRef.current = [];
+    captureSchedulerRef.current?.resetMetrology();
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SINUS_STABLE|0" }));
     startProcessing();
     setIsMonitoring(true);
@@ -390,7 +373,7 @@ const Index = () => {
     }
     setIsMonitoring(false);
     setIsCalibrating(false);
-    frameTimestampHistoryRef.current = [];
+    captureSchedulerRef.current?.resetMetrology();
     if (savedResults) setVitalSigns(savedResults);
     setShowResults(true);
     const total = totalBeatsRef.current;
@@ -416,7 +399,7 @@ const Index = () => {
     fullResetVitalSigns();
     resetProcessingEngine();
     emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, cholesterol: 0, triglycerides: 0 };
-    frameTimestampHistoryRef.current = [];
+    captureSchedulerRef.current?.resetMetrology();
     setIsMonitoring(false);
     setShowResults(false);
     setMeasurementSummary(null);
@@ -487,8 +470,7 @@ const Index = () => {
       Math.min(1, (ls.sourceStability ?? positionQuality.qualityScore) || 0)
     );
     const sampleRate =
-      (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
-      estimateSampleRateFromFrames(lastSignal.timestamp);
+      ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : 30;
 
     const heartBeatResult =
       getLastBeatResult() ?? emptyHeartBeatResult(0);
