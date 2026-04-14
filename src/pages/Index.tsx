@@ -467,6 +467,10 @@ const Index = () => {
       pressureState?: 'LOW_PRESSURE' | 'OPTIMAL_PRESSURE' | 'HIGH_PRESSURE';
       estimatedSampleRate?: number;
       sourceStability?: number;
+      maskIoU?: number;
+      roiCoverage?: number;
+      captureTimingConfidence?: number;
+      presentationJitterMs?: number;
     };
     const positionQuality = getPositionQuality();
     const stableHumanSignal = getBeatMeasurementActive();
@@ -578,10 +582,20 @@ const Index = () => {
         contactStable: lastSignal.measurementReady === true,
         pressureOptimal,
         clipHighRatio: clipHigh,
+        clipLowRatio: ls.clipLowRatio ?? 0,
         sourceStability,
         avgBeatSQI: heartBeatResult.beatSQI || heartBeatResult.debug.lastBeatSQI || 0,
         beatCount: heartBeatResult.debug.beatsAccepted || heartBeatResult.rrData?.intervals.length || 0,
+        sampleRate:
+          ls.estimatedSampleRate != null && ls.estimatedSampleRate >= 15 && ls.estimatedSampleRate <= 60
+            ? ls.estimatedSampleRate
+            : undefined,
+        detectorAgreement,
+        rrStability,
         pipelineContactQuality,
+        maskIoU: ls.maskIoU,
+        captureTimingConfidence: ls.captureTimingConfidence,
+        presentationJitterMs: ls.presentationJitterMs,
       });
 
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {

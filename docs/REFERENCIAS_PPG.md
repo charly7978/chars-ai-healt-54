@@ -23,7 +23,7 @@ Documento de apoyo para alinear implementación con literatura y tendencias reci
 | Picos / RR / autocorr+espectral | `HeartBeatProcessor.ts` (Fs alineada a `estimatedSampleRate`, gating por `maskIoU`) |
 | Pesos multi-escala según SNR previo | `AdvancedFingerTracker.ts` |
 | PA morfológica / PTT-proxy + altura usuario | `BloodPressureProcessorElite.ts`, perfil en `DeviceProfileManager` |
-| Pipeline UI principal | `VitalSignsProcessor.ts` (SpO2/PA élite + calibrador dispositivo), `Index.tsx` |
+| Pipeline UI principal | `VitalSignsProcessor.ts` (contexto upstream: Fs, IoU, clip, jitter RVFC → SpO₂/PA/ritmo), `Index.tsx` |
 | Monitor pantalla completa + altura (TA) | `PPGSignalMeter.tsx` (barra superior izquierda, `z-index` sobre el canvas; `Guardar` → `setUserHeightM` + toast; valor inicial desde perfil o 1,70 m) |
 | Integración pipeline (cámara → señal) | `ElitePPGProcessor.ts` vía `useSignalProcessor` en `Index.tsx` |
 

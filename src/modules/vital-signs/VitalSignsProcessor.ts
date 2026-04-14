@@ -120,6 +120,7 @@ export class VitalSignsProcessor {
     contactStable: false,
     pressureOptimal: false,
     clipHighRatio: 0,
+    clipLowRatio: 0,
     sourceStability: 0,
     avgBeatSQI: 0,
     beatCount: 0,
@@ -128,6 +129,12 @@ export class VitalSignsProcessor {
     rrStability: 0,
     /** Calidad PPG/máscara (dedo lateral: el tracker visual puede subestimar contacto). */
     pipelineContactQuality: 0,
+    /** Estabilidad ROI [0,1] — FrameAnalysisCore / E2 */
+    maskIoU: 1,
+    /** Confianza metrología RVFC [0,1] — Etapa A; 0 = aún sin estimación fiable */
+    timingConfidence: 0,
+    /** Jitter MAD Δt (ms), para coherencia con UncertaintyRouter */
+    presentationJitterMs: 0,
   };
 
   private heartRuntime = { bpm: 0, bpmConfidence: 0, beatCount: 0 };
@@ -210,6 +217,7 @@ export class VitalSignsProcessor {
     contactStable?: boolean;
     pressureOptimal?: boolean;
     clipHighRatio?: number;
+    clipLowRatio?: number;
     sourceStability?: number;
     avgBeatSQI?: number;
     beatCount?: number;
@@ -217,18 +225,34 @@ export class VitalSignsProcessor {
     detectorAgreement?: number;
     rrStability?: number;
     pipelineContactQuality?: number;
+    maskIoU?: number;
+    captureTimingConfidence?: number;
+    presentationJitterMs?: number;
   }): void {
     if (ctx.contactStable !== undefined) this.upstreamContext.contactStable = ctx.contactStable;
     if (ctx.pressureOptimal !== undefined) this.upstreamContext.pressureOptimal = ctx.pressureOptimal;
     if (ctx.clipHighRatio !== undefined) this.upstreamContext.clipHighRatio = ctx.clipHighRatio;
+    if (ctx.clipLowRatio !== undefined) this.upstreamContext.clipLowRatio = ctx.clipLowRatio;
     if (ctx.sourceStability !== undefined) this.upstreamContext.sourceStability = ctx.sourceStability;
     if (ctx.avgBeatSQI !== undefined) this.upstreamContext.avgBeatSQI = ctx.avgBeatSQI;
     if (ctx.beatCount !== undefined) this.upstreamContext.beatCount = ctx.beatCount;
-    if (ctx.sampleRate !== undefined && isFinite(ctx.sampleRate)) this.upstreamContext.sampleRate = Math.max(15, Math.min(60, ctx.sampleRate));
+    if (ctx.sampleRate !== undefined && isFinite(ctx.sampleRate)) {
+      const sr = ctx.sampleRate;
+      this.upstreamContext.sampleRate = sr >= 15 && sr <= 60 ? sr : Math.max(15, Math.min(60, sr));
+    }
     if (ctx.detectorAgreement !== undefined) this.upstreamContext.detectorAgreement = ctx.detectorAgreement;
     if (ctx.rrStability !== undefined) this.upstreamContext.rrStability = ctx.rrStability;
     if (ctx.pipelineContactQuality !== undefined && isFinite(ctx.pipelineContactQuality)) {
       this.upstreamContext.pipelineContactQuality = Math.max(0, Math.min(100, ctx.pipelineContactQuality));
+    }
+    if (ctx.maskIoU !== undefined && isFinite(ctx.maskIoU)) {
+      this.upstreamContext.maskIoU = Math.max(0, Math.min(1, ctx.maskIoU));
+    }
+    if (ctx.captureTimingConfidence !== undefined && isFinite(ctx.captureTimingConfidence)) {
+      this.upstreamContext.timingConfidence = Math.max(0, Math.min(1, ctx.captureTimingConfidence));
+    }
+    if (ctx.presentationJitterMs !== undefined && isFinite(ctx.presentationJitterMs)) {
+      this.upstreamContext.presentationJitterMs = Math.max(0, ctx.presentationJitterMs);
     }
   }
 
@@ -314,8 +338,30 @@ export class VitalSignsProcessor {
     return 'UNCALIBRATED';
   }
 
-  private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
+  /**
+   * E4: calidad efectiva = SQI histórico + penalizaciones por ROI inestable, clip y jitter temporal
+   * (sin borrar lecturas; solo desescala el tier de confianza global).
+   */
+  private effectiveSignalQualityForConfidence(): number {
     const sq = this.measurements.signalQuality;
+    const mi = this.upstreamContext.maskIoU;
+    const tc = this.upstreamContext.timingConfidence;
+    const ch = this.upstreamContext.clipHighRatio;
+    const cl = this.upstreamContext.clipLowRatio;
+    const j = this.upstreamContext.presentationJitterMs;
+
+    let q = sq;
+    if (mi < 1) q *= 0.78 + 0.22 * Math.max(0, mi);
+    if (tc > 0.04 && tc < 0.32) q *= 0.86 + 0.14 * (tc / 0.32);
+    if (ch > 0.11) q *= Math.max(0.68, 1 - (ch - 0.11) * 1.05);
+    if (cl > 0.14) q *= Math.max(0.72, 1 - (cl - 0.14) * 0.85);
+    if (j > 14) q *= Math.max(0.75, 1 - Math.min(0.22, (j - 14) * 0.008));
+
+    return Math.max(0, Math.min(100, q));
+  }
+
+  private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
+    const sq = this.effectiveSignalQualityForConfidence();
     if (sq >= 45 && this.validPulseCount >= 4) return 'HIGH';
     if (sq >= 24 && this.validPulseCount >= 3) return 'MEDIUM';
     if (sq >= 10 && this.validPulseCount >= 2) return 'LOW';
@@ -333,13 +379,16 @@ export class VitalSignsProcessor {
     const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
     const hr = avgRR > 0 ? 60000 / avgRR : 0;
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
-    const sampleRate = this.upstreamContext.sampleRate || 30;
+    const sampleRate = this.upstreamContext.sampleRate >= 15 ? this.upstreamContext.sampleRate : 30;
 
-    const contactQ = Math.max(
+    const baseContact = Math.max(
       this.measurements.signalQuality,
       this.upstreamContext.avgBeatSQI,
       this.upstreamContext.pipelineContactQuality
     );
+    const mi = this.upstreamContext.maskIoU;
+    const contactQ = Math.min(100, Math.round(baseContact * (0.9 + 0.1 * mi)));
+
     const spo2Elite = this.spo2Processor.process({
       redAC: this.rgbData.redAC,
       redDC: this.rgbData.redDC,
@@ -349,7 +398,7 @@ export class VitalSignsProcessor {
       beatSQI: this.upstreamContext.avgBeatSQI,
       pressureOptimal: this.upstreamContext.pressureOptimal,
       clipHighRatio: this.upstreamContext.clipHighRatio,
-      clipLowRatio: 0,
+      clipLowRatio: this.upstreamContext.clipLowRatio,
     });
 
     const calState = this.resolveSpo2CalState();
@@ -491,7 +540,11 @@ export class VitalSignsProcessor {
 
     const beatN = beatInputs?.length ?? 0;
     const avgSQI = Math.max(this.upstreamContext.avgBeatSQI, 15);
-    const stab = Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement);
+    const stab = Math.max(
+      this.upstreamContext.sourceStability,
+      this.upstreamContext.detectorAgreement,
+      this.upstreamContext.rrStability
+    );
 
     let rhythmResult: RhythmResult;
     if (beatInputs && beatN >= 8) {
@@ -671,5 +724,12 @@ export class VitalSignsProcessor {
     this.lastGlucose = null;
     this.lastLipids = null;
     this.upstreamContext.pipelineContactQuality = 0;
+    this.upstreamContext.clipLowRatio = 0;
+    this.upstreamContext.maskIoU = 1;
+    this.upstreamContext.timingConfidence = 0;
+    this.upstreamContext.presentationJitterMs = 0;
+    this.upstreamContext.sampleRate = 30;
+    this.upstreamContext.detectorAgreement = 0;
+    this.upstreamContext.rrStability = 0;
   }
 }

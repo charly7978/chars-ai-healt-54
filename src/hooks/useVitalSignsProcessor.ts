@@ -40,10 +40,17 @@ export const useVitalSignsProcessor = () => {
     contactStable?: boolean;
     pressureOptimal?: boolean;
     clipHighRatio?: number;
+    clipLowRatio?: number;
     sourceStability?: number;
     avgBeatSQI?: number;
     beatCount?: number;
+    sampleRate?: number;
+    detectorAgreement?: number;
+    rrStability?: number;
     pipelineContactQuality?: number;
+    maskIoU?: number;
+    captureTimingConfidence?: number;
+    presentationJitterMs?: number;
   }) => {
     processorRef.current?.setUpstreamContext(ctx);
   }, []);
