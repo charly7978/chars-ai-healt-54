@@ -4,6 +4,7 @@ import {
   type EffectiveCameraSettings,
   type CameraCapabilitiesSnapshot,
 } from "@/modules/signal-processing/CameraControlEngine";
+import { buildProgressiveConstraints, type NegotiatedConstraints } from "@/modules/camera/ConstraintNegotiator";
 
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
@@ -26,6 +27,24 @@ export interface CameraDiagnostics {
   capabilities: CameraCapabilitiesSnapshot | null;
   /** Fases de constraints que se aplicaron correctamente (torch, fps, AE, etc.) */
   phasesApplied: string[];
+  /** Métricas de negociación de constraints adaptativa */
+  negotiationMetrics?: {
+    phaseAttempted: string;
+    phaseSucceeded: string;
+    attempts: number;
+    finalResolution: { width: number; height: number } | null;
+    finalFramerate: number | null;
+    negotiationTimeMs: number;
+  };
+  /** Capabilities del dispositivo detectadas */
+  deviceCapabilities?: {
+    maxWidth: number;
+    maxHeight: number;
+    maxFramerate: number;
+    supportsExposureMode: boolean;
+    supportsWhiteBalanceMode: boolean;
+    supportsFocusMode: boolean;
+  };
 }
 
 interface CameraViewProps {
@@ -101,8 +120,8 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     };
 
     /**
-     * Una sola apertura de cámara en el caso habitual (p. ej. 1 webcam en PC).
-     * Antes: varios getUserMedia de prueba que se cerraban → LED/sensor "abre y cierra".
+     * Adquisición de video con negociación adaptativa multi-fase (Etapa 1).
+     * Usa ConstraintNegotiator para detectar capabilities y negociar progresivamente.
      */
     const acquireVideoStream = async (): Promise<MediaStream> => {
       const tryVideo = (video: MediaTrackConstraints | boolean) =>
@@ -117,23 +136,39 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       const videoInputs = devices.filter((d) => d.kind === 'videoinput');
       console.log('📷 Dispositivos video:', videoInputs.length, videoInputs.map((d) => d.label || d.deviceId));
 
-      if (videoInputs.length === 1) {
+      // Usar negociación adaptativa multi-fase si hay dispositivos
+      if (videoInputs.length >= 1) {
         const d = videoInputs[0]!;
         diagnosticsRef.current.deviceLabel = d.label || 'Cámara';
+        
         try {
-          return await tryVideo({
-            deviceId: { ideal: d.deviceId },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 60, min: 15, max: 60 },
+          console.log('📷 Iniciando negociación adaptativa multi-fase...');
+          const negotiated: NegotiatedConstraints = await buildProgressiveConstraints(d.deviceId);
+          
+          console.log('📷 Negociación completada:', {
+            phaseSucceeded: negotiated.metrics?.phaseSucceeded,
+            attempts: negotiated.metrics?.attempts,
+            finalResolution: negotiated.metrics?.finalResolution,
+            finalFramerate: negotiated.metrics?.finalFramerate,
+            negotiationTimeMs: negotiated.metrics?.negotiationTimeMs,
+            phases: negotiated.phases,
           });
-        } catch {
+          
+          // Actualizar diagnósticos con métricas de negociación
+          diagnosticsRef.current.negotiationMetrics = negotiated.metrics;
+          diagnosticsRef.current.deviceCapabilities = negotiated.capabilities;
+          diagnosticsRef.current.phasesApplied = negotiated.phases;
+          
+          return await tryVideo(negotiated.video);
+        } catch (error) {
+          console.warn('📷 Negociación adaptativa falló, usando fallback:', error);
+          // Fallback a constraints manuales si la negociación falla
           try {
             return await tryVideo({
               deviceId: { ideal: d.deviceId },
               width: { ideal: 640 },
               height: { ideal: 480 },
-              frameRate: { ideal: 60, min: 15, max: 60 },
+              frameRate: { ideal: 30, min: 15, max: 30 },
             });
           } catch {
             return await tryVideo({ deviceId: { ideal: d.deviceId } });
@@ -146,7 +181,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           return await tryVideo({
             width: { ideal: 640 },
             height: { ideal: 480 },
-            frameRate: { ideal: 60, min: 15, max: 60 },
+            frameRate: { ideal: 30, min: 15, max: 30 },
           });
         } catch {
           return await tryVideo(true);

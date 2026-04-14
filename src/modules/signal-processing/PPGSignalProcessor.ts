@@ -152,15 +152,24 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (
       ct &&
       ct.timingConfidence >= 0.22 &&
-      ct.sampleRateHz >= 15 &&
-      ct.sampleRateHz <= 60 &&
-      ct.intervalCount >= 4
+      ct.kalmanSampleRateHz >= 15 &&
+      ct.kalmanSampleRateHz <= 60 &&
+      isFinite(ct.kalmanSampleRateHz)
     ) {
-      this.estimatedSampleRate = ct.sampleRateHz;
+      // Usar Kalman filter para estimación más suave y robusta
+      this.estimatedSampleRate = ct.kalmanSampleRateHz;
       this.realFps = ct.sampleRateHz;
-      this.bandpassFilter.setSampleRate(ct.sampleRateHz);
+      this.bandpassFilter.setSampleRate(ct.kalmanSampleRateHz);
       this.lastFrameTime = timestamp;
       this.lastCaptureTiming = ct;
+      
+      // Log de métricas extendidas para debugging
+      if (ct.jitterStdMs > 0) {
+        // Jitter estándar disponible
+      }
+      if (ct.sampleRateDriftHzPerSec !== 0) {
+        // Drift detectado
+      }
     } else {
       this.updateSampleRate(timestamp);
       this.lastCaptureTiming = null;
@@ -301,8 +310,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       console.log(
         `📷 PPG [${this.activeSourceLabel}] Q=${gatedQuality.toFixed(0)} PI=${perfusionIndex.toFixed(2)} ` +
           `${this.exportedContactState} worker=${pipeStats.workerActive ? 'on' : 'off'} ` +
-          `inFPS=${pipeStats.inputFps.toFixed(0)} procFPS=${pipeStats.processedFps.toFixed(0)} ` +
-          `lat=${pipeStats.lastFrameLatencyMs.toFixed(1)}ms drop=${pipeStats.droppedFrames}`
+          `Fs=${ct.kalmanSampleRateHz.toFixed(1)}(raw=${ct.sampleRateHz.toFixed(1)}) ` +
+          `jitter=${ct.jitterMadMs.toFixed(1)}(std=${ct.jitterStdMs.toFixed(1)}) ` +
+          `drift=${ct.sampleRateDriftHzPerSec.toFixed(3)} ` +
+          `skew=${ct.deltaSkew.toFixed(3)} ` +
+          `conf=${ct.timingConfidence.toFixed(2)} ` +
+          `drops=${ct.frameDropCount} ` +
+          `win=${ct.windowSize} ` +
+          `dropped=${pipeStats.droppedFrames}`
       );
     }
 
