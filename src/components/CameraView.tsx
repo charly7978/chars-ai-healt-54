@@ -136,91 +136,59 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       const videoInputs = devices.filter((d) => d.kind === 'videoinput');
       console.log('📷 Dispositivos video:', videoInputs.length, videoInputs.map((d) => d.label || d.deviceId));
 
-      // Usar negociación adaptativa multi-fase si hay dispositivos
-      if (videoInputs.length >= 1) {
-        const d = videoInputs[0]!;
-        diagnosticsRef.current.deviceLabel = d.label || 'Cámara';
-        
-        try {
-          console.log('📷 Iniciando negociación adaptativa multi-fase...');
-          const negotiated: NegotiatedConstraints = await buildProgressiveConstraints(d.deviceId);
-          
-          console.log('📷 Negociación completada:', {
-            phaseSucceeded: negotiated.metrics?.phaseSucceeded,
-            attempts: negotiated.metrics?.attempts,
-            finalResolution: negotiated.metrics?.finalResolution,
-            finalFramerate: negotiated.metrics?.finalFramerate,
-            negotiationTimeMs: negotiated.metrics?.negotiationTimeMs,
-            phases: negotiated.phases,
-          });
-          
-          // Actualizar diagnósticos con métricas de negociación
-          diagnosticsRef.current.negotiationMetrics = negotiated.metrics;
-          diagnosticsRef.current.deviceCapabilities = negotiated.capabilities;
-          diagnosticsRef.current.phasesApplied = negotiated.phases;
-          
-          return await tryVideo(negotiated.video);
-        } catch (error) {
-          console.warn('📷 Negociación adaptativa falló, usando fallback:', error);
-          // Fallback a constraints manuales si la negociación falla
-          try {
-            return await tryVideo({
-              deviceId: { ideal: d.deviceId },
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30, min: 15, max: 30 },
-            });
-          } catch {
-            return await tryVideo({ deviceId: { ideal: d.deviceId } });
-          }
-        }
+      // ═══ V3: Flujo robusto de adquisición de cámara ═══
+      // Prioridad: facingMode:'environment' (trasera) → deviceId específico → fallback genérico
+      // NO usar deviceId vacío (enumerateDevices sin permisos devuelve "")
+      
+      const firstDevice = videoInputs.length > 0 ? videoInputs[0]! : null;
+      const hasValidDeviceId = firstDevice?.deviceId != null && firstDevice.deviceId.length > 4;
+      if (firstDevice?.label) {
+        diagnosticsRef.current.deviceLabel = firstDevice.label;
       }
 
-      if (videoInputs.length === 0) {
+      // Intento 1: facingMode environment (cámara trasera) — funciona sin deviceId
+      try {
+        console.log('📷 Intentando cámara trasera (facingMode: environment)...');
+        return await tryVideo({
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 640, max: 1280 },
+          height: { ideal: 480, max: 720 },
+          frameRate: { ideal: 30, min: 15, max: 60 },
+        });
+      } catch (e1) {
+        console.warn('📷 facingMode environment falló:', e1);
+      }
+
+      // Intento 2: deviceId específico si está disponible y no es vacío
+      if (hasValidDeviceId) {
         try {
+          console.log('📷 Intentando deviceId específico:', firstDevice!.deviceId.slice(0, 8) + '...');
           return await tryVideo({
+            deviceId: { exact: firstDevice!.deviceId },
             width: { ideal: 640 },
             height: { ideal: 480 },
             frameRate: { ideal: 30, min: 15, max: 30 },
           });
-        } catch {
-          return await tryVideo(true);
+        } catch (e2) {
+          console.warn('📷 deviceId específico falló:', e2);
         }
       }
 
-      // Varias cámaras (móvil): una sola petición orientada a trasera; sin bucles que abran/cierren cada una.
+      // Intento 3: constraints mínimos
       try {
+        console.log('📷 Intentando constraints mínimos...');
         return await tryVideo({
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          frameRate: { ideal: 60, min: 15, max: 60 },
+          width: { ideal: 320 },
+          height: { ideal: 240 },
+          frameRate: { ideal: 24 },
         });
-      } catch {
-        try {
-          return await tryVideo({
-            facingMode: { ideal: 'user' },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 60, min: 15, max: 60 },
-          });
-        } catch {
-          const first = videoInputs[0];
-          if (first?.deviceId) {
-            try {
-              return await tryVideo({
-                deviceId: { ideal: first.deviceId },
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                frameRate: { ideal: 60, min: 15, max: 60 },
-              });
-            } catch {
-              return await tryVideo({ deviceId: { ideal: first.deviceId } });
-            }
-          }
-          return await tryVideo(true);
-        }
+      } catch (e3) {
+        console.warn('📷 Constraints mínimos fallaron:', e3);
       }
+
+      // Intento 4: sin constraints (acepta cualquier cámara)
+      console.log('📷 Último intento: sin constraints...');
+      return await tryVideo(true);
     };
 
     const startCamera = async () => {
