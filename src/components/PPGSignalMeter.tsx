@@ -745,9 +745,13 @@ const PPGSignalMeter = ({
         const beatDuration = Math.min(Math.max(lastRR, 400), 800); // Duración del latido en ms
         const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
         
+        // DEBUG: Log para verificar el flujo
+        console.log('[PPGSignalMeter] Peak:', pe.seq, 'waveClass:', waveClass, 'beatTime:', beatTime, 'now:', now, 'lastRR:', lastRR);
+        
         // Marcar solo el segmento del latido actual
         const segmentStart = beatTime - beatDuration / 2;
         if (waveClass === 'arrhythmia') {
+          console.log('[PPGSignalMeter] Marking arrhythmia segment:', segmentStart, 'to', segmentStart + beatDuration);
           buffer.markWaveClassSegment(segmentStart, beatDuration, 'arrhythmia');
         } else if (waveClass === 'weak') {
           buffer.markWaveClassSegment(segmentStart, beatDuration, 'weak');
