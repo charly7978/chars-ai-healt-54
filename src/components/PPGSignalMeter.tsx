@@ -46,9 +46,9 @@ const CONFIG = {
   /** Lienzo lógico algo menor = menos píxeles por frame (mejor FPS en móvil/PC). */
   CANVAS_WIDTH: 1400,
   CANVAS_HEIGHT: 2480,
-  WINDOW_MS: 2800,
-  /** ~22 FPS dibujo onda: suficiente para PPG y menos carga que 30 en canvas pesado. */
-  TARGET_FPS: 22,
+  WINDOW_MS: 1800,
+  /** 45 FPS para respuesta eléctrica instantánea (vs 22 anterior). */
+  TARGET_FPS: 45,
   BUFFER_SIZE: 400,
   PLOT_AREA: {
     LEFT: 96,
@@ -61,34 +61,34 @@ const CONFIG = {
     GRID_MAJOR: 'rgba(34, 211, 238, 0.12)',
     GRID_MINOR: 'rgba(52, 211, 153, 0.06)',
     BASELINE: 'rgba(45, 212, 191, 0.35)',
-    SIGNAL_NORMAL: '#34d399',
-    SIGNAL_GLOW: 'rgba(52, 211, 153, 0.45)',
-    SIGNAL_ARRHYTHMIA: '#fb7185',
-    ARRHYTHMIA_GLOW: 'rgba(251, 113, 133, 0.45)',
-    SIGNAL_WEAK: '#fbbf24',
-    WEAK_GLOW: 'rgba(251, 191, 36, 0.4)',
-    PEAK_NORMAL: '#22d3ee',
-    PEAK_WEAK: '#fbbf24',
-    PEAK_ARRHYTHMIA: '#f87171',
+    SIGNAL_NORMAL: '#00ff88',
+    SIGNAL_GLOW: 'rgba(0, 255, 136, 0.6)',
+    SIGNAL_ARRHYTHMIA: '#ff3366',
+    ARRHYTHMIA_GLOW: 'rgba(255, 51, 102, 0.6)',
+    SIGNAL_WEAK: '#ffaa00',
+    WEAK_GLOW: 'rgba(255, 170, 0, 0.5)',
+    PEAK_NORMAL: '#00ffff',
+    PEAK_WEAK: '#ffaa00',
+    PEAK_ARRHYTHMIA: '#ff0000',
     VALLEY_COLOR: '#64748b',
-    TEXT_PRIMARY: '#5eead4',
+    TEXT_PRIMARY: '#00ffff',
     TEXT_SECONDARY: '#94a3b8',
-    TEXT_WARNING: '#fbbf24',
-    TEXT_DANGER: '#f87171',
+    TEXT_WARNING: '#ffaa00',
+    TEXT_DANGER: '#ff3366',
     SCALE_TEXT: '#64748b',
-    SIGNAL_FILL_NORMAL: 'rgba(52, 211, 153, 0.1)',
-    SIGNAL_FILL_WEAK: 'rgba(251, 191, 36, 0.09)',
-    SIGNAL_FILL_ARR: 'rgba(248, 113, 113, 0.09)',
-    SYSTOLIC_MARKER: '#22d3ee',
+    SIGNAL_FILL_NORMAL: 'rgba(0, 255, 136, 0.15)',
+    SIGNAL_FILL_WEAK: 'rgba(255, 170, 0, 0.12)',
+    SIGNAL_FILL_ARR: 'rgba(255, 51, 102, 0.12)',
+    SYSTOLIC_MARKER: '#00ffff',
     DIASTOLIC_MARKER: '#818cf8',
     DICHROTIC_NOTCH: '#a78bfa',
     IBI_TEXT: '#67e8f9',
-    ACCENT_LINE: 'rgba(34, 211, 238, 0.45)',
+    ACCENT_LINE: 'rgba(0, 255, 255, 0.6)',
   }
 };
 
 /** Solo escala Y de la onda en el canvas; no afecta BPM/SpO₂ ni vitales (provienen de props). */
-const VISUAL_WAVEFORM_GAIN = 2.45;
+const VISUAL_WAVEFORM_GAIN = 3.2;
 
 const parseRhythmStatus = (statusString?: string) => {
   const [label = 'SIN ARRITMIAS', countStr = '0'] = (statusString || 'SIN ARRITMIAS|0').split('|');
@@ -107,11 +107,11 @@ const parseRhythmStatus = (statusString?: string) => {
 function strokeForWaveClass(wc: BeatWaveClass, COLORS: typeof CONFIG.COLORS) {
   switch (wc) {
     case 'arrhythmia':
-      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 16, width: 5.6 };
+      return { stroke: COLORS.SIGNAL_ARRHYTHMIA, glow: COLORS.ARRHYTHMIA_GLOW, blur: 8, width: 6.5 };
     case 'weak':
-      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 13, width: 4.9 };
+      return { stroke: COLORS.SIGNAL_WEAK, glow: COLORS.WEAK_GLOW, blur: 6, width: 5.8 };
     default:
-      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 12, width: 4.6 };
+      return { stroke: COLORS.SIGNAL_NORMAL, glow: COLORS.SIGNAL_GLOW, blur: 5, width: 5.2 };
   }
 }
 
@@ -849,6 +849,38 @@ const PPGSignalMeter = ({
           }
         }
         strokeWaveformRuns(pathCoords, COLORS, ctx);
+        
+        // Efecto de electricidad en picos sistólicos
+        for (let i = 1; i < pathCoords.length - 1; i++) {
+          const prev = pathCoords[i - 1]!;
+          const curr = pathCoords[i]!;
+          const next = pathCoords[i + 1]!;
+          
+          // Detectar pico local (máximo)
+          if (curr.y < prev.y && curr.y < next.y) {
+            const depth = Math.min(prev.y - curr.y, next.y - curr.y);
+            if (depth > 15) {
+              // Dibujar líneas eléctricas radiantes desde el pico
+              ctx.save();
+              ctx.strokeStyle = curr.wc === 'arrhythmia' ? '#ff3366' : curr.wc === 'weak' ? '#ffaa00' : '#00ffff';
+              ctx.lineWidth = 1.5;
+              ctx.globalAlpha = 0.7;
+              
+              for (let ray = 0; ray < 8; ray++) {
+                const angle = (ray / 8) * Math.PI * 2;
+                const rayLen = 12 + depth * 0.3;
+                ctx.beginPath();
+                ctx.moveTo(curr.x, curr.y);
+                ctx.lineTo(
+                  curr.x + Math.cos(angle) * rayLen,
+                  curr.y + Math.sin(angle) * rayLen
+                );
+                ctx.stroke();
+              }
+              ctx.restore();
+            }
+          }
+        }
 
         const plotTelemetryY = plot.y + 10;
         const telH = 54;
