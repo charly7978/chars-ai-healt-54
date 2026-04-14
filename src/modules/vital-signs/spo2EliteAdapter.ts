@@ -1,7 +1,7 @@
 /**
  * Adapta SpO2ResultElite al contrato SpO2Result (gating + UncertaintyRouter).
  */
-import type { SpO2Result } from './SpO2Processor';
+import type { SpO2Result } from './types';
 import type { SpO2ResultElite } from './SpO2ProcessorElite';
 
 export function mapEliteSpO2ToDetail(

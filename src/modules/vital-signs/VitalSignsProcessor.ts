@@ -10,7 +10,7 @@ type BeatInputRow = {
   amplitude?: number;
   flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
 };
-import type { SpO2Result } from './SpO2Processor';
+import type { SpO2Result } from './types';
 import { SpO2ProcessorElite } from './SpO2ProcessorElite';
 import { mapEliteSpO2ToDetail } from './spo2EliteAdapter';
 import { SpO2Calibrator } from './SpO2Calibrator';

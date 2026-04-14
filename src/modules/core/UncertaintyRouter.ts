@@ -1,5 +1,5 @@
 import { MeasurementGate, type OutputState } from './MeasurementGate';
-import type { SpO2Result } from '../vital-signs/SpO2Processor';
+import type { SpO2Result } from '../vital-signs/types';
 import type { GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
 import type { LipidResult } from '../biomarkers/LipidResearchProcessor';
 import type { RhythmResult } from '../vital-signs/RhythmClassifier';
