@@ -43,7 +43,7 @@ export class ArrhythmiaClassifier {
   constructor(config?: Partial<ArrhythmiaConfig>) {
     this.config = {
       rrWindow: 10,
-      afibThreshold: 0.15,
+      afibThreshold: 0.18,
       tachycardiaThreshold: 100,
       bradycardiaThreshold: 60,
       ...config,
@@ -80,8 +80,8 @@ export class ArrhythmiaClassifier {
       type = 'bradycardia';
       confidence = 0.9;
     }
-    // Latido prematuro
-    else if (expectedRR > 0 && rrInterval < expectedRR * 0.7) {
+    // Latido prematuro (threshold más estricto: 0.6 en lugar de 0.7)
+    else if (expectedRR > 0 && rrInterval < expectedRR * 0.6) {
       type = 'premature';
       confidence = 0.85;
     }
@@ -95,8 +95,8 @@ export class ArrhythmiaClassifier {
       type = 'missed';
       confidence = 0.8;
     }
-    // Irregular
-    else if (rrDeviation > 0.3) {
+    // Irregular (threshold más estricto: 0.4 en lugar de 0.3)
+    else if (rrDeviation > 0.4) {
       type = 'irregular';
       confidence = 0.7;
     }
@@ -141,7 +141,7 @@ export class ArrhythmiaClassifier {
    * Estima probabilidad de fibrilación auricular
    */
   private estimateAFibProbability(): number {
-    if (this.rrIndex < 10) return 0;
+    if (this.rrIndex < 15) return 0;
 
     const n = Math.min(this.rrIndex, this.bufferSize);
     const rrValues: number[] = [];
@@ -156,11 +156,15 @@ export class ArrhythmiaClassifier {
     const stdDev = Math.sqrt(variance);
     const cv = stdDev / (mean + 1e-6);
 
-    // AFib: alta variabilidad sin patrón regular
+    // AFib: alta variabilidad sin patrón regular (threshold más estricto)
     if (cv > this.config.afibThreshold) {
       // Verificar ausencia de patrón regular
       const regularityScore = this.checkRegularity(rrValues);
-      return Math.min(1, cv * 3 * (1 - regularityScore));
+      
+      // Solo considerar AFib si CV > 0.18 y regularityScore < 0.5
+      if (cv > 0.18 && regularityScore < 0.5) {
+        return Math.min(1, cv * 2.5 * (1 - regularityScore));
+      }
     }
 
     return 0;
@@ -175,9 +179,10 @@ export class ArrhythmiaClassifier {
     let regularCount = 0;
     const mean = rrValues.reduce((a, b) => a + b, 0) / rrValues.length;
 
+    // Threshold más estricto: 10% en lugar de 15%
     for (let i = 1; i < rrValues.length; i++) {
       const deviation = Math.abs(rrValues[i]! - mean) / (mean + 1e-6);
-      if (deviation < 0.15) regularCount++;
+      if (deviation < 0.10) regularCount++;
     }
 
     return regularCount / (rrValues.length - 1);

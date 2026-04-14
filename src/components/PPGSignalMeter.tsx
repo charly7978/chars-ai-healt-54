@@ -47,8 +47,8 @@ const CONFIG = {
   CANVAS_WIDTH: 1400,
   CANVAS_HEIGHT: 2480,
   WINDOW_MS: 1800,
-  /** 45 FPS para respuesta eléctrica instantánea (vs 22 anterior). */
-  TARGET_FPS: 45,
+  /** 30 FPS para respuesta rápida sin cortes (vs 22 anterior, 45 causaba stuttering). */
+  TARGET_FPS: 30,
   BUFFER_SIZE: 400,
   PLOT_AREA: {
     LEFT: 96,
@@ -742,7 +742,7 @@ const PPGSignalMeter = ({
         );
         lastRhythmCountSeenRef.current = lastRhythmCountSeen;
         const lastRR = rr && rr.length > 0 ? rr[rr.length - 1]! : 800;
-        const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
+        const retroDuration = Math.min(Math.max(lastRR, 400), 600);
         if (waveClass === 'arrhythmia') {
           buffer.markWaveClassBack(retroDuration, 'arrhythmia');
         } else if (waveClass === 'weak') {
