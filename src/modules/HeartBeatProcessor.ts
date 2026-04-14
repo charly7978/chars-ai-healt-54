@@ -1,986 +1,50 @@
 /**
- * HEARTBEAT PROCESSOR V2 — LAYERED ARCHITECTURE
+ * HEARTBEAT PROCESSOR - FUSIÓN TIEMPO + FRECUENCIA
  *
- * E3: Fs efectiva alineada con `ProcessedSignal.estimatedSampleRate` (Etapa A/B) cuando el
- * buffer local aún no tiene mediana fiable; gating extra por `maskIoU` (estabilidad ROI).
+ * Mejoras:
+ * 1. NO resetea buffers por fingerDetected — eso lo maneja el caller
+ * 2. Fusión explícita: peak-domain dominante cuando morfología buena,
+ *    spectral dominante cuando señal débil
+ * 3. Scoring de candidatos de pico por prominencia + pendiente + consistencia RR
+ * 4. Ventanas adaptativas: cortas para señal débil, largas para estable
  */
-import { RingBuffer } from './signal-processing/RingBuffer';
-import type {
-  BeatCandidate, AcceptedBeat, BeatFlags, BPMHypothesis,
-  HeartBeatResult, HeartBeatDebug
-} from '../types/beat';
-
 export class HeartBeatProcessor {
-  private signalBuf = new RingBuffer(360);
-  private derivBuf = new RingBuffer(360);
-  private slopeSum = new RingBuffer(360);
-  private timestampBuf = new RingBuffer(360);
+  private readonly MIN_PEAK_INTERVAL_MS = 330;
+  private readonly MAX_PEAK_INTERVAL_MS = 2000;
 
-  private rrIntervals: number[] = [];
-  private readonly MAX_RR = 40;
-  private acceptedBeats: AcceptedBeat[] = [];
-  private readonly MAX_ACCEPTED = 60;
-
-  private templateBuf: Float64Array = new Float64Array(40);
-  private templateLen = 0;
-  private templateValid = false;
-  /** V2: Template window adaptive to Fs — covers ~0.8s */
-  private get TEMPLATE_WINDOW(): number {
-    const sr = this.estimateSampleRate();
-    return Math.max(20, Math.min(40, Math.round(sr * 0.8)));
-  }
-
-  /** V2: Pre-allocated buffer for normalizeWindow — zero allocations in hot path */
-  private readonly normalizeWindowBuf = new Float64Array(16);
-
-  private smoothBPM = 0;
-  private spectralBPM = 0;
-  private autocorrBPM = 0;
-  private medianRRBPM = 0;
-  private lastHypothesis: BPMHypothesis | null = null;
+  private signalBuffer: number[] = [];
+  private derivativeBuffer: number[] = [];
+  private timestampBuffer: number[] = [];
+  private readonly BUFFER_SIZE = 300;
 
   private lastPeakTime = 0;
-  private lastPeakValue = 0;
-  private consecutivePeaks = 0;
-  private frameCount = 0;
   private peakThreshold = 4.0;
+  private lastPeakValue = 0;
 
-  private beatsAccepted = 0;
-  private beatsRejected = 0;
-  private doublePeakCount = 0;
-  private missedBeatCount = 0;
-  private suspiciousCount = 0;
-  private lastRejectionReason = '';
+  private rrIntervals: number[] = [];
+  private readonly MAX_RR_INTERVALS = 30;
+  private smoothBPM = 0;
+  private frequencyBPM = 0;
+  private periodicityScore = 0;
 
   private audioContext: AudioContext | null = null;
   private audioUnlocked = false;
   private lastBeepTime = 0;
 
-  private upstreamSQI = 50;
-  private motionPenalty = 0;
-  private clipPenalty = 0;
-  private pressurePenalty = 0;
-  private contactStable = true;
-  private sourceSwitchRecent = false;
-  /** Fs del PPG (RVFC + buffer); prioriza coherencia autocorr/espectral con la cadena de captura */
-  private upstreamSampleRateHz: number | null = null;
-  /** Estabilidad máscara ROI [0,1]; 1 = sin señal o no provista */
-  private maskIoU = 1;
+  private frameCount = 0;
+  private consecutivePeaks = 0;
+  private signalQualityIndex = 0;
 
   constructor() {
     this.setupAudio();
   }
 
-  processSignal(
-    filteredValue: number,
-    timestamp?: number,
-    upstreamContext?: {
-      rawValue?: number;
-      quality?: number;
-      contactState?: string;
-      motionArtifact?: boolean;
-      pressureState?: string;
-      clipHigh?: number;
-      clipLow?: number;
-      activeSource?: string;
-      perfusionIndex?: number;
-      positionDrifting?: boolean;
-      /** Hz [15,60] desde PPGSignalProcessor / metrología */
-      estimatedSampleRate?: number;
-      maskIoU?: number;
-    }
-  ): HeartBeatResult {
-    this.frameCount++;
-    const now = timestamp ?? performance.now();
-
-    if (upstreamContext) {
-      this.upstreamSQI = upstreamContext.quality ?? 50;
-      this.motionPenalty = upstreamContext.motionArtifact ? 0.3 : 0;
-      this.clipPenalty = Math.min(1, (upstreamContext.clipHigh ?? 0) + (upstreamContext.clipLow ?? 0)) * 0.5;
-      this.pressurePenalty = upstreamContext.pressureState === 'HIGH_PRESSURE' ? 0.4 :
-        upstreamContext.pressureState === 'LOW_PRESSURE' ? 0.15 : 0;
-      this.contactStable = upstreamContext.contactState === 'STABLE_CONTACT';
-      this.sourceSwitchRecent = false;
-      const es = upstreamContext.estimatedSampleRate;
-      this.upstreamSampleRateHz =
-        es != null && isFinite(es) && es >= 15 && es <= 60 ? es : null;
-      const mi = upstreamContext.maskIoU;
-      this.maskIoU = mi != null && isFinite(mi) ? Math.max(0, Math.min(1, mi)) : 1;
-    }
-
-    this.signalBuf.push(filteredValue);
-    this.timestampBuf.push(now);
-
-    const deriv = this.computeDerivative();
-    this.derivBuf.push(deriv);
-
-    const ssf = this.computeSlopeSum();
-    this.slopeSum.push(ssf);
-
-    if (this.signalBuf.length < 25) {
-      return this.makeEmptyResult(0);
-    }
-
-    const range = this.getSignalRange(60);
-    const minRange = this.consecutivePeaks >= 4 ? 0.22 : 0.4;
-    if (range < minRange) {
-      return this.makeEmptyResult(0);
-    }
-
-    const { normalizedValue, normRange } = this.normalizeSignal(filteredValue);
-    this.updatePeriodicityEstimates();
-    this.updateThreshold(normRange);
-
-    const timeSinceLastPeak = this.lastPeakTime > 0 ? now - this.lastPeakTime : 1e9;
-    const expectedRR = this.getExpectedRR();
-    const refractoryState = this.getRefractoryState(timeSinceLastPeak, expectedRR);
-
-    let candidate: BeatCandidate | null = null;
-    if (refractoryState !== 'hard') {
-      candidate = this.detectCandidate(now, timeSinceLastPeak, expectedRR, normRange);
-    }
-
-    let isPeak = false;
-    let currentBeatSQI = 0;
-    let currentFlags: BeatFlags | null = null;
-    let rejectionReason = '';
-
-    if (candidate) {
-      this.adjudicate(candidate, timeSinceLastPeak, expectedRR, refractoryState);
-
-      if (candidate.status === 'accepted') {
-        isPeak = true;
-
-        if (this.lastPeakTime > 0 && timeSinceLastPeak >= 280 && timeSinceLastPeak <= 2200) {
-          this.rrIntervals.push(timeSinceLastPeak);
-          if (this.rrIntervals.length > this.MAX_RR) this.rrIntervals.shift();
-
-          const instantBPM = 60000 / timeSinceLastPeak;
-          if (expectedRR > 0 && timeSinceLastPeak > expectedRR * 1.7) {
-            this.handleMissedBeat(timeSinceLastPeak, expectedRR, now);
-          }
-          this.updateSmoothBPM(instantBPM);
-          this.consecutivePeaks++;
-        }
-
-        this.lastPeakTime = now;
-        this.lastPeakValue = candidate.amplitude;
-
-        currentBeatSQI = this.computeBeatSQI(candidate);
-        currentFlags = this.computeFlags(candidate, timeSinceLastPeak, expectedRR);
-
-        const accepted: AcceptedBeat = {
-          timestamp: now,
-          ibiMs: timeSinceLastPeak,
-          instantBpm: timeSinceLastPeak > 0 ? 60000 / timeSinceLastPeak : 0,
-          beatSQI: currentBeatSQI,
-          morphologyScore: candidate.morphologyScore,
-          rhythmScore: candidate.rhythmScore,
-          detectorAgreementScore: candidate.detectorAgreement,
-          templateScore: candidate.templateCorrelation,
-          sourceConsistencyScore: this.sourceSwitchRecent ? 0.3 : 1.0,
-          flags: currentFlags,
-        };
-
-        this.acceptedBeats.push(accepted);
-        if (this.acceptedBeats.length > this.MAX_ACCEPTED) this.acceptedBeats.shift();
-        this.beatsAccepted++;
-
-        if (currentBeatSQI > 50) {
-          this.updateTemplate();
-        }
-
-        this.vibrate();
-        this.playBeep();
-      } else {
-        rejectionReason = candidate.rejectionReason;
-        this.lastRejectionReason = rejectionReason;
-        this.beatsRejected++;
-      }
-    }
-
-    if (!isPeak && this.lastPeakTime > 0 && timeSinceLastPeak > 2200) {
-      this.consecutivePeaks = Math.max(0, this.consecutivePeaks - 1);
-    }
-
-    const hypothesis = this.fuseBPM();
-    this.lastHypothesis = hypothesis;
-    const bpmConfidence = this.computeBPMConfidence(hypothesis);
-    const globalSQI = this.computeGlobalSQI();
-
-    const debug: HeartBeatDebug = {
-      instantBpm: isPeak && timeSinceLastPeak > 0 ? 60000 / timeSinceLastPeak : 0,
-      medianRRBpm: this.medianRRBPM,
-      autocorrBpm: this.autocorrBPM,
-      spectralBpm: this.spectralBPM,
-      lastBeatSQI: currentBeatSQI,
-      detectorAgreement: candidate?.detectorAgreement ?? 0,
-      expectedRR,
-      refractoryState,
-      beatsAccepted: this.beatsAccepted,
-      beatsRejected: this.beatsRejected,
-      lastRejectionReason: this.lastRejectionReason,
-      doublePeakCount: this.doublePeakCount,
-      missedBeatCount: this.missedBeatCount,
-      suspiciousCount: this.suspiciousCount,
-      templateCorrelation: candidate?.templateCorrelation ?? 0,
-      morphologyScore: candidate?.morphologyScore ?? 0,
-      consecutivePeaks: this.consecutivePeaks,
-      recentAcceptedBeats: this.acceptedBeats.slice(-12).map((beat) => ({
-        ibiMs: beat.ibiMs,
-        beatSQI: beat.beatSQI,
-        morphologyScore: beat.morphologyScore,
-        detectorAgreement: beat.detectorAgreementScore,
-        amplitude: undefined,
-        flags: beat.flags,
-      })),
-    };
-
-    return {
-      bpm: hypothesis.finalBpm,
-      bpmConfidence,
-      isPeak,
-      filteredValue: normalizedValue,
-      arrhythmiaCount: 0,
-      sqi: globalSQI,
-      beatSQI: currentBeatSQI,
-      rrData: {
-        intervals: this.rrIntervals.slice(-10),
-        lastPeakTime: this.lastPeakTime || null,
-      },
-      hypothesis,
-      detectorAgreement: candidate?.detectorAgreement ?? 0,
-      rejectionReason,
-      beatFlags: currentFlags,
-      debug,
-    };
-  }
-
-  private detectCandidate(now: number, timeSinceLast: number, expectedRR: number, normRange: number): BeatCandidate | null {
-    const n = this.signalBuf.length;
-    const dn = this.derivBuf.length;
-    if (n < 15 || dn < 8) return null;
-
-    const windowLen = this.consecutivePeaks < 4 ? 90 : 150;
-    const normalized = this.normalizeWindow(11, windowLen);
-    const ci = 5;
-    const center = normalized[ci];
-
-    const isLocalMax =
-      center >= normalized[ci - 1] && center > normalized[ci + 1] &&
-      center >= normalized[ci - 2] && center >= normalized[ci + 2];
-
-    const neighborhoodMin = Math.min(...normalized);
-    const prominence = center - neighborhoodMin;
-    const risingSlope = center - normalized[ci - 3];
-    const fallingSlope = center - normalized[ci + 3];
-
-    const halfProm = neighborhoodMin + prominence / 2;
-    let widthSamples = 0;
-    for (let i = 0; i < normalized.length; i++) {
-      if (normalized[i] >= halfProm) widthSamples++;
-    }
-    const widthMs = (widthSamples / Math.max(1, this.estimateSampleRate())) * 1000;
-
-    const det1Hit = isLocalMax && prominence > 1.8 && risingSlope > 0.6;
-
-    const d = new Float64Array(8);
-    for (let i = 0; i < 8; i++) d[i] = this.derivBuf.get(dn - 8 + i);
-
-    const zeroCrossing =
-      (d[4] > 0 && d[5] <= 0) || (d[5] > 0 && d[6] <= 0) || (d[3] > 0 && d[4] <= 0);
-
-    const ssn = this.slopeSum.length;
-    const ssfRecent = ssn > 3 ? this.slopeSum.get(ssn - 3) : 0;
-    const ssfPeak = ssfRecent > 1.0;
-
-    const det2Hit = zeroCrossing && (ssfPeak || risingSlope > 1.0);
-
-    const detectorHits = (det1Hit ? 1 : 0) + (det2Hit ? 1 : 0);
-    if (detectorHits === 0) return null;
-
-    const detectorAgreement = detectorHits / 2;
-    const templateCorrelation = this.templateValid ? this.correlateWithTemplate() : 0;
-    const nearExpected = expectedRR > 0 &&
-      timeSinceLast >= expectedRR * 0.55 && timeSinceLast <= expectedRR * 1.45;
-
-    const prominenceScore = clamp(prominence / 8, 0, 1) * 30;
-    const slopeScore = clamp(risingSlope / 4, 0, 1) * 15 + clamp(fallingSlope / 3, 0, 1) * 10;
-    const widthScore = (widthMs > 80 && widthMs < 500) ? 10 : 0;
-    const asymmetry = risingSlope > 0 ? fallingSlope / risingSlope : 0;
-    const asymmetryScore = (asymmetry > 0.3 && asymmetry < 2.0) ? 8 : 0;
-    const morphologyScore = clamp(prominenceScore + slopeScore + widthScore + asymmetryScore, 0, 100);
-
-    let rhythmScore = 0;
-    if (nearExpected) rhythmScore += 40;
-    if (this.autocorrBPM > 0) rhythmScore += 15;
-    if (this.consecutivePeaks >= 3) rhythmScore += 15;
-    rhythmScore = clamp(rhythmScore, 0, 100);
-
-    const totalScore = morphologyScore * 0.45 + rhythmScore * 0.25 +
-      detectorAgreement * 30 + templateCorrelation * 15 +
-      (this.contactStable ? 5 : 0);
-
-    return {
-      timestamp: now,
-      sampleIndex: this.frameCount,
-      amplitude: center,
-      prominence,
-      widthMs,
-      upSlope: risingSlope,
-      downSlope: fallingSlope,
-      localBaseline: neighborhoodMin,
-      detectorHits,
-      detectorAgreement,
-      zeroCrossingSupport: zeroCrossing,
-      periodicitySupport: nearExpected,
-      templateCorrelation,
-      localBandPowerRatio: clamp(normRange / 5, 0, 1),
-      localPerfusion: 0,
-      localMotionPenalty: this.motionPenalty,
-      localPressurePenalty: this.pressurePenalty,
-      localClipPenalty: this.clipPenalty,
-      status: 'pending',
-      rejectionReason: '',
-      morphologyScore,
-      rhythmScore,
-      totalScore,
-    };
-  }
-
-  private adjudicate(c: BeatCandidate, timeSinceLast: number, expectedRR: number, refractoryState: 'hard' | 'soft' | 'open'): void {
-    if (c.prominence < 1.5) {
-      c.status = 'rejected'; c.rejectionReason = 'low_prominence'; return;
-    }
-    if (c.widthMs < 40 || c.widthMs > 800) {
-      c.status = 'rejected'; c.rejectionReason = 'abnormal_width'; return;
-    }
-    if (c.localClipPenalty > 0.6) {
-      c.status = 'rejected'; c.rejectionReason = 'high_clipping'; return;
-    }
-    if (this.maskIoU < 0.2 && c.detectorHits < 2 && c.morphologyScore < 48) {
-      c.status = 'rejected'; c.rejectionReason = 'unstable_roi_mask'; return;
-    }
-    if (!this.contactStable && c.detectorHits < 2) {
-      c.status = 'rejected'; c.rejectionReason = 'unstable_contact_single_detector'; return;
-    }
-    if (c.upSlope < 0.4) {
-      c.status = 'rejected'; c.rejectionReason = 'no_rising_edge'; return;
-    }
-    if (c.downSlope < 0.2) {
-      c.status = 'rejected'; c.rejectionReason = 'no_falling_edge'; return;
-    }
-    if (this.consecutivePeaks === 0 && c.detectorAgreement < 0.5 && !c.periodicitySupport) {
-      c.status = 'rejected'; c.rejectionReason = 'first_peak_weak_support'; return;
-    }
-    if (this.upstreamSQI < 38 && c.detectorHits < 2 && c.templateCorrelation < 0.4) {
-      c.status = 'rejected'; c.rejectionReason = 'low_quality_need_dual_detector'; return;
-    }
-    if (refractoryState === 'soft') {
-      if (c.morphologyScore < 65 || c.detectorAgreement < 1.0) {
-        c.status = 'rejected'; c.rejectionReason = 'double_peak_suspect';
-        this.doublePeakCount++;
-        return;
-      }
-    }
-    if (this.lastPeakValue > 0) {
-      const ampRatio = Math.abs(c.amplitude) / Math.max(1, Math.abs(this.lastPeakValue));
-      if (ampRatio < 0.06 || ampRatio > 12) {
-        c.status = 'rejected'; c.rejectionReason = 'amplitude_inconsistent'; return;
-      }
-    }
-
-    const minScore =
-      this.upstreamSQI < 40
-        ? (this.consecutivePeaks < 3 ? 34 : 40)
-        : this.consecutivePeaks < 3
-          ? 28
-          : 35;
-    const thresholdMet = c.amplitude > this.peakThreshold * (c.periodicitySupport ? 0.6 : 0.85) ||
-      c.prominence > Math.max(1.8, this.peakThreshold * 0.5);
-
-    if (c.totalScore < minScore && !thresholdMet) {
-      c.status = 'rejected'; c.rejectionReason = 'low_total_score'; return;
-    }
-    if (c.detectorAgreement >= 1.0 && c.morphologyScore > 40 && thresholdMet) {
-      c.status = 'accepted'; return;
-    }
-    if (c.detectorHits >= 1 && c.totalScore >= minScore && thresholdMet) {
-      if (c.templateCorrelation > 0.5 || c.periodicitySupport || c.morphologyScore > 55) {
-        c.status = 'accepted'; return;
-      }
-    }
-    if (c.totalScore > 55) {
-      c.status = 'accepted'; return;
-    }
-    c.status = 'rejected';
-    c.rejectionReason = 'insufficient_overall_support';
-  }
-
-  private getRefractoryState(timeSinceLast: number, expectedRR: number): 'hard' | 'soft' | 'open' {
-    const hardLimit = 280;
-    if (timeSinceLast < hardLimit) return 'hard';
-    if (expectedRR > 0) {
-      // FC alta: ventana "soft" más estrecha (~0.48×RR) para reducir dobles picos a ~>100 lpm
-      const softFrac = expectedRR < 420 ? 0.48 : 0.55;
-      const softLimit = expectedRR * softFrac;
-      if (timeSinceLast < softLimit) return 'soft';
-    } else if (timeSinceLast < 380) {
-      return 'soft';
-    }
-    return 'open';
-  }
-
-  private getExpectedRR(): number {
-    if (this.rrIntervals.length >= 3) {
-      const recent = this.rrIntervals.slice(-8);
-      const sorted = [...recent].sort((a, b) => a - b);
-      return sorted[Math.floor(sorted.length / 2)];
-    }
-    if (this.autocorrBPM > 0) return 60000 / this.autocorrBPM;
-    if (this.spectralBPM > 0) return 60000 / this.spectralBPM;
-    return 0;
-  }
-
-  /** V2: handles both 2:1 and 3:1 missed beat ratios */
-  private handleMissedBeat(longRR: number, expectedRR: number, now: number): void {
-    if (expectedRR <= 0) return;
-    const ratio = longRR / expectedRR;
-
-    // 2:1 — one missed beat: split into two equal intervals
-    if (ratio >= 1.7 && ratio <= 2.5) {
-      const halfRR = longRR / 2;
-      if (halfRR >= 300 && halfRR <= 1800) {
-        if (this.rrIntervals.length > 0) {
-          this.rrIntervals[this.rrIntervals.length - 1] = halfRR;
-          this.rrIntervals.push(halfRR);
-          if (this.rrIntervals.length > this.MAX_RR) this.rrIntervals.shift();
-        }
-        this.missedBeatCount++;
-      }
-      return;
-    }
-
-    // 3:1 — two missed beats: split into three equal intervals
-    if (ratio >= 2.5 && ratio <= 3.5) {
-      const thirdRR = longRR / 3;
-      if (thirdRR >= 300 && thirdRR <= 1800) {
-        if (this.rrIntervals.length > 0) {
-          this.rrIntervals[this.rrIntervals.length - 1] = thirdRR;
-          this.rrIntervals.push(thirdRR);
-          this.rrIntervals.push(thirdRR);
-          while (this.rrIntervals.length > this.MAX_RR) this.rrIntervals.shift();
-        }
-        this.missedBeatCount += 2;
-      }
-    }
-  }
-
-  private updateTemplate(): void {
-    const n = this.signalBuf.length;
-    if (n < this.TEMPLATE_WINDOW * 2) return;
-    const half = Math.floor(this.TEMPLATE_WINDOW / 2);
-    const start = n - half - 5;
-    if (start < 0) return;
-
-    const segment = new Float64Array(this.TEMPLATE_WINDOW);
-    for (let i = 0; i < this.TEMPLATE_WINDOW; i++) {
-      segment[i] = this.signalBuf.get(start + i);
-    }
-
-    let min = Infinity, max = -Infinity;
-    for (let i = 0; i < segment.length; i++) {
-      if (segment[i] < min) min = segment[i];
-      if (segment[i] > max) max = segment[i];
-    }
-    const range = max - min;
-    if (range < 0.1) return;
-    for (let i = 0; i < segment.length; i++) segment[i] = (segment[i] - min) / range;
-
-    if (!this.templateValid) {
-      this.templateBuf = segment;
-      this.templateLen = this.TEMPLATE_WINDOW;
-      this.templateValid = true;
-    } else {
-      const alpha = 0.15;
-      for (let i = 0; i < Math.min(this.templateLen, segment.length); i++) {
-        this.templateBuf[i] = this.templateBuf[i] * (1 - alpha) + segment[i] * alpha;
-      }
-    }
-  }
-
-  private correlateWithTemplate(): number {
-    if (!this.templateValid || this.signalBuf.length < this.TEMPLATE_WINDOW * 2) return 0;
-    const n = this.signalBuf.length;
-    const half = Math.floor(this.TEMPLATE_WINDOW / 2);
-    const start = n - half - 5;
-    if (start < 0) return 0;
-
-    const seg = new Float64Array(this.TEMPLATE_WINDOW);
-    for (let i = 0; i < this.TEMPLATE_WINDOW; i++) seg[i] = this.signalBuf.get(start + i);
-
-    let sMin = Infinity, sMax = -Infinity;
-    for (let i = 0; i < seg.length; i++) {
-      if (seg[i] < sMin) sMin = seg[i];
-      if (seg[i] > sMax) sMax = seg[i];
-    }
-    const sRange = sMax - sMin;
-    if (sRange < 0.1) return 0;
-    for (let i = 0; i < seg.length; i++) seg[i] = (seg[i] - sMin) / sRange;
-
-    let dot = 0, magA = 0, magB = 0;
-    const len = Math.min(this.templateLen, seg.length);
-    for (let i = 0; i < len; i++) {
-      dot += this.templateBuf[i] * seg[i];
-      magA += this.templateBuf[i] ** 2;
-      magB += seg[i] ** 2;
-    }
-    const denom = Math.sqrt(magA * magB);
-    return denom > 0 ? dot / denom : 0;
-  }
-
-  private fuseBPM(): BPMHypothesis {
-    const fromLastIBI = this.rrIntervals.length > 0 ? 60000 / this.rrIntervals[this.rrIntervals.length - 1] : 0;
-    const fromMedianIBI = this.computeMedianRRBPM();
-    this.medianRRBPM = fromMedianIBI;
-    const fromTrimmedIBI = this.computeTrimmedMeanBPM();
-    const fromAutocorrelation = this.estimateAutocorrBPM();
-    this.autocorrBPM = fromAutocorrelation;
-    const fromSpectral = this.spectralBPM;
-
-    const hasEnoughPeaks = this.consecutivePeaks >= 3;
-    const peakDomainReliable = hasEnoughPeaks && this.getAvgBeatSQI() > 35;
-
-    let finalBpm: number;
-    let dominantSource: 'peak' | 'spectral' | 'autocorr' | 'median';
-    let confidence: number;
-
-    if (peakDomainReliable && fromMedianIBI > 0) {
-      const peakBpm = fromTrimmedIBI > 0 ? fromTrimmedIBI : fromMedianIBI;
-      finalBpm = fromAutocorrelation > 0 && Math.abs(peakBpm - fromAutocorrelation) < peakBpm * 0.2
-        ? peakBpm * 0.8 + fromAutocorrelation * 0.2
-        : peakBpm;
-      if (fromSpectral > 0 && Math.abs(finalBpm - fromSpectral) / Math.max(finalBpm, 1) < 0.12) {
-        finalBpm = finalBpm * 0.88 + fromSpectral * 0.12;
-      }
-      dominantSource = 'median';
-      confidence = clamp(0.5 + this.consecutivePeaks * 0.06 + this.getAvgBeatSQI() * 0.003, 0, 1);
-    } else if (fromAutocorrelation > 0 || fromSpectral > 0) {
-      const ac = fromAutocorrelation;
-      const sp = fromSpectral;
-      if (ac > 0 && sp > 0) {
-        const rel = Math.abs(ac - sp) / Math.max(ac, sp);
-        if (rel < 0.14) {
-          finalBpm = ac * 0.58 + sp * 0.42;
-          dominantSource = 'autocorr';
-        } else if (fromMedianIBI > 0) {
-          const lo = Math.min(ac, sp);
-          const hi = Math.max(ac, sp);
-          if (fromMedianIBI >= lo * 0.9 && fromMedianIBI <= hi * 1.1) {
-            finalBpm = fromMedianIBI * 0.5 + ((ac + sp) * 0.5) * 0.5;
-            dominantSource = 'median';
-          } else {
-            finalBpm = ac >= sp ? ac : sp;
-            dominantSource = ac >= sp ? 'autocorr' : 'spectral';
-          }
-        } else {
-          finalBpm = ac >= sp ? ac : sp;
-          dominantSource = ac >= sp ? 'autocorr' : 'spectral';
-        }
-      } else {
-        finalBpm = ac || sp;
-        dominantSource = ac > 0 ? 'autocorr' : 'spectral';
-      }
-      if (fromMedianIBI > 0) {
-        const relM = Math.abs(finalBpm - fromMedianIBI) / Math.max(fromMedianIBI, 1);
-        if (relM < 0.22) {
-          finalBpm = finalBpm * 0.62 + fromMedianIBI * 0.38;
-        }
-      }
-      // V2: Boost confidence when autocorr and spectral agree
-      const agreementBoost = (ac > 0 && sp > 0 && Math.abs(ac - sp) / Math.max(ac, sp) < 0.14) ? 0.12 : 0;
-      confidence = clamp(0.22 + this.consecutivePeaks * 0.05 + (sp > 0 ? 0.08 : 0) + agreementBoost, 0, 0.75);
-    } else if (fromMedianIBI > 0) {
-      finalBpm = fromMedianIBI;
-      dominantSource = 'median';
-      confidence = clamp(0.15 + this.consecutivePeaks * 0.05, 0, 0.6);
-    } else {
-      finalBpm = 0;
-      dominantSource = 'peak';
-      confidence = 0;
-    }
-
-    if (finalBpm > 0) {
-      if (this.smoothBPM === 0) this.smoothBPM = finalBpm;
-      else {
-        const diff = Math.abs(finalBpm - this.smoothBPM) / Math.max(1, this.smoothBPM);
-        const alpha = diff > 0.25 ? 0.08 : diff > 0.12 ? 0.18 : 0.28;
-        this.smoothBPM = this.smoothBPM * (1 - alpha) + finalBpm * alpha;
-      }
-    }
-
-    return { fromLastIBI, fromMedianIBI, fromTrimmedIBI, fromAutocorrelation, fromSpectral, finalBpm: this.smoothBPM, confidence, dominantSource };
-  }
-
-  private computeMedianRRBPM(): number {
-    if (this.rrIntervals.length < 2) return 0;
-    const recent = this.rrIntervals.slice(-10);
-    const sorted = [...recent].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    return median > 0 ? 60000 / median : 0;
-  }
-
-  private computeTrimmedMeanBPM(): number {
-    if (this.rrIntervals.length < 4) return 0;
-    const recent = this.rrIntervals.slice(-12);
-    const sorted = [...recent].sort((a, b) => a - b);
-    const trimN = Math.max(1, Math.floor(sorted.length * 0.2));
-    const trimmed = sorted.slice(trimN, sorted.length - trimN);
-    if (trimmed.length === 0) return 0;
-    const mean = trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
-    return mean > 0 ? 60000 / mean : 0;
-  }
-
-  /** Sesgo suave hacia el lag esperado por RR reciente (sin aleatoriedad). */
-  private rhythmBiasLag(lag: number, expectedLag: number): number {
-    if (expectedLag <= 0) return 1;
-    return 1 - Math.min(0.15, Math.abs(lag - expectedLag) / Math.max(1, expectedLag) * 0.1);
-  }
-
-  /**
-   * Autocorrelación en banda cardíaca + corrección armónico/subarmónico frecuente en PPG por dedo.
-   */
-  private estimateAutocorrBPM(): number {
-    if (this.signalBuf.length < 80) return 0;
-    const sr = this.estimateSampleRate();
-    const n = Math.min(180, this.signalBuf.length);
-    const minLag = Math.max(5, Math.round((sr * 60) / 200));
-    const maxLag = Math.min(n - 10, Math.round((sr * 60) / 38));
-
-    const expectedRR = this.getExpectedRR();
-    const expectedLag = expectedRR > 0 ? Math.round((expectedRR / 1000) * sr) : 0;
-
-    const weightedAc = (lag: number): number =>
-      this.signalBuf.autocorrelation(lag, n) * this.rhythmBiasLag(lag, expectedLag);
-
-    let bestLag = 0;
-    let bestScore = 0;
-    for (let lag = minLag; lag <= maxLag; lag++) {
-      const w = weightedAc(lag);
-      if (w > bestScore) {
-        bestScore = w;
-        bestLag = lag;
-      }
-    }
-
-    if (bestLag === 0 || bestScore < 0.28) return 0;
-
-    let L = bestLag;
-    let s = bestScore;
-    let bpm = (60 * sr) / L;
-
-    // Subarmónico: FC aparente muy baja; probar periodo ~T/2 (armónica 2× en FC)
-    if (bpm < 62 && L >= 2 * minLag) {
-      const Lh = Math.round(L / 2);
-      if (Lh >= minLag) {
-        const sh = weightedAc(Lh);
-        const bpmH = (60 * sr) / Lh;
-        if (bpmH >= 56 && bpmH <= 198 && sh >= s * 0.87 && sh > 0.28) {
-          L = Lh;
-          s = sh;
-          bpm = bpmH;
-        }
-      }
-    }
-    // Armónico: FC aparente muy alta; probar periodo ~2T (mitad de FC)
-    if (bpm > 108 && 2 * L <= maxLag) {
-      const Ld = 2 * L;
-      const sd = weightedAc(Ld);
-      const bpmD = (60 * sr) / Ld;
-      if (bpmD >= 40 && bpmD <= 102 && sd >= s * 0.84 && sd > 0.26) {
-        L = Ld;
-      }
-    }
-
-    return (60 * sr) / L;
-  }
-
-  /**
-   * Periodograma en rejilla BPM (proyecciones sen/cos) — desacoplado de autocorr para fusión al arranque.
-   */
-  private estimateSpectralPeakBPM(): number {
-    if (this.signalBuf.length < 100) return 0;
-    const sr = this.estimateSampleRate();
-    const n = Math.min(240, this.signalBuf.length);
-    const start = this.signalBuf.length - n;
-    let m = 0;
-    for (let i = 0; i < n; i++) {
-      m += this.signalBuf.get(start + i);
-    }
-    m /= n;
-
-    const expectedRR = this.getExpectedRR();
-    const expectedBpm = expectedRR > 0 ? 60000 / expectedRR : 0;
-
-    let bestPow = 0;
-    let bestBpm = 0;
-    for (let bpm = 42; bpm <= 195; bpm += 3) {
-      const f = bpm / 60;
-      const omega = (2 * Math.PI * f) / sr;
-      let cp = 0;
-      let sp = 0;
-      for (let i = 0; i < n; i++) {
-        const x = this.signalBuf.get(start + i) - m;
-        const ang = omega * i;
-        cp += x * Math.cos(ang);
-        sp += x * Math.sin(ang);
-      }
-      const pow = cp * cp + sp * sp;
-      let bias = 1;
-      if (expectedBpm > 45 && expectedBpm < 200) {
-        bias = 1 - Math.min(0.12, Math.abs(bpm - expectedBpm) / Math.max(expectedBpm, 1) * 0.08);
-      }
-      const w = pow * bias;
-      if (w > bestPow) {
-        bestPow = w;
-        bestBpm = bpm;
-      }
-    }
-
-    let varN = 0;
-    for (let i = 0; i < n; i++) {
-      const d = this.signalBuf.get(start + i) - m;
-      varN += d * d;
-    }
-    varN /= Math.max(1, n - 1);
-    if (bestPow < varN * n * 0.035) return 0;
-    return bestBpm;
-  }
-
-  private updateSmoothBPM(instantBPM: number): void {
-    if (this.smoothBPM === 0) {
-      this.smoothBPM = instantBPM;
-      return;
-    }
-    const relativeDiff = Math.abs(instantBPM - this.smoothBPM) / Math.max(1, this.smoothBPM);
-    let alpha = 0.25;
-    if (relativeDiff > 0.30) alpha = 0.06;
-    else if (relativeDiff > 0.18) alpha = 0.12;
-    if (this.consecutivePeaks < 5) alpha = Math.max(0.05, alpha - 0.06);
-    this.smoothBPM = this.smoothBPM * (1 - alpha) + instantBPM * alpha;
-  }
-
-  private computeBeatSQI(c: BeatCandidate): number {
-    let sqi = 0;
-    sqi += Math.min(30, c.morphologyScore * 0.3);
-    sqi += c.detectorAgreement * 20;
-    sqi += Math.max(0, c.templateCorrelation) * 15;
-    sqi += Math.min(15, c.rhythmScore * 0.15);
-    sqi += c.localBandPowerRatio * 8;
-    sqi += Math.min(7, this.upstreamSQI * 0.07);
-    sqi += this.contactStable ? 5 : 0;
-    if (this.maskIoU > 0.48) sqi += 4;
-    else if (this.maskIoU > 0.3) sqi += 2;
-    sqi -= c.localMotionPenalty * 15;
-    sqi -= c.localClipPenalty * 12;
-    sqi -= c.localPressurePenalty * 10;
-    if (this.sourceSwitchRecent) sqi -= 5;
-    return clamp(Math.round(sqi), 0, 100);
-  }
-
-  private computeFlags(c: BeatCandidate, timeSinceLast: number, expectedRR: number): BeatFlags {
-    const isPremature = expectedRR > 0 && timeSinceLast < expectedRR * 0.65;
-    const isWeak = c.detectorHits < 2 && c.morphologyScore < 40;
-    return {
-      isWeak,
-      isDoublePeak: false,
-      isMissedBeatInserted: false,
-      isPremature,
-      isSuspicious: isPremature || isWeak || c.totalScore < 35,
-    };
-  }
-
-  private computeBPMConfidence(h: BPMHypothesis): number {
-    if (h.finalBpm === 0) return 0;
-    const peakFactor = Math.min(1, this.consecutivePeaks / 6) * 0.25;
-    const avgSQI = this.getAvgBeatSQI() / 100 * 0.20;
-
-    let rrStability = 0;
-    if (this.rrIntervals.length >= 3) {
-      const recent = this.rrIntervals.slice(-8);
-      const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-      const variance = recent.reduce((a, rr) => a + (rr - mean) ** 2, 0) / recent.length;
-      const cv = Math.sqrt(variance) / Math.max(1, mean);
-      rrStability = clamp(1 - cv * 2, 0, 1) * 0.20;
-    }
-
-    let coherence = 0;
-    const hyps = [h.fromMedianIBI, h.fromTrimmedIBI, h.fromAutocorrelation, h.fromSpectral].filter(v => v > 0);
-    if (hyps.length >= 2 && h.finalBpm > 0) {
-      const diffs = hyps.map(v => Math.abs(v - h.finalBpm) / h.finalBpm);
-      const avgDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-      coherence = clamp(1 - avgDiff * 5, 0, 1) * 0.15;
-    }
-
-    const recentBeats = this.acceptedBeats.slice(-10);
-    const suspiciousRatio = recentBeats.length > 0 ? recentBeats.filter(b => b.flags.isSuspicious).length / recentBeats.length : 0;
-    const suspPenalty = suspiciousRatio * 0.1;
-    const contactBonus = this.contactStable ? 0.08 : 0;
-    const pressureBonus = this.pressurePenalty < 0.1 ? 0.05 : 0;
-
-    return clamp(peakFactor + avgSQI + rrStability + coherence - suspPenalty + contactBonus + pressureBonus, 0, 1);
-  }
-
-  private computeGlobalSQI(): number {
-    if (this.signalBuf.length < 30) return 0;
-    const range = this.getSignalRange(60);
-    const rangeFactor = Math.min(1, range / 5) * 22;
-    const peakFactor = Math.min(1, this.consecutivePeaks / 5) * 20;
-
-    const dLen = Math.min(60, this.derivBuf.length);
-    let derivSum = 0;
-    for (let i = 0; i < dLen; i++) derivSum += Math.abs(this.derivBuf.get(this.derivBuf.length - dLen + i));
-    const slopeFactor = Math.min(1, (derivSum / dLen) / 1.0) * 14;
-
-    let rrFactor = 0;
-    if (this.rrIntervals.length >= 3) {
-      const m = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
-      const v = this.rrIntervals.reduce((a, rr) => a + (rr - m) ** 2, 0) / this.rrIntervals.length;
-      const cv = Math.sqrt(v) / Math.max(1, m);
-      rrFactor = Math.max(0, 1 - cv * 2) * 22;
-    }
-
-    const periodicityFactor = (this.autocorrBPM > 0 ? 0.6 : 0) * 22;
-    return clamp(Math.round(rangeFactor + slopeFactor + rrFactor + peakFactor + periodicityFactor), 0, 100);
-  }
-
-  private getAvgBeatSQI(): number {
-    const recent = this.acceptedBeats.slice(-8);
-    if (recent.length === 0) return 0;
-    return recent.reduce((s, b) => s + b.beatSQI, 0) / recent.length;
-  }
-
-  /**
-   * Derivada con escalado por Δt real entre muestras (FPS irregular en móvil).
-   */
-  private computeDerivative(): number {
-    const n = this.signalBuf.length;
-    if (n < 3 || this.timestampBuf.length < 3) return 0;
-    const dtNom = 1000 / Math.max(15, Math.min(60, this.estimateSampleRate()));
-    const t12 = this.timestampBuf.get(n - 1) - this.timestampBuf.get(n - 2);
-    const t23 = this.timestampBuf.get(n - 2) - this.timestampBuf.get(n - 3);
-    const sc12 = t12 >= 5 && t12 <= 130 ? dtNom / t12 : 1;
-    const sc23 = t23 >= 5 && t23 <= 130 ? dtNom / t23 : 1;
-    const v1 = (this.signalBuf.get(n - 1) - this.signalBuf.get(n - 2)) * sc12;
-    const v2 = (this.signalBuf.get(n - 2) - this.signalBuf.get(n - 3)) * sc23;
-    return v1 * 0.55 + v2 * 0.45;
-  }
-
-  private computeSlopeSum(): number {
-    const win = 5;
-    const n = this.derivBuf.length;
-    if (n < win) return 0;
-    let sum = 0;
-    for (let i = 0; i < win; i++) {
-      const d = this.derivBuf.get(n - win + i);
-      if (d > 0) sum += d;
-    }
-    return sum;
-  }
-
-  private getSignalRange(windowLen: number): number {
-    const n = Math.min(windowLen, this.signalBuf.length);
-    if (n < 10) return 0;
-    const p10 = this.signalBuf.percentile(0.1, n);
-    const p90 = this.signalBuf.percentile(0.9, n);
-    return p90 - p10;
-  }
-
-  private normalizeSignal(value: number): { normalizedValue: number; normRange: number } {
-    const windowLen = this.consecutivePeaks < 4 ? 90 : 150;
-    const n = Math.min(windowLen, this.signalBuf.length);
-    if (n < 10) return { normalizedValue: 0, normRange: 0 };
-    const p10 = this.signalBuf.percentile(0.1, n);
-    const p90 = this.signalBuf.percentile(0.9, n);
-    const range = p90 - p10;
-    if (range < 0.15) return { normalizedValue: 0, normRange: 0 };
-    const clipped = Math.min(p90, Math.max(p10, value));
-    const normalizedValue = ((clipped - p10) / range - 0.5) * 120;
-    return { normalizedValue, normRange: range };
-  }
-
-  /** V2: Uses pre-allocated buffer — zero allocations in hot path */
-  private normalizeWindow(count: number, refWindowLen: number): Float64Array {
-    const n = this.signalBuf.length;
-    const out = this.normalizeWindowBuf;
-    if (n < count) {
-      for (let i = 0; i < count; i++) out[i] = 0;
-      return out;
-    }
-    const refN = Math.min(refWindowLen, n);
-    const p10 = this.signalBuf.percentile(0.1, refN);
-    const p90 = this.signalBuf.percentile(0.9, refN);
-    const range = p90 - p10;
-    if (range < 0.15) {
-      for (let i = 0; i < count; i++) out[i] = 0;
-      return out;
-    }
-    for (let i = 0; i < count; i++) {
-      const v = this.signalBuf.get(n - count + i);
-      const c = Math.min(p90, Math.max(p10, v));
-      out[i] = ((c - p10) / range - 0.5) * 120;
-    }
-    return out;
-  }
-
-  private estimateSampleRate(): number {
-    const up = this.upstreamSampleRateHz;
-    const upOk = up != null && isFinite(up) && up >= 15 && up <= 60;
-    if (this.timestampBuf.length < 10) {
-      return upOk ? up! : 30;
-    }
-    const n = Math.min(50, this.timestampBuf.length);
-    const intervals: number[] = [];
-    for (let i = 1; i < n; i++) {
-      const d = this.timestampBuf.get(this.timestampBuf.length - n + i) - this.timestampBuf.get(this.timestampBuf.length - n + i - 1);
-      if (d >= 8 && d <= 120) intervals.push(d);
-    }
-    if (intervals.length < 6) {
-      return upOk ? up! : 30;
-    }
-    intervals.sort((a, b) => a - b);
-    const median = intervals[Math.floor(intervals.length / 2)]!;
-    const fromBuf = clamp(1000 / median, 15, 60);
-    if (!upOk) return fromBuf;
-    const rel = Math.abs(fromBuf - up!) / Math.max(up!, 1e-6);
-    if (rel < 0.11) return (fromBuf + up!) * 0.5;
-    if (intervals.length >= 22) return fromBuf;
-    return fromBuf * 0.42 + up! * 0.58;
-  }
-
-  private updateThreshold(range: number): void {
-    const periodicSupport = this.autocorrBPM > 0;
-    const base = periodicSupport ? 2.8 : 3.8;
-    const target = clamp(base + range * 0.25, 2.2, 7.0);
-    this.peakThreshold = this.peakThreshold * 0.82 + target * 0.18;
-  }
-
-  private updatePeriodicityEstimates(): void {
-    if (this.frameCount % 16 === 0 && this.signalBuf.length >= 100) {
-      this.spectralBPM = this.estimateSpectralPeakBPM();
-    }
-  }
-
-  private vibrate(): void {
-    try { if (navigator.vibrate) navigator.vibrate(55); } catch {}
-  }
-
-  private setupAudio(): void {
+  private setupAudio() {
     const unlock = async () => {
       if (this.audioUnlocked) return;
       try {
-        const AC = window.AudioContext || (window as any).webkitAudioContext;
-        this.audioContext = new AC();
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        this.audioContext = new AudioContextClass();
         await this.audioContext.resume();
         this.audioUnlocked = true;
         document.removeEventListener('touchstart', unlock);
@@ -991,9 +55,358 @@ export class HeartBeatProcessor {
     document.addEventListener('click', unlock, { passive: true });
   }
 
+  processSignal(filteredValue: number, timestamp?: number): {
+    bpm: number;
+    confidence: number;
+    isPeak: boolean;
+    filteredValue: number;
+    arrhythmiaCount: number;
+    sqi: number;
+  } {
+    this.frameCount++;
+    const now = timestamp ?? Date.now();
+
+    this.signalBuffer.push(filteredValue);
+    this.timestampBuffer.push(now);
+    if (this.signalBuffer.length > this.BUFFER_SIZE) {
+      this.signalBuffer.shift();
+      this.timestampBuffer.shift();
+    }
+
+    const derivative = this.calculateDerivative();
+    this.derivativeBuffer.push(derivative);
+    if (this.derivativeBuffer.length > this.BUFFER_SIZE) {
+      this.derivativeBuffer.shift();
+    }
+
+    if (this.signalBuffer.length < 20) {
+      return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
+    }
+
+    // === GATE: minimum signal energy to reject noise ===
+    const recentForGate = this.signalBuffer.slice(-60);
+    const gSorted = [...recentForGate].sort((a, b) => a - b);
+    const gRange = (gSorted[Math.floor(gSorted.length * 0.9)] ?? 0) - (gSorted[Math.floor(gSorted.length * 0.1)] ?? 0);
+    if (gRange < 0.5) {
+      return { bpm: 0, confidence: 0, isPeak: false, filteredValue: 0, arrhythmiaCount: 0, sqi: 0 };
+    }
+
+    // Adaptive window for normalization
+    const windowLen = this.consecutivePeaks < 3 ? 90 : 150;
+    const { normalizedValue, range } = this.normalizeSignal(filteredValue, windowLen);
+    
+    const periodicity = this.estimatePeriodicity();
+    this.periodicityScore = periodicity.score;
+
+    if (periodicity.bpm > 0) {
+      this.frequencyBPM = this.frequencyBPM === 0
+        ? periodicity.bpm
+        : this.frequencyBPM * 0.82 + periodicity.bpm * 0.18;
+    } else {
+      this.frequencyBPM = this.frequencyBPM * 0.94;
+    }
+
+    this.updateThreshold(range, this.periodicityScore);
+    this.signalQualityIndex = this.calculateSQI(range, this.periodicityScore);
+
+    const timeSinceLastPeak = this.lastPeakTime > 0 ? now - this.lastPeakTime : Number.MAX_SAFE_INTEGER;
+    let isPeak = false;
+
+    if (timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS) {
+      isPeak = this.detectPeakWithScoring(timeSinceLastPeak);
+
+      if (isPeak) {
+        if (this.lastPeakTime > 0 && timeSinceLastPeak <= this.MAX_PEAK_INTERVAL_MS) {
+          this.rrIntervals.push(timeSinceLastPeak);
+          if (this.rrIntervals.length > this.MAX_RR_INTERVALS) {
+            this.rrIntervals.shift();
+          }
+
+          const instantBPM = 60000 / timeSinceLastPeak;
+
+          if (this.smoothBPM === 0) {
+            this.smoothBPM = instantBPM;
+          } else {
+            const relativeDiff = Math.abs(instantBPM - this.smoothBPM) / Math.max(1, this.smoothBPM);
+            let alpha = 0.25;
+            if (relativeDiff > 0.30) alpha = 0.08;
+            else if (relativeDiff > 0.18) alpha = 0.15;
+            if (this.consecutivePeaks < 5) alpha = Math.max(0.06, alpha - 0.08);
+
+            this.smoothBPM = this.smoothBPM * (1 - alpha) + instantBPM * alpha;
+          }
+
+          this.consecutivePeaks++;
+        }
+
+        this.lastPeakTime = now;
+        this.vibrate();
+        this.playBeep();
+      }
+    }
+
+    if (!isPeak && this.lastPeakTime > 0 && timeSinceLastPeak > this.MAX_PEAK_INTERVAL_MS) {
+      this.consecutivePeaks = Math.max(0, this.consecutivePeaks - 1);
+    }
+
+    // === FUSIÓN TIEMPO + FRECUENCIA ===
+    // BLOCK: never show frequency-only BPM without at least 1 confirmed time-domain peak
+    let displayBPM = this.smoothBPM;
+
+    if (this.frequencyBPM > 0 && this.consecutivePeaks >= 3) {
+      if (this.consecutivePeaks < 5 || this.signalQualityIndex < 35) {
+        // Weak signal — blend with caution
+        displayBPM = displayBPM * 0.65 + this.frequencyBPM * 0.35;
+      } else {
+        // Strong signal — trust peaks more
+        displayBPM = displayBPM * 0.88 + this.frequencyBPM * 0.12;
+      }
+    }
+    // If no peaks confirmed yet, displayBPM stays 0 — no guessing
+
+    const confidence = this.calculateConfidence();
+
+    return {
+      bpm: displayBPM,
+      confidence,
+      isPeak,
+      filteredValue: normalizedValue,
+      arrhythmiaCount: 0,
+      sqi: this.signalQualityIndex,
+    };
+  }
+
+  private calculateDerivative(): number {
+    const n = this.signalBuffer.length;
+    if (n < 3) return 0;
+    return (this.signalBuffer[n - 1] - this.signalBuffer[n - 3]) * 0.5 + (this.signalBuffer[n - 1] - this.signalBuffer[n - 2]) * 0.5;
+  }
+
+  private getRobustBounds(values: number[]): { low: number; high: number; range: number } {
+    const sorted = [...values].sort((a, b) => a - b);
+    if (sorted.length === 0) return { low: 0, high: 0, range: 0 };
+    const low = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? sorted[0];
+    const high = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? sorted[sorted.length - 1];
+    return { low, high, range: Math.max(0, high - low) };
+  }
+
+  private normalizeSignal(value: number, windowLen: number = 150): { normalizedValue: number; range: number } {
+    const recent = this.signalBuffer.slice(-windowLen);
+    const { low, high, range } = this.getRobustBounds(recent);
+    if (range < 0.15) return { normalizedValue: 0, range: 0 };
+    const clipped = Math.min(high, Math.max(low, value));
+    const normalizedValue = ((clipped - low) / range - 0.5) * 120;
+    return { normalizedValue, range };
+  }
+
+  private normalizeWindow(values: number[], windowLen: number = 150): number[] {
+    const refWindow = this.signalBuffer.slice(-windowLen);
+    const { low, high, range } = this.getRobustBounds(refWindow);
+    if (range < 0.15) return values.map(() => 0);
+    return values.map((v) => {
+      const c = Math.min(high, Math.max(low, v));
+      return ((c - low) / range - 0.5) * 120;
+    });
+  }
+
+  private estimateSampleRate(): number {
+    if (this.timestampBuffer.length < 10) return 30;
+    const recent = this.timestampBuffer.slice(-50);
+    const intervals: number[] = [];
+    for (let i = 1; i < recent.length; i++) {
+      const d = recent[i] - recent[i - 1];
+      if (d >= 10 && d <= 100) intervals.push(d);
+    }
+    if (intervals.length < 6) return 30;
+    const sorted = [...intervals].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)] ?? 33;
+    return this.clamp(1000 / median, 20, 40);
+  }
+
+  private estimatePeriodicity(): { bpm: number; score: number } {
+    if (this.signalBuffer.length < 60) return { bpm: 0, score: 0 };
+
+    const sampleRate = this.estimateSampleRate();
+    const windowLen = this.consecutivePeaks < 3 ? 120 : 180;
+    const recentSignal = this.normalizeWindow(this.signalBuffer.slice(-windowLen), windowLen);
+    const mean = recentSignal.reduce((s, v) => s + v, 0) / recentSignal.length;
+    const centered = recentSignal.map((v) => v - mean);
+    const energy = centered.reduce((s, v) => s + v * v, 0);
+
+    if (energy < 1800) return { bpm: 0, score: 0 };
+
+    const minLag = Math.max(5, Math.round((sampleRate * 60) / 200));
+    const maxLag = Math.min(centered.length - 8, Math.round((sampleRate * 60) / 38));
+
+    let bestLag = 0;
+    let bestScore = 0;
+    const expectedRR = this.getExpectedRR();
+    const expectedLag = expectedRR > 0 ? Math.round((expectedRR / 1000) * sampleRate) : 0;
+
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let cross = 0, eA = 0, eB = 0;
+      for (let i = lag; i < centered.length; i++) {
+        cross += centered[i] * centered[i - lag];
+        eA += centered[i] ** 2;
+        eB += centered[i - lag] ** 2;
+      }
+      if (eA === 0 || eB === 0) continue;
+
+      const correlation = cross / Math.sqrt(eA * eB);
+      const rhythmBias = expectedLag > 0
+        ? 1 - Math.min(0.2, Math.abs(lag - expectedLag) / Math.max(1, expectedLag) * 0.12)
+        : 1;
+      const weighted = correlation * rhythmBias;
+
+      if (weighted > bestScore) {
+        bestScore = weighted;
+        bestLag = lag;
+      }
+    }
+
+    if (bestLag === 0 || bestScore < 0.2) return { bpm: 0, score: Math.max(0, bestScore) };
+    return { bpm: (60 * sampleRate) / bestLag, score: this.clamp(bestScore, 0, 1) };
+  }
+
+  private calculateSQI(range: number, periodicityScore: number): number {
+    if (this.signalBuffer.length < 30) return 0;
+
+    const rangeFactor = Math.min(1, range / 5) * 22;
+    const derivWindow = this.derivativeBuffer.slice(-60);
+    const meanAbsDeriv = derivWindow.length > 0
+      ? derivWindow.reduce((s, v) => s + Math.abs(v), 0) / derivWindow.length
+      : 0;
+    const slopeFactor = Math.min(1, meanAbsDeriv / 1.0) * 14;
+
+    let rrFactor = 0;
+    if (this.rrIntervals.length >= 3) {
+      const m = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
+      const v = this.rrIntervals.reduce((a, rr) => a + (rr - m) ** 2, 0) / this.rrIntervals.length;
+      const cv = Math.sqrt(v) / Math.max(1, m);
+      rrFactor = Math.max(0, 1 - cv * 2) * 22;
+    }
+
+    const peakFactor = Math.min(1, this.consecutivePeaks / 4) * 20;
+    const periodicityFactor = periodicityScore * 22;
+
+    return this.clamp(rangeFactor + slopeFactor + rrFactor + peakFactor + periodicityFactor, 0, 100);
+  }
+
+  private updateThreshold(range: number, periodicityScore: number): void {
+    const base = periodicityScore > 0.35 ? 3.0 : 4.0;
+    const target = this.clamp(base + range * 0.3, 2.5, 7.5);
+    this.peakThreshold = this.peakThreshold * 0.8 + target * 0.2;
+  }
+
+  private getExpectedRR(): number {
+    if (this.rrIntervals.length >= 3) {
+      const recent = this.rrIntervals.slice(-6).sort((a, b) => a - b);
+      return recent[Math.floor(recent.length / 2)] ?? recent[0] ?? 0;
+    }
+    if (this.frequencyBPM > 0) return 60000 / this.frequencyBPM;
+    return 0;
+  }
+
+  // === PEAK DETECTION WITH CANDIDATE SCORING ===
+  private detectPeakWithScoring(timeSinceLastPeak: number): boolean {
+    const n = this.signalBuffer.length;
+    const dn = this.derivativeBuffer.length;
+    if (n < 11 || dn < 6) return false;
+
+    const deriv = this.derivativeBuffer.slice(-6);
+    const zeroCrossing = (deriv[2] > 0 && deriv[3] <= 0) || (deriv[3] > 0 && deriv[4] <= 0);
+
+    const windowLen = this.consecutivePeaks < 3 ? 90 : 150;
+    const recentNormalized = this.normalizeWindow(this.signalBuffer.slice(-11), windowLen);
+    const ci = 5;
+    const center = recentNormalized[ci];
+    const neighborhoodMin = Math.min(...recentNormalized);
+    const prominence = center - neighborhoodMin;
+
+    const isLocalMax =
+      center >= recentNormalized[4] &&
+      center > recentNormalized[6] &&
+      center >= recentNormalized[3] &&
+      center >= recentNormalized[7];
+
+    const risingSlope = center - recentNormalized[2];
+    const fallingSlope = center - recentNormalized[8];
+    const expectedRR = this.getExpectedRR();
+    const nearExpected = expectedRR > 0 &&
+      timeSinceLastPeak >= expectedRR * 0.55 &&
+      timeSinceLastPeak <= expectedRR * 1.45;
+
+    // === CANDIDATE SCORING ===
+    let score = 0;
+
+    // Prominence gate: reject flat noise but accept real PPG
+    if (prominence < 2.2) return false;
+
+    // Morphology gate: PPG has rising edge
+    if (risingSlope < 0.8) return false;
+
+    // Prominence (0-30 points)
+    score += Math.min(30, prominence * 2.5);
+
+    // Morphology: rising + falling slope (0-20 points)
+    score += Math.min(10, risingSlope * 2.0);
+    score += Math.min(10, fallingSlope * 1.8);
+
+    // Zero crossing derivative (0-15 points)
+    if (zeroCrossing) score += 15;
+
+    // First peak: need periodic support (chicken-and-egg)
+    if (this.consecutivePeaks === 0 && this.periodicityScore < 0.25 && !zeroCrossing) return false;
+
+    // Rhythm consistency (0-20 points)
+    if (nearExpected) score += 20;
+
+    // Periodicity boost (0-15 points)
+    score += this.periodicityScore * 15;
+
+    // Threshold: require minimum score scaled by consecutive peaks
+    const minScore = this.consecutivePeaks < 3 ? 36 : 42;
+    const thresholdCheck = center > this.peakThreshold * (nearExpected ? 0.65 : 0.9) || prominence > Math.max(2.0, this.peakThreshold * 0.55);
+
+    // Falling slope must also be positive for real PPG morphology
+    if (fallingSlope < 0.35) return false;
+
+    const amplitudeValid = this.lastPeakValue > 0
+      ? (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) > 0.08 && (Math.abs(center) / Math.max(1, Math.abs(this.lastPeakValue))) < 8
+      : true;
+
+    const isPeak = isLocalMax && amplitudeValid && timeSinceLastPeak >= this.MIN_PEAK_INTERVAL_MS && score >= minScore && thresholdCheck;
+
+    if (isPeak) {
+      this.lastPeakValue = center;
+    }
+
+    return isPeak;
+  }
+
+  private calculateConfidence(): number {
+    const sqiFactor = this.signalQualityIndex / 100;
+    const peakSupport = Math.min(1, this.consecutivePeaks / 5);
+
+    if (this.rrIntervals.length < 2) {
+      return this.clamp(sqiFactor * 0.22 + peakSupport * 0.2 + this.periodicityScore * 0.3, 0, 0.6);
+    }
+
+    const mean = this.rrIntervals.reduce((a, b) => a + b, 0) / this.rrIntervals.length;
+    const variance = this.rrIntervals.reduce((a, rr) => a + (rr - mean) ** 2, 0) / this.rrIntervals.length;
+    const cv = Math.sqrt(variance) / Math.max(1, mean);
+    const rrStability = this.clamp(1 - cv * 1.7, 0, 1);
+
+    return this.clamp(rrStability * 0.32 + peakSupport * 0.24 + sqiFactor * 0.2 + this.periodicityScore * 0.24, 0, 1);
+  }
+
+  private vibrate(): void {
+    try { if (navigator.vibrate) navigator.vibrate(55); } catch {}
+  }
+
   private async playBeep(): Promise<void> {
     if (!this.audioContext || !this.audioUnlocked) return;
-    const now = performance.now();
+    const now = Date.now();
     if (now - this.lastBeepTime < 220) return;
     try {
       if (this.audioContext.state === 'suspended') await this.audioContext.resume();
@@ -1012,64 +425,33 @@ export class HeartBeatProcessor {
     } catch {}
   }
 
-  getRRIntervals(): number[] { return [...this.rrIntervals]; }
-  getLastPeakTime(): number { return this.lastPeakTime; }
-  getSQI(): number { return this.computeGlobalSQI(); }
-
-  private makeEmptyResult(bpm: number): HeartBeatResult {
-    return {
-      bpm, bpmConfidence: 0, isPeak: false,
-      filteredValue: 0, arrhythmiaCount: 0, sqi: 0, beatSQI: 0,
-      rrData: { intervals: [], lastPeakTime: null },
-      hypothesis: null, detectorAgreement: 0,
-      rejectionReason: '', beatFlags: null,
-      debug: {
-        instantBpm: 0, medianRRBpm: 0, autocorrBpm: 0, spectralBpm: 0,
-        lastBeatSQI: 0, detectorAgreement: 0, expectedRR: 0,
-        refractoryState: 'open' as const, beatsAccepted: this.beatsAccepted,
-        beatsRejected: this.beatsRejected, lastRejectionReason: this.lastRejectionReason,
-        doublePeakCount: this.doublePeakCount, missedBeatCount: this.missedBeatCount,
-        suspiciousCount: this.suspiciousCount, templateCorrelation: 0,
-        morphologyScore: 0, consecutivePeaks: this.consecutivePeaks,
-        recentAcceptedBeats: [],
-      },
-    };
+  private clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
   }
 
+  getRRIntervals(): number[] { return [...this.rrIntervals]; }
+  getLastPeakTime(): number { return this.lastPeakTime; }
+  getSQI(): number { return this.signalQualityIndex; }
+  getDerivativeBuffer(): number[] { return [...this.derivativeBuffer]; }
+
+
   reset(): void {
-    this.signalBuf.clear();
-    this.derivBuf.clear();
-    this.slopeSum.clear();
-    this.timestampBuf.clear();
+    this.signalBuffer = [];
+    this.derivativeBuffer = [];
+    this.timestampBuffer = [];
     this.rrIntervals = [];
-    this.acceptedBeats = [];
     this.smoothBPM = 0;
-    this.spectralBPM = 0;
-    this.autocorrBPM = 0;
-    this.medianRRBPM = 0;
+    this.frequencyBPM = 0;
+    this.periodicityScore = 0;
     this.lastPeakTime = 0;
-    this.lastPeakValue = 0;
-    this.consecutivePeaks = 0;
     this.peakThreshold = 4.0;
+    this.lastPeakValue = 0;
     this.frameCount = 0;
-    this.beatsAccepted = 0;
-    this.beatsRejected = 0;
-    this.doublePeakCount = 0;
-    this.missedBeatCount = 0;
-    this.suspiciousCount = 0;
-    this.lastRejectionReason = '';
-    this.templateValid = false;
-    this.templateLen = 0;
-    this.lastHypothesis = null;
-    this.upstreamSampleRateHz = null;
-    this.maskIoU = 1;
+    this.consecutivePeaks = 0;
+    this.signalQualityIndex = 0;
   }
 
   dispose(): void {
     if (this.audioContext) this.audioContext.close().catch(() => {});
   }
-}
-
-function clamp(v: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, v));
 }

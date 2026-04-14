@@ -5,37 +5,13 @@ import type { Database } from './types';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-const createFallbackClient = () => {
-  const error = new Error('Supabase is not configured in this environment');
-
-  return {
-    auth: {
-      getUser: async () => ({ data: { user: null }, error }),
-    },
-    from: () => ({
-      insert: async () => ({ error }),
-    }),
-    functions: {
-      invoke: async () => ({ data: null, error }),
-    },
-  } as any;
-};
-
-const hasSupabaseEnv = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY);
-
-if (!hasSupabaseEnv) {
-  console.warn('[supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY. Running with fallback client.');
-}
-
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = hasSupabaseEnv
-  ? createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-      auth: {
-        storage: localStorage,
-        persistSession: true,
-        autoRefreshToken: true,
-      },
-    })
-  : createFallbackClient();
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    storage: localStorage,
+    persistSession: true,
+    autoRefreshToken: true,
+  }
+});

@@ -40,7 +40,7 @@ export const useHealthAnalysis = () => {
           diastolic: vitalSigns.pressure?.diastolic || 80,
           arrhythmiaCount: vitalSigns.arrhythmiaCount || 0,
           glucose: vitalSigns.glucose || undefined,
-          
+          hemoglobin: vitalSigns.hemoglobin || undefined,
           totalCholesterol: vitalSigns.lipids?.totalCholesterol || undefined,
           triglycerides: vitalSigns.lipids?.triglycerides || undefined,
           quality,

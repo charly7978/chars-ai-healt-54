@@ -103,16 +103,20 @@ export default {
   			]
   		},
   		keyframes: {
-  			'fade-in': {
-  				'0%': { opacity: '0' },
-  				'100%': { opacity: '1' }
-  			},
   			'heart-beat': {
   				'0%, 100%': {
   					transform: 'scale(1)'
   				},
   				'50%': {
   					transform: 'scale(1.1)'
+  				}
+  			},
+  			'card-flip': {
+  				'0%': {
+  					transform: 'rotateY(0deg)'
+  				},
+  				'100%': {
+  					transform: 'rotateY(180deg)'
   				}
   			},
   			progress: {
@@ -144,17 +148,11 @@ export default {
   			}
   		},
   		animation: {
-  			'fade-in': 'fade-in 0.35s ease-out forwards',
   			'heart-beat': 'heart-beat 1s ease-in-out infinite',
+  			flip: 'card-flip 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards',
   			'value-glow': 'value-glow 3s ease-in-out infinite'
   		},
   		fontFamily: {
-  			display: [
-  				'Plus Jakarta Sans',
-  				'ui-sans-serif',
-  				'system-ui',
-  				'sans-serif'
-  			],
   			sans: [
   				'Work Sans',
   				'ui-sans-serif',
