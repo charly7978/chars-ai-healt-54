@@ -278,11 +278,21 @@ const Index = () => {
       if ('requestVideoFrameCallback' in video) {
         const v = video as HTMLVideoElement & {
           requestVideoFrameCallback: (
-            cb: (now: number, metadata?: { presentationTime?: number; expectedDisplayTime?: number }) => void
-          ) => void;
+            cb: (now: number, metadata?: VideoFrameCallbackMetadata) => void
+          ) => number;
         };
-        v.requestVideoFrameCallback((now) => {
-          captureOneFrame(now);
+        v.requestVideoFrameCallback((now, metadata) => {
+          const tPresent =
+            metadata != null &&
+            typeof metadata.presentationTime === 'number' &&
+            Number.isFinite(metadata.presentationTime)
+              ? metadata.presentationTime
+              : metadata != null &&
+                  typeof metadata.expectedDisplayTime === 'number' &&
+                  Number.isFinite(metadata.expectedDisplayTime)
+                ? metadata.expectedDisplayTime
+                : now;
+          captureOneFrame(tPresent);
         });
       } else {
         frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
@@ -471,8 +481,6 @@ const Index = () => {
       0,
       Math.min(1, (ls.sourceStability ?? positionQuality.qualityScore) || 0)
     );
-    const sampleRate =
-      ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : 30;
 
     const heartBeatResult =
       getLastBeatResult() ?? emptyHeartBeatResult(0);

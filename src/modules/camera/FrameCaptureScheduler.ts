@@ -53,7 +53,7 @@ export class FrameCaptureScheduler {
     strategy: 'buffer_pool',
     presentationMedianDeltaMs: 0,
     presentationJitterMs: 0,
-    effectiveSampleRateHz: 30,
+    effectiveSampleRateHz: 0,
     timingConfidence: 0,
     frameDropCount: 0,
   };

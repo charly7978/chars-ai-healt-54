@@ -5,8 +5,9 @@
  */
 
 export interface CaptureTimingContext {
-  /** Fs efectivo = 1000 / medianDeltaMs, acotado [15, 60] Hz */
+  /** Fs efectivo = 1000 / medianDeltaMs, acotado [15, 60] Hz. `0` = aún sin muestras Δt válidas (no inventar Hz). */
   sampleRateHz: number;
+  /** `0` si no hay mediana fiable aún */
   medianaDeltaMs: number;
   /** Mediana de |Δt − mediana| (robusta a outliers) */
   jitterMadMs: number;
@@ -69,8 +70,8 @@ export class CaptureMetrology {
     const ts = this.presentationTs;
     if (ts.length < 2) {
       return {
-        sampleRateHz: 30,
-        medianaDeltaMs: 1000 / 30,
+        sampleRateHz: 0,
+        medianaDeltaMs: 0,
         jitterMadMs: 0,
         frameDropCount: this.dropCount,
         timingConfidence: 0,
@@ -86,11 +87,11 @@ export class CaptureMetrology {
 
     if (deltas.length < 3) {
       return {
-        sampleRateHz: 30,
-        medianaDeltaMs: 1000 / 30,
+        sampleRateHz: 0,
+        medianaDeltaMs: 0,
         jitterMadMs: 0,
         frameDropCount: this.dropCount,
-        timingConfidence: 0.15,
+        timingConfidence: deltas.length > 0 ? 0.12 : 0,
         intervalCount: deltas.length,
       };
     }
