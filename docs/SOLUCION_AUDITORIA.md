@@ -6,18 +6,16 @@ La aplicación usa **`src/pages/Index.tsx`** como pantalla principal (`App.tsx` 
 
 Flujo en vivo:
 
-1. **`useSignalProcessor`** → `PPGSignalProcessor` (frames reales de cámara).
-2. **`useHeartBeatProcessor`** → `HeartBeatProcessor` (latidos, RR, calidad).
-3. **`useVitalSignsProcessor`** → **`VitalSignsProcessor`**:
+1. **`useSignalProcessor`** → **`ElitePPGProcessor`** (cámara → dedo/ROI → `PPGSignalProcessor` → `HeartBeatProcessor`, HRV, arritmias; frames reales).
+2. **`useVitalSignsProcessor`** → **`VitalSignsProcessor`**:
    - **SpO2:** `SpO2ProcessorElite` + fusión con curva de **`SpO2Calibrator`** / perfil dispositivo (`DeviceCalibrationEngine`).
    - **Presión arterial:** `BloodPressureProcessorElite` + offsets de **`BPCalibrationManager`** y motor de dispositivo.
    - **Glucosa / lípidos / ritmo:** `GlucoseResearchProcessor`, `LipidResearchProcessor`, `RhythmClassifier` (sin cambiar de propósito).
-4. Cada frame pasa **timestamp** de señal a `processSignal(..., frameTimestamp)` para alinear buffers PPG/TA élite.
+3. Cada frame pasa **timestamp** de señal a `processSignal(..., frameTimestamp)` para alinear buffers PPG/TA élite.
 
-## Pipeline alternativo (panel élite)
+## `ElitePPGProcessor` en la app
 
-- **`ElitePPGProcessor`**: integra dedo, PPG, latidos, HRV, arritmias, SpO2 élite y PA élite en un solo bucle (p. ej. `EliteMeasurementPanel`, `useEliteMeasurement`).
-- No sustituye automáticamente a `Index.tsx`; es una vía compacta para medición completa con un solo procesador.
+- Es el núcleo de **`useSignalProcessor`** (página `Index.tsx`): un solo bucle para PPG, latidos y derivados temporales; SpO2/TA/glucosa/lípidos siguen en **`VitalSignsProcessor`** alimentado desde el mismo flujo de frames.
 
 ## Duplicación resuelta
 
