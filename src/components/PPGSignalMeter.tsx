@@ -1106,7 +1106,7 @@ const PPGSignalMeter = ({
   }, [onReset]);
 
   return (
-    <div className="fixed inset-0 z-[36] bg-[#020617]">
+    <div className="fixed inset-0 z-10 bg-[#020617]">
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.45]"
         style={{

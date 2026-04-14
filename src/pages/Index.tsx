@@ -22,9 +22,13 @@ import {
 import { FrameCaptureScheduler } from "@/modules/camera/FrameCaptureScheduler";
 import type { CaptureTimingContext } from "@/modules/camera/CaptureMetrology";
 import { PPGPipelineDebugOverlay } from "@/components/PPGPipelineDebugOverlay";
-import { ClinicalTopBar } from "@/components/visual/ClinicalTopBar";
-import { MedicalAmbient3D } from "@/components/visual/MedicalAmbient3D";
 import { cn } from "@/lib/utils";
+
+function formatElapsed(total: number) {
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
 const Index = () => {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>({
@@ -783,52 +787,97 @@ const Index = () => {
         </div>
       )}
 
-      <div className="flex-1 relative">
-        <div className="absolute inset-0 z-0">
-          <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
-        </div>
-        <MedicalAmbient3D />
-        {ppgDebug && isMonitoring && (
-          <PPGPipelineDebugOverlay
-            signal={lastSignal}
-            positionQuality={getPositionQuality()}
-            captureMetrics={captureSchedulerRef.current?.getMetrics() ?? null}
-            cameraDiag={cameraRef.current?.getDiagnostics() ?? null}
-            framesProcessed={framesProcessed}
-          />
-        )}
-        <div
-          className="pointer-events-none absolute inset-0 z-[5] bg-gradient-to-b from-black/60 via-black/15 to-[#020617]/88"
-          aria-hidden
-        />
-        <div
-          className="pointer-events-none absolute inset-0 z-[6] bg-[radial-gradient(ellipse_85%_55%_at_50%_18%,rgba(34,211,238,0.07),transparent_55%)]"
-          aria-hidden
-        />
+      {/* Cámara: solo captura; debajo del monitor (z-0 < z-10) */}
+      <div className="absolute inset-0 z-0">
+        <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
+      </div>
 
-        {isMonitoring && (() => {
+      {ppgDebug && isMonitoring && (
+        <PPGPipelineDebugOverlay
+          signal={lastSignal}
+          positionQuality={getPositionQuality()}
+          captureMetrics={captureSchedulerRef.current?.getMetrics() ?? null}
+          cameraDiag={cameraRef.current?.getDiagnostics() ?? null}
+          framesProcessed={framesProcessed}
+        />
+      )}
+
+      {/* Interfaz única base: monitor PPG a pantalla completa */}
+      <div className="font-display">
+        <PPGSignalMeter
+          value={heartbeatSignal}
+          quality={lastSignal?.quality || 0}
+          isFingerDetected={Boolean(
+            lastSignal?.measurementReady &&
+              lastSignal.contactState === 'STABLE_CONTACT' &&
+              lastSignal.extendedContactState === 'STABLE_CONTACT'
+          )}
+          onStartMeasurement={handleToggleMonitoring}
+          onReset={handleReset}
+          isMonitoring={isMonitoring}
+          arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
+          rawArrhythmiaData={lastArrhythmiaData.current}
+          preserveResults={showResults}
+          diagnosticMessage={lastSignal?.diagnostics?.message}
+          peakEvent={peakEvent}
+          bpm={heartRate}
+          spo2={vitalSigns.spo2}
+          rrIntervals={rrIntervals}
+        />
+      </div>
+
+      {/* Flotante: tiempo y calibración (no duplica el encabezado del monitor) */}
+      {isMonitoring && (
+        <div
+          className="pointer-events-none fixed right-3 top-[max(0.5rem,env(safe-area-inset-top))] z-30 flex max-w-[min(100vw-1.5rem,14rem)] flex-col items-end gap-1 text-right"
+          aria-hidden
+        >
+          <div className="rounded-lg border border-cyan-500/35 bg-[#020617]/85 px-2.5 py-1.5 font-mono text-[11px] tabular-nums text-cyan-100 shadow-lg backdrop-blur-md sm:text-xs">
+            <span className="inline-flex items-center gap-1.5">
+              <Activity className="h-3.5 w-3.5 flex-shrink-0 text-emerald-400" />
+              {formatElapsed(elapsedTime)}
+              <span className="text-slate-500">/ 60:00</span>
+            </span>
+          </div>
+          {isCalibrating && (
+            <div className="rounded-md border border-amber-500/35 bg-amber-950/80 px-2 py-1 text-[10px] font-semibold text-amber-100 backdrop-blur-sm">
+              Calibrando… {Math.round(calibrationProgress)}%
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Guía de contacto: banda compacta, no cubre el gráfico principal */}
+      {isMonitoring &&
+        (() => {
           const pq = getPositionQuality();
           const isDrifting = pq.drifting;
           const isLocked = pq.locked && !isDrifting;
           const showGuidance = !isLocked || isDrifting;
           return showGuidance || isLocked ? (
             <div
-              className="pointer-events-none absolute left-2 right-2 z-[28] flex justify-center px-1"
-              style={{ top: 'max(7.5rem, min(22vh, 200px))' }}
+              className="pointer-events-none fixed left-2 right-2 z-[25] flex justify-center px-1"
+              style={{ top: "max(6.25rem, min(18vh, 160px))" }}
             >
               <div
-                className={`max-w-[min(100%,28rem)] rounded-2xl border px-4 py-2.5 text-center text-sm font-semibold leading-snug shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur-xl sm:text-base ${
+                className={`max-w-[min(100%,26rem)] rounded-xl border px-3 py-2 text-center text-xs font-semibold leading-snug shadow-lg backdrop-blur-md sm:text-sm ${
                   isLocked
-                    ? 'border-teal-400/40 bg-teal-950/90 text-teal-50 ring-1 ring-teal-500/20'
+                    ? "border-teal-400/40 bg-teal-950/88 text-teal-50 ring-1 ring-teal-500/20"
                     : isDrifting
-                      ? 'animate-pulse border-rose-500/45 bg-rose-950/90 text-rose-50 ring-1 ring-rose-400/20'
+                      ? "animate-pulse border-rose-500/45 bg-rose-950/88 text-rose-50 ring-1 ring-rose-400/20"
                       : pq.qualityScore > 0.4
-                        ? 'border-amber-500/45 bg-amber-950/90 text-amber-50 ring-1 ring-amber-400/15'
-                        : 'border-orange-500/40 bg-orange-950/90 text-orange-50 ring-1 ring-orange-400/15'
+                        ? "border-amber-500/45 bg-amber-950/88 text-amber-50 ring-1 ring-amber-400/15"
+                        : "border-orange-500/40 bg-orange-950/88 text-orange-50 ring-1 ring-orange-400/15"
                 }`}
               >
                 <span className="flex items-center justify-center gap-2">
-                  {isLocked ? <Shield className="h-5 w-5 flex-shrink-0" /> : isDrifting ? <AlertTriangle className="h-5 w-5 flex-shrink-0" /> : <Activity className="h-5 w-5 flex-shrink-0 animate-pulse" />}
+                  {isLocked ? (
+                    <Shield className="h-4 w-4 flex-shrink-0" />
+                  ) : isDrifting ? (
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                  ) : (
+                    <Activity className="h-4 w-4 flex-shrink-0 animate-pulse" />
+                  )}
                   <span className="text-balance">{pq.guidance}</span>
                 </span>
               </div>
@@ -836,76 +885,57 @@ const Index = () => {
           ) : null;
         })()}
 
-        <ClinicalTopBar
-          isMonitoring={isMonitoring}
-          elapsedSeconds={elapsedTime}
-          signalQuality={lastSignal?.quality ?? 0}
-          isCalibrating={isCalibrating}
-          calibrationProgress={calibrationProgress}
-        />
-
-        {/* z-[36]: por encima de guía (28) y topbar (25) — si no, el canvas queda tapado */}
-        <div className="relative z-[36] flex min-h-0 h-full min-w-0 flex-col font-display">
-          <div className="min-h-0 flex-1">
-            <PPGSignalMeter 
-              value={heartbeatSignal}
-              quality={lastSignal?.quality || 0}
-              isFingerDetected={
-                Boolean(
-                  lastSignal?.measurementReady &&
-                    lastSignal.contactState === 'STABLE_CONTACT' &&
-                    lastSignal.extendedContactState === 'STABLE_CONTACT'
-                )
-              }
-              onStartMeasurement={handleToggleMonitoring}
-              onReset={handleReset}
-              isMonitoring={isMonitoring}
-              arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
-              rawArrhythmiaData={lastArrhythmiaData.current}
-              preserveResults={showResults}
-              diagnosticMessage={lastSignal?.diagnostics?.message}
-              peakEvent={peakEvent}
-              bpm={heartRate}
-              spo2={vitalSigns.spo2}
-              rrIntervals={rrIntervals}
-            />
-          </div>
-
-          <div className="pointer-events-none absolute inset-x-0 top-[55%] bottom-[72px] z-[37] px-2 py-4 sm:bottom-20 sm:px-3">
-            <div className="clinical-vitals-shell clinical-vitals-inner mx-auto max-w-4xl rounded-2xl border border-cyan-500/25 bg-gradient-to-b from-slate-950/90 via-slate-950/85 to-[#020617]/95 px-2 py-4 backdrop-blur-xl sm:px-4 sm:py-5">
-            <div className="grid grid-cols-3 gap-2 place-items-stretch sm:gap-3">
-              <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
+      {/* Displays vitales: franja compacta sobre el dock, sin tapar el lienzo del monitor */}
+      {isMonitoring && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-[5.1rem] z-20 px-1.5 sm:bottom-[5.25rem] sm:px-3">
+          <div className="clinical-vitals-shell clinical-vitals-inner mx-auto max-w-5xl rounded-xl border border-cyan-500/25 bg-slate-950/55 px-1.5 py-2 shadow-[0_-4px_24px_rgba(0,0,0,0.35)] backdrop-blur-md sm:px-3 sm:py-2.5">
+            <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6 sm:gap-2">
+              <VitalSign
+                label="FREC. CARD."
+                value={heartRate > 0 ? Math.round(heartRate) : "--"}
+                unit="BPM"
+                highlighted={showResults}
+              />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
-              <VitalSign 
-                label="PRESIÓN ARTERIAL"
-                value={vitalSigns.pressure && vitalSigns.pressure.systolic > 0 ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` : "--/--"}
+              <VitalSign
+                label="P. ARTERIAL"
+                value={
+                  vitalSigns.pressure && vitalSigns.pressure.systolic > 0
+                    ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}`
+                    : "--/--"
+                }
                 unit="mmHg"
                 highlighted={showResults}
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
-              <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
-              <VitalSign 
-                label="COLEST./TRIGL. (EST.)"
-                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
+              <VitalSign label="GLUC. (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
+              <VitalSign
+                label="COL./TRIG. (EST.)"
+                value={
+                  vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
+                    ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`
+                    : "--/--"
+                }
                 unit="mg/dL"
                 highlighted={showResults}
               />
               <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
             </div>
-            </div>
           </div>
+        </div>
+      )}
 
-          {showResults && measurementSummary && (() => {
-            const { totalBeats, arrhythmiaBeats, normalPercent } = measurementSummary;
-            const normalBeats = totalBeats - arrhythmiaBeats;
-            const avgBpm = heartRate > 0 ? Math.round(heartRate) : '--';
-            const statusColor = normalPercent >= 95 ? 'emerald' : normalPercent >= 80 ? 'yellow' : 'red';
-            const statusText = vitalSigns.rhythm?.label ? vitalSigns.rhythm.label.split('_').join(' ') : (normalPercent >= 95 ? 'RITMO NORMAL' : normalPercent >= 80 ? 'LEVE IRREGULARIDAD' : 'IRREGULARIDAD DETECTADA');
-            const statusIcon = normalPercent >= 95 ? CheckCircle2 : AlertTriangle;
-            const StatusIcon = statusIcon;
-            
-            return (
+      {showResults && measurementSummary && (() => {
+        const { totalBeats, arrhythmiaBeats, normalPercent } = measurementSummary;
+        const normalBeats = totalBeats - arrhythmiaBeats;
+        const avgBpm = heartRate > 0 ? Math.round(heartRate) : '--';
+        const statusColor = normalPercent >= 95 ? 'emerald' : normalPercent >= 80 ? 'yellow' : 'red';
+        const statusText = vitalSigns.rhythm?.label ? vitalSigns.rhythm.label.split('_').join(' ') : (normalPercent >= 95 ? 'RITMO NORMAL' : normalPercent >= 80 ? 'LEVE IRREGULARIDAD' : 'IRREGULARIDAD DETECTADA');
+        const statusIcon = normalPercent >= 95 ? CheckCircle2 : AlertTriangle;
+        const StatusIcon = statusIcon;
+
+        return (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md animate-fade-in">
                 <div className="font-display max-w-sm w-[92%] overflow-hidden rounded-2xl border border-cyan-500/20 bg-slate-950 shadow-[0_24px_80px_rgba(0,0,0,0.65),inset_0_1px_0_rgba(34,211,238,0.08)]">
                   <div
@@ -1044,40 +1074,38 @@ const Index = () => {
                   </div>
                 </div>
               </div>
-            );
-          })()}
+        );
+      })()}
 
-          {showAIAnalysis && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
-              <div className="bg-slate-950 border border-slate-700/50 rounded-2xl max-w-sm w-[92%] max-h-[80vh] shadow-2xl overflow-hidden flex flex-col">
-                <div className="px-4 py-3 bg-purple-500/10 border-b border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Brain className="w-5 h-5 text-purple-400" />
-                    <h3 className="text-white text-sm font-bold">Análisis AI de Salud</h3>
-                  </div>
-                  <button onClick={() => { setShowAIAnalysis(false); clearAnalysis(); }} className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors">
-                    <X className="w-4 h-4 text-slate-400" />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4">
-                  {isAnalyzing ? (
-                    <div className="flex flex-col items-center justify-center py-12 gap-3">
-                      <Loader2 className="w-8 h-8 text-purple-400 animate-spin" />
-                      <p className="text-slate-400 text-sm">Analizando tus signos vitales...</p>
-                    </div>
-                  ) : analysis ? (
-                    <div className="text-slate-300 text-xs leading-relaxed whitespace-pre-wrap">{analysis}</div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-12 gap-3">
-                      <p className="text-slate-500 text-sm">No se pudo generar el análisis.</p>
-                    </div>
-                  )}
-                </div>
+      {showAIAnalysis && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-slate-950 border border-slate-700/50 rounded-2xl max-w-sm w-[92%] max-h-[80vh] shadow-2xl overflow-hidden flex flex-col">
+            <div className="px-4 py-3 bg-purple-500/10 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Brain className="w-5 h-5 text-purple-400" />
+                <h3 className="text-white text-sm font-bold">Análisis AI de Salud</h3>
               </div>
+              <button onClick={() => { setShowAIAnalysis(false); clearAnalysis(); }} className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors">
+                <X className="w-4 h-4 text-slate-400" />
+              </button>
             </div>
-          )}
+            <div className="flex-1 overflow-y-auto p-4">
+              {isAnalyzing ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <Loader2 className="w-8 h-8 text-purple-400 animate-spin" />
+                  <p className="text-slate-400 text-sm">Analizando tus signos vitales...</p>
+                </div>
+              ) : analysis ? (
+                <div className="text-slate-300 text-xs leading-relaxed whitespace-pre-wrap">{analysis}</div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <p className="text-slate-500 text-sm">No se pudo generar el análisis.</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
