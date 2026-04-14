@@ -835,6 +835,13 @@ const Index = () => {
           bpm={heartRate}
           spo2={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : 0}
           rrIntervals={rrIntervals}
+          pipelineTelemetry={{
+            estimatedSampleRateHz: lastSignal?.estimatedSampleRate,
+            captureTimingConfidence: lastSignal?.captureTimingConfidence,
+            maskIoU: lastSignal?.maskIoU,
+            measurementConfidence: vitalSigns.measurementConfidence,
+            activeSource: lastSignal?.activeSource,
+          }}
         />
       </div>
 

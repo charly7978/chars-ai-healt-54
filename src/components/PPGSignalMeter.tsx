@@ -5,6 +5,18 @@ import { NON_ALERT_RHYTHM_LABELS } from '../constants/rhythmAlert';
 import type { BeatFlags } from '@/types/beat';
 import { classifyBeatWaveClass, type BeatWaveClass } from '@/utils/beatVisualization';
 
+/**
+ * E5: datos ya calculados en el pipeline (PPG / vitales / metrología). El monitor solo refleja;
+ * no sustituye a `VitalSignsProcessor` ni a `PPGSignalProcessor`.
+ */
+export type PipelineTelemetryMirror = {
+  estimatedSampleRateHz?: number;
+  captureTimingConfidence?: number;
+  maskIoU?: number;
+  measurementConfidence?: 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID';
+  activeSource?: string;
+};
+
 interface PPGSignalMeterProps {
   value: number;
   quality: number;
@@ -25,6 +37,8 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
+  /** Telemetría del motor (opcional): solo lectura para el lienzo */
+  pipelineTelemetry?: PipelineTelemetryMirror;
 }
 
 /** Resolución lógica del lienzo (coordenadas de dibujo); el buffer físico = esto × devicePixelRatio. */
@@ -72,6 +86,9 @@ const CONFIG = {
     ACCENT_LINE: 'rgba(34, 211, 238, 0.45)',
   }
 };
+
+/** Solo escala Y de la onda en el canvas; no afecta BPM/SpO₂ ni vitales (provienen de props). */
+const VISUAL_WAVEFORM_GAIN = 2.45;
 
 const parseRhythmStatus = (statusString?: string) => {
   const [label = 'SIN ARRITMIAS', countStr = '0'] = (statusString || 'SIN ARRITMIAS|0').split('|');
@@ -223,7 +240,8 @@ const PPGSignalMeter = ({
   peakEvent = { seq: 0, flags: null, wallTime: 0, morphologyScore: null },
   bpm = 0,
   spo2 = 0,
-  rrIntervals = []
+  rrIntervals = [],
+  pipelineTelemetry
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   /** Escala física para nitidez en pantallas retina (coordenadas lógicas sin cambiar). */
@@ -235,7 +253,19 @@ const PPGSignalMeter = ({
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, peakEvent, bpm, spo2, rrIntervals, rawArrhythmiaData });
+  const propsRef = useRef({
+    value,
+    quality,
+    isFingerDetected,
+    arrhythmiaStatus,
+    preserveResults,
+    peakEvent,
+    bpm,
+    spo2,
+    rrIntervals,
+    rawArrhythmiaData,
+    pipelineTelemetry,
+  });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   
@@ -253,7 +283,19 @@ const PPGSignalMeter = ({
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
 
   useEffect(() => {
-    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, peakEvent, bpm, spo2, rrIntervals, rawArrhythmiaData };
+    propsRef.current = {
+      value,
+      quality,
+      isFingerDetected,
+      arrhythmiaStatus,
+      preserveResults,
+      peakEvent,
+      bpm,
+      spo2,
+      rrIntervals,
+      rawArrhythmiaData,
+      pipelineTelemetry,
+    };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
       ibiDisplayRef.current = Math.round(last);
@@ -264,7 +306,19 @@ const PPGSignalMeter = ({
       for (let i = 1; i < rrIntervals.length; i++) sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
       hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
     }
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, peakEvent, bpm, spo2, rrIntervals, rawArrhythmiaData]);
+  }, [
+    value,
+    quality,
+    isFingerDetected,
+    arrhythmiaStatus,
+    preserveResults,
+    peakEvent,
+    bpm,
+    spo2,
+    rrIntervals,
+    rawArrhythmiaData,
+    pipelineTelemetry,
+  ]);
 
   useEffect(() => {
     const seq = peakEvent?.seq ?? 0;
@@ -576,6 +630,14 @@ const PPGSignalMeter = ({
     ctx.font = 'bold 18px "SF Mono", Consolas, monospace';
     ctx.fillStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
     ctx.fillText(`${quality.toFixed(0)}%`, centerX, panelY + 64);
+    const mc = propsRef.current.pipelineTelemetry?.measurementConfidence;
+    if (mc && mc !== 'INVALID') {
+      ctx.font = '600 10px "SF Mono", Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle =
+        mc === 'HIGH' ? 'rgba(45, 212, 191, 0.95)' : mc === 'MEDIUM' ? 'rgba(251, 191, 36, 0.95)' : 'rgba(248, 113, 113, 0.9)';
+      ctx.fillText(`Conf. medición · ${mc}`, centerX, panelY + 82);
+    }
     const ibi = ibiDisplayRef.current;
     const hrv = hrvDisplayRef.current;
     ctx.font = fontSize.small;
@@ -665,7 +727,7 @@ const PPGSignalMeter = ({
         animationRef.current = requestAnimationFrame(render);
         return;
       }
-      const scaledValue = signalValue * 2.45;
+      const scaledValue = signalValue * VISUAL_WAVEFORM_GAIN;
       
       const peakSeq = pe?.seq ?? 0;
       if (peakSeq > 0 && peakSeq !== lastProcessedPeakSeqRef.current) {
@@ -789,23 +851,34 @@ const PPGSignalMeter = ({
         strokeWaveformRuns(pathCoords, COLORS, ctx);
 
         const plotTelemetryY = plot.y + 10;
-        const telH = 40;
+        const telH = 54;
+        const tel = propsRef.current.pipelineTelemetry;
+        const fsStr =
+          tel?.estimatedSampleRateHz != null && tel.estimatedSampleRateHz > 0
+            ? `${tel.estimatedSampleRateHz.toFixed(1)} Hz`
+            : '—';
+        const iouStr = tel?.maskIoU != null ? `${(tel.maskIoU * 100).toFixed(0)}%` : '—';
+        const rvfcStr =
+          tel?.captureTimingConfidence != null && tel.captureTimingConfidence > 0
+            ? `${(tel.captureTimingConfidence * 100).toFixed(0)}%`
+            : '—';
+        const srcStr = tel?.activeSource && tel.activeSource.length > 0 ? tel.activeSource : '—';
         ctx.save();
         fillMetricPanel(ctx, plot.x, plotTelemetryY, plot.width, telH, 'rgba(34, 211, 238, 0.35)');
         ctx.fillStyle = 'rgba(34, 211, 238, 0.5)';
         ctx.fillRect(plot.x + 2, plotTelemetryY + 2, plot.width - 4, 2);
-        ctx.font = '600 13px "SF Mono", Consolas, monospace';
+        ctx.font = '600 12px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_PRIMARY;
         ctx.textAlign = 'left';
-        ctx.fillText('CANAL PPG · fotopletismografía', plot.x + 16, plotTelemetryY + 26);
-        ctx.font = '13px "SF Mono", Consolas, monospace';
+        ctx.fillText(`CANAL · ${srcStr}  ·  Fs ${fsStr}  ·  IoU ${iouStr}  ·  RVFC ${rvfcStr}`, plot.x + 14, plotTelemetryY + 22);
+        ctx.font = '12px "SF Mono", Consolas, monospace';
         ctx.fillStyle = 'rgba(203, 213, 225, 0.95)';
         const ampTxt = stats.range > 1 ? `${Math.round(stats.range)} u.a.` : '—';
         const lastRr = rrLive && rrLive.length > 0 ? `${Math.round(rrLive[rrLive.length - 1]!)} ms` : '—';
         ctx.fillText(
           `Ventana ${(WINDOW_MS / 1000).toFixed(1)} s  ·  Amp ${ampTxt}  ·  FC ${bpmLive > 0 ? Math.round(bpmLive) : '—'}  ·  IBI ${lastRr}  ·  ${fingerOk ? 'LISTO' : 'ESPERANDO'}`,
-          plot.x + 260,
-          plotTelemetryY + 26
+          plot.x + 14,
+          plotTelemetryY + 42
         );
         ctx.restore();
 

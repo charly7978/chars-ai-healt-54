@@ -26,6 +26,7 @@ Documento de apoyo para alinear implementación con literatura y tendencias reci
 | Pipeline UI principal | `VitalSignsProcessor.ts` (contexto upstream: Fs, IoU, clip, jitter RVFC → SpO₂/PA/ritmo), `Index.tsx` |
 | Monitor pantalla completa + altura (TA) | `PPGSignalMeter.tsx` (barra superior izquierda, `z-index` sobre el canvas; `Guardar` → `setUserHeightM` + toast; valor inicial desde perfil o 1,70 m) |
 | Integración pipeline (cámara → señal) | `ElitePPGProcessor.ts` vía `useSignalProcessor` en `Index.tsx` |
+| Monitor E5 (solo espejo) | `PPGSignalMeter.tsx` recibe `pipelineTelemetry` + props clínicas; onda usa `VISUAL_WAVEFORM_GAIN` (dibujo) |
 
 **Estabilidad de contacto / lectura:** `PPGSignalProcessor.ts` usa confirmación de dedo más larga, umbral de contacto estable mayor, EWMA RGB/cobertura algo más suaves y menos castigo por fotogramas dudosos; en `Index.tsx` la señal “humana estable” para BPM exige más calidad, más perfusión, sin deriva de posición y calidad extra si el candado óptico no está activo; alertas por arritmia en toast requieren al menos 2 eventos y cooldown.
 
