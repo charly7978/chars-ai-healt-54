@@ -198,7 +198,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       analysis.clipHighRatio,
       analysis.clipLowRatio,
       analysis.perfusionIndex < 2.8,
-      analysis.contactRaw === 'CONTACT_UNSTABLE' || analysis.contactRaw === 'ACQUIRING'
+      analysis.contactRaw === 'CONTACT_UNSTABLE' || analysis.contactRaw === 'ACQUIRING',
+      analysis.perfusionIndex
     );
 
     const roi = analysis.roi;
