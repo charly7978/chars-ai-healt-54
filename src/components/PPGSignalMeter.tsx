@@ -743,9 +743,9 @@ const PPGSignalMeter = ({
         lastRhythmCountSeenRef.current = lastRhythmCountSeen;
         const lastRR = rr && rr.length > 0 ? rr[rr.length - 1]! : 800;
         const retroDuration = Math.min(Math.max(lastRR, 400), 600);
-        if (waveClass === 'arrhythmia') {
-          buffer.markWaveClassBack(retroDuration, 'arrhythmia');
-        } else if (waveClass === 'weak') {
+        // NO marcar hacia atrás para arritmias - permite alternancia real
+        // Solo marcar hacia atrás para weak beats
+        if (waveClass === 'weak') {
           buffer.markWaveClassBack(retroDuration, 'weak');
         }
         const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
@@ -758,7 +758,11 @@ const PPGSignalMeter = ({
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
 
-      buffer.push({ time: now, value: scaledValue, waveClass: 'normal' });
+      // Usar waveClass del latido actual si está disponible, sino 'normal'
+      const currentWaveClass = beatHistoryRef.current.length > 0 
+        ? beatHistoryRef.current[beatHistoryRef.current.length - 1]!.waveClass 
+        : 'normal';
+      buffer.push({ time: now, value: scaledValue, waveClass: currentWaveClass });
       const points = buffer.getPoints();
       if (points.length > 30) {
         const recentPoints = points.slice(-150);
