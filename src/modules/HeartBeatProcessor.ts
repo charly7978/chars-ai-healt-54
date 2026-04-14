@@ -21,17 +21,10 @@ export class HeartBeatProcessor {
   private acceptedBeats: AcceptedBeat[] = [];
   private readonly MAX_ACCEPTED = 60;
 
-  private templateBuf: Float64Array = new Float64Array(40);
+  private templateBuf: Float64Array = new Float64Array(30);
   private templateLen = 0;
   private templateValid = false;
-  /** V2: Template window adaptive to Fs — covers ~0.8s */
-  private get TEMPLATE_WINDOW(): number {
-    const sr = this.estimateSampleRate();
-    return Math.max(20, Math.min(40, Math.round(sr * 0.8)));
-  }
-
-  /** V2: Pre-allocated buffer for normalizeWindow — zero allocations in hot path */
-  private readonly normalizeWindowBuf = new Float64Array(16);
+  private readonly TEMPLATE_WINDOW = 25;
 
   private smoothBPM = 0;
   private spectralBPM = 0;
@@ -442,12 +435,9 @@ export class HeartBeatProcessor {
     return 0;
   }
 
-  /** V2: handles both 2:1 and 3:1 missed beat ratios */
   private handleMissedBeat(longRR: number, expectedRR: number, now: number): void {
     if (expectedRR <= 0) return;
     const ratio = longRR / expectedRR;
-
-    // 2:1 — one missed beat: split into two equal intervals
     if (ratio >= 1.7 && ratio <= 2.5) {
       const halfRR = longRR / 2;
       if (halfRR >= 300 && halfRR <= 1800) {
@@ -457,21 +447,6 @@ export class HeartBeatProcessor {
           if (this.rrIntervals.length > this.MAX_RR) this.rrIntervals.shift();
         }
         this.missedBeatCount++;
-      }
-      return;
-    }
-
-    // 3:1 — two missed beats: split into three equal intervals
-    if (ratio >= 2.5 && ratio <= 3.5) {
-      const thirdRR = longRR / 3;
-      if (thirdRR >= 300 && thirdRR <= 1800) {
-        if (this.rrIntervals.length > 0) {
-          this.rrIntervals[this.rrIntervals.length - 1] = thirdRR;
-          this.rrIntervals.push(thirdRR);
-          this.rrIntervals.push(thirdRR);
-          while (this.rrIntervals.length > this.MAX_RR) this.rrIntervals.shift();
-        }
-        this.missedBeatCount += 2;
       }
     }
   }
@@ -597,9 +572,7 @@ export class HeartBeatProcessor {
           finalBpm = finalBpm * 0.62 + fromMedianIBI * 0.38;
         }
       }
-      // V2: Boost confidence when autocorr and spectral agree
-      const agreementBoost = (ac > 0 && sp > 0 && Math.abs(ac - sp) / Math.max(ac, sp) < 0.14) ? 0.12 : 0;
-      confidence = clamp(0.22 + this.consecutivePeaks * 0.05 + (sp > 0 ? 0.08 : 0) + agreementBoost, 0, 0.75);
+      confidence = clamp(0.22 + this.consecutivePeaks * 0.05 + (sp > 0 ? 0.08 : 0), 0, 0.75);
     } else if (fromMedianIBI > 0) {
       finalBpm = fromMedianIBI;
       dominantSource = 'median';
@@ -789,7 +762,7 @@ export class HeartBeatProcessor {
   }
 
   private computeFlags(c: BeatCandidate, timeSinceLast: number, expectedRR: number): BeatFlags {
-    const isPremature = expectedRR > 0 && timeSinceLast < expectedRR * 0.65;
+    const isPremature = expectedRR > 0 && timeSinceLast < expectedRR * 0.7;
     const isWeak = c.detectorHits < 2 && c.morphologyScore < 40;
     return {
       isWeak,
@@ -909,22 +882,15 @@ export class HeartBeatProcessor {
     return { normalizedValue, normRange: range };
   }
 
-  /** V2: Uses pre-allocated buffer — zero allocations in hot path */
   private normalizeWindow(count: number, refWindowLen: number): Float64Array {
     const n = this.signalBuf.length;
-    const out = this.normalizeWindowBuf;
-    if (n < count) {
-      for (let i = 0; i < count; i++) out[i] = 0;
-      return out;
-    }
+    if (n < count) return new Float64Array(count);
     const refN = Math.min(refWindowLen, n);
     const p10 = this.signalBuf.percentile(0.1, refN);
     const p90 = this.signalBuf.percentile(0.9, refN);
     const range = p90 - p10;
-    if (range < 0.15) {
-      for (let i = 0; i < count; i++) out[i] = 0;
-      return out;
-    }
+    const out = new Float64Array(count);
+    if (range < 0.15) return out;
     for (let i = 0; i < count; i++) {
       const v = this.signalBuf.get(n - count + i);
       const c = Math.min(p90, Math.max(p10, v));

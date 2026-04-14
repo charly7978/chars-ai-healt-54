@@ -7,10 +7,8 @@ import type { PressureState } from './PressureProxyEstimator';
  * - **Estricta**: yema centrada, poca asimetría (referencia reproducible).
  * - **Lateral óptica** (fallback): contacto lateral válido cuando la señal es
  *   estable (maskIoU, perfusión, cromática) aunque el centroide y los gradientes
- *   R indiquen dedo "de costado" — mismo tejido, distinta geometría respecto al
+ *   R indiquen dedo “de costado” — mismo tejido, distinta geometría respecto al
  *   flash; sin simulación, solo reglas sobre métricas del frame.
- *
- * V2: Umbrales adaptativos para pieles oscuras (Fitzpatrick V-VI) donde rawRed < 80.
  */
 export type CanonicalPoseIssue =
   | 'OK'
@@ -31,11 +29,7 @@ function pressureOf(a: FrameAnalysisResult): PressureState {
   return a.pressureState;
 }
 
-/**
- * Pose frontal "libro": centroide cerca del eje óptico y gradientes moderados.
- * Umbrales adaptativos: piel oscura bajo flash tiene menor reflexión R, así que
- * relajamos cobertura, centrado y perfusión mínimas.
- */
+/** Pose frontal “libro”: centroide cerca del eje óptico y gradientes moderados. */
 function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
   const cx = a.poseCentroidNorm.x;
   const cy = a.poseCentroidNorm.y;
@@ -45,12 +39,6 @@ function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
   const su = a.spatialUniformity;
   const pi = a.perfusionIndex;
   const ch = a.clipHighRatio;
-
-  // Adaptive thresholds for dark skin (Fitzpatrick V-VI)
-  const darkSkin = a.rawRed < 80;
-  const covMin = darkSkin ? 0.22 : 0.28;
-  const centMin = darkSkin ? 0.08 : 0.12;
-  const flatPerfThresh = darkSkin ? 1.5 : 2.05;
 
   if (pressureOf(a) === 'HIGH_PRESSURE' || ch > 0.15) {
     return { ok: false, issue: 'PRESSURE_HIGH' };
@@ -68,7 +56,7 @@ function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
     return { ok: false, issue: 'TIP_ASYMMETRY' };
   }
 
-  if (cov < covMin || cent < centMin) {
+  if (cov < 0.28 || cent < 0.12) {
     return { ok: false, issue: 'TIP_COVERAGE' };
   }
 
@@ -76,7 +64,7 @@ function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
     return { ok: false, issue: 'FLAT_OVERPRESSURE' };
   }
 
-  if (cov > 0.76 && pi < flatPerfThresh) {
+  if (cov > 0.76 && pi < 2.05) {
     return { ok: false, issue: 'FLAT_PERFUSION' };
   }
 
@@ -98,16 +86,13 @@ function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
 /**
  * Contacto lateral: centroide desplazado y/o gradiente R alto son normales;
  * exigimos estabilidad de máscara, perfusión y consistencia cromática (R/G/B).
- * V2: Relajado para piel oscura (rawRed < 80).
  */
 function evaluateLateralOpticalPose(a: FrameAnalysisResult): boolean {
   if (a.pressureState !== 'OPTIMAL_PRESSURE') return false;
   if (a.clipHighRatio > 0.18) return false;
   if ((a.maskIoU ?? 0) < 0.18) return false;
-
-  const darkSkin = a.rawRed < 80;
-  if (a.perfusionIndex < (darkSkin ? 1.0 : 1.45)) return false;
-  if (a.coverageRatio < (darkSkin ? 0.18 : 0.24) || a.centerCoverage < (darkSkin ? 0.06 : 0.09)) return false;
+  if (a.perfusionIndex < 1.45) return false;
+  if (a.coverageRatio < 0.24 || a.centerCoverage < 0.09) return false;
 
   const cx = a.poseCentroidNorm.x;
   const cy = a.poseCentroidNorm.y;
@@ -119,8 +104,7 @@ function evaluateLateralOpticalPose(a: FrameAnalysisResult): boolean {
   const rr = a.rawRed;
   const gg = a.rawGreen;
   const bb = a.rawBlue;
-  const rgMin = darkSkin ? 1.01 : 1.02;
-  if (rr < (darkSkin ? 28 : 42) || gg < 6 || rr / Math.max(gg, 1) < rgMin) return false;
+  if (rr < 42 || gg < 6 || rr / Math.max(gg, 1) < 1.02) return false;
   if (bb > 3 && rr / bb < 1.008) return false;
 
   const su = a.spatialUniformity;

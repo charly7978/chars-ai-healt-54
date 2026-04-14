@@ -107,8 +107,7 @@ export class BloodPressureProcessorElite {
   private sbpHistory: number[] = [];
   private dbpHistory: number[] = [];
   private readonly HISTORY_SIZE = 20;
-  /** V2: EMA alpha adaptativo según confianza (HIGH=0.30, MEDIUM=0.20, LOW=0.10) */
-  private lastEmaAlpha = 0.25;
+  private readonly EMA_ALPHA = 0.25;
   
   private lastSBP = 0;
   private lastDBP = 0;
@@ -168,20 +167,14 @@ export class BloodPressureProcessorElite {
     
     const rrVar = this.calculateRRVariability(validRR);
     
-    // ═══ V2: PWV PROXY MEJORADO CON DICROTIC NOTCH ═══
-    // PWV ≈ distancia arterial / tiempo de tránsito; altura personalizada
+    // ========== CALCULAR PWV PROXY ==========
+    // PWV ≈ distancia arterial efectiva / tiempo de subida (proxy); altura personalizada mejora coherencia fisiológica
     const height =
       userHeightM != null && isFinite(userHeightM) && userHeightM >= 1.2 && userHeightM <= 2.15
         ? userHeightM
         : 1.7;
-    // Si la nota dicrota fue detectada, usar tiempo onset→dicrotic (más fisiológico)
-    // De lo contrario, fallback a SUT (systolic upstroke time)
-    const dicroticTimeMs = medianFeatures.dtMs > 20 && medianFeatures.dicroticDepth > 0.02
-      ? medianFeatures.sutMs + medianFeatures.dtMs * 0.5  // Proxy: SUT + mitad del tiempo diastólico
-      : 0;
-    const transitTimeMs = dicroticTimeMs > 30 ? dicroticTimeMs : (medianFeatures.sutMs || 80);
-    const transitSec = Math.max(0.02, transitTimeMs / 1000);
-    const pwvProxy = height / transitSec;
+    const sutSec = Math.max(0.02, (medianFeatures.sutMs || 80) / 1000);
+    const pwvProxy = height / sutSec;
     
     // ========== ESTIMAR SBP ==========
     let sbp = this.SBP_COEFF.intercept +
@@ -224,16 +217,10 @@ export class BloodPressureProcessorElite {
     sbp = Math.max(80, Math.min(200, sbp));
     dbp = Math.max(50, Math.min(120, dbp));
     
-    // ═══ V2: SUAVIZADO TEMPORAL CON EMA ADAPTATIVO ═══
-    // HIGH confidence → alpha alto (0.30) = reacciona rápido
-    // LOW confidence → alpha bajo (0.10) = más conservador
-    this.lastEmaAlpha = confidenceLevel === 'HIGH' ? 0.30
-      : confidenceLevel === 'MEDIUM' ? 0.20
-      : confidenceLevel === 'LOW' ? 0.10
-      : 0.08;
+    // ========== SUAVIZADO TEMPORAL ==========
     if (this.lastSBP > 0 && this.lastDBP > 0) {
-      sbp = this.lastSBP * (1 - this.lastEmaAlpha) + sbp * this.lastEmaAlpha;
-      dbp = this.lastDBP * (1 - this.lastEmaAlpha) + dbp * this.lastEmaAlpha;
+      sbp = this.lastSBP * (1 - this.EMA_ALPHA) + sbp * this.EMA_ALPHA;
+      dbp = this.lastDBP * (1 - this.EMA_ALPHA) + dbp * this.EMA_ALPHA;
     }
     
     this.lastSBP = sbp;

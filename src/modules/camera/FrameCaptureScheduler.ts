@@ -10,30 +10,18 @@ export interface CaptureFrameMetrics {
   inputFps: number;
   captureLatencyMs: number;
   /** Estrategia usada en el último frame */
-  strategy: 'bitmap' | 'buffer_pool' | 'offscreen';
+  strategy: 'bitmap' | 'buffer_pool';
   /** Solo path pool: getImageData en main */
   readbackMs?: number;
   /** Δt mediano entre timestamps de presentación (RVFC), ms */
   presentationMedianDeltaMs: number;
   /** Jitter (MAD) de Δt, ms */
   presentationJitterMs: number;
-  /** Jitter (desviación estándar) de Δt, ms */
-  presentationJitterStdMs: number;
   /** Fs efectivo robusto (Etapa A), Hz */
   effectiveSampleRateHz: number;
-  /** Fs estimado por Kalman filter, Hz */
-  kalmanSampleRateHz: number;
-  /** Drift de sample rate, Hz/s */
-  sampleRateDriftHzPerSec: number;
-  /** Skew de distribución de Δt */
-  deltaSkew: number;
   /** Confianza metrología [0,1] */
   timingConfidence: number;
   frameDropCount: number;
-  /** Tamaño de ventana adaptativo */
-  windowSize: number;
-  /** Predicción de próximo timestamp */
-  predictedNextTimestamp: number;
 }
 
 export type FrameForPipeline = ImageData | ImageBitmap;
@@ -43,8 +31,6 @@ export interface FrameCaptureSchedulerOptions {
   targetHeight: number;
   /** Preferir createImageBitmap → worker (sin getImageData en main) */
   preferBitmapPath: boolean;
-  /** Usar OffscreenCanvas si está disponible (zero-copy) */
-  preferOffscreenCanvas: boolean;
 }
 
 const POOL_SIZE = 2;
@@ -53,11 +39,9 @@ export class FrameCaptureScheduler {
   readonly targetWidth: number;
   readonly targetHeight: number;
   private readonly preferBitmapPath: boolean;
-  private readonly preferOffscreenCanvas: boolean;
 
   private canvas: HTMLCanvasElement | null = null;
-  private offscreenCanvas: OffscreenCanvas | null = null;
-  private ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null = null;
+  private ctx: CanvasRenderingContext2D | null = null;
   private bufferPool: Uint8ClampedArray<ArrayBuffer>[] = [];
   private poolIndex = 0;
 
@@ -69,22 +53,15 @@ export class FrameCaptureScheduler {
     strategy: 'buffer_pool',
     presentationMedianDeltaMs: 0,
     presentationJitterMs: 0,
-    presentationJitterStdMs: 0,
     effectiveSampleRateHz: 0,
-    kalmanSampleRateHz: 0,
-    sampleRateDriftHzPerSec: 0,
-    deltaSkew: 0,
     timingConfidence: 0,
     frameDropCount: 0,
-    windowSize: 64,
-    predictedNextTimestamp: 0,
   };
 
   constructor(options: FrameCaptureSchedulerOptions) {
     this.targetWidth = options.targetWidth;
     this.targetHeight = options.targetHeight;
     this.preferBitmapPath = options.preferBitmapPath;
-    this.preferOffscreenCanvas = options.preferOffscreenCanvas;
     const px = this.targetWidth * this.targetHeight * 4;
     for (let i = 0; i < POOL_SIZE; i++) {
       this.bufferPool.push(new Uint8ClampedArray(new ArrayBuffer(px)));
@@ -95,6 +72,7 @@ export class FrameCaptureScheduler {
     return { ...this.metrics };
   }
 
+  /** Snapshot Etapa A (misma base que métricas expuestas). */
   getTimingSnapshot(): CaptureTimingContext {
     return this.metrology.getSnapshot();
   }
@@ -110,32 +88,12 @@ export class FrameCaptureScheduler {
     const snap = this.metrology.getSnapshot();
     this.metrics.presentationMedianDeltaMs = snap.medianaDeltaMs;
     this.metrics.presentationJitterMs = snap.jitterMadMs;
-    this.metrics.presentationJitterStdMs = snap.jitterStdMs;
     this.metrics.effectiveSampleRateHz = snap.sampleRateHz;
-    this.metrics.kalmanSampleRateHz = snap.kalmanSampleRateHz;
-    this.metrics.sampleRateDriftHzPerSec = snap.sampleRateDriftHzPerSec;
-    this.metrics.deltaSkew = snap.deltaSkew;
     this.metrics.timingConfidence = snap.timingConfidence;
     this.metrics.frameDropCount = snap.frameDropCount;
-    this.metrics.windowSize = snap.windowSize;
-    this.metrics.predictedNextTimestamp = snap.predictedNextTimestamp;
   }
 
-  private ensureCanvas(): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D {
-    // Prefer OffscreenCanvas si está disponible y es preferido
-    if (this.preferOffscreenCanvas && !this.offscreenCanvas && typeof OffscreenCanvas !== 'undefined') {
-      try {
-        this.offscreenCanvas = new OffscreenCanvas(this.targetWidth, this.targetHeight);
-        this.ctx = this.offscreenCanvas.getContext('2d', { alpha: false });
-        if (this.ctx) {
-          this.metrics.strategy = 'offscreen';
-          return this.ctx;
-        }
-      } catch {
-        // Fallback a canvas normal
-      }
-    }
-
+  private ensureCanvas(): CanvasRenderingContext2D {
     if (!this.canvas) {
       this.canvas = document.createElement('canvas');
       this.canvas.width = this.targetWidth;
@@ -158,7 +116,6 @@ export class FrameCaptureScheduler {
     if (this.lastInputTs.length > 40) this.lastInputTs.shift();
     this.metrics.inputFps = this.estimateFps(this.lastInputTs);
 
-    // Path 1: ImageBitmap (preferido si está disponible)
     if (this.preferBitmapPath && supportsCreateImageBitmap()) {
       try {
         const bmp = await createImageBitmap(video, {
@@ -174,7 +131,6 @@ export class FrameCaptureScheduler {
       }
     }
 
-    // Path 2: Canvas/OffscreenCanvas con buffer pool
     const ctx = this.ensureCanvas();
     ctx.drawImage(video, 0, 0, this.targetWidth, this.targetHeight);
     const readT0 = performance.now();
@@ -185,11 +141,7 @@ export class FrameCaptureScheduler {
     const imageData = new ImageData(buf, this.targetWidth, this.targetHeight);
     this.metrics.captureLatencyMs = performance.now() - t0;
     this.metrics.readbackMs = performance.now() - readT0;
-    if (this.offscreenCanvas) {
-      this.metrics.strategy = 'offscreen';
-    } else {
-      this.metrics.strategy = 'buffer_pool';
-    }
+    this.metrics.strategy = 'buffer_pool';
     return imageData;
   }
 
@@ -210,11 +162,7 @@ export class FrameCaptureScheduler {
     this.poolIndex = (this.poolIndex + 1) % POOL_SIZE;
     buf.set(snapshot.data);
     this.metrics.captureLatencyMs = performance.now() - t0;
-    if (this.offscreenCanvas) {
-      this.metrics.strategy = 'offscreen';
-    } else {
-      this.metrics.strategy = 'buffer_pool';
-    }
+    this.metrics.strategy = 'buffer_pool';
     return new ImageData(buf, this.targetWidth, this.targetHeight);
   }
 

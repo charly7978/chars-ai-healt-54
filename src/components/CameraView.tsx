@@ -4,7 +4,6 @@ import {
   type EffectiveCameraSettings,
   type CameraCapabilitiesSnapshot,
 } from "@/modules/signal-processing/CameraControlEngine";
-import { buildProgressiveConstraints, type NegotiatedConstraints } from "@/modules/camera/ConstraintNegotiator";
 
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
@@ -27,24 +26,6 @@ export interface CameraDiagnostics {
   capabilities: CameraCapabilitiesSnapshot | null;
   /** Fases de constraints que se aplicaron correctamente (torch, fps, AE, etc.) */
   phasesApplied: string[];
-  /** Métricas de negociación de constraints adaptativa */
-  negotiationMetrics?: {
-    phaseAttempted: string;
-    phaseSucceeded: string;
-    attempts: number;
-    finalResolution: { width: number; height: number } | null;
-    finalFramerate: number | null;
-    negotiationTimeMs: number;
-  };
-  /** Capabilities del dispositivo detectadas */
-  deviceCapabilities?: {
-    maxWidth: number;
-    maxHeight: number;
-    maxFramerate: number;
-    supportsExposureMode: boolean;
-    supportsWhiteBalanceMode: boolean;
-    supportsFocusMode: boolean;
-  };
 }
 
 interface CameraViewProps {
@@ -120,8 +101,8 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     };
 
     /**
-     * Adquisición de video con negociación adaptativa multi-fase (Etapa 1).
-     * Usa ConstraintNegotiator para detectar capabilities y negociar progresivamente.
+     * Una sola apertura de cámara en el caso habitual (p. ej. 1 webcam en PC).
+     * Antes: varios getUserMedia de prueba que se cerraban → LED/sensor "abre y cierra".
      */
     const acquireVideoStream = async (): Promise<MediaStream> => {
       const tryVideo = (video: MediaTrackConstraints | boolean) =>
@@ -136,59 +117,75 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       const videoInputs = devices.filter((d) => d.kind === 'videoinput');
       console.log('📷 Dispositivos video:', videoInputs.length, videoInputs.map((d) => d.label || d.deviceId));
 
-      // ═══ V3: Flujo robusto de adquisición de cámara ═══
-      // Prioridad: facingMode:'environment' (trasera) → deviceId específico → fallback genérico
-      // NO usar deviceId vacío (enumerateDevices sin permisos devuelve "")
-      
-      const firstDevice = videoInputs.length > 0 ? videoInputs[0]! : null;
-      const hasValidDeviceId = firstDevice?.deviceId != null && firstDevice.deviceId.length > 4;
-      if (firstDevice?.label) {
-        diagnosticsRef.current.deviceLabel = firstDevice.label;
-      }
-
-      // Intento 1: facingMode environment (cámara trasera) — funciona sin deviceId
-      try {
-        console.log('📷 Intentando cámara trasera (facingMode: environment)...');
-        return await tryVideo({
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 640, max: 1280 },
-          height: { ideal: 480, max: 720 },
-          frameRate: { ideal: 30, min: 15, max: 60 },
-        });
-      } catch (e1) {
-        console.warn('📷 facingMode environment falló:', e1);
-      }
-
-      // Intento 2: deviceId específico si está disponible y no es vacío
-      if (hasValidDeviceId) {
+      if (videoInputs.length === 1) {
+        const d = videoInputs[0]!;
+        diagnosticsRef.current.deviceLabel = d.label || 'Cámara';
         try {
-          console.log('📷 Intentando deviceId específico:', firstDevice!.deviceId.slice(0, 8) + '...');
           return await tryVideo({
-            deviceId: { exact: firstDevice!.deviceId },
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            frameRate: { ideal: 30, min: 15, max: 30 },
+            deviceId: { ideal: d.deviceId },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            frameRate: { ideal: 60, min: 15, max: 60 },
           });
-        } catch (e2) {
-          console.warn('📷 deviceId específico falló:', e2);
+        } catch {
+          try {
+            return await tryVideo({
+              deviceId: { ideal: d.deviceId },
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              frameRate: { ideal: 60, min: 15, max: 60 },
+            });
+          } catch {
+            return await tryVideo({ deviceId: { ideal: d.deviceId } });
+          }
         }
       }
 
-      // Intento 3: constraints mínimos
-      try {
-        console.log('📷 Intentando constraints mínimos...');
-        return await tryVideo({
-          width: { ideal: 320 },
-          height: { ideal: 240 },
-          frameRate: { ideal: 24 },
-        });
-      } catch (e3) {
-        console.warn('📷 Constraints mínimos fallaron:', e3);
+      if (videoInputs.length === 0) {
+        try {
+          return await tryVideo({
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 60, min: 15, max: 60 },
+          });
+        } catch {
+          return await tryVideo(true);
+        }
       }
 
-      // Intento 4: sin constraints (acepta cualquier cámara)
-      console.log('📷 Último intento: sin constraints...');
-      return await tryVideo(true);
+      // Varias cámaras (móvil): una sola petición orientada a trasera; sin bucles que abran/cierren cada una.
+      try {
+        return await tryVideo({
+          facingMode: { ideal: 'environment' },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 60, min: 15, max: 60 },
+        });
+      } catch {
+        try {
+          return await tryVideo({
+            facingMode: { ideal: 'user' },
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 60, min: 15, max: 60 },
+          });
+        } catch {
+          const first = videoInputs[0];
+          if (first?.deviceId) {
+            try {
+              return await tryVideo({
+                deviceId: { ideal: first.deviceId },
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 60, min: 15, max: 60 },
+              });
+            } catch {
+              return await tryVideo({ deviceId: { ideal: first.deviceId } });
+            }
+          }
+          return await tryVideo(true);
+        }
+      }
     };
 
     const startCamera = async () => {

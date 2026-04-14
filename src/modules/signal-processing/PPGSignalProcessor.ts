@@ -37,8 +37,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private bandpassFilter: BandpassFilter;
   private readonly filteredBuf = new RingBuffer(300);
   private readonly rawSignalBuf = new RingBuffer(300);
-  /** Mediana móvil sobre bruto: suprime saltos por ROI/fuente (11 samples, median of 7) */
-  private readonly rawPrefilterBuf = new RingBuffer(11);
+  /** Mediana móvil corta sobre bruto (sin simulación): suprime saltos por ROI/fuente */
+  private readonly rawPrefilterBuf = new RingBuffer(7);
   private readonly frameTimeBuf = new RingBuffer(120);
 
   private cameraControl: CameraControlEngine | null = null;
@@ -152,24 +152,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (
       ct &&
       ct.timingConfidence >= 0.22 &&
-      ct.kalmanSampleRateHz >= 15 &&
-      ct.kalmanSampleRateHz <= 60 &&
-      isFinite(ct.kalmanSampleRateHz)
+      ct.sampleRateHz >= 15 &&
+      ct.sampleRateHz <= 60 &&
+      ct.intervalCount >= 4
     ) {
-      // Usar Kalman filter para estimación más suave y robusta
-      this.estimatedSampleRate = ct.kalmanSampleRateHz;
+      this.estimatedSampleRate = ct.sampleRateHz;
       this.realFps = ct.sampleRateHz;
-      this.bandpassFilter.setSampleRate(ct.kalmanSampleRateHz);
+      this.bandpassFilter.setSampleRate(ct.sampleRateHz);
       this.lastFrameTime = timestamp;
       this.lastCaptureTiming = ct;
-      
-      // Log de métricas extendidas para debugging
-      if (ct.jitterStdMs > 0) {
-        // Jitter estándar disponible
-      }
-      if (ct.sampleRateDriftHzPerSec !== 0) {
-        // Drift detectado
-      }
     } else {
       this.updateSampleRate(timestamp);
       this.lastCaptureTiming = null;
@@ -198,8 +189,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       analysis.clipHighRatio,
       analysis.clipLowRatio,
       analysis.perfusionIndex < 2.8,
-      analysis.contactRaw === 'CONTACT_UNSTABLE' || analysis.contactRaw === 'ACQUIRING',
-      analysis.perfusionIndex
+      analysis.contactRaw === 'CONTACT_UNSTABLE' || analysis.contactRaw === 'ACQUIRING'
     );
 
     const roi = analysis.roi;
@@ -223,8 +213,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     this.rawPrefilterBuf.push(analysis.sourceValue);
     const rawDenoised =
-      this.rawPrefilterBuf.length >= 5
-        ? this.rawPrefilterBuf.medianLast(Math.min(7, this.rawPrefilterBuf.length))
+      this.rawPrefilterBuf.length >= 3
+        ? this.rawPrefilterBuf.medianLast(Math.min(5, this.rawPrefilterBuf.length))
         : analysis.sourceValue;
     this.rawSignalBuf.push(rawDenoised);
     const filtered = this.bandpassFilter.filter(rawDenoised);
@@ -308,19 +298,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     if (performance.now() - this.lastLogTime > 4000) {
       this.lastLogTime = performance.now();
-      const lct = this.lastCaptureTiming;
       console.log(
         `📷 PPG [${this.activeSourceLabel}] Q=${gatedQuality.toFixed(0)} PI=${perfusionIndex.toFixed(2)} ` +
           `${this.exportedContactState} worker=${pipeStats.workerActive ? 'on' : 'off'} ` +
-          `Fs=${lct ? lct.kalmanSampleRateHz.toFixed(1) : this.estimatedSampleRate.toFixed(1)}` +
-          `(raw=${lct ? lct.sampleRateHz.toFixed(1) : this.realFps.toFixed(1)}) ` +
-          `jitter=${lct ? lct.jitterMadMs.toFixed(1) : '?'}(std=${lct ? lct.jitterStdMs.toFixed(1) : '?'}) ` +
-          `drift=${lct ? lct.sampleRateDriftHzPerSec.toFixed(3) : '?'} ` +
-          `skew=${lct ? lct.deltaSkew.toFixed(3) : '?'} ` +
-          `conf=${lct ? lct.timingConfidence.toFixed(2) : '0'} ` +
-          `drops=${lct ? lct.frameDropCount : 0} ` +
-          `win=${lct ? lct.windowSize : 0} ` +
-          `dropped=${pipeStats.droppedFrames}`
+          `inFPS=${pipeStats.inputFps.toFixed(0)} procFPS=${pipeStats.processedFps.toFixed(0)} ` +
+          `lat=${pipeStats.lastFrameLatencyMs.toFixed(1)}ms drop=${pipeStats.droppedFrames}`
       );
     }
 

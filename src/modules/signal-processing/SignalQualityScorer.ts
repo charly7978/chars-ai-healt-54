@@ -87,9 +87,7 @@ export class SignalQualityScorer {
     if (clipHigh > 0.12) reasons.push('clip_high');
     if (clipLow > 0.18) reasons.push('clip_low');
 
-    // Template SQI adaptive to estimated BPM from autocorrelation
-    const estimatedBPM = bestLag > 0 ? (sr / bestLag) * 60 : 0;
-    const templateCorr = this.pulseTemplateCorrelation(buf, n, sr, estimatedBPM);
+    const templateCorr = this.pulseTemplateCorrelation(buf, n, sr);
 
     let zc = 0;
     for (let i = 1; i < n; i++) {
@@ -135,20 +133,9 @@ export class SignalQualityScorer {
     };
   }
 
-  /**
-   * Template correlation adaptive to estimated BPM.
-   * When a confident BPM is available, centers the Gaussian template at the
-   * expected beat period (sr * 60/BPM) instead of the fixed sr*0.45.
-   */
-  private pulseTemplateCorrelation(buf: RingBuffer, n: number, sr: number, estimatedBPM?: number): number {
-    // Adaptive center: if BPM is in valid cardiac range, use it
-    let center: number;
-    if (estimatedBPM && estimatedBPM >= 40 && estimatedBPM <= 200) {
-      center = Math.floor(sr * (60 / estimatedBPM));
-    } else {
-      center = Math.floor(sr * 0.45); // Default ~80 BPM assumption
-    }
-    const sigma = Math.max(3, center * 0.2);
+  private pulseTemplateCorrelation(buf: RingBuffer, n: number, sr: number): number {
+    const center = Math.floor(sr * 0.45);
+    const sigma = Math.max(3, sr * 0.09);
     let sum = 0;
     let sumTT = 0;
     for (let i = 0; i < n; i++) {
