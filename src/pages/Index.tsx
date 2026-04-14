@@ -787,8 +787,8 @@ const Index = () => {
         </div>
       )}
 
-      {/* Cámara: solo captura; debajo del monitor (z-0 < z-10) */}
-      <div className="absolute inset-0 z-0">
+      {/* Cámara: solo captura; siempre por debajo del monitor PPG */}
+      <div className="absolute inset-0 z-0 overflow-hidden">
         <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isMonitoring} />
       </div>
 
