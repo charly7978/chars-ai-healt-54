@@ -89,9 +89,12 @@ function extractCapabilities(track: MediaStreamTrack): DeviceCapabilities {
       maxWidth: capabilities.width?.max ?? 640,
       maxHeight: capabilities.height?.max ?? 480,
       maxFramerate: capabilities.frameRate?.max ?? 30,
-      supportsExposureMode: (capabilities as any).exposureMode?.length > 1 || false,
-      supportsWhiteBalanceMode: (capabilities as any).whiteBalanceMode?.length > 1 || false,
-      supportsFocusMode: (capabilities as any).focusMode?.length > 1 || false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supportsExposureMode: ((capabilities as Record<string, unknown>).exposureMode as string[] | undefined)?.length! > 1 || false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supportsWhiteBalanceMode: ((capabilities as Record<string, unknown>).whiteBalanceMode as string[] | undefined)?.length! > 1 || false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supportsFocusMode: ((capabilities as Record<string, unknown>).focusMode as string[] | undefined)?.length! > 1 || false,
     };
   } catch {
     return defaultCaps;

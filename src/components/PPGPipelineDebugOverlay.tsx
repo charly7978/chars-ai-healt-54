@@ -5,10 +5,10 @@ import React from 'react';
  * Only rendered when ?ppgDebug query param is present.
  */
 interface PPGPipelineDebugOverlayProps {
-  signal: any;
-  positionQuality: any;
-  captureMetrics: any;
-  cameraDiag: any;
+  signal: Record<string, unknown> | null;
+  positionQuality: Record<string, unknown> | null;
+  captureMetrics: Record<string, unknown> | null;
+  cameraDiag: Record<string, unknown> | null;
   framesProcessed: number;
 }
 
