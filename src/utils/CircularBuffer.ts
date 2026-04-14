@@ -55,6 +55,26 @@ export class CircularBuffer {
     }
   }
 
+  /**
+   * Marca un segmento específico del buffer por tiempo (para arritmias individuales)
+   * @param startTimeMs Tiempo de inicio del segmento
+   * @param durationMs Duración del segmento
+   * @param waveClass Tipo de waveClass a asignar
+   */
+  markWaveClassSegment(startTimeMs: number, durationMs: number, waveClass: 'weak' | 'arrhythmia'): void {
+    const endTime = startTimeMs + durationMs;
+    for (let i = 0; i < this.buffer.length; i++) {
+      const pt = this.buffer[i];
+      if (pt.time >= startTimeMs && pt.time <= endTime) {
+        if (waveClass === 'arrhythmia') {
+          pt.waveClass = 'arrhythmia';
+        } else if (pt.waveClass !== 'arrhythmia') {
+          pt.waveClass = 'weak';
+        }
+      }
+    }
+  }
+
   clear(): void {
     this.buffer = [];
   }
