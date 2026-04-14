@@ -246,6 +246,8 @@ export class ElitePPGProcessor {
             activeSource: ppgSignal.activeSource,
             perfusionIndex: ppgSignal.perfusionIndex,
             positionDrifting: pq.drifting,
+            estimatedSampleRate: ppgSignal.estimatedSampleRate,
+            maskIoU: ppgSignal.maskIoU,
           }
         );
       } else {

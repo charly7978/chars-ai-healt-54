@@ -77,6 +77,8 @@ export const useHeartBeatProcessor = () => {
       activeSource?: string;
       perfusionIndex?: number;
       positionDrifting?: boolean;
+      estimatedSampleRate?: number;
+      maskIoU?: number;
     }
   ): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {

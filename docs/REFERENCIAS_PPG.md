@@ -19,7 +19,8 @@ Documento de apoyo para alinear implementación con literatura y tendencias reci
 |------|-----------------|
 | RoR + CHROM | `SpO2ProcessorElite.ts`, `OpticalRatioEngine.ts` |
 | PPG multi-canal | `PPGSignalProcessor.ts` |
-| Meta-ROI (estabilidad máscara + pulsatility proxy) | `AdaptiveROIMask.ts` |
+| Meta-ROI (estabilidad máscara + pulsatility proxy) | `AdaptiveROIAssembler` + `TilePulsatilityMap` (`maskIoU` → `HeartBeatProcessor`) |
+| Picos / RR / autocorr+espectral | `HeartBeatProcessor.ts` (Fs alineada a `estimatedSampleRate`, gating por `maskIoU`) |
 | Pesos multi-escala según SNR previo | `AdvancedFingerTracker.ts` |
 | PA morfológica / PTT-proxy + altura usuario | `BloodPressureProcessorElite.ts`, perfil en `DeviceProfileManager` |
 | Pipeline UI principal | `VitalSignsProcessor.ts` (SpO2/PA élite + calibrador dispositivo), `Index.tsx` |

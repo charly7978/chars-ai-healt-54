@@ -1,5 +1,8 @@
 /**
  * HEARTBEAT PROCESSOR V2 — LAYERED ARCHITECTURE
+ *
+ * E3: Fs efectiva alineada con `ProcessedSignal.estimatedSampleRate` (Etapa A/B) cuando el
+ * buffer local aún no tiene mediana fiable; gating extra por `maskIoU` (estabilidad ROI).
  */
 import { RingBuffer } from './signal-processing/RingBuffer';
 import type {
@@ -52,6 +55,10 @@ export class HeartBeatProcessor {
   private pressurePenalty = 0;
   private contactStable = true;
   private sourceSwitchRecent = false;
+  /** Fs del PPG (RVFC + buffer); prioriza coherencia autocorr/espectral con la cadena de captura */
+  private upstreamSampleRateHz: number | null = null;
+  /** Estabilidad máscara ROI [0,1]; 1 = sin señal o no provista */
+  private maskIoU = 1;
 
   constructor() {
     this.setupAudio();
@@ -71,6 +78,9 @@ export class HeartBeatProcessor {
       activeSource?: string;
       perfusionIndex?: number;
       positionDrifting?: boolean;
+      /** Hz [15,60] desde PPGSignalProcessor / metrología */
+      estimatedSampleRate?: number;
+      maskIoU?: number;
     }
   ): HeartBeatResult {
     this.frameCount++;
@@ -84,6 +94,11 @@ export class HeartBeatProcessor {
         upstreamContext.pressureState === 'LOW_PRESSURE' ? 0.15 : 0;
       this.contactStable = upstreamContext.contactState === 'STABLE_CONTACT';
       this.sourceSwitchRecent = false;
+      const es = upstreamContext.estimatedSampleRate;
+      this.upstreamSampleRateHz =
+        es != null && isFinite(es) && es >= 15 && es <= 60 ? es : null;
+      const mi = upstreamContext.maskIoU;
+      this.maskIoU = mi != null && isFinite(mi) ? Math.max(0, Math.min(1, mi)) : 1;
     }
 
     this.signalBuf.push(filteredValue);
@@ -335,6 +350,9 @@ export class HeartBeatProcessor {
     }
     if (c.localClipPenalty > 0.6) {
       c.status = 'rejected'; c.rejectionReason = 'high_clipping'; return;
+    }
+    if (this.maskIoU < 0.3 && c.detectorHits < 2 && c.morphologyScore < 58) {
+      c.status = 'rejected'; c.rejectionReason = 'unstable_roi_mask'; return;
     }
     if (!this.contactStable && c.detectorHits < 2) {
       c.status = 'rejected'; c.rejectionReason = 'unstable_contact_single_detector'; return;
@@ -734,6 +752,8 @@ export class HeartBeatProcessor {
     sqi += c.localBandPowerRatio * 8;
     sqi += Math.min(7, this.upstreamSQI * 0.07);
     sqi += this.contactStable ? 5 : 0;
+    if (this.maskIoU > 0.48) sqi += 4;
+    else if (this.maskIoU > 0.3) sqi += 2;
     sqi -= c.localMotionPenalty * 15;
     sqi -= c.localClipPenalty * 12;
     sqi -= c.localPressurePenalty * 10;
@@ -880,17 +900,28 @@ export class HeartBeatProcessor {
   }
 
   private estimateSampleRate(): number {
-    if (this.timestampBuf.length < 10) return 30;
+    const up = this.upstreamSampleRateHz;
+    const upOk = up != null && isFinite(up) && up >= 15 && up <= 60;
+    if (this.timestampBuf.length < 10) {
+      return upOk ? up! : 30;
+    }
     const n = Math.min(50, this.timestampBuf.length);
     const intervals: number[] = [];
     for (let i = 1; i < n; i++) {
       const d = this.timestampBuf.get(this.timestampBuf.length - n + i) - this.timestampBuf.get(this.timestampBuf.length - n + i - 1);
       if (d >= 8 && d <= 120) intervals.push(d);
     }
-    if (intervals.length < 6) return 30;
+    if (intervals.length < 6) {
+      return upOk ? up! : 30;
+    }
     intervals.sort((a, b) => a - b);
-    const median = intervals[Math.floor(intervals.length / 2)];
-    return clamp(1000 / median, 15, 60);
+    const median = intervals[Math.floor(intervals.length / 2)]!;
+    const fromBuf = clamp(1000 / median, 15, 60);
+    if (!upOk) return fromBuf;
+    const rel = Math.abs(fromBuf - up!) / Math.max(up!, 1e-6);
+    if (rel < 0.11) return (fromBuf + up!) * 0.5;
+    if (intervals.length >= 22) return fromBuf;
+    return fromBuf * 0.42 + up! * 0.58;
   }
 
   private updateThreshold(range: number): void {
@@ -996,6 +1027,8 @@ export class HeartBeatProcessor {
     this.templateValid = false;
     this.templateLen = 0;
     this.lastHypothesis = null;
+    this.upstreamSampleRateHz = null;
+    this.maskIoU = 1;
   }
 
   dispose(): void {
