@@ -347,6 +347,9 @@ export class HeartBeatProcessor {
     if (this.consecutivePeaks === 0 && c.detectorAgreement < 0.5 && !c.periodicitySupport) {
       c.status = 'rejected'; c.rejectionReason = 'first_peak_weak_support'; return;
     }
+    if (this.upstreamSQI < 38 && c.detectorHits < 2 && c.templateCorrelation < 0.4) {
+      c.status = 'rejected'; c.rejectionReason = 'low_quality_need_dual_detector'; return;
+    }
     if (refractoryState === 'soft') {
       if (c.morphologyScore < 65 || c.detectorAgreement < 1.0) {
         c.status = 'rejected'; c.rejectionReason = 'double_peak_suspect';
@@ -361,7 +364,12 @@ export class HeartBeatProcessor {
       }
     }
 
-    const minScore = this.consecutivePeaks < 3 ? 28 : 35;
+    const minScore =
+      this.upstreamSQI < 40
+        ? (this.consecutivePeaks < 3 ? 34 : 40)
+        : this.consecutivePeaks < 3
+          ? 28
+          : 35;
     const thresholdMet = c.amplitude > this.peakThreshold * (c.periodicitySupport ? 0.6 : 0.85) ||
       c.prominence > Math.max(1.8, this.peakThreshold * 0.5);
 
@@ -521,6 +529,16 @@ export class HeartBeatProcessor {
         if (rel < 0.14) {
           finalBpm = ac * 0.58 + sp * 0.42;
           dominantSource = 'autocorr';
+        } else if (fromMedianIBI > 0) {
+          const lo = Math.min(ac, sp);
+          const hi = Math.max(ac, sp);
+          if (fromMedianIBI >= lo * 0.9 && fromMedianIBI <= hi * 1.1) {
+            finalBpm = fromMedianIBI * 0.5 + ((ac + sp) * 0.5) * 0.5;
+            dominantSource = 'median';
+          } else {
+            finalBpm = ac >= sp ? ac : sp;
+            dominantSource = ac >= sp ? 'autocorr' : 'spectral';
+          }
         } else {
           finalBpm = ac >= sp ? ac : sp;
           dominantSource = ac >= sp ? 'autocorr' : 'spectral';
@@ -794,10 +812,20 @@ export class HeartBeatProcessor {
     return recent.reduce((s, b) => s + b.beatSQI, 0) / recent.length;
   }
 
+  /**
+   * Derivada con escalado por Δt real entre muestras (FPS irregular en móvil).
+   */
   private computeDerivative(): number {
     const n = this.signalBuf.length;
-    if (n < 3) return 0;
-    return (this.signalBuf.get(n - 1) - this.signalBuf.get(n - 3)) * 0.5 + (this.signalBuf.get(n - 1) - this.signalBuf.get(n - 2)) * 0.5;
+    if (n < 3 || this.timestampBuf.length < 3) return 0;
+    const dtNom = 1000 / Math.max(15, Math.min(60, this.estimateSampleRate()));
+    const t12 = this.timestampBuf.get(n - 1) - this.timestampBuf.get(n - 2);
+    const t23 = this.timestampBuf.get(n - 2) - this.timestampBuf.get(n - 3);
+    const sc12 = t12 >= 5 && t12 <= 130 ? dtNom / t12 : 1;
+    const sc23 = t23 >= 5 && t23 <= 130 ? dtNom / t23 : 1;
+    const v1 = (this.signalBuf.get(n - 1) - this.signalBuf.get(n - 2)) * sc12;
+    const v2 = (this.signalBuf.get(n - 2) - this.signalBuf.get(n - 3)) * sc23;
+    return v1 * 0.55 + v2 * 0.45;
   }
 
   private computeSlopeSum(): number {

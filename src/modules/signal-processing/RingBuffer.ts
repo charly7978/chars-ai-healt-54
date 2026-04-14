@@ -95,6 +95,19 @@ export class RingBuffer {
     return arr[idx];
   }
 
+  /** Mediana de los últimos k valores (k ≤ length); útil para rechazar picos aislados en PPG bruto) */
+  medianLast(k: number): number {
+    const len = Math.min(k, this.count);
+    if (len === 0) return 0;
+    if (len === 1) return this.get(this.count - 1);
+    const arr = new Float64Array(len);
+    for (let i = 0; i < len; i++) arr[i] = this.get(this.count - len + i);
+    arr.sort();
+    const mid = Math.floor(len / 2);
+    if (len % 2 === 1) return arr[mid]!;
+    return (arr[mid - 1]! + arr[mid]!) * 0.5;
+  }
+
   /** Autocorrelation at given lag over last N samples */
   autocorrelation(lag: number, n?: number): number {
     const len = Math.min(n ?? this.count, this.count);

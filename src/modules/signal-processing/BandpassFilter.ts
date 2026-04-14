@@ -18,8 +18,8 @@ export class BandpassFilter {
   private sampleRate: number;
   private lastComputedRate = 0;
   
-  // FIR Filter specifications
-  private readonly ORDER = 40; // N=40 -> 41 taps. Good balance of resolution and low delay at 30-60fps
+  // FIR Filter specifications (ligeramente mayor = transiciones más limpias en 30–60 Hz)
+  private readonly ORDER = 44;
   private coefficients: Float64Array;
   private history: RingBuffer;
 
@@ -42,9 +42,9 @@ export class BandpassFilter {
     const fs = this.sampleRate;
     this.lastComputedRate = fs;
 
-    // Frequencies
-    const fLow = 0.5; // High-pass cutoff
-    const fHigh = 4.5; // Low-pass cutoff
+    // Banda cardíaca ~36–220 lpm a Fs típico; más estrecha que antes = menos deriva sub-Hz y ruido >4 Hz
+    const fLow = 0.58;
+    const fHigh = 4.15;
 
     // Normalized angular frequencies (0 to PI)
     const w1 = 2 * Math.PI * (fLow / fs);
