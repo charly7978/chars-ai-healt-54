@@ -339,8 +339,8 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * E4: calidad efectiva = SQI histórico + penalizaciones por ROI inestable, clip y jitter temporal
-   * (sin borrar lecturas; solo desescala el tier de confianza global).
+   * E4: penalizaciones en **puntos** sobre el SQI (no encadenadas), con techo, para no tumbar
+   * SpO₂/ritmo cuando IoU o RVFC son mediocres pero la señal es usable.
    */
   private effectiveSignalQualityForConfidence(): number {
     const sq = this.measurements.signalQuality;
@@ -350,21 +350,29 @@ export class VitalSignsProcessor {
     const cl = this.upstreamContext.clipLowRatio;
     const j = this.upstreamContext.presentationJitterMs;
 
-    let q = sq;
-    if (mi < 1) q *= 0.78 + 0.22 * Math.max(0, mi);
-    if (tc > 0.04 && tc < 0.32) q *= 0.86 + 0.14 * (tc / 0.32);
-    if (ch > 0.11) q *= Math.max(0.68, 1 - (ch - 0.11) * 1.05);
-    if (cl > 0.14) q *= Math.max(0.72, 1 - (cl - 0.14) * 0.85);
-    if (j > 14) q *= Math.max(0.75, 1 - Math.min(0.22, (j - 14) * 0.008));
+    let pen = 0;
+    if (mi < 0.2) pen += (0.2 - mi) * 28;
+    else if (mi < 0.42) pen += (0.42 - mi) * 12;
 
-    return Math.max(0, Math.min(100, q));
+    if (tc > 0.06 && tc < 0.3) pen += (0.3 - tc) * 18;
+
+    if (ch > 0.2) pen += Math.min(22, (ch - 0.2) * 42);
+    if (cl > 0.24) pen += Math.min(18, (cl - 0.24) * 36);
+
+    if (j > 22) pen += Math.min(20, (j - 22) * 0.45);
+
+    pen = Math.min(38, pen);
+    return Math.max(0, Math.min(100, sq - pen));
   }
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.effectiveSignalQualityForConfidence();
-    if (sq >= 45 && this.validPulseCount >= 4) return 'HIGH';
-    if (sq >= 24 && this.validPulseCount >= 3) return 'MEDIUM';
-    if (sq >= 10 && this.validPulseCount >= 2) return 'LOW';
+    const raw = this.measurements.signalQuality;
+    /** Si el SQI bruto es aceptable, no dejar INVALID solo por penalizaciones leves de contexto */
+    const gate = Math.max(sq, raw * 0.92);
+    if (gate >= 42 && this.validPulseCount >= 4) return 'HIGH';
+    if (gate >= 22 && this.validPulseCount >= 3) return 'MEDIUM';
+    if (gate >= 9 && this.validPulseCount >= 2) return 'LOW';
     return 'INVALID';
   }
 
@@ -386,8 +394,12 @@ export class VitalSignsProcessor {
       this.upstreamContext.avgBeatSQI,
       this.upstreamContext.pipelineContactQuality
     );
+    /** SpO₂: no multiplicar por maskIoU (regresión contactQ < 36); bonus leve si máscara estable */
     const mi = this.upstreamContext.maskIoU;
-    const contactQ = Math.min(100, Math.round(baseContact * (0.9 + 0.1 * mi)));
+    const contactQ = Math.min(
+      100,
+      Math.round(baseContact + (mi >= 0.45 ? 4 : mi >= 0.28 ? 2 : 0))
+    );
 
     const spo2Elite = this.spo2Processor.process({
       redAC: this.rgbData.redAC,

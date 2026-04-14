@@ -351,7 +351,7 @@ export class HeartBeatProcessor {
     if (c.localClipPenalty > 0.6) {
       c.status = 'rejected'; c.rejectionReason = 'high_clipping'; return;
     }
-    if (this.maskIoU < 0.3 && c.detectorHits < 2 && c.morphologyScore < 58) {
+    if (this.maskIoU < 0.2 && c.detectorHits < 2 && c.morphologyScore < 48) {
       c.status = 'rejected'; c.rejectionReason = 'unstable_roi_mask'; return;
     }
     if (!this.contactStable && c.detectorHits < 2) {
