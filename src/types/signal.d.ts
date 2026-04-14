@@ -61,6 +61,10 @@ export interface ProcessedSignal {
   frameLatencyMs?: number;
   roiValidPixelRatio?: number;
   maskIoU?: number;
+  /** true = dedo en la pose única aceptada (yema centrada, presión moderada, sin punta ni aplastamiento) */
+  canonicalPoseOk?: boolean;
+  /** Código de motivo si canonicalPoseOk es false (p. ej. TIP_ASYMMETRY, FLAT_OVERPRESSURE) */
+  canonicalPoseIssue?: string;
 }
 
 export interface ProcessingError {

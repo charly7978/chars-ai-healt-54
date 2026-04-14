@@ -177,6 +177,8 @@ export const useSignalProcessor = () => {
         qualityScore: 0,
         poseAngleDrift: 0,
         poseOptimal: false,
+        canonicalPoseOk: false,
+        canonicalPoseIssue: 'PRESSURE_LOW',
       };
     }
     return processorRef.current.getPositionQuality();

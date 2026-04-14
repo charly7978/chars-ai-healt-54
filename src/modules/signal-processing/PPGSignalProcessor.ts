@@ -14,6 +14,11 @@ import { computeGlobalSQI } from './SignalQualityEstimator';
 import type { CameraControlEngine } from './CameraControlEngine';
 import type { DebugTelemetry } from './DebugTelemetry';
 import { emptyTiming } from './DebugTelemetry';
+import {
+  evaluateCanonicalPose,
+  canonicalPoseGuidance,
+  type CanonicalPoseResult,
+} from './CanonicalFingerPose';
 
 /**
  * PPG etapa 1: delega ROI/contacto/extracción/SQI a FrameAnalysisCore (main o Worker),
@@ -84,6 +89,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastSourceLabel = 'RG';
 
   private lastAnalysis: FrameAnalysisResult | null = null;
+  private lastCanonicalPose: CanonicalPoseResult = { ok: false, issue: 'PRESSURE_LOW' };
   private debugMode = false;
 
   private lastLogTime = 0;
@@ -311,6 +317,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         hasPulsatility: measurementReady,
         pulsatilityValue: measurementReady ? perfusionIndex / 100 : 0,
       },
+      canonicalPoseOk: this.lastCanonicalPose.ok,
+      canonicalPoseIssue: this.lastCanonicalPose.issue,
       pipelineDebug: debug,
       inputFps: pipeStats.inputFps,
       processedFps: pipeStats.processedFps,
@@ -359,6 +367,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         hasPulsatility: false,
         pulsatilityValue: 0,
       },
+      canonicalPoseOk: false,
+      canonicalPoseIssue: 'PRESSURE_LOW',
     });
   }
 
@@ -428,6 +438,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.poseAngleDrift > this.POSE_DRIFT_MEASURE_MAX) return false;
     if (this.lastAnalysis?.pressureState === 'HIGH_PRESSURE') return false;
     if (clipHighRatio > 0.22) return false;
+    if (!this.lastCanonicalPose.ok) return false;
     if (perfusionIndexNorm < 0.034) return false;
     if (gatedQuality < 22) return false;
     if (periodicityScore < 0.13) return false;
@@ -476,6 +487,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   private updatePositionLock(a: FrameAnalysisResult): void {
+    const canon = evaluateCanonicalPose(a);
+    this.lastCanonicalPose = canon;
+
     if (!this.positionLocked) {
       this.poseAngleDrift = 0;
     }
@@ -488,6 +502,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       roi.coverageRatio * 0.34 + roi.spatialUniformity * 0.36 + roi.centerCoverage * 0.3;
 
     if (this.positionLocked) {
+      if (!canon.ok) {
+        this.positionDrifting = true;
+        this.positionGuidance = canonicalPoseGuidance(canon.issue);
+      }
       const redDrift = this.lockedRedBase > 0 ? Math.abs(currentRed - this.lockedRedBase) / this.lockedRedBase : 0;
       const greenDrift =
         this.lockedGreenBase > 0 ? Math.abs(currentGreen - this.lockedGreenBase) / this.lockedGreenBase : 0;
@@ -509,10 +527,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
       if (colorBad || angleBad) {
         this.positionDrifting = true;
-        if (angleBad && !colorBad) {
-          this.positionGuidance = 'NO GIRE EL DEDO — MANTENGA EL MISMO ÁNGULO (YEMA O BASE)';
-        } else {
-          this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA MISMA POSICIÓN';
+        if (canon.ok) {
+          if (angleBad && !colorBad) {
+            this.positionGuidance = 'NO GIRE EL DEDO — MANTENGA LA YEMA CENTRADA (POSE DE MEDICIÓN)';
+          } else {
+            this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA YEMA CENTRADA SOBRE LENTE Y FLASH';
+          }
         }
         const unlock =
           this.poseAngleDrift > this.POSE_DRIFT_UNLOCK || colorDrift > this.POS_DRIFT_TOL * 2.35;
@@ -524,7 +544,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.positionGuidance = 'REPOSICIONE EL DEDO COMO AL INICIO';
         }
       } else {
-        this.positionDrifting = false;
+        if (canon.ok) {
+          this.positionDrifting = false;
+        }
         const adapt = 0.003;
         this.lockedRedBase += (currentRed - this.lockedRedBase) * adapt;
         this.lockedGreenBase += (currentGreen - this.lockedGreenBase) * adapt;
@@ -533,13 +555,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.lockedPoseNy += (pc.y - this.lockedPoseNy) * 0.008;
         this.lockedPoseGy += (a.poseRedGradientY - this.lockedPoseGy) * 0.012;
         this.lockedPoseGx += (a.poseRedGradientX - this.lockedPoseGx) * 0.012;
-        this.positionGuidance = 'ÁNGULO ÓPTIMO — NO MUEVA EL DEDO';
+        this.positionGuidance = canon.ok
+          ? 'POSE DE MEDICIÓN — YEMA CENTRADA, PRESIÓN MODERADA; NO MUEVA'
+          : canonicalPoseGuidance(canon.issue);
       }
     } else if (this.exportedContactState !== 'NO_CONTACT') {
       this.positionDrifting = false;
       const canStabilize =
         a.contactRaw === 'CONTACT_STABLE' || a.contactRaw === 'CONTACT_UNSTABLE';
-      if (
+      if (!canon.ok) {
+        this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 4);
+        this.positionGuidance = canonicalPoseGuidance(canon.issue);
+      } else if (
         canStabilize &&
         this.positionQualityScore > 0.46 &&
         roi.coverageRatio > 0.26 &&
@@ -558,24 +585,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.lockedPoseGy = a.poseRedGradientY;
           this.lockedPoseGx = a.poseRedGradientX;
           this.poseAngleDrift = 0;
-          this.positionGuidance = 'ÁNGULO DE MEDICIÓN BLOQUEADO — NO GIRE EL DEDO';
+          this.positionGuidance =
+            'POSE BLOQUEADA — YEMA CENTRADA SOBRE LENTE Y FLASH; NO GIRE NI CAMBIE A PUNTA O APLASTAMIENTO';
         } else {
-          this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POS_LOCK_FRAMES) * 100)}%`;
+          this.positionGuidance = `AJUSTE A LA POSE ÚNICA… ${Math.round((this.positionStabilityCount / this.POS_LOCK_FRAMES) * 100)}%`;
         }
       } else {
         this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 3);
         if (a.pressureState === 'HIGH_PRESSURE') {
-          this.positionGuidance = 'REDUZCA LA PRESIÓN DEL DEDO';
+          this.positionGuidance = 'REDUZCA LA PRESIÓN — YEMA SUAVE, NO APLASTADA';
         } else if (roi.coverageRatio < 0.28) {
-          this.positionGuidance = 'CUBRA LA LENTE CON EL DEDO';
+          this.positionGuidance = 'CUBRA LENTE Y FLASH CON LA YEMA (NO SOLO EL BORDE)';
         } else {
-          this.positionGuidance = 'PRESIONE CON FIRMEZA Y SIN MOVER';
+          this.positionGuidance = 'PRESIÓN MODERADA Y UNIFORME — NI PUNTA NI DEDO APLASTADO';
         }
       }
     } else {
       this.positionStabilityCount = 0;
       this.positionDrifting = false;
-      this.positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
+      this.positionGuidance = 'COLOQUE LA YEMA SOBRE LA CÁMARA Y EL FLASH — PRESIÓN MODERADA';
     }
   }
 
@@ -703,7 +731,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       qualityScore: this.positionQualityScore,
       poseAngleDrift: this.poseAngleDrift,
       poseOptimal:
-        this.positionLocked && !this.positionDrifting && this.poseAngleDrift <= this.POSE_DRIFT_MEASURE_MAX,
+        this.positionLocked &&
+        !this.positionDrifting &&
+        this.poseAngleDrift <= this.POSE_DRIFT_MEASURE_MAX &&
+        this.lastCanonicalPose.ok,
+      canonicalPoseOk: this.lastCanonicalPose.ok,
+      canonicalPoseIssue: this.lastCanonicalPose.issue,
     };
   }
 
@@ -785,6 +818,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.sourceStableFrames = 0;
     this.lastSourceLabel = 'RG';
     this.lastAnalysis = null;
+    this.lastCanonicalPose = { ok: false, issue: 'PRESSURE_LOW' };
     this.lastLogTime = 0;
     this.processingTimeMs = 0;
     this._respirationScratch.clear();

@@ -55,6 +55,7 @@ export function stableForBeatsFromSignal(s: ProcessedSignal): boolean {
   if (s.motionArtifact) return false;
   if (!s.fingerDetected) return false;
   if (s.contactState !== 'STABLE_CONTACT') return false;
+  if (s.canonicalPoseOk === false) return false;
   if (s.measurementReady !== true) return false;
 
   const perf = s.perfusionIndex ?? 0;

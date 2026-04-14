@@ -14,6 +14,8 @@ type PQ = {
   guidance: string;
   poseAngleDrift?: number;
   poseOptimal?: boolean;
+  canonicalPoseOk?: boolean;
+  canonicalPoseIssue?: string;
 };
 
 type Dbg = NonNullable<ProcessedSignal['pipelineDebug']>;
@@ -56,7 +58,7 @@ export const PPGPipelineDebugOverlay: React.FC<PPGPipelineDebugOverlayProps> = (
       `SQI ${s?.quality?.toFixed(0) ?? '—'}  PI ${s?.perfusionIndex?.toFixed(2) ?? '—'}`,
       `clip H/L ${((s?.clipHighRatio ?? 0) * 100).toFixed(0)} / ${((s?.clipLowRatio ?? 0) * 100).toFixed(0)}%`,
       `ROI valid ${((s?.roiValidPixelRatio ?? 0) * 100).toFixed(0)}%  maskIoU ${((s?.maskIoU ?? 0) * 100).toFixed(0)}%`,
-      `pos Q ${(positionQuality.qualityScore * 100).toFixed(0)}% drift ${positionQuality.positionDrift.toFixed(3)} poseΔ ${(positionQuality.poseAngleDrift ?? 0).toFixed(3)} ok ${positionQuality.poseOptimal ? 'y' : 'n'} ${positionQuality.guidance}`,
+      `pose canon ${positionQuality.canonicalPoseOk ? 'ok' : 'no'} ${positionQuality.canonicalPoseIssue ?? '—'} | pos Q ${(positionQuality.qualityScore * 100).toFixed(0)}% drift ${positionQuality.positionDrift.toFixed(3)} poseΔ ${(positionQuality.poseAngleDrift ?? 0).toFixed(3)} ok ${positionQuality.poseOptimal ? 'y' : 'n'} ${positionQuality.guidance}`,
       `worker: ${d ? `${d.timing.processedFps.toFixed(0)} fps drop ${d.timing.droppedFrames} stale ${d.stalePipeline ? 'y' : 'n'}` : '—'}`,
       `frames ${framesProcessed} proc ${s?.processingDurationMs?.toFixed(1) ?? '—'}ms`,
       `cam ${cam?.resolution.width ?? 0}x${cam?.resolution.height ?? 0} @${cam?.realFrameRate ?? '—'} torch ${cam?.torchActive ? 'on' : 'off'}`,
