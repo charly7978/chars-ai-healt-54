@@ -278,8 +278,6 @@ const PPGSignalMeter = ({
     ibiMs?: number;
     morph?: number | null;
   }[]>([]);
-  const overrideWaveClassRef = useRef<BeatWaveClass | null>(null);
-  const overrideEndTimeRef = useRef(0);
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
@@ -744,13 +742,11 @@ const PPGSignalMeter = ({
         );
         lastRhythmCountSeenRef.current = lastRhythmCountSeen;
         const lastRR = rr && rr.length > 0 ? rr[rr.length - 1]! : 800;
-        const beatDuration = Math.min(Math.max(lastRR, 400), 800); // Duración del latido en ms
         const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
         
-        // Establecer overrideWaveClass temporal para los próximos puntos
+        // Marcar directamente los últimos 10 puntos del buffer
         if (waveClass === 'arrhythmia' || waveClass === 'weak') {
-          overrideWaveClassRef.current = waveClass;
-          overrideEndTimeRef.current = now + beatDuration;
+          buffer.markWaveClassRecent(10, waveClass);
         }
         
         beatHistoryRef.current.push({
@@ -762,17 +758,8 @@ const PPGSignalMeter = ({
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
 
-      // Usar overrideWaveClass si está activo, sino 'normal'
-      const waveClassToUse = overrideWaveClassRef.current && now < overrideEndTimeRef.current
-        ? overrideWaveClassRef.current
-        : 'normal';
-      
-      // Limpiar override si expiró
-      if (overrideWaveClassRef.current && now >= overrideEndTimeRef.current) {
-        overrideWaveClassRef.current = null;
-      }
-      
-      buffer.push({ time: now, value: scaledValue, waveClass: waveClassToUse });
+      // Siempre usar 'normal' para nuevos puntos - el marking se hace por separado
+      buffer.push({ time: now, value: scaledValue, waveClass: 'normal' });
       const points = buffer.getPoints();
       if (points.length > 30) {
         const recentPoints = points.slice(-150);

@@ -23,10 +23,13 @@ export function isLastRROutlier(rrs: number[], relDev = 0.14): boolean {
   return Math.abs(last - med) / med > relDev;
 }
 
-/** Señales fuertes a nivel de latido desde el detector (prematuro, doble, inserción). */
+/**
+ * Señales fuertes a nivel de latido desde el detector (prematuro, doble, inserción).
+ */
 export function beatFlagsSuggestArrhythmia(flags: BeatFlags | null): boolean {
   if (!flags) return false;
-  return !!(flags.isPremature || flags.isDoublePeak || flags.isMissedBeatInserted);
+  // SOLO usar isPremature para arritmia - más conservador
+  return !!flags.isPremature;
 }
 
 export type RhythmPanel = { isAlert: boolean; count: number };
@@ -42,17 +45,19 @@ export function shouldPaintBeatAsArrhythmic(
   lastRhythmCountSeen: number
 ): { arrhythmic: boolean; lastRhythmCountSeen: number } {
   let nextSeen = lastRhythmCountSeen;
+  // SOLO usar flags del latido actual, desactivar rhythm.isAlert para permitir alternancia
   if (beatFlagsSuggestArrhythmia(flags)) {
     nextSeen = Math.max(nextSeen, rhythm.count);
     return { arrhythmic: true, lastRhythmCountSeen: nextSeen };
   }
-  const countJump = rhythm.count > lastRhythmCountSeen;
-  const rrIrreg = isLastRROutlier(rrIntervals);
-  const rhythmEscalation = rhythm.isAlert && (countJump || rrIrreg);
-  if (rhythmEscalation) {
-    nextSeen = Math.max(nextSeen, rhythm.count);
-    return { arrhythmic: true, lastRhythmCountSeen: nextSeen };
-  }
+  // Desactivado temporalmente: rhythmEscalation basado en rhythm.isAlert
+  // const countJump = rhythm.count > lastRhythmCountSeen;
+  // const rrIrreg = isLastRROutlier(rrIntervals);
+  // const rhythmEscalation = rhythm.isAlert && (countJump || rrIrreg);
+  // if (rhythmEscalation) {
+  //   nextSeen = Math.max(nextSeen, rhythm.count);
+  //   return { arrhythmic: true, lastRhythmCountSeen: nextSeen };
+  // }
   return { arrhythmic: false, lastRhythmCountSeen: nextSeen };
 }
 
@@ -66,18 +71,21 @@ export function classifyBeatWaveClass(
   lastRhythmCountSeen: number,
   morphologyScore?: number | null
 ): { waveClass: BeatWaveClass; lastRhythmCountSeen: number } {
-  const step = shouldPaintBeatAsArrhythmic(flags, rhythm, rrIntervals, lastRhythmCountSeen);
-  if (step.arrhythmic) {
-    return { waveClass: 'arrhythmia', lastRhythmCountSeen: step.lastRhythmCountSeen };
-  }
-  const weakByFlag = !!(flags?.isWeak && !flags?.isPremature);
-  const morph =
-    morphologyScore != null &&
-    Number.isFinite(morphologyScore) &&
-    morphologyScore >= 0 &&
-    morphologyScore < MORPHOLOGY_WEAK_BELOW;
-  if (weakByFlag || morph) {
-    return { waveClass: 'weak', lastRhythmCountSeen: step.lastRhythmCountSeen };
-  }
-  return { waveClass: 'normal', lastRhythmCountSeen: step.lastRhythmCountSeen };
+  // DESACTIVADO TEMPORALMENTE PARA DEBUG - siempre retorna 'normal'
+  return { waveClass: 'normal', lastRhythmCountSeen };
+  
+  // const step = shouldPaintBeatAsArrhythmic(flags, rhythm, rrIntervals, lastRhythmCountSeen);
+  // if (step.arrhythmic) {
+  //   return { waveClass: 'arrhythmia', lastRhythmCountSeen: step.lastRhythmCountSeen };
+  // }
+  // const weakByFlag = !!(flags?.isWeak && !flags?.isPremature);
+  // const morph =
+  //   morphologyScore != null &&
+  //   Number.isFinite(morphologyScore) &&
+  //   morphologyScore >= 0 &&
+  //   morphologyScore < MORPHOLOGY_WEAK_BELOW;
+  // if (weakByFlag || morph) {
+  //   return { waveClass: 'weak', lastRhythmCountSeen: step.lastRhythmCountSeen };
+  // }
+  // return { waveClass: 'normal', lastRhythmCountSeen: step.lastRhythmCountSeen };
 }
