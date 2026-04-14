@@ -1,10 +1,7 @@
-import type { BeatWaveClass } from './beatVisualization';
-
 interface PPGDataPoint {
   time: number;
   value: number;
-  /** Segmentación del trazo: normal / débil (ámbar) / arritmia (rojo). */
-  waveClass: BeatWaveClass;
+  isArrhythmia: boolean;
 }
 
 export class CircularBuffer {
@@ -37,22 +34,6 @@ export class CircularBuffer {
    */
   getPointsCount(): number {
     return this.buffer.length;
-  }
-
-  /**
-   * Colorea retroactivamente el trazo desde hace `durationMs` hasta ahora.
-   * La arritmia no se sobrescribe con “weak”; “weak” no pisa “arrhythmia”.
-   */
-  markWaveClassBack(durationMs: number, waveClass: 'weak' | 'arrhythmia'): void {
-    const cutoff = Date.now() - durationMs;
-    for (let i = this.buffer.length - 1; i >= 0; i--) {
-      if (this.buffer[i].time < cutoff) break;
-      if (waveClass === 'arrhythmia') {
-        this.buffer[i].waveClass = 'arrhythmia';
-      } else if (this.buffer[i].waveClass !== 'arrhythmia') {
-        this.buffer[i].waveClass = 'weak';
-      }
-    }
   }
 
   clear(): void {

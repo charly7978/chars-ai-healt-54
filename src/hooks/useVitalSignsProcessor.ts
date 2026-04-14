@@ -1,9 +1,9 @@
 import { useCallback, useRef, useState, useEffect } from 'react';
-import { VitalSignsProcessor, VitalSignsResult, RGBData } from '../modules/vital-signs/VitalSignsProcessor';
+import { VitalSignsProcessor, VitalSignsResult } from '../modules/vital-signs/VitalSignsProcessor';
 
 /**
- * HOOK DE SIGNOS VITALES V2
- * Accepts RGB data + upstream context for gating
+ * HOOK ÚNICO DE SIGNOS VITALES - OPTIMIZADO
+ * Sin dependencia de MultiChannel (eliminado por rendimiento)
  */
 export const useVitalSignsProcessor = () => {
   const processorRef = useRef<VitalSignsProcessor | null>(null);
@@ -11,10 +11,12 @@ export const useVitalSignsProcessor = () => {
   const sessionId = useRef<string>(`${Date.now().toString(36)}${(performance.now() | 0).toString(36)}`);
   const processedSignals = useRef<number>(0);
   
+  // Lazy initialization - solo crear una vez
   if (!processorRef.current) {
     processorRef.current = new VitalSignsProcessor();
   }
   
+  // Cleanup al desmontar
   useEffect(() => {
     return () => {
       if (processorRef.current) {
@@ -32,59 +34,21 @@ export const useVitalSignsProcessor = () => {
     processorRef.current?.forceCalibrationCompletion();
   }, []);
   
-  const setRGBData = useCallback((data: RGBData) => {
-    processorRef.current?.setRGBData(data);
-  }, []);
-
-  const setUpstreamContext = useCallback((ctx: {
-    contactStable?: boolean;
-    pressureOptimal?: boolean;
-    clipHighRatio?: number;
-    clipLowRatio?: number;
-    sourceStability?: number;
-    avgBeatSQI?: number;
-    beatCount?: number;
-    sampleRate?: number;
-    detectorAgreement?: number;
-    rrStability?: number;
-    pipelineContactQuality?: number;
-    maskIoU?: number;
-    captureTimingConfidence?: number;
-    presentationJitterMs?: number;
-  }) => {
-    processorRef.current?.setUpstreamContext(ctx);
-  }, []);
-  
-  const processSignal = useCallback((
-    value: number, 
-    rrData?: { intervals: number[], lastPeakTime: number | null },
-    beatInputs?: Array<{
-      ibiMs: number; beatSQI: number; morphologyScore: number;
-      detectorAgreement: number; amplitude?: number;
-      flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
-    }>,
-    frameTimestamp?: number
-  ): VitalSignsResult => {
-    const defaultResult: VitalSignsResult = {
-      spo2: 0, glucose: 0,
-      pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
-      arrhythmiaCount: 0, arrhythmiaStatus: "SINUS_STABLE|0",
+  const processSignal = useCallback((value: number, rrData?: { intervals: number[], lastPeakTime: number | null }) => {
+    if (!processorRef.current) return {
+      spo2: 0, glucose: 0, hemoglobin: 0,
+      pressure: { systolic: 0, diastolic: 0 },
+      arrhythmiaCount: 0, arrhythmiaStatus: "SIN ARRITMIAS|0",
       lipids: { totalCholesterol: 0, triglycerides: 0 },
-      isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined,
-      signalQuality: 0, measurementConfidence: 'INVALID' as const,
+      isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined
     };
     
-    if (!processorRef.current) return defaultResult;
-    
     processedSignals.current++;
-    const result = processorRef.current.processSignal(value, rrData, beatInputs, frameTimestamp);
     
-    if (
-      result.measurementConfidence !== 'INVALID' ||
-      result.pressure.confidence !== 'INSUFFICIENT' ||
-      result.spo2 > 0 || result.glucose > 0 ||
-      result.lipids.totalCholesterol > 0 || result.arrhythmiaCount > 0
-    ) {
+    const result = processorRef.current.processSignal(value, rrData);
+    
+    // Guardar resultados válidos
+    if (result.spo2 > 0 && result.glucose > 0) {
       setLastValidResults(result);
     }
     
@@ -92,50 +56,26 @@ export const useVitalSignsProcessor = () => {
   }, []);
 
   const reset = useCallback(() => {
-    if (!processorRef.current) return lastValidResults;
+    if (!processorRef.current) return null;
     const savedResults = processorRef.current.reset();
-    const resultToReturn = savedResults ?? lastValidResults;
-    if (resultToReturn) setLastValidResults(resultToReturn);
-    return resultToReturn;
-  }, [lastValidResults]);
-
+    if (savedResults) {
+      setLastValidResults(savedResults);
+    }
+    return savedResults;
+  }, []);
+  
   const fullReset = useCallback(() => {
     processorRef.current?.fullReset();
     setLastValidResults(null);
     processedSignals.current = 0;
   }, []);
 
-  const hasValidPressureEstimate = useCallback(() => {
-    return processorRef.current?.hasValidPressureEstimate() ?? false;
-  }, []);
-
-  const setHeartRuntime = useCallback((ctx: { bpm?: number; bpmConfidence?: number; beatCount?: number }) => {
-    processorRef.current?.setHeartRuntime(ctx);
-  }, []);
-
-  const ingestBeatOpticalRatio = useCallback(() => {
-    processorRef.current?.ingestBeatOpticalRatio();
-  }, []);
-
-  const setUserHeightM = useCallback((meters: number) => {
-    processorRef.current?.setUserHeightM(meters);
-  }, []);
-
-  const getUserHeightM = useCallback(() => processorRef.current?.getUserHeightM(), []);
-
   return {
     processSignal,
-    setRGBData,
-    setUpstreamContext,
-    setHeartRuntime,
-    ingestBeatOpticalRatio,
-    setUserHeightM,
-    getUserHeightM,
     reset,
     fullReset,
     startCalibration,
     forceCalibrationCompletion,
-    hasValidPressureEstimate,
     lastValidResults,
     getCalibrationProgress: useCallback(() => processorRef.current?.getCalibrationProgress() ?? 0, []),
     debugInfo: {

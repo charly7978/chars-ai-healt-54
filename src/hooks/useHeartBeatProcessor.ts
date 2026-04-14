@@ -1,39 +1,44 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
-import type { ContactState } from '../types/signal';
-import type { HeartBeatResult } from '../types/beat';
+
+interface HeartBeatResult {
+  bpm: number;
+  confidence: number;
+  isPeak: boolean;
+  arrhythmiaCount: number;
+  signalQuality: number;
+  rrData?: {
+    intervals: number[];
+    lastPeakTime: number | null;
+  };
+}
 
 /**
- * HOOK DE PROCESAMIENTO CARDÍACO V2
+ * HOOK DE PROCESAMIENTO CARDÍACO - SIN FINGER DETECTION
  * 
- * - Expone richer beat results (beatSQI, hypothesis, flags, debug)
- * - Alineado con ContactState del PPGSignalProcessor
- * - Pasa upstream context al procesador
+ * Procesa la señal directamente:
+ * - Si hay sangre real → BPM coherente
+ * - Si hay ambiente → valores erráticos o 0
  */
 export const useHeartBeatProcessor = () => {
   const processorRef = useRef<HeartBeatProcessor | null>(null);
   const [currentBPM, setCurrentBPM] = useState<number>(0);
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
-
-  const sessionIdRef = useRef<string>('');
+  
+  const sessionIdRef = useRef<string>("");
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
   const lastProcessTimeRef = useRef<number>(0);
   const processedSignalsRef = useRef<number>(0);
-  const noContactFramesRef = useRef<number>(0);
-  const NO_CONTACT_RESET_THRESHOLD = 90;
-
-  const currentBPMRef = useRef(0);
-  const confidenceRef = useRef(0);
-  const signalQualityRef = useRef(0);
 
   useEffect(() => {
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `hb_${t}_${p}`;
+    
     processorRef.current = new HeartBeatProcessor();
     processingStateRef.current = 'ACTIVE';
-
+    
     return () => {
       if (processorRef.current) {
         processorRef.current.dispose();
@@ -43,109 +48,89 @@ export const useHeartBeatProcessor = () => {
     };
   }, []);
 
-  currentBPMRef.current = currentBPM;
-  confidenceRef.current = confidence;
-  signalQualityRef.current = signalQuality;
-
-  const emptyResult = (bpm: number): HeartBeatResult => ({
-    bpm, bpmConfidence: 0, isPeak: false,
-    filteredValue: 0, arrhythmiaCount: 0, sqi: 0, beatSQI: 0,
-    rrData: { intervals: [], lastPeakTime: null },
-    hypothesis: null, detectorAgreement: 0,
-    rejectionReason: '', beatFlags: null,
-    debug: {
-      instantBpm: 0, medianRRBpm: 0, autocorrBpm: 0, spectralBpm: 0,
-      lastBeatSQI: 0, detectorAgreement: 0, expectedRR: 0,
-      refractoryState: 'open', beatsAccepted: 0, beatsRejected: 0,
-      lastRejectionReason: '', doublePeakCount: 0, missedBeatCount: 0,
-      suspiciousCount: 0, templateCorrelation: 0, morphologyScore: 0,
-      consecutivePeaks: 0,
-    },
-  });
-
-  const processSignal = useCallback((
-    value: number,
-    contactState: ContactState = 'STABLE_CONTACT',
-    timestamp?: number,
-    upstreamContext?: {
-      quality?: number;
-      contactState?: string;
-      motionArtifact?: boolean;
-      pressureState?: string;
-      clipHigh?: number;
-      clipLow?: number;
-      activeSource?: string;
-      perfusionIndex?: number;
-      positionDrifting?: boolean;
-      estimatedSampleRate?: number;
-      maskIoU?: number;
-    }
-  ): HeartBeatResult => {
+  const processSignal = useCallback((value: number, _fingerDetected: boolean = true, timestamp?: number): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
-      return emptyResult(currentBPMRef.current);
+      return {
+        bpm: currentBPM,
+        confidence: 0,
+        isPeak: false,
+        arrhythmiaCount: 0,
+        signalQuality: 0,
+        rrData: { intervals: [], lastPeakTime: null }
+      };
     }
 
-    const currentTime = timestamp ?? performance.now();
-
-    if (contactState === 'NO_CONTACT') {
-      noContactFramesRef.current += 1;
-      if (noContactFramesRef.current >= NO_CONTACT_RESET_THRESHOLD) {
-        processorRef.current.reset();
-      }
-      if (currentBPMRef.current !== 0) setCurrentBPM(0);
-      if (confidenceRef.current !== 0) setConfidence(0);
-      if (signalQualityRef.current !== 0) setSignalQuality(0);
-      return emptyResult(0);
+    const currentTime = Date.now();
+    
+    // Control de tasa (~60 FPS)
+    if (currentTime - lastProcessTimeRef.current < 16) {
+      return {
+        bpm: currentBPM,
+        confidence,
+        isPeak: false,
+        arrhythmiaCount: 0,
+        signalQuality,
+        rrData: { intervals: [], lastPeakTime: null }
+      };
     }
-
-    if (contactState !== 'STABLE_CONTACT') {
-      noContactFramesRef.current = 0;
-      if (currentBPMRef.current !== 0) setCurrentBPM(0);
-      if (confidenceRef.current !== 0) setConfidence(0);
-      if (signalQualityRef.current !== 0) setSignalQuality(0);
-      return emptyResult(0);
-    }
-
-    if (currentTime - lastProcessTimeRef.current < 12) {
-      return emptyResult(currentBPMRef.current);
-    }
+    
     lastProcessTimeRef.current = currentTime;
-
-    noContactFramesRef.current = 0;
     processedSignalsRef.current++;
 
-    const result = processorRef.current.processSignal(value, timestamp, upstreamContext);
-    const roundedSQI = Math.round(result.sqi);
+    // Procesar señal directamente - sin validación de dedo
+    const result = processorRef.current.processSignal(value, timestamp);
+    const rrIntervals = processorRef.current.getRRIntervals();
+    const lastPeakTime = processorRef.current.getLastPeakTime();
+    const rrData = { intervals: rrIntervals, lastPeakTime };
+    
+    // NOTA: signalQuality ahora viene de SignalQualityAnalyzer a través de PPGSignalProcessor
+    // El hook recibe la calidad ya calculada desde Index.tsx
 
-    setSignalQuality(roundedSQI);
-
-    if (result.bpm > 0 && result.bpmConfidence >= 0.12) {
-      setCurrentBPM(Math.round(result.bpm));
-      setConfidence(result.bpmConfidence);
-    } else if (result.bpmConfidence > 0) {
-      setConfidence(result.bpmConfidence);
+    // Actualizar BPM si hay confianza y está en rango válido
+    if (result.confidence >= 0.3 && result.bpm >= 40 && result.bpm <= 180) {
+      const smoothingFactor = Math.min(0.5, result.confidence * 0.7);
+      const newBPM = currentBPM > 0 ? 
+        currentBPM * (1 - smoothingFactor) + result.bpm * smoothingFactor : 
+        result.bpm;
+      
+      setCurrentBPM(Math.round(newBPM * 10) / 10);
+      setConfidence(result.confidence);
     }
 
-    return result;
-  }, []);
+    return {
+      bpm: result.bpm,
+      confidence: result.confidence,
+      isPeak: result.isPeak,
+      arrhythmiaCount: result.arrhythmiaCount,
+      signalQuality: signalQuality, // Usa el estado actual, que viene de PPG
+      rrData
+    };
+  }, [currentBPM, confidence, signalQuality]);
 
   const reset = useCallback(() => {
     if (processingStateRef.current === 'RESETTING') return;
+    
     processingStateRef.current = 'RESETTING';
-
-    if (processorRef.current) processorRef.current.reset();
-
+    
+    if (processorRef.current) {
+      processorRef.current.reset();
+    }
+    
     setCurrentBPM(0);
     setConfidence(0);
     setSignalQuality(0);
+    
     lastProcessTimeRef.current = 0;
     processedSignalsRef.current = 0;
-    noContactFramesRef.current = 0;
-
+    
     processingStateRef.current = 'ACTIVE';
   }, []);
 
-  const setArrhythmiaState = useCallback((_isArrhythmiaDetected: boolean) => {}, []);
+  const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
+    if (processorRef.current && processingStateRef.current === 'ACTIVE') {
+      processorRef.current.setArrhythmiaDetected(isArrhythmiaDetected);
+    }
+  }, []);
 
   return {
     currentBPM,
@@ -157,7 +142,7 @@ export const useHeartBeatProcessor = () => {
     debugInfo: {
       sessionId: sessionIdRef.current,
       processingState: processingStateRef.current,
-      processedSignals: processedSignalsRef.current,
-    },
+      processedSignals: processedSignalsRef.current
+    }
   };
 };

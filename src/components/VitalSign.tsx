@@ -1,4 +1,4 @@
-import React, { useState, memo } from 'react';
+import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { parseArrhythmiaStatus, getArrhythmiaText, getArrhythmiaColor } from '@/utils/arrhythmiaUtils';
 
@@ -11,11 +11,9 @@ interface VitalSignProps {
   normalRange?: { min: number; max: number };
   median?: number;
   average?: number;
-  confidenceLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
-  featureQuality?: number;
 }
 
-const VitalSign = memo(function VitalSign({ 
+const VitalSign = ({ 
   label, 
   value, 
   unit, 
@@ -23,10 +21,8 @@ const VitalSign = memo(function VitalSign({
   calibrationProgress,
   normalRange,
   median,
-  average,
-  confidenceLevel,
-  featureQuality
-}: VitalSignProps) {
+  average
+}: VitalSignProps) => {
   const [showDetails, setShowDetails] = useState(false);
 
   const getRiskLabel = (label: string, value: string | number) => {
@@ -38,7 +34,7 @@ const VitalSign = memo(function VitalSign({
     
     if (typeof value === 'string') {
       switch(label) {
-        case 'PRESIÓN ARTERIAL': {
+        case 'PRESIÓN ARTERIAL':
           const pressureParts = value.split('/');
           if (pressureParts.length === 2) {
             const systolic = parseInt(pressureParts[0], 10);
@@ -49,21 +45,34 @@ const VitalSign = memo(function VitalSign({
             }
           }
           return '';
-        }
-        case 'COLESTEROL/TRIGL.': {
+        case 'COLESTEROL/TRIGL.':
           const lipidParts = value.split('/');
           if (lipidParts.length === 2) {
             const cholesterol = parseInt(lipidParts[0], 10);
             const triglycerides = parseInt(lipidParts[1], 10);
-            if (!isNaN(cholesterol) && cholesterol > 200) return 'Hipercolesterolemia';
-            if (!isNaN(triglycerides) && triglycerides > 150) return 'Hipertrigliceridemia';
+            if (!isNaN(cholesterol)) {
+              if (cholesterol > 200) return 'Hipercolesterolemia';
+            }
+            if (!isNaN(triglycerides)) {
+              if (triglycerides > 150) return 'Hipertrigliceridemia';
+            }
           }
           return '';
-        }
-        case 'ARRITMIAS': {
-          const status = parseArrhythmiaStatus(value);
-          return getArrhythmiaText(status);
-        }
+        case 'ARRITMIAS':
+          const arrhythmiaParts = value.split('|');
+          if (arrhythmiaParts.length === 2) {
+            const status = arrhythmiaParts[0];
+            const count = arrhythmiaParts[1];
+            
+            if (status === "ARRITMIA DETECTADA" && parseInt(count) > 1) {
+              return `Arritmias: ${count}`;
+            } else if (status === "SIN ARRITMIAS") {
+              return 'Normal';
+            } else if (status === "CALIBRANDO...") {
+              return 'Calibrando';
+            }
+          }
+          return '';
         default:
           return '';
       }
@@ -96,6 +105,7 @@ const VitalSign = memo(function VitalSign({
 
   const getArrhythmiaDisplay = (value: string | number) => {
     if (typeof value !== 'string') return null;
+    
     const status = parseArrhythmiaStatus(value);
     return (
       <div className="text-sm font-medium mt-2" style={{ color: getArrhythmiaColor(status) }}>
@@ -130,50 +140,21 @@ const VitalSign = memo(function VitalSign({
   return (
     <div 
       className={cn(
-        "relative flex min-h-[5.5rem] flex-col justify-center items-center rounded-xl border border-cyan-500/20 bg-gradient-to-b from-slate-900/90 to-slate-950/98 p-2.5 text-center shadow-[0_8px_24px_rgba(0,0,0,0.35),inset_0_1px_0_rgba(255,255,255,0.05)] transition-all duration-300 cursor-pointer backdrop-blur-md",
-        "hover:border-cyan-400/35 hover:shadow-[0_12px_32px_rgba(34,211,238,0.08)] active:scale-[0.99]",
-        showDetails && "ring-1 ring-cyan-400/35"
+        "relative flex flex-col justify-center items-center p-2 bg-transparent transition-all duration-500 text-center cursor-pointer",
+        showDetails && "bg-gray-800/20 backdrop-blur-sm rounded-lg"
       )}
       onClick={handleClick}
     >
-      <div className="mb-1 font-display text-[9px] font-semibold uppercase tracking-[0.22em] text-cyan-400/85">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-black/70 mb-1">
         {label}
       </div>
       
-      <div className="font-mono font-bold text-lg sm:text-xl transition-all duration-300">
-        <span className="bg-gradient-to-br from-cyan-100 to-teal-200 bg-clip-text text-transparent drop-shadow-[0_0_12px_rgba(34,211,238,0.15)]">
-          {isArrhytmia && typeof value === 'string'
-            ? getArrhythmiaText(parseArrhythmiaStatus(value))
-            : value}
+      <div className="font-bold text-xl sm:text-2xl transition-all duration-300">
+        <span className="text-gradient-soft animate-value-glow">
+          {isArrhytmia && typeof value === 'string' ? value.split('|')[0] : value}
         </span>
-        {unit && <span className="ml-1 text-[10px] font-normal text-slate-400">{unit}</span>}
+        {unit && <span className="text-xs text-white/70 ml-1">{unit}</span>}
       </div>
-
-      {confidenceLevel && confidenceLevel !== 'INSUFFICIENT' && label === 'PRESIÓN ARTERIAL' && (
-        <div className="flex items-center gap-1.5 mt-1">
-          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-            confidenceLevel === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400' :
-            confidenceLevel === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
-            'bg-orange-500/20 text-orange-400'
-          }`}>
-            {confidenceLevel}
-          </span>
-          {featureQuality !== undefined && featureQuality > 0 && (
-            <div className="flex items-center gap-0.5">
-              <div className="w-8 h-1 bg-white/10 rounded-full overflow-hidden">
-                <div 
-                  className={`h-full rounded-full transition-all duration-500 ${
-                    featureQuality >= 75 ? 'bg-emerald-400' :
-                    featureQuality >= 50 ? 'bg-yellow-400' :
-                    'bg-orange-400'
-                  }`}
-                  style={{ width: `${featureQuality}%` }}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {!isArrhytmia && riskLabel && (
         <div className={`text-sm font-medium mt-1 ${riskColor}`}>
@@ -198,23 +179,23 @@ const VitalSign = memo(function VitalSign({
       )}
 
       {showDetails && detailedInfo && (
-        <div className="absolute inset-x-0 top-full z-50 mt-2 rounded-xl border border-cyan-500/20 bg-slate-900/95 p-4 text-left shadow-2xl backdrop-blur-xl">
-          <div className="mb-2 text-sm font-medium text-cyan-100">Información adicional</div>
+        <div className="absolute inset-x-0 top-full z-50 mt-2 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg text-left">
+          <div className="text-sm font-medium text-gray-900 mb-2">Información adicional:</div>
           <div className="grid grid-cols-2 gap-2 mb-2">
-            <div className="text-xs text-slate-300">
-              <span className="font-medium text-cyan-200/90">Mediana:</span> {median} {unit}
+            <div className="text-xs">
+              <span className="font-medium">Mediana:</span> {median} {unit}
             </div>
-            <div className="text-xs text-slate-300">
-              <span className="font-medium text-cyan-200/90">Promedio ponderado:</span> {average} {unit}
+            <div className="text-xs">
+              <span className="font-medium">Promedio ponderado:</span> {average} {unit}
             </div>
           </div>
-          <div className="mt-1 text-xs text-slate-400">
+          <div className="text-xs mt-1 text-gray-800">
             {detailedInfo.interpretation}
           </div>
         </div>
       )}
     </div>
   );
-});
+};
 
 export default VitalSign;
