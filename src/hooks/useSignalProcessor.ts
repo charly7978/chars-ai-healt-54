@@ -1,6 +1,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ElitePPGProcessor } from '../modules/integration/ElitePPGProcessor';
+import { ElitePPGProcessor, type ElitePPGResult } from '../modules/integration/ElitePPGProcessor';
 import type { ProcessFrameOptions } from '../modules/signal-processing/PPGSignalProcessor';
 import type { HeartBeatResult } from '../types/beat';
 import { ProcessedSignal, ProcessingError } from '../types/signal';
@@ -12,6 +12,8 @@ export const useSignalProcessor = () => {
   const processorRef = useRef<ElitePPGProcessor | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSignal, setLastSignal] = useState<ProcessedSignal | null>(null);
+  /** Alineado con `lastSignal` (mismo throttle UI); alimenta CardiacMonitor / vista hospitalaria. */
+  const [lastEliteResult, setLastEliteResult] = useState<ElitePPGResult | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
   const lastSignalRef = useRef<ProcessedSignal | null>(null);
@@ -64,6 +66,7 @@ export const useSignalProcessor = () => {
     if (now - lastUiEmitAtRef.current >= UI_SIGNAL_INTERVAL_MS) {
       lastUiEmitAtRef.current = now;
       setLastSignal(signal);
+      setLastEliteResult(processorRef.current?.getLastResult() ?? null);
     }
   }, []);
 
@@ -94,6 +97,7 @@ export const useSignalProcessor = () => {
     lastBeatRef.current = null;
     lastUiEmitAtRef.current = 0;
     setLastSignal(null);
+    setLastEliteResult(null);
     setFramesProcessed(0);
   }, []);
 
@@ -104,6 +108,7 @@ export const useSignalProcessor = () => {
     lastBeatRef.current = null;
     lastUiEmitAtRef.current = 0;
     setLastSignal(null);
+    setLastEliteResult(null);
     setFramesProcessed(0);
   }, []);
 
@@ -200,6 +205,7 @@ export const useSignalProcessor = () => {
   return {
     isProcessing,
     lastSignal,
+    lastEliteResult,
     getLastSignal,
     getLastBeatResult,
     getBeatMeasurementActive,

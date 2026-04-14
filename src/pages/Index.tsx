@@ -8,12 +8,11 @@ import { emptyHeartBeatResult } from "@/modules/signal-processing/beatContactGat
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
-import PPGSignalMeter from "@/components/PPGSignalMeter";
+import HospitalMonitorLayout from "@/components/HospitalMonitorLayout";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { NON_ALERT_RHYTHM_LABELS } from "@/constants/rhythmAlert";
-import type { BeatFlags } from "@/types/beat";
 import {
   getUserHeightMFromStorage,
   DEFAULT_USER_HEIGHT_M,
@@ -45,18 +44,6 @@ const Index = () => {
     measurementConfidence: 'INVALID'
   });
   const [heartRate, setHeartRate] = useState(0);
-  const [heartbeatSignal, setHeartbeatSignal] = useState(0);
-  const [peakEvent, setPeakEvent] = useState<{
-    seq: number;
-    flags: BeatFlags | null;
-    wallTime: number;
-    morphologyScore: number | null;
-  }>({
-    seq: 0,
-    flags: null,
-    wallTime: 0,
-    morphologyScore: null,
-  });
   const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
@@ -111,6 +98,7 @@ const Index = () => {
     startProcessing,
     stopProcessing,
     lastSignal,
+    lastEliteResult,
     getLastSignal,
     getLastBeatResult,
     getBeatMeasurementActive,
@@ -414,8 +402,6 @@ const Index = () => {
     arrhythmiaBeatsRef.current = 0;
     lastArrhythmiaCountForBeatsRef.current = 0;
     unstableFrameCounter.current = 0;
-    setHeartbeatSignal(0);
-    setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
     setRRIntervals([]);
     setVitalSigns({ 
       spo2: 0,
@@ -482,13 +468,11 @@ const Index = () => {
     if (!stableHumanSignal) {
       unstableFrameCounter.current++;
       if (unstableFrameCounter.current < UNSTABLE_ZERO_THRESHOLD) {
-        setHeartbeatSignal(heartBeatResult.filteredValue ?? 0);
         return;
       }
       setHeartRate(0);
       emaRef.current.bpm = 0;
       vitalSignsFrameCounter.current = 0;
-      setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
       setRRIntervals([]);
       setArrhythmiaCount("--");
       if (arrhythmiaDetectedRef.current) {
@@ -510,27 +494,16 @@ const Index = () => {
               measurementConfidence: 'INVALID'
               }
       ));
-      setHeartbeatSignal(0);
       return;
     }
 
     unstableFrameCounter.current = 0;
-    setHeartbeatSignal(heartBeatResult.filteredValue ?? 0);
     const smoothedBPM = applyEMA(emaRef.current.bpm, heartBeatResult.bpm);
     emaRef.current.bpm = smoothedBPM;
     setHeartRate(smoothedBPM);
 
     if (heartBeatResult.isPeak) {
       ingestBeatOpticalRatio();
-      setPeakEvent((pe) => ({
-        seq: pe.seq + 1,
-        flags: heartBeatResult.beatFlags ?? null,
-        wallTime: Date.now(),
-        morphologyScore:
-          heartBeatResult.debug?.morphologyScore != null
-            ? heartBeatResult.debug.morphologyScore
-            : null,
-      }));
       totalBeatsRef.current++;
       const currentArrCount = vitalSignsRef.current.arrhythmiaCount || 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
@@ -802,10 +775,10 @@ const Index = () => {
         />
       )}
 
-      {/* Interfaz única base: monitor PPG a pantalla completa */}
+      {/* Monitor hospitalario original (CardiacMonitor): misma pipeline, sin segundo motor PPG */}
       <div className="font-display">
-        <PPGSignalMeter
-          value={heartbeatSignal}
+        <HospitalMonitorLayout
+          eliteData={lastEliteResult}
           quality={lastSignal?.quality || 0}
           isFingerDetected={Boolean(
             lastSignal?.measurementReady &&
@@ -815,14 +788,7 @@ const Index = () => {
           onStartMeasurement={handleToggleMonitoring}
           onReset={handleReset}
           isMonitoring={isMonitoring}
-          arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
-          rawArrhythmiaData={lastArrhythmiaData.current}
-          preserveResults={showResults}
           diagnosticMessage={lastSignal?.diagnostics?.message}
-          peakEvent={peakEvent}
-          bpm={heartRate}
-          spo2={vitalSigns.spo2}
-          rrIntervals={rrIntervals}
         />
       </div>
 
