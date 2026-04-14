@@ -37,6 +37,7 @@ export interface ProcessedSignal {
   perfusionIndex?: number;
   rawRed?: number;
   rawGreen?: number;
+  rawBlue?: number;
   clipHighRatio?: number;
   clipLowRatio?: number;
   roiCoverage?: number;

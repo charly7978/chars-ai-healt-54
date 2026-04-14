@@ -19,14 +19,20 @@ export function stableForBeatsFromSignal(s: ProcessedSignal): boolean {
 
   const rr = s.rawRed ?? 0;
   const gg = s.rawGreen ?? 1;
+  const bb = s.rawBlue ?? 0;
   if (rr < 62 || gg < 8) return false;
   if (rr / Math.max(gg, 1) < 1.1) return false;
+  /** Rechazo objetos neutros (R≈G≈B) — tejido+flash suele R/B > 1 */
+  if (bb > 3 && rr / bb < 1.05) return false;
 
   const ch = s.clipHighRatio ?? 0;
   if (ch > 0.2) return false;
 
   const cov = s.roiCoverage ?? 0;
   if (cov < 0.22) return false;
+
+  const iou = s.maskIoU ?? 1;
+  if (iou < 0.28) return false;
 
   return true;
 }

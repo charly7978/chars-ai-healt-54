@@ -19,6 +19,11 @@ export interface ContactScoreInput {
   redDominance: number;
   /** Ratio R/G */
   rgRatio: number;
+  /**
+   * Ratio R/B — con flash+tejido la hemoglobina atenúa más el azul que objetos neutros/planos.
+   * Ref.: patrones típicos rPPG / eliminación de errores de toque en vídeo de yema.
+   */
+  rbRatio: number;
   clipHigh: number;
   clipLow: number;
   /** Estabilidad espacial de máscara/ROI 0..1 */
@@ -47,9 +52,10 @@ export interface ContactStateOutput {
 
 const HOLD: Record<ContactMachineState, number> = {
   NO_FINGER: 4,
-  ACQUIRING: 6,
-  CONTACT_UNSTABLE: 10,
-  CONTACT_STABLE: 14,
+  ACQUIRING: 7,
+  CONTACT_UNSTABLE: 11,
+  /** Más frames para confirmar dedo real vs falso positivo (superficies rojizas) */
+  CONTACT_STABLE: 17,
   SATURATED: 8,
   LOW_PERFUSION: 10,
   EXCESS_PRESSURE: 8,
@@ -76,15 +82,19 @@ export class ContactStateMachine {
 
   private computeAggregate(i: ContactScoreInput): number {
     const clipPen = Math.min(1, (i.clipHigh * 2.2 + i.clipLow * 1.4));
+    const rb = i.rbRatio > 0.5 ? i.rbRatio : 0;
+    const rbTerm =
+      rb > 1.03 ? Math.max(0, Math.min(1, (rb - 1.03) / 0.55)) * 0.1 : 0;
     const base =
-      i.coverage * 0.22 +
-      Math.max(0, Math.min(1, (i.redDominance - 0.04) / 0.32)) * 0.16 +
-      Math.max(0, Math.min(1, (i.rgRatio - 1.04) / 0.32)) * 0.14 +
+      i.coverage * 0.2 +
+      Math.max(0, Math.min(1, (i.redDominance - 0.045) / 0.3)) * 0.15 +
+      Math.max(0, Math.min(1, (i.rgRatio - 1.06) / 0.3)) * 0.13 +
       i.spatialStability * 0.12 +
-      i.temporalStability * 0.12 +
-      i.pulsatilityQuality * 0.18 +
-      i.tissueInstant * 0.12 -
-      clipPen * 0.38 -
+      i.temporalStability * 0.11 +
+      i.pulsatilityQuality * 0.17 +
+      i.tissueInstant * 0.14 +
+      rbTerm -
+      clipPen * 0.4 -
       i.dcDriftPenalty * 0.12;
 
     const pressure = i.pressureProxy;
@@ -103,14 +113,36 @@ export class ContactStateMachine {
     if (i.clipHigh > 0.38 || (i.clipHigh > 0.28 && i.redDominance < 0.08)) return 'SATURATED';
     if (i.pressureProxy > 0.78 && i.clipHigh > 0.12) return 'EXCESS_PRESSURE';
     if (i.pulsatilityQuality < 0.06 && i.coverage > 0.14 && i.tissueInstant > 0.35) return 'LOW_PERFUSION';
-    /** Aire / ambiente: poca firma R>G y baja coherencia tejido */
-    if (i.rgRatio < 1.05 && i.redDominance < 0.11) return 'NO_FINGER';
-    if (i.redDominance < 0.035 && i.coverage < 0.16) return 'NO_FINGER';
+
+    const rb = i.rbRatio > 0.5 ? i.rbRatio : 0;
+
+    /** Fondo / plano sin firma sangre: R≈G≈B */
+    if (rb > 0.5 && rb < 1.02 && i.rgRatio < 1.14 && i.coverage > 0.1) return 'NO_FINGER';
+    /** Aire / ambiente: poca firma R>G */
+    if (i.rgRatio < 1.07 && i.redDominance < 0.1) return 'NO_FINGER';
+    if (i.redDominance < 0.038 && i.coverage < 0.16) return 'NO_FINGER';
     if (i.tissueInstant < 0.2 && i.coverage < 0.13) return 'NO_FINGER';
-    if (agg < 0.33) return 'NO_FINGER';
-    if (agg < 0.46) return 'ACQUIRING';
-    if (i.temporalStability < 0.4 || i.spatialStability < 0.34) return 'CONTACT_UNSTABLE';
-    if (agg >= 0.62 && i.pulsatilityQuality >= 0.12 && i.tissueInstant >= 0.26) return 'CONTACT_STABLE';
+    /** Tejido dudoso: coherencia “instantánea” alta pero color no cardíaco */
+    if (i.tissueInstant < 0.24 && i.rgRatio < 1.12) return 'NO_FINGER';
+
+    if (agg < 0.35) return 'NO_FINGER';
+    if (agg < 0.48) return 'ACQUIRING';
+    if (i.temporalStability < 0.41 || i.spatialStability < 0.35) return 'CONTACT_UNSTABLE';
+    /**
+     * Contacto estable: exige firma cromática + pulsatilidad + tejido (menos FP que superficies rojizas).
+     */
+    const rbOk = rb < 0.5 || rb >= 1.035;
+    if (
+      agg >= 0.64 &&
+      i.pulsatilityQuality >= 0.14 &&
+      i.tissueInstant >= 0.28 &&
+      i.rgRatio >= 1.12 &&
+      rbOk &&
+      i.spatialStability >= 0.36 &&
+      i.temporalStability >= 0.41
+    ) {
+      return 'CONTACT_STABLE';
+    }
     return 'CONTACT_UNSTABLE';
   }
 

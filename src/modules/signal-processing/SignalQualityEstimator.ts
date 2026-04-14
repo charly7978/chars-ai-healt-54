@@ -40,6 +40,8 @@ export function computeGlobalSQI(params: {
   roiValidRatio?: number;
   /** Estabilidad máscara dedo frame a frame */
   maskIoU?: number;
+  /** R/B — si es ~1.0 con contacto “estable”, probable falso tejido */
+  rbRatio?: number;
 }): number {
   const {
     perfusionIndex, periodicityScore, coverageRatio,
@@ -48,6 +50,7 @@ export function computeGlobalSQI(params: {
     signalRange, redDominance, contactState, sourceStability,
     roiValidRatio = 1,
     maskIoU = 1,
+    rbRatio,
   } = params;
 
   if (contactState === 'NO_CONTACT') return 0;
@@ -85,5 +88,10 @@ export function computeGlobalSQI(params: {
   // Stable contact bonus
   const stableBonus = contactState === 'STABLE_CONTACT' ? 5 : 0;
 
-  return Math.max(0, Math.min(100, (base + stableBonus) * pressurePenalty));
+  let score = Math.max(0, Math.min(100, (base + stableBonus) * pressurePenalty));
+  /** Penaliza fuerte R≈B típico de papel/pared (no sangre bajo flash) */
+  if (rbRatio !== undefined && rbRatio > 0.4 && rbRatio < 1.02 && contactState === 'STABLE_CONTACT') {
+    score = Math.min(score, 28);
+  }
+  return score;
 }

@@ -480,6 +480,7 @@ export class FrameAnalysisEngine {
       coverage: assembled.coverageEffective,
       redDominance: tr - (tg + tb) / 2,
       rgRatio: tg > 1 ? tr / tg : 0,
+      rbRatio: tb > 0.75 ? tr / tb : 0,
       clipHigh: clipHighRatio,
       clipLow: clipLowRatio,
       spatialStability: assembled.spatialStability,

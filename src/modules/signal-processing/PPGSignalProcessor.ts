@@ -191,6 +191,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const perfusionIndex = analysis.perfusionIndex;
     const signalRange = this.getSignalRange();
     const redDominance = analysis.rawRed - (analysis.rawGreen + analysis.rawBlue) / 2;
+    const rbRatio =
+      analysis.rawBlue > 0.75 ? analysis.rawRed / analysis.rawBlue : 0;
 
     this.signalQuality = computeGlobalSQI({
       perfusionIndex: perfusionIndex / 100,
@@ -208,6 +210,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       sourceStability: this.sourceStability,
       roiValidRatio: analysis.roiValidPixelRatio,
       maskIoU: analysis.maskIoU,
+      rbRatio,
     });
 
     const driftPenalty = this.positionDrifting ? 0.14 : 1.0;
@@ -285,6 +288,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       perfusionIndex,
       rawRed: analysis.rawRed,
       rawGreen: analysis.rawGreen,
+      rawBlue: analysis.rawBlue,
       clipHighRatio: analysis.clipHighRatio,
       clipLowRatio: analysis.clipLowRatio,
       roiCoverage: analysis.coverageRatio,
@@ -332,6 +336,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       perfusionIndex: 0,
       rawRed: 0,
       rawGreen: 0,
+      rawBlue: 0,
       clipHighRatio: 0,
       clipLowRatio: 0,
       roiCoverage: 0,
@@ -433,6 +438,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // SQI por fuente está en 0..1 (SignalQualityScorer)
       if (sq.length === 0 || Math.max(...sq) < 0.16) return false;
       if (a.readinessReason !== 'ok') return false;
+      const tb = a.rawBlue ?? 0;
+      if (tb > 2 && a.rawRed / tb < 1.04) return false;
+      if ((a.maskIoU ?? 0) < 0.3) return false;
     }
     return true;
   }
