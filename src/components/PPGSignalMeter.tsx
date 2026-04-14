@@ -304,8 +304,6 @@ const PPGSignalMeter = ({
         ibiDisplayRef.current = ibi;
       }
     }
-    // Limpiar buffer para eliminar waveClass persistentes de antes
-    dataBufferRef.current?.clear();
   }, [
     value,
     quality,
@@ -744,9 +742,18 @@ const PPGSignalMeter = ({
         const lastRR = rr && rr.length > 0 ? rr[rr.length - 1]! : 800;
         const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
         
-        // Marcar directamente los últimos 10 puntos del buffer
+        // Marcado basado en índices: marcar los últimos 25 puntos del buffer cuando hay arritmia
         if (waveClass === 'arrhythmia' || waveClass === 'weak') {
-          buffer.markWaveClassRecent(10, waveClass);
+          const points = buffer.getPoints();
+          const markCount = 25;
+          const startIndex = Math.max(0, points.length - markCount);
+          for (let i = startIndex; i < points.length; i++) {
+            if (waveClass === 'arrhythmia') {
+              points[i].waveClass = 'arrhythmia';
+            } else if (waveClass === 'weak' && points[i].waveClass !== 'arrhythmia') {
+              points[i].waveClass = 'weak';
+            }
+          }
         }
         
         beatHistoryRef.current.push({
@@ -758,7 +765,7 @@ const PPGSignalMeter = ({
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
 
-      // Siempre usar 'normal' para nuevos puntos - el marking se hace por separado
+      // Siempre usar 'normal' para nuevos puntos - el marcado agresivo se hace por separado
       buffer.push({ time: now, value: scaledValue, waveClass: 'normal' });
       const points = buffer.getPoints();
       if (points.length > 30) {

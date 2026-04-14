@@ -762,7 +762,7 @@ export class HeartBeatProcessor {
   }
 
   private computeFlags(c: BeatCandidate, timeSinceLast: number, expectedRR: number): BeatFlags {
-    const isPremature = expectedRR > 0 && timeSinceLast < expectedRR * 0.7;
+    const isPremature = expectedRR > 0 && timeSinceLast < expectedRR * 0.65;
     const isWeak = c.detectorHits < 2 && c.morphologyScore < 40;
     return {
       isWeak,

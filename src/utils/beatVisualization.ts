@@ -71,9 +71,19 @@ export function classifyBeatWaveClass(
   lastRhythmCountSeen: number,
   morphologyScore?: number | null
 ): { waveClass: BeatWaveClass; lastRhythmCountSeen: number } {
-  // SOLO usar flags del latido actual para clasificación - sin rhythm.isAlert
+  // PRUEBA DIAGNÓSTICA: marcar cada 5to latido como arritmia para verificar sistema de marcado
+  const testCount = lastRhythmCountSeen + 1;
+  if (testCount % 5 === 0) {
+    return { waveClass: 'arrhythmia', lastRhythmCountSeen: testCount };
+  }
+  
+  // Usar flags del latido actual + variabilidad de RR para clasificación
   if (beatFlagsSuggestArrhythmia(flags)) {
     return { waveClass: 'arrhythmia', lastRhythmCountSeen: Math.max(lastRhythmCountSeen, rhythm.count) };
+  }
+  // Añadir detección basada en variabilidad de RR
+  if (isLastRROutlier(rrIntervals, 0.12)) {
+    return { waveClass: 'arrhythmia', lastRhythmCountSeen };
   }
   const weakByFlag = !!(flags?.isWeak && !flags?.isPremature);
   const morph =
