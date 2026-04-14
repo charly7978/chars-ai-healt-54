@@ -25,7 +25,7 @@ export function ClinicalTopBar({
 
   return (
     <div
-      className="pointer-events-none absolute left-0 right-0 top-0 z-[25] flex justify-center px-3 pt-[max(0.5rem,env(safe-area-inset-top))]"
+      className="pointer-events-none absolute left-0 right-0 top-0 z-[24] flex justify-center px-3 pt-[max(0.5rem,env(safe-area-inset-top))]"
       aria-hidden
     >
       <div className="clinical-topbar-glass relative flex w-full max-w-2xl items-center justify-between gap-3 rounded-b-2xl border border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-2.5">

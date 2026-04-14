@@ -831,7 +831,7 @@ const Index = () => {
           const showGuidance = !isLocked || isDrifting;
           return showGuidance || isLocked ? (
             <div
-              className="pointer-events-none absolute left-2 right-2 z-30 flex justify-center px-1"
+              className="pointer-events-none absolute left-2 right-2 z-[28] flex justify-center px-1"
               style={{ top: 'max(7.5rem, min(22vh, 200px))' }}
             >
               <div
@@ -862,8 +862,9 @@ const Index = () => {
           calibrationProgress={calibrationProgress}
         />
 
-        <div className="relative z-10 h-full font-display">
-          <div className="flex-1 h-full">
+        {/* z-[36]: por encima de guía (28) y topbar (25) — si no, el canvas queda tapado */}
+        <div className="relative z-[36] flex min-h-0 h-full min-w-0 flex-col font-display">
+          <div className="min-h-0 flex-1">
             <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
@@ -888,7 +889,7 @@ const Index = () => {
             />
           </div>
 
-          <div className="pointer-events-none absolute inset-x-0 top-[55%] bottom-[72px] px-2 py-4 sm:bottom-20 sm:px-3">
+          <div className="pointer-events-none absolute inset-x-0 top-[55%] bottom-[72px] z-[37] px-2 py-4 sm:bottom-20 sm:px-3">
             <div className="clinical-vitals-shell clinical-vitals-inner mx-auto max-w-4xl rounded-2xl border border-cyan-500/25 bg-gradient-to-b from-slate-950/90 via-slate-950/85 to-[#020617]/95 px-2 py-4 backdrop-blur-xl sm:px-4 sm:py-5">
             <div className="grid grid-cols-3 gap-2 place-items-stretch sm:gap-3">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
