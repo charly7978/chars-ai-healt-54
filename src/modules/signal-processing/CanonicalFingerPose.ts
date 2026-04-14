@@ -2,14 +2,13 @@ import type { FrameAnalysisResult } from './FrameAnalysisCore';
 import type { PressureState } from './PressureProxyEstimator';
 
 /**
- * Pose única de medición para PPG por cámara trasera + flash (contacto).
+ * Pose de medición para PPG (cámara trasera + flash).
  *
- * Criterio de ingeniería (alineado con literatura PPG/reflectancia): una sola geometría
- * reproducible — yema cubriendo lente y flash de forma centrada, presión moderada
- * (rango óptimo de perfusión), sin “solo punta” (alta asimetría óptica / cobertura baja)
- * ni dedo aplastado (alta cobertura + pulsos atenuados / saturación).
- *
- * Sin aleatoriedad: solo umbrales sobre señales observadas en el frame.
+ * - **Estricta**: yema centrada, poca asimetría (referencia reproducible).
+ * - **Lateral óptica** (fallback): contacto lateral válido cuando la señal es
+ *   estable (maskIoU, perfusión, cromática) aunque el centroide y los gradientes
+ *   R indiquen dedo “de costado” — mismo tejido, distinta geometría respecto al
+ *   flash; sin simulación, solo reglas sobre métricas del frame.
  */
 export type CanonicalPoseIssue =
   | 'OK'
@@ -30,11 +29,8 @@ function pressureOf(a: FrameAnalysisResult): PressureState {
   return a.pressureState;
 }
 
-/**
- * Devuelve si la pose es la canónica aceptada para medir todos los biomarcadores
- * con la misma configuración de contacto.
- */
-export function evaluateCanonicalPose(a: FrameAnalysisResult): CanonicalPoseResult {
+/** Pose frontal “libro”: centroide cerca del eje óptico y gradientes moderados. */
+function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
   const cx = a.poseCentroidNorm.x;
   const cy = a.poseCentroidNorm.y;
   const gMag = Math.hypot(a.poseRedGradientX, a.poseRedGradientY);
@@ -87,6 +83,51 @@ export function evaluateCanonicalPose(a: FrameAnalysisResult): CanonicalPoseResu
   return { ok: true, issue: 'OK' };
 }
 
+/**
+ * Contacto lateral: centroide desplazado y/o gradiente R alto son normales;
+ * exigimos estabilidad de máscara, perfusión y consistencia cromática (R/G/B).
+ */
+function evaluateLateralOpticalPose(a: FrameAnalysisResult): boolean {
+  if (a.pressureState !== 'OPTIMAL_PRESSURE') return false;
+  if (a.clipHighRatio > 0.16) return false;
+  if ((a.maskIoU ?? 0) < 0.24) return false;
+  if (a.perfusionIndex < 1.82) return false;
+  if (a.coverageRatio < 0.27 || a.centerCoverage < 0.105) return false;
+
+  const cx = a.poseCentroidNorm.x;
+  const cy = a.poseCentroidNorm.y;
+  if (Math.abs(cx - 0.5) > 0.4 || Math.abs(cy - 0.5) > 0.4) return false;
+
+  const gMag = Math.hypot(a.poseRedGradientX, a.poseRedGradientY);
+  if (gMag > 0.68 || gMag < 0.008) return false;
+
+  const rr = a.rawRed;
+  const gg = a.rawGreen;
+  const bb = a.rawBlue;
+  if (rr < 45 || gg < 6.5 || rr / Math.max(gg, 1) < 1.03) return false;
+  if (bb > 3 && rr / bb < 1.01) return false;
+
+  const su = a.spatialUniformity;
+  if (su < 0.13 || su > 0.93) return false;
+
+  if (a.coverageRatio > 0.91 && su > 0.83 && a.perfusionIndex < 2.05) {
+    return false;
+  }
+
+  return true;
+}
+
+export function evaluateCanonicalPose(a: FrameAnalysisResult): CanonicalPoseResult {
+  const strict = evaluateStrictCanonical(a);
+  if (strict.ok) return strict;
+
+  if (evaluateLateralOpticalPose(a)) {
+    return { ok: true, issue: 'OK' };
+  }
+
+  return strict;
+}
+
 export function canonicalPoseGuidance(issue: CanonicalPoseIssue): string {
   switch (issue) {
     case 'OK':
@@ -106,6 +147,6 @@ export function canonicalPoseGuidance(issue: CanonicalPoseIssue): string {
     case 'PRESSURE_HIGH':
       return 'SUELTE PRESIÓN: DEMASIADO FUERTE — USE SOLO FIRMEZA MODERADA CON LA YEMA';
     default:
-      return 'AJUSTE LA YEMA: CENTRADA, PRESIÓN MODERADA, SIN PUNTA NI APLASTAMIENTO';
+      return 'AJUSTE LA YEMA: CENTRADA O DE COSTADO FIRME, PRESIÓN MODERADA, SIN APLASTAMIENTO';
   }
 }

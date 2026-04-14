@@ -570,6 +570,14 @@ const Index = () => {
           }))
         : undefined;
 
+      const pipelineContactQuality = Math.min(
+        100,
+        Math.round(
+          (lastSignal.quality ?? 0) * 0.88 +
+            (lastSignal.maskIoU ?? 0) * 22 +
+            (lastSignal.roiCoverage ?? 0) * 28
+        )
+      );
       setUpstreamContext({
         contactStable: lastSignal.measurementReady === true,
         pressureOptimal,
@@ -577,6 +585,7 @@ const Index = () => {
         sourceStability,
         avgBeatSQI: heartBeatResult.beatSQI || heartBeatResult.debug.lastBeatSQI || 0,
         beatCount: heartBeatResult.debug.beatsAccepted || heartBeatResult.rrData?.intervals.length || 0,
+        pipelineContactQuality,
       });
 
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {

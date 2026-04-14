@@ -141,6 +141,18 @@ export class SpO2ProcessorElite {
       const br = trimmedMedian(this.beatRatioBuffer, 0.12);
       if (isFinite(br)) medianR = medianR * 0.65 + br * 0.35;
     }
+
+    /** Dedo lateral: PI verde/rojo diverge por trayectoria óptica — fusionar R con mediana robusta del buffer temporal. */
+    const piRatio = piGreen / Math.max(piRed, 1e-6);
+    if (this.ratioBuffer.length >= 8) {
+      const robust = trimmedMedian(this.ratioBuffer, 0.2);
+      if (isFinite(robust) && robust > 0.05) {
+        let w = 0;
+        if (piRatio > 2.35) w = Math.min(0.26, (piRatio - 2.35) * 0.038);
+        else if (piRatio < 0.42) w = Math.min(0.22, (0.42 - piRatio) * 0.35);
+        if (w > 0) medianR = medianR * (1 - w) + robust * w;
+      }
+    }
     
     // ========== CONVERSIÓN A SpO2 ==========
     // Modelo calibrado: SpO2 = intercept - slope × R

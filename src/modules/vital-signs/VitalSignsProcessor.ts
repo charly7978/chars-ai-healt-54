@@ -126,6 +126,8 @@ export class VitalSignsProcessor {
     sampleRate: 30,
     detectorAgreement: 0,
     rrStability: 0,
+    /** Calidad PPG/máscara (dedo lateral: el tracker visual puede subestimar contacto). */
+    pipelineContactQuality: 0,
   };
 
   private heartRuntime = { bpm: 0, bpmConfidence: 0, beatCount: 0 };
@@ -214,6 +216,7 @@ export class VitalSignsProcessor {
     sampleRate?: number;
     detectorAgreement?: number;
     rrStability?: number;
+    pipelineContactQuality?: number;
   }): void {
     if (ctx.contactStable !== undefined) this.upstreamContext.contactStable = ctx.contactStable;
     if (ctx.pressureOptimal !== undefined) this.upstreamContext.pressureOptimal = ctx.pressureOptimal;
@@ -224,6 +227,9 @@ export class VitalSignsProcessor {
     if (ctx.sampleRate !== undefined && isFinite(ctx.sampleRate)) this.upstreamContext.sampleRate = Math.max(15, Math.min(60, ctx.sampleRate));
     if (ctx.detectorAgreement !== undefined) this.upstreamContext.detectorAgreement = ctx.detectorAgreement;
     if (ctx.rrStability !== undefined) this.upstreamContext.rrStability = ctx.rrStability;
+    if (ctx.pipelineContactQuality !== undefined && isFinite(ctx.pipelineContactQuality)) {
+      this.upstreamContext.pipelineContactQuality = Math.max(0, Math.min(100, ctx.pipelineContactQuality));
+    }
   }
 
   processSignal(
@@ -329,7 +335,11 @@ export class VitalSignsProcessor {
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
     const sampleRate = this.upstreamContext.sampleRate || 30;
 
-    const contactQ = Math.max(this.measurements.signalQuality, this.upstreamContext.avgBeatSQI);
+    const contactQ = Math.max(
+      this.measurements.signalQuality,
+      this.upstreamContext.avgBeatSQI,
+      this.upstreamContext.pipelineContactQuality
+    );
     const spo2Elite = this.spo2Processor.process({
       redAC: this.rgbData.redAC,
       redDC: this.rgbData.redDC,
@@ -660,5 +670,6 @@ export class VitalSignsProcessor {
     this.lastSpo2 = null;
     this.lastGlucose = null;
     this.lastLipids = null;
+    this.upstreamContext.pipelineContactQuality = 0;
   }
 }

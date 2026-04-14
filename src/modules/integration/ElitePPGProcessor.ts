@@ -324,12 +324,20 @@ export class ElitePPGProcessor {
     if (rgbStats.redDC > 0 && rgbStats.greenDC > 0 && beatResult) {
       const pressureOptimal =
         fingerResult.pressureEstimate >= 0.35 && fingerResult.pressureEstimate <= 0.65;
+      const pipeQ = Math.min(
+        100,
+        Math.max(
+          fingerResult.contactQuality,
+          Math.round((ppgSignal?.quality ?? 0) * 0.97),
+          Math.round(((ppgSignal?.maskIoU ?? 0) * 0.52 + (ppgSignal?.roiCoverage ?? 0) * 0.48) * 100)
+        )
+      );
       const spo2Res = this.spo2Processor.process({
         redAC: rgbStats.redAC,
         redDC: rgbStats.redDC,
         greenAC: rgbStats.greenAC,
         greenDC: rgbStats.greenDC,
-        contactQuality: fingerResult.contactQuality,
+        contactQuality: pipeQ,
         beatSQI: beatResult.beatSQI ?? 0,
         pressureOptimal,
         clipHighRatio: ppgSignal?.clipHighRatio ?? 0,
