@@ -278,6 +278,8 @@ const PPGSignalMeter = ({
     ibiMs?: number;
     morph?: number | null;
   }[]>([]);
+  const overrideWaveClassRef = useRef<BeatWaveClass | null>(null);
+  const overrideEndTimeRef = useRef(0);
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
@@ -745,16 +747,10 @@ const PPGSignalMeter = ({
         const beatDuration = Math.min(Math.max(lastRR, 400), 800); // Duración del latido en ms
         const beatTime = pe.wallTime > 0 ? pe.wallTime : now;
         
-        // DEBUG: Log para verificar el flujo
-        console.log('[PPGSignalMeter] Peak:', pe.seq, 'waveClass:', waveClass, 'beatTime:', beatTime, 'now:', now, 'lastRR:', lastRR);
-        
-        // Marcar solo el segmento del latido actual
-        const segmentStart = beatTime - beatDuration / 2;
-        if (waveClass === 'arrhythmia') {
-          console.log('[PPGSignalMeter] Marking arrhythmia segment:', segmentStart, 'to', segmentStart + beatDuration);
-          buffer.markWaveClassSegment(segmentStart, beatDuration, 'arrhythmia');
-        } else if (waveClass === 'weak') {
-          buffer.markWaveClassSegment(segmentStart, beatDuration, 'weak');
+        // Establecer overrideWaveClass temporal para los próximos puntos
+        if (waveClass === 'arrhythmia' || waveClass === 'weak') {
+          overrideWaveClassRef.current = waveClass;
+          overrideEndTimeRef.current = now + beatDuration;
         }
         
         beatHistoryRef.current.push({
@@ -766,8 +762,17 @@ const PPGSignalMeter = ({
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
 
-      // Siempre usar 'normal' para nuevos puntos - el marking segment se hace por separado
-      buffer.push({ time: now, value: scaledValue, waveClass: 'normal' });
+      // Usar overrideWaveClass si está activo, sino 'normal'
+      const waveClassToUse = overrideWaveClassRef.current && now < overrideEndTimeRef.current
+        ? overrideWaveClassRef.current
+        : 'normal';
+      
+      // Limpiar override si expiró
+      if (overrideWaveClassRef.current && now >= overrideEndTimeRef.current) {
+        overrideWaveClassRef.current = null;
+      }
+      
+      buffer.push({ time: now, value: scaledValue, waveClass: waveClassToUse });
       const points = buffer.getPoints();
       if (points.length > 30) {
         const recentPoints = points.slice(-150);
