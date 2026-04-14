@@ -320,7 +320,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       contactState: this.exportedContactState,
       extendedContactState: this.extendedState,
       motionArtifact,
-      roi: { x: 0, y: 0, width: dims.width, height: dims.height },
+      roi: this.roiRectFromAnalysisBBox(analysis.roiBBox, dims.width, dims.height),
       perfusionIndex,
       rawRed: analysis.rawRed,
       rawGreen: analysis.rawGreen,
@@ -352,6 +352,31 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       roiValidPixelRatio: analysis.roiValidPixelRatio,
       maskIoU: analysis.maskIoU,
     });
+  }
+
+  /**
+   * ROI en píxeles según el bbox del `AdaptiveROIAssembler` (meta-ROI), acotado al frame.
+   * Antes se exportaba el rectángulo completo y desalineaba telemetría/visualización.
+   */
+  private roiRectFromAnalysisBBox(
+    bbox: { sx: number; sy: number; ex: number; ey: number },
+    frameW: number,
+    frameH: number
+  ): { x: number; y: number; width: number; height: number } {
+    const fw = Math.max(1, frameW);
+    const fh = Math.max(1, frameH);
+    let x0 = Math.floor(bbox.sx);
+    let y0 = Math.floor(bbox.sy);
+    let x1 = Math.ceil(bbox.ex);
+    let y1 = Math.ceil(bbox.ey);
+    if (x1 <= x0 || y1 <= y0) {
+      return { x: 0, y: 0, width: fw, height: fh };
+    }
+    x0 = Math.max(0, Math.min(fw - 1, x0));
+    y0 = Math.max(0, Math.min(fh - 1, y0));
+    x1 = Math.max(x0 + 1, Math.min(fw, x1));
+    y1 = Math.max(y0 + 1, Math.min(fh, y1));
+    return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
   }
 
   private emitEmpty(
@@ -390,7 +415,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       presentationJitterMs: this.lastCaptureTiming?.jitterMadMs,
       processingDurationMs: this.processingTimeMs,
       diagnostics: {
-        message: 'PIPELINE_INIT',
+        message: 'NO_FRAME_ANALYSIS',
         hasPulsatility: false,
         pulsatilityValue: 0,
       },
