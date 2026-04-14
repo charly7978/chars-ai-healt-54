@@ -247,7 +247,8 @@ export class TilePulsatilityMap {
         temporalStab * 0.1 +
         centerPrior * 0.04;
       w *= Math.max(0.12, 1 - sat * 2.1);
-      w *= Math.max(0.15, 1 - clipHigh * 2.4);
+      const clipHighPen = clipHigh > 0.14 ? 2.78 : 2.4;
+      w *= Math.max(0.12, 1 - clipHigh * clipHighPen);
       w *= Math.max(0.2, 1 - clipLow * 1.8);
       if (meanR < 18 || meanR > 245) w *= 0.35;
       w *= Math.max(0.35, 1 - globalMotionHint);

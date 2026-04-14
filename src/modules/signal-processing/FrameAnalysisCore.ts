@@ -1,6 +1,9 @@
 /**
  * Núcleo de análisis por frame: tiles pulsátiles, ROI adaptativa, contacto, presión,
  * extracción multi-fuente y ranking SQI — usable en main thread o en Worker.
+ *
+ * Etapa B (ROI): servo al centroide + fracción de ventana modulada por EMA de clip alto/bajo
+ * (literatura frame-adaptive ROI / meta-ROI frente a saturación y cámara móvil).
  */
 
 import { ContactStateMachine, type ContactMachineState, type ContactScoreInput } from './ContactStateMachine';
@@ -160,6 +163,10 @@ export class FrameAnalysisEngine {
   private sessionRedEma = 88;
   private prevStableMask: Uint8Array | null = null;
 
+  /** EMA de clip del frame anterior → ajuste causal de tamaño ROI (sin doble pasada) */
+  private clipHighEma = 0;
+  private clipLowEma = 0;
+
   /**
    * PPG contacto dedo + flash: el rojo suele portar más pulsación útil que el verde.
    * Prior determinista (sin aleatoriedad) para ranking y fusión cuando R≫G.
@@ -300,6 +307,8 @@ export class FrameAnalysisEngine {
     this.lastAllSQI = {};
     this.sessionRedEma = 88;
     this.prevStableMask = null;
+    this.clipHighEma = 0;
+    this.clipLowEma = 0;
   }
 
   processFrame(imageData: ImageData, timestamp: number, motionArtifact: boolean): FrameAnalysisResult {
@@ -313,7 +322,17 @@ export class FrameAnalysisEngine {
     const globalMotion = this.computeGlobalMotion(data, w, h);
 
     const metaQ = 0.5 * this.metaStabilityEma + 0.5 * this.pulsatilityEma;
-    const roiFrac = Math.max(0.58, Math.min(0.88, 0.63 + 0.2 * metaQ));
+    let roiFrac = Math.max(0.58, Math.min(0.88, 0.63 + 0.2 * metaQ));
+    const chPrev = this.clipHighEma;
+    const clPrev = this.clipLowEma;
+    if (chPrev > 0.07) {
+      const shrink = 0.055 + 0.13 * Math.min(1, (chPrev - 0.07) / 0.45);
+      roiFrac *= 1 - shrink;
+    }
+    if (clPrev > 0.12 && chPrev < 0.24) {
+      roiFrac *= 1 + 0.038 * Math.min(1, (clPrev - 0.12) / 0.38);
+    }
+    roiFrac = Math.max(0.52, Math.min(0.88, roiFrac));
     const roiSize = Math.min(w, h) * roiFrac;
     const roiInt = Math.floor(roiSize);
     const maxShift = Math.min(w, h) * 0.14;
@@ -382,6 +401,8 @@ export class FrameAnalysisEngine {
     }
     const clipHighRatio = totalW > 0 ? totalClipHi / totalW : 0;
     const clipLowRatio = totalW > 0 ? totalClipLo / totalW : 0;
+    this.clipHighEma = this.clipHighEma * 0.88 + clipHighRatio * 0.12;
+    this.clipLowEma = this.clipLowEma * 0.88 + clipLowRatio * 0.12;
 
     const tr = assembled.trimmedMean.r;
     const poseSig = this.computePoseSignature(assembled, tr, nMask);

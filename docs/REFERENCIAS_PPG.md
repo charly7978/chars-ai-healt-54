@@ -10,6 +10,7 @@ Documento de apoyo para alinear implementación con literatura y tendencias reci
 
 ## Señal PPG y corrección en smartphone
 
+- **ROI frame-adaptive (dedo / vídeo):** p. ej. *Frame adaptive ROI for photoplethysmography signal extraction from fingertip video captured by smartphone* (IEEE) — reduce distorsión por saturación vs ROI fija; la app aplica servo de ventana + penalización de tiles saturados y EMA de clip para el tamaño de ROI en `FrameAnalysisCore` / `TilePulsatilityMap`.
 - **PRISM / optimización adaptativa (literatura reciente):** buscar *PRISM photoplethysmography adaptive detrending* en arxiv (2024–2025) para métodos sin entrenamiento que ajustan mezcla cromática y detrending según calidad en tiempo real.
 
 ## Cómo se usa esto en el código

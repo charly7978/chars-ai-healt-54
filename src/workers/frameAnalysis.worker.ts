@@ -61,8 +61,11 @@ self.onmessage = (ev: MessageEvent<Inbound>) => {
     const imageData = ctx.getImageData(0, 0, w, h);
     const readbackMs = performance.now() - readT0;
     const t0 = performance.now();
-    const sr = typeof m.sampleRateHz === 'number' && isFinite(m.sampleRateHz) ? m.sampleRateHz : 30;
-    engine.setSampleRate(sr);
+    /** Solo si el mensaje no trae Fs; `FrameAnalysisEngine.setSampleRate` acota [15,60] Hz */
+    const DEFAULT_SR_PRIOR = 30;
+    const srRaw =
+      typeof m.sampleRateHz === 'number' && isFinite(m.sampleRateHz) ? m.sampleRateHz : DEFAULT_SR_PRIOR;
+    engine.setSampleRate(srRaw);
     const payload = engine.processFrame(imageData, m.timestamp, m.motion);
     const dt = performance.now() - t0;
     (self as unknown as DedicatedWorkerGlobalScope).postMessage({
@@ -79,8 +82,10 @@ self.onmessage = (ev: MessageEvent<Inbound>) => {
   const data = new Uint8ClampedArray(m.buffer);
   const imageData = new ImageData(data, m.width, m.height);
   const t0 = performance.now();
-  const sr = typeof m.sampleRateHz === 'number' && isFinite(m.sampleRateHz) ? m.sampleRateHz : 30;
-  engine.setSampleRate(sr);
+  const DEFAULT_SR_PRIOR = 30;
+  const srRaw =
+    typeof m.sampleRateHz === 'number' && isFinite(m.sampleRateHz) ? m.sampleRateHz : DEFAULT_SR_PRIOR;
+  engine.setSampleRate(srRaw);
   const payload = engine.processFrame(imageData, m.timestamp, m.motion);
   const dt = performance.now() - t0;
   (self as unknown as DedicatedWorkerGlobalScope).postMessage({
