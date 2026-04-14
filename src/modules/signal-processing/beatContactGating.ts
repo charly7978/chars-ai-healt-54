@@ -55,29 +55,34 @@ export function stableForBeatsFromSignal(s: ProcessedSignal): boolean {
   if (s.motionArtifact) return false;
   if (!s.fingerDetected) return false;
   if (s.contactState !== 'STABLE_CONTACT') return false;
-  if (s.canonicalPoseOk === false) return false;
+  /**
+   * No repetir `canonicalPoseOk` aquí: entra en conflicto con el latch de
+   * `measurementReady` (histéresis ON/OFF) — un frame puede tener pose OK en el
+   * criterio de medición latchado y `canonicalPoseOk` instantáneo false.
+   * La pose ya se exige dentro de `computeMeasurementReadyRaw` antes del latch.
+   */
   if (s.measurementReady !== true) return false;
 
   const perf = s.perfusionIndex ?? 0;
-  if (perf < 2.2) return false;
-  if ((s.quality ?? 0) < 24) return false;
+  if (perf < 1.95) return false;
+  if ((s.quality ?? 0) < 19) return false;
 
   const rr = s.rawRed ?? 0;
   const gg = s.rawGreen ?? 1;
   const bb = s.rawBlue ?? 0;
-  if (rr < 62 || gg < 8) return false;
-  if (rr / Math.max(gg, 1) < 1.1) return false;
+  if (rr < 52 || gg < 7) return false;
+  if (rr / Math.max(gg, 1) < 1.08) return false;
   /** Rechazo objetos neutros (R≈G≈B) — tejido+flash suele R/B > 1 */
-  if (bb > 3 && rr / bb < 1.05) return false;
+  if (bb > 3 && rr / bb < 1.04) return false;
 
   const ch = s.clipHighRatio ?? 0;
-  if (ch > 0.2) return false;
+  if (ch > 0.22) return false;
 
   const cov = s.roiCoverage ?? 0;
-  if (cov < 0.22) return false;
+  if (cov < 0.2) return false;
 
   const iou = s.maskIoU ?? 1;
-  if (iou < 0.28) return false;
+  if (iou < 0.22) return false;
 
   return true;
 }

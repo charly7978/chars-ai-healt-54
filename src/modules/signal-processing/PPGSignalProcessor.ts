@@ -58,7 +58,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lockedGreenBase = 0;
   private lockedCoverage = 0;
   private positionStabilityCount = 0;
-  private readonly POS_LOCK_FRAMES = 40;
+  private readonly POS_LOCK_FRAMES = 28;
   private readonly POS_DRIFT_TOL = 0.13;
   /** Pose óptima bloqueada (centroide + gradientes R) — un solo ángulo de medición */
   private lockedPoseNx = 0.5;
@@ -440,25 +440,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (clipHighRatio > 0.22) return false;
     if (!this.lastCanonicalPose.ok) return false;
     if (perfusionIndexNorm < 0.034) return false;
-    if (gatedQuality < 22) return false;
+    if (gatedQuality < 19) return false;
     if (periodicityScore < 0.13) return false;
     if ((this.lastAnalysis?.coverageRatio ?? 0) < 0.2) return false;
     if (this.sourceStability < 0.2) return false;
-    if (spatialUniformity < 0.26) return false;
+    if (spatialUniformity < 0.22) return false;
 
     const a = this.lastAnalysis;
     if (a) {
       const rr = a.rawRed;
       const gg = a.rawGreen;
-      if (rr < 52 || gg < 8 || rr / Math.max(gg, 1) < 1.06) return false;
-      if (a.fingerScore < 0.16) return false;
+      if (rr < 48 || gg < 7 || rr / Math.max(gg, 1) < 1.04) return false;
+      if (a.fingerScore < 0.14) return false;
       const sq = Object.values(a.allSQI);
       // SQI por fuente está en 0..1 (SignalQualityScorer)
-      if (sq.length === 0 || Math.max(...sq) < 0.16) return false;
+      if (sq.length === 0 || Math.max(...sq) < 0.14) return false;
       if (a.readinessReason !== 'ok') return false;
       const tb = a.rawBlue ?? 0;
-      if (tb > 2 && a.rawRed / tb < 1.04) return false;
-      if ((a.maskIoU ?? 0) < 0.3) return false;
+      if (tb > 2 && a.rawRed / tb < 1.03) return false;
+      if ((a.maskIoU ?? 0) < 0.22) return false;
     }
     return true;
   }
@@ -502,10 +502,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       roi.coverageRatio * 0.34 + roi.spatialUniformity * 0.36 + roi.centerCoverage * 0.3;
 
     if (this.positionLocked) {
-      if (!canon.ok) {
-        this.positionDrifting = true;
-        this.positionGuidance = canonicalPoseGuidance(canon.issue);
-      }
       const redDrift = this.lockedRedBase > 0 ? Math.abs(currentRed - this.lockedRedBase) / this.lockedRedBase : 0;
       const greenDrift =
         this.lockedGreenBase > 0 ? Math.abs(currentGreen - this.lockedGreenBase) / this.lockedGreenBase : 0;
@@ -544,9 +540,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           this.positionGuidance = 'REPOSICIONE EL DEDO COMO AL INICIO';
         }
       } else {
-        if (canon.ok) {
-          this.positionDrifting = false;
-        }
+        this.positionDrifting = false;
         const adapt = 0.003;
         this.lockedRedBase += (currentRed - this.lockedRedBase) * adapt;
         this.lockedGreenBase += (currentGreen - this.lockedGreenBase) * adapt;

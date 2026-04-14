@@ -93,9 +93,9 @@ export class SpO2ProcessorElite {
       return this.getWithheldResult(warnings);
     }
     
-    if (input.contactQuality < 50) {
+    if (input.contactQuality < 36) {
       warnings.push('Poor contact quality');
-      this.consecutiveValidFrames = Math.max(0, this.consecutiveValidFrames - 2);
+      this.consecutiveValidFrames = Math.max(0, this.consecutiveValidFrames - 1);
     }
     
     // ========== CÁLCULO DE PERfusion INDEX ==========
@@ -201,11 +201,14 @@ export class SpO2ProcessorElite {
       Math.min(100, piRed * 500) * 0.2
     );
     
-    // Determinar estado
+    // Determinar estado (umbrales algo más bajos: smartphone + dedo variable)
     let enabledState: SpO2ResultElite['enabledState'] = 'WITHHELD_LOW_QUALITY';
-    if (confidence > 80 && this.consecutiveValidFrames > 30) {
+    if (confidence > 62 && this.consecutiveValidFrames > 18) {
       enabledState = 'ENABLED_HIGH_CONF';
-    } else if (confidence > 50 && this.consecutiveValidFrames > 15) {
+    } else if (
+      (confidence > 34 && this.consecutiveValidFrames > 7) ||
+      (confidence > 26 && this.consecutiveValidFrames > 5 && quality > 26)
+    ) {
       enabledState = 'ENABLED_MEDIUM_CONF';
     }
     
@@ -265,8 +268,7 @@ export class SpO2ProcessorElite {
     // Frames consecutivos (10%)
     score += Math.min(100, consecutiveFrames * 2) * 0.1;
     
-    // Penalización por warnings
-    score -= warningCount * 10;
+    score -= warningCount * 6;
     
     return Math.max(0, Math.min(100, score));
   }

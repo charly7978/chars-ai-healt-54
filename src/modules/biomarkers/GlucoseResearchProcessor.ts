@@ -113,7 +113,7 @@ export class GlucoseResearchProcessor {
       featureCount: 0, modelVersion: 'pop_v1',
     };
 
-    if (!input.cycleFeatures || !input.contactStable || input.signalQuality < 15) {
+    if (!input.cycleFeatures || !input.contactStable || input.signalQuality < 12) {
       return withheld;
     }
 
@@ -137,7 +137,7 @@ export class GlucoseResearchProcessor {
     if (input.rgACRatio > 0) featureCount++;
     if (input.hr > 0) featureCount++;
 
-    if (featureCount < 5) return withheld;
+    if (featureCount < 4) return withheld;
 
     // ── Population model ──
     let glucose = POP_COEFF.intercept;

@@ -48,15 +48,15 @@ function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
     return { ok: false, issue: 'PRESSURE_LOW' };
   }
 
-  if (Math.abs(cx - 0.5) > 0.125 || Math.abs(cy - 0.5) > 0.125) {
+  if (Math.abs(cx - 0.5) > 0.19 || Math.abs(cy - 0.5) > 0.19) {
     return { ok: false, issue: 'OFF_CENTER' };
   }
 
-  if (gMag > 0.33) {
+  if (gMag > 0.42) {
     return { ok: false, issue: 'TIP_ASYMMETRY' };
   }
 
-  if (cov < 0.31 || cent < 0.14) {
+  if (cov < 0.28 || cent < 0.12) {
     return { ok: false, issue: 'TIP_COVERAGE' };
   }
 
@@ -64,15 +64,15 @@ function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
     return { ok: false, issue: 'FLAT_OVERPRESSURE' };
   }
 
-  if (cov > 0.74 && pi < 2.3) {
+  if (cov > 0.76 && pi < 2.05) {
     return { ok: false, issue: 'FLAT_PERFUSION' };
   }
 
-  if (gMag < 0.016 && cov > 0.62) {
+  if (gMag < 0.014 && cov > 0.62) {
     return { ok: false, issue: 'FLAT_OVERPRESSURE' };
   }
 
-  if (cov > 0.84) {
+  if (cov > 0.88) {
     return { ok: false, issue: 'FLAT_OVERPRESSURE' };
   }
 
@@ -89,28 +89,28 @@ function evaluateStrictCanonical(a: FrameAnalysisResult): CanonicalPoseResult {
  */
 function evaluateLateralOpticalPose(a: FrameAnalysisResult): boolean {
   if (a.pressureState !== 'OPTIMAL_PRESSURE') return false;
-  if (a.clipHighRatio > 0.16) return false;
-  if ((a.maskIoU ?? 0) < 0.24) return false;
-  if (a.perfusionIndex < 1.82) return false;
-  if (a.coverageRatio < 0.27 || a.centerCoverage < 0.105) return false;
+  if (a.clipHighRatio > 0.18) return false;
+  if ((a.maskIoU ?? 0) < 0.18) return false;
+  if (a.perfusionIndex < 1.45) return false;
+  if (a.coverageRatio < 0.24 || a.centerCoverage < 0.09) return false;
 
   const cx = a.poseCentroidNorm.x;
   const cy = a.poseCentroidNorm.y;
-  if (Math.abs(cx - 0.5) > 0.4 || Math.abs(cy - 0.5) > 0.4) return false;
+  if (Math.abs(cx - 0.5) > 0.42 || Math.abs(cy - 0.5) > 0.42) return false;
 
   const gMag = Math.hypot(a.poseRedGradientX, a.poseRedGradientY);
-  if (gMag > 0.68 || gMag < 0.008) return false;
+  if (gMag > 0.74 || gMag < 0.006) return false;
 
   const rr = a.rawRed;
   const gg = a.rawGreen;
   const bb = a.rawBlue;
-  if (rr < 45 || gg < 6.5 || rr / Math.max(gg, 1) < 1.03) return false;
-  if (bb > 3 && rr / bb < 1.01) return false;
+  if (rr < 42 || gg < 6 || rr / Math.max(gg, 1) < 1.02) return false;
+  if (bb > 3 && rr / bb < 1.008) return false;
 
   const su = a.spatialUniformity;
-  if (su < 0.13 || su > 0.93) return false;
+  if (su < 0.11 || su > 0.94) return false;
 
-  if (a.coverageRatio > 0.91 && su > 0.83 && a.perfusionIndex < 2.05) {
+  if (a.coverageRatio > 0.92 && su > 0.84 && a.perfusionIndex < 1.95) {
     return false;
   }
 
