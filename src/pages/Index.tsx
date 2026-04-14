@@ -4,7 +4,7 @@ import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
-import { stableForBeatsFromSignal, emptyHeartBeatResult } from "@/modules/signal-processing/beatContactGating";
+import { emptyHeartBeatResult } from "@/modules/signal-processing/beatContactGating";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
@@ -127,6 +127,7 @@ const Index = () => {
     lastSignal,
     getLastSignal,
     getLastBeatResult,
+    getBeatMeasurementActive,
     processFrame,
     isProcessing,
     framesProcessed,
@@ -443,7 +444,8 @@ const Index = () => {
 
   const vitalSignsFrameCounter = useRef<number>(0);
   const unstableFrameCounter = useRef<number>(0);
-  const UNSTABLE_ZERO_THRESHOLD = 10;
+  /** Frames consecutivos "malos" antes de borrar FC (histéresis; ~≥0,7 s a ~22 ms/tick). */
+  const UNSTABLE_ZERO_THRESHOLD = 32;
   const VITALS_PROCESS_EVERY_N_FRAMES = 3;
   const lastProcessedSignalTsRef = useRef<number | null>(null);
   const signalProcessingTickRef = useRef<() => void>(() => {});
@@ -462,8 +464,7 @@ const Index = () => {
       sourceStability?: number;
     };
     const positionQuality = getPositionQuality();
-    const stableForBeats = stableForBeatsFromSignal(lastSignal);
-    const stableHumanSignal = stableForBeats;
+    const stableHumanSignal = getBeatMeasurementActive();
 
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
@@ -482,41 +483,43 @@ const Index = () => {
     const heartBeatResult =
       getLastBeatResult() ?? emptyHeartBeatResult(0);
 
-    setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
-
     if (!stableHumanSignal) {
       unstableFrameCounter.current++;
+      if (unstableFrameCounter.current < UNSTABLE_ZERO_THRESHOLD) {
+        setHeartbeatSignal(heartBeatResult.filteredValue ?? 0);
+        return;
+      }
       setHeartRate(0);
       emaRef.current.bpm = 0;
-      if (unstableFrameCounter.current >= UNSTABLE_ZERO_THRESHOLD) {
-        vitalSignsFrameCounter.current = 0;
-        setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
-        setRRIntervals([]);
-        setArrhythmiaCount("--");
-        if (arrhythmiaDetectedRef.current) {
-          arrhythmiaDetectedRef.current = false;
-        }
-        setVitalSigns(prev => (
-          prev.measurementConfidence === 'INVALID' && prev.spo2 === 0 && prev.glucose === 0 && prev.pressure.systolic === 0 && prev.pressure.diastolic === 0
-            ? prev
-            : {
-                ...prev,
-                spo2: 0,
-                glucose: 0,
-                pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
-                arrhythmiaCount: 0,
-                arrhythmiaStatus: "SINUS_STABLE|0",
-                lipids: { totalCholesterol: 0, triglycerides: 0 },
-                lastArrhythmiaData: undefined,
-                signalQuality: 0,
-                measurementConfidence: 'INVALID'
-              }
-        ));
+      vitalSignsFrameCounter.current = 0;
+      setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
+      setRRIntervals([]);
+      setArrhythmiaCount("--");
+      if (arrhythmiaDetectedRef.current) {
+        arrhythmiaDetectedRef.current = false;
       }
+      setVitalSigns(prev => (
+        prev.measurementConfidence === 'INVALID' && prev.spo2 === 0 && prev.glucose === 0 && prev.pressure.systolic === 0 && prev.pressure.diastolic === 0
+          ? prev
+          : {
+              ...prev,
+              spo2: 0,
+              glucose: 0,
+              pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
+              arrhythmiaCount: 0,
+              arrhythmiaStatus: "SINUS_STABLE|0",
+              lipids: { totalCholesterol: 0, triglycerides: 0 },
+              lastArrhythmiaData: undefined,
+              signalQuality: 0,
+              measurementConfidence: 'INVALID'
+              }
+      ));
+      setHeartbeatSignal(0);
       return;
     }
 
     unstableFrameCounter.current = 0;
+    setHeartbeatSignal(heartBeatResult.filteredValue ?? 0);
     const smoothedBPM = applyEMA(emaRef.current.bpm, heartBeatResult.bpm);
     emaRef.current.bpm = smoothedBPM;
     setHeartRate(smoothedBPM);
@@ -830,7 +833,13 @@ const Index = () => {
             <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
-              isFingerDetected={lastSignal?.measurementReady ?? false}
+              isFingerDetected={
+                Boolean(
+                  lastSignal?.measurementReady &&
+                    lastSignal.contactState === 'STABLE_CONTACT' &&
+                    lastSignal.extendedContactState === 'STABLE_CONTACT'
+                )
+              }
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
               isMonitoring={isMonitoring}

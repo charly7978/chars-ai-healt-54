@@ -372,12 +372,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       case 'ACQUIRING':
         this.exportedContactState = 'UNSTABLE_CONTACT';
         this.extendedState = 'ACQUIRING_CONTACT';
-        this.fingerDetected = true;
+        this.fingerDetected = false;
         break;
       case 'CONTACT_UNSTABLE':
         this.exportedContactState = 'UNSTABLE_CONTACT';
         this.extendedState = 'UNSTABLE_CONTACT';
-        this.fingerDetected = true;
+        this.fingerDetected = false;
         break;
       case 'CONTACT_STABLE':
         this.exportedContactState = 'STABLE_CONTACT';
@@ -387,17 +387,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       case 'SATURATED':
         this.exportedContactState = 'UNSTABLE_CONTACT';
         this.extendedState = 'SATURATED_CONTACT';
-        this.fingerDetected = true;
+        this.fingerDetected = false;
         break;
       case 'LOW_PERFUSION':
         this.exportedContactState = 'UNSTABLE_CONTACT';
         this.extendedState = 'UNSTABLE_CONTACT';
-        this.fingerDetected = true;
+        this.fingerDetected = false;
         break;
       case 'EXCESS_PRESSURE':
         this.exportedContactState = 'UNSTABLE_CONTACT';
         this.extendedState = 'EXCESSIVE_PRESSURE';
-        this.fingerDetected = true;
+        this.fingerDetected = false;
         break;
       default:
         this.exportedContactState = 'NO_CONTACT';
@@ -535,7 +535,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         this.lockedPoseGx += (a.poseRedGradientX - this.lockedPoseGx) * 0.012;
         this.positionGuidance = 'ÁNGULO ÓPTIMO — NO MUEVA EL DEDO';
       }
-    } else if (this.fingerDetected && this.exportedContactState !== 'NO_CONTACT') {
+    } else if (this.exportedContactState !== 'NO_CONTACT') {
       this.positionDrifting = false;
       const canStabilize =
         a.contactRaw === 'CONTACT_STABLE' || a.contactRaw === 'CONTACT_UNSTABLE';

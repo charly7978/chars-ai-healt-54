@@ -2,6 +2,50 @@ import type { HeartBeatResult } from '../../types/beat';
 import type { ContactState, ProcessedSignal } from '../../types/signal';
 
 /**
+ * Histéresis compartida (ElitePPGProcessor + UI): evita que un frame malo corte
+ * la cadena de latidos; requiere varios frames buenos para enganchar y varios
+ * malos consecutivos para soltar (Schmitt con retención).
+ */
+export class BeatMeasurementGate {
+  private onStreak = 0;
+  private offStreak = 0;
+  private latched = false;
+
+  constructor(
+    private readonly onFrames = 2,
+    private readonly offFrames = 22
+  ) {}
+
+  reset(): void {
+    this.onStreak = 0;
+    this.offStreak = 0;
+    this.latched = false;
+  }
+
+  /** true = medición de latidos activa (incluye ventana de retención tras glitches). */
+  update(rawOk: boolean): boolean {
+    if (rawOk) {
+      this.offStreak = 0;
+      this.onStreak = Math.min(255, this.onStreak + 1);
+      if (!this.latched && this.onStreak >= this.onFrames) {
+        this.latched = true;
+      }
+    } else {
+      this.onStreak = 0;
+      if (this.latched) {
+        this.offStreak = Math.min(255, this.offStreak + 1);
+        if (this.offStreak >= this.offFrames) {
+          this.latched = false;
+          this.offStreak = 0;
+        }
+      }
+    }
+    if (!this.latched) return false;
+    return rawOk || this.offStreak < this.offFrames;
+  }
+}
+
+/**
  * Misma regla en ElitePPGProcessor e Index: latidos solo con señal 100 % atribuible
  * al pipeline cámara+flash (sin atajos que acepten aire / ambiente como "estable").
  *

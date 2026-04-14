@@ -187,11 +187,16 @@ export const useSignalProcessor = () => {
     return processorRef.current.getPPGDebugInfo();
   }, []);
 
+  const getBeatMeasurementActive = useCallback((): boolean => {
+    return processorRef.current?.isBeatMeasurementActive() ?? false;
+  }, []);
+
   return {
     isProcessing,
     lastSignal,
     getLastSignal,
     getLastBeatResult,
+    getBeatMeasurementActive,
     error,
     framesProcessed,
     startProcessing,

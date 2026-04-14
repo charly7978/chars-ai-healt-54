@@ -13,7 +13,11 @@
  */
 
 import { AdvancedFingerTracker, type FingerTrackingResult } from '../signal-processing/AdvancedFingerTracker';
-import { beatContactFromSignal, emptyHeartBeatResult } from '../signal-processing/beatContactGating';
+import {
+  BeatMeasurementGate,
+  emptyHeartBeatResult,
+  stableForBeatsFromSignal,
+} from '../signal-processing/beatContactGating';
 import { PPGSignalProcessor } from '../signal-processing/PPGSignalProcessor';
 import { HeartBeatProcessor } from '../HeartBeatProcessor';
 import type { HeartBeatResult } from '../../types/beat';
@@ -118,7 +122,9 @@ export class ElitePPGProcessor {
   private rrHistory: number[] = [];
   /** Alineado con useHeartBeatProcessor: muchos frames sin contacto → reset del detector */
   private noContactBeatFrames = 0;
-  private readonly NO_CONTACT_BEAT_RESET = 90;
+  private readonly NO_CONTACT_BEAT_RESET = 200;
+  private readonly beatMeasurementGate = new BeatMeasurementGate();
+  private lastBeatGateActive = false;
 
   private onResult?: (result: ElitePPGResult) => void;
   private onArrhythmia?: (result: ArrhythmiaResult) => void;
@@ -175,6 +181,8 @@ export class ElitePPGProcessor {
     this.lastBeatResult = null;
     this.lastFingerResult = null;
     this.noContactBeatFrames = 0;
+    this.beatMeasurementGate.reset();
+    this.lastBeatGateActive = false;
     this.fingerTracker.reset();
     this.ppgProcessor.reset?.();
     this.beatProcessor.reset?.();
@@ -207,9 +215,14 @@ export class ElitePPGProcessor {
 
     if (!ppgSignal) {
       this.lastBeatResult = null;
+      this.beatMeasurementGate.reset();
+      this.lastBeatGateActive = false;
     } else {
-      const beatContact = beatContactFromSignal(ppgSignal);
-      if (beatContact === 'STABLE_CONTACT') {
+      const rawOk = stableForBeatsFromSignal(ppgSignal);
+      const shouldProcessBeats = this.beatMeasurementGate.update(rawOk);
+      this.lastBeatGateActive = shouldProcessBeats;
+
+      if (shouldProcessBeats) {
         this.noContactBeatFrames = 0;
         const pq = this.ppgProcessor.getPositionQuality();
         const ppgPressure = ppgSignal.pressureState;
@@ -224,7 +237,7 @@ export class ElitePPGProcessor {
           timestamp,
           {
             quality: ppgSignal.quality,
-            contactState: beatContact,
+            contactState: 'STABLE_CONTACT',
             motionArtifact: ppgSignal.motionArtifact ?? false,
             pressureState: resolvedPressure,
             clipHigh: ppgSignal.clipHighRatio ?? 0,
@@ -238,6 +251,7 @@ export class ElitePPGProcessor {
         this.noContactBeatFrames++;
         if (this.noContactBeatFrames >= this.NO_CONTACT_BEAT_RESET) {
           this.beatProcessor.reset();
+          this.beatMeasurementGate.reset();
           this.noContactBeatFrames = 0;
         }
         beatResult = emptyHeartBeatResult(0);
@@ -352,7 +366,10 @@ export class ElitePPGProcessor {
     // CONSTRUIR RESULTADO
     const result: ElitePPGResult = {
       finger: {
-        detected: fingerResult.contactQuality > 40,
+        detected:
+          fingerResult.contactQuality > 38 &&
+          ppgSignal?.contactState === 'STABLE_CONTACT' &&
+          ppgSignal?.extendedContactState === 'STABLE_CONTACT',
         contactQuality: fingerResult.contactQuality,
         stabilityScore: fingerResult.stabilityScore,
         pressure: fingerResult.pressureEstimate,
@@ -429,6 +446,11 @@ export class ElitePPGProcessor {
 
   getLastBeatResult(): HeartBeatResult | null {
     return this.lastBeatResult;
+  }
+
+  /** Alineado con `BeatMeasurementGate.update` en processFrame (histéresis de latidos). */
+  isBeatMeasurementActive(): boolean {
+    return this.lastBeatGateActive;
   }
 
   getLastFingerResult(): FingerTrackingResult | null {

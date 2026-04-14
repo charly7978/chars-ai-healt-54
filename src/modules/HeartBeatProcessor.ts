@@ -100,7 +100,8 @@ export class HeartBeatProcessor {
     }
 
     const range = this.getSignalRange(60);
-    if (range < 0.4) {
+    const minRange = this.consecutivePeaks >= 4 ? 0.22 : 0.4;
+    if (range < minRange) {
       return this.makeEmptyResult(0);
     }
 
