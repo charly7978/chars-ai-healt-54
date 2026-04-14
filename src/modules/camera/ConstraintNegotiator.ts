@@ -1,12 +1,13 @@
 /**
  * Negociación adaptativa multi-fase de constraints de vídeo según capabilities del hardware.
- * Basado en WebRTC standards y literatura 2024 sobre adaptive camera constraints.
  * 
- * Estrategia:
- * 1. Detección de capabilities del dispositivo (resolución, framerate, exposure)
- * 2. Negociación progresiva de 5 fases (alta → media → baja, framerate, exposure)
- * 3. Fallback inteligente con métricas de éxito
- * 4. Exposición adaptativa para optimizar señal PPG
+ * Estrategia optimizada (sin stream extra de probing):
+ * 1. Intenta abrir stream con constraints de la fase más ambiciosa
+ * 2. Si falla, degrada progresivamente (720p → 640p → 480p → 320p)
+ * 3. Extrae capabilities del primer stream exitoso (sin abrir stream adicional)
+ * 4. Reporta métricas de negociación para telemetría
+ *
+ * Solo 1 getUserMedia antes de iniciar captura real (eliminado detectDeviceCapabilities separado).
  */
 
 export interface DeviceCapabilities {
@@ -40,49 +41,29 @@ interface NegotiationPhase {
   width: { ideal: number; max: number };
   height: { ideal: number; max: number };
   frameRate: { ideal: number; min?: number; max?: number };
-  exposureMode?: string;
-  exposureCompensation?: number;
-  whiteBalanceMode?: string;
 }
 
 const NEGOTIATION_PHASES: NegotiationPhase[] = [
   {
-    name: 'phase_1_1080p_30fps_exposure_adaptive',
-    width: { ideal: 1920, max: 1920 },
-    height: { ideal: 1080, max: 1080 },
-    frameRate: { ideal: 30, min: 25, max: 30 },
-    exposureMode: 'continuous',
-    exposureCompensation: 0,
-    whiteBalanceMode: 'continuous',
-  },
-  {
-    name: 'phase_2_720p_30fps_exposure_adaptive',
+    name: 'phase_1_720p_30fps',
     width: { ideal: 1280, max: 1280 },
     height: { ideal: 720, max: 720 },
     frameRate: { ideal: 30, min: 25, max: 30 },
-    exposureMode: 'continuous',
-    exposureCompensation: 0,
-    whiteBalanceMode: 'continuous',
   },
   {
-    name: 'phase_3_640p_30fps_exposure_adaptive',
+    name: 'phase_2_640p_30fps',
     width: { ideal: 640, max: 960 },
     height: { ideal: 480, max: 720 },
     frameRate: { ideal: 30, min: 20, max: 30 },
-    exposureMode: 'continuous',
-    exposureCompensation: 0,
-    whiteBalanceMode: 'continuous',
   },
   {
-    name: 'phase_4_480p_30fps_exposure_auto',
+    name: 'phase_3_480p_30fps',
     width: { ideal: 640, max: 640 },
     height: { ideal: 480, max: 480 },
     frameRate: { ideal: 30, min: 15, max: 30 },
-    exposureMode: 'continuous',
-    whiteBalanceMode: 'continuous',
   },
   {
-    name: 'phase_5_320p_24fps_basic',
+    name: 'phase_4_320p_24fps_basic',
     width: { ideal: 320, max: 480 },
     height: { ideal: 240, max: 360 },
     frameRate: { ideal: 24, min: 15, max: 30 },
@@ -90,53 +71,41 @@ const NEGOTIATION_PHASES: NegotiationPhase[] = [
 ];
 
 /**
- * Detecta capabilities del dispositivo mediante probing de constraints.
- * Sin simulación: usa MediaDevices API real.
+ * Extrae capabilities de un track ya abierto (sin stream adicional).
  */
-async function detectDeviceCapabilities(preferredDeviceId?: string | null): Promise<DeviceCapabilities> {
-  const constraints: MediaStreamConstraints = {
-    video: {
-      deviceId: preferredDeviceId ? { exact: preferredDeviceId } : undefined,
-      facingMode: { ideal: 'environment' },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      frameRate: { ideal: 30 },
-    },
+function extractCapabilities(track: MediaStreamTrack): DeviceCapabilities {
+  const defaultCaps: DeviceCapabilities = {
+    maxWidth: 640,
+    maxHeight: 480,
+    maxFramerate: 30,
+    supportsExposureMode: false,
+    supportsWhiteBalanceMode: false,
+    supportsFocusMode: false,
   };
-
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    const track = stream.getVideoTracks()[0];
-    if (!track) {
-      stream.getTracks().forEach(t => t.stop());
-      return { maxWidth: 640, maxHeight: 480, maxFramerate: 30, supportsExposureMode: false, supportsWhiteBalanceMode: false, supportsFocusMode: false };
-    }
-
-    const settings = track.getSettings();
-    const capabilities = track.getCapabilities ? track.getCapabilities() : null;
-
-    const caps: DeviceCapabilities = {
-      maxWidth: capabilities?.width?.max ?? 640,
-      maxHeight: capabilities?.height?.max ?? 480,
-      maxFramerate: capabilities?.frameRate?.max ?? 30,
-      supportsExposureMode: capabilities?.exposureMode?.length ? capabilities.exposureMode.length > 1 : false,
-      supportsWhiteBalanceMode: capabilities?.whiteBalanceMode?.length ? capabilities.whiteBalanceMode.length > 1 : false,
-      supportsFocusMode: capabilities?.focusMode?.length ? capabilities.focusMode.length > 1 : false,
+    const capabilities = track.getCapabilities?.();
+    if (!capabilities) return defaultCaps;
+    return {
+      maxWidth: capabilities.width?.max ?? 640,
+      maxHeight: capabilities.height?.max ?? 480,
+      maxFramerate: capabilities.frameRate?.max ?? 30,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supportsExposureMode: ((capabilities as Record<string, unknown>).exposureMode as string[] | undefined)?.length! > 1 || false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supportsWhiteBalanceMode: ((capabilities as Record<string, unknown>).whiteBalanceMode as string[] | undefined)?.length! > 1 || false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supportsFocusMode: ((capabilities as Record<string, unknown>).focusMode as string[] | undefined)?.length! > 1 || false,
     };
-
-    stream.getTracks().forEach(t => t.stop());
-    return caps;
   } catch {
-    return { maxWidth: 640, maxHeight: 480, maxFramerate: 30, supportsExposureMode: false, supportsWhiteBalanceMode: false, supportsFocusMode: false };
+    return defaultCaps;
   }
 }
 
 /**
- * Construye constraints para una fase específica, ajustando según capabilities.
+ * Construye constraints para una fase específica.
  */
 function buildPhaseConstraints(
   phase: NegotiationPhase,
-  capabilities: DeviceCapabilities,
   preferredDeviceId?: string | null
 ): MediaTrackConstraints {
   const base: MediaTrackConstraints = {
@@ -147,44 +116,21 @@ function buildPhaseConstraints(
     base.deviceId = { exact: preferredDeviceId };
   }
 
-  // Ajustar resolución según capabilities del dispositivo
-  const targetWidth = Math.min(phase.width.ideal, capabilities.maxWidth);
-  const targetHeight = Math.min(phase.height.ideal, capabilities.maxHeight);
-  const targetFramerate = Math.min(phase.frameRate.ideal, capabilities.maxFramerate);
-
-  base.width = {
-    ideal: targetWidth,
-    max: Math.min(phase.width.max, capabilities.maxWidth),
-  };
-  base.height = {
-    ideal: targetHeight,
-    max: Math.min(phase.height.max, capabilities.maxHeight),
-  };
+  base.width = { ideal: phase.width.ideal, max: phase.width.max };
+  base.height = { ideal: phase.height.ideal, max: phase.height.max };
   base.frameRate = {
-    ideal: targetFramerate,
+    ideal: phase.frameRate.ideal,
     min: phase.frameRate.min,
-    max: Math.min(phase.frameRate.max ?? targetFramerate, capabilities.maxFramerate),
+    max: phase.frameRate.max,
   };
-
-  // Añadir modo de exposición si el dispositivo lo soporta (propiedad no estándar)
-  if (capabilities.supportsExposureMode && phase.exposureMode) {
-    (base as any).exposureMode = { ideal: phase.exposureMode };
-    if (phase.exposureCompensation !== undefined) {
-      (base as any).exposureCompensation = { ideal: phase.exposureCompensation };
-    }
-  }
-
-  // Añadir modo de balance de blancos si el dispositivo lo soporta (propiedad no estándar)
-  if (capabilities.supportsWhiteBalanceMode && phase.whiteBalanceMode) {
-    (base as any).whiteBalanceMode = { ideal: phase.whiteBalanceMode };
-  }
 
   return base;
 }
 
 /**
- * Negociación adaptativa multi-fase.
- * Intenta cada fase en orden hasta que una tenga éxito.
+ * Negociación adaptativa multi-fase — UNA SOLA llamada a getUserMedia.
+ * Intenta cada fase en orden. El primer éxito detiene la búsqueda.
+ * Las capabilities se extraen del track resultante sin stream adicional.
  */
 export async function buildProgressiveConstraints(
   preferredDeviceId?: string | null
@@ -200,22 +146,21 @@ export async function buildProgressiveConstraints(
     negotiationTimeMs: 0,
   };
 
-  // Detectar capabilities del dispositivo
-  const capabilities = await detectDeviceCapabilities(preferredDeviceId);
-
-  // Intentar cada fase en orden
+  // Intentar cada fase en orden — sin stream previo de probing
   for (const phase of NEGOTIATION_PHASES) {
     metrics.phaseAttempted = phase.name;
     metrics.attempts++;
     phases.push(phase.name);
 
     try {
-      const constraints = buildPhaseConstraints(phase, capabilities, preferredDeviceId);
+      const constraints = buildPhaseConstraints(phase, preferredDeviceId);
       const stream = await navigator.mediaDevices.getUserMedia({ video: constraints });
       const track = stream.getVideoTracks()[0];
 
       if (track) {
         const settings = track.getSettings();
+        const capabilities = extractCapabilities(track);
+
         metrics.phaseSucceeded = phase.name;
         metrics.finalResolution = {
           width: settings.width ?? 640,
@@ -223,6 +168,7 @@ export async function buildProgressiveConstraints(
         };
         metrics.finalFramerate = settings.frameRate ?? 30;
 
+        // Cerrar stream de prueba — CameraView abrirá el definitivo con estos constraints
         stream.getTracks().forEach(t => t.stop());
         metrics.negotiationTimeMs = performance.now() - t0;
 
@@ -250,7 +196,14 @@ export async function buildProgressiveConstraints(
     video: fallbackConstraints(),
     phases,
     metrics,
-    capabilities,
+    capabilities: {
+      maxWidth: 640,
+      maxHeight: 480,
+      maxFramerate: 30,
+      supportsExposureMode: false,
+      supportsWhiteBalanceMode: false,
+      supportsFocusMode: false,
+    },
   };
 }
 

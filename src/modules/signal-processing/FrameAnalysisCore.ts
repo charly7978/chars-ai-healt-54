@@ -502,6 +502,7 @@ export class FrameAnalysisEngine {
       pressureProxy: pressure.score,
       tissueInstant,
       highPressure: pressure.state === 'HIGH_PRESSURE',
+      tileSpectralMean: spectralMean,
     };
 
     const contactOut = this.contactMachine.update(contactInput);
@@ -527,7 +528,8 @@ export class FrameAnalysisEngine {
       buf.push(c.value);
     }
 
-    if (this.frameCount < 3 || this.frameCount % 2 === 0) {
+    // Score ALL sources EVERY frame (V2: no skip; ~0.1ms for 14 labels is negligible)
+    {
       let best = this.activeSource;
       let bestScore = -1;
       for (const l of LABELS) {
@@ -569,12 +571,9 @@ export class FrameAnalysisEngine {
       } else {
         this.bestStreak = 0;
       }
-    } else {
-      Object.assign(allSQI, this.lastAllSQI);
     }
 
-    const sqiFusion =
-      this.frameCount < 3 || this.frameCount % 2 === 0 ? allSQI : this.lastAllSQI;
+    const sqiFusion = allSQI;
     const sourceValue = this.fusedSourceValue(candidates, sqiFusion, tr, tg);
 
     const fingerScore = assembled.globalScore;

@@ -192,9 +192,10 @@ export class CameraControlEngine {
 
   /**
    * Lazo cerrado suave: clipping alto baja exposición; señal débil sin clipping la sube.
+   * V2: perfusionIndex para ajuste fino — baja perfusión + poco clipping → subir exposición.
    * No actúa si contacto inestable para evitar caza de ruido.
    */
-  feedbackFrame(clipHigh: number, clipLow: number, signalWeak: boolean, contactUnstable: boolean): void {
+  feedbackFrame(clipHigh: number, clipLow: number, signalWeak: boolean, contactUnstable: boolean, perfusionIndex?: number): void {
     const track = this.track;
     if (!track?.applyConstraints || !track.getCapabilities) return;
     const now = performance.now();
@@ -204,7 +205,8 @@ export class CameraControlEngine {
     if (clipHigh > 0.36) this.highClipStreak = Math.min(this.highClipStreak + 1, 30);
     else this.highClipStreak = Math.max(0, this.highClipStreak - 2);
 
-    const key = `${clipHigh.toFixed(2)}_${clipLow.toFixed(2)}_${signalWeak ? 1 : 0}`;
+    const pi = perfusionIndex ?? -1;
+    const key = `${clipHigh.toFixed(2)}_${clipLow.toFixed(2)}_${signalWeak ? 1 : 0}_${pi > 0 ? pi.toFixed(1) : '?'}`;
     if (key === this.lastFeedbackKey) return;
 
     const caps = track.getCapabilities() as ExtendedMediaTrackCapabilities;
@@ -245,6 +247,12 @@ export class CameraControlEngine {
       ec = Math.max(min, ec - step * 2);
     } else if (clipHigh > 0.22) {
       ec = Math.max(min, ec - step);
+    } else if (pi > 0 && pi < 1.5 && clipHigh < 0.1) {
+      // Low perfusion + no clipping → increase exposure to boost signal
+      ec = Math.min(max, ec + step * 0.75);
+    } else if (pi > 8 && clipHigh > 0.15) {
+      // Very high perfusion + some clipping → slightly decrease exposure
+      ec = Math.max(min, ec - step * 0.5);
     } else if (clipLow > 0.28 && signalWeak) {
       ec = Math.min(max, ec + step);
     } else if (signalWeak && clipHigh < 0.12) {

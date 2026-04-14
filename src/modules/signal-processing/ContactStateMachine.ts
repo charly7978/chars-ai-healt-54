@@ -1,6 +1,11 @@
 /**
  * Máquina de estados de contacto dedo/cámara con histéresis temporal y puntuación agregada.
  * Objetivo: evitar transiciones violentas frame-a-frame.
+ *
+ * V2 — Optimizaciones:
+ * - HOLD CONTACT_STABLE reducido 17→12 para mejor UX (~0.4s vs ~0.57s)
+ * - Fast-path para dedo inequívoco (8 frames / ~0.27s)
+ * - Firma R/B mejorada con spectralTissueScore anti-falso-positivo
  */
 
 export type ContactMachineState =
@@ -21,7 +26,6 @@ export interface ContactScoreInput {
   rgRatio: number;
   /**
    * Ratio R/B — con flash+tejido la hemoglobina atenúa más el azul que objetos neutros/planos.
-   * Ref.: patrones típicos rPPG / eliminación de errores de toque en vídeo de yema.
    */
   rbRatio: number;
   clipHigh: number;
@@ -40,6 +44,8 @@ export interface ContactScoreInput {
   tissueInstant: number;
   /** Clasificador explícito: bloquea STABLE si hay aplastamiento hemodinámico */
   highPressure: boolean;
+  /** Media ponderada spectralTissueScore de tiles activos [0,1]; 0 si no disponible */
+  tileSpectralMean?: number;
 }
 
 export interface ContactStateOutput {
@@ -50,16 +56,22 @@ export interface ContactStateOutput {
   dwellFrames: number;
 }
 
+/** Base hold frames per state */
 const HOLD: Record<ContactMachineState, number> = {
   NO_FINGER: 4,
   ACQUIRING: 7,
   CONTACT_UNSTABLE: 11,
-  /** Más frames para confirmar dedo real vs falso positivo (superficies rojizas) */
-  CONTACT_STABLE: 17,
+  CONTACT_STABLE: 12,
   SATURATED: 8,
   LOW_PERFUSION: 10,
   EXCESS_PRESSURE: 8,
 };
+
+/**
+ * Fast-path: cuando la firma del dedo es inequívoca en TODAS las dimensiones,
+ * confirmamos CONTACT_STABLE en solo 8 frames (~0.27s a 30fps).
+ */
+const FAST_HOLD_CONTACT_STABLE = 8;
 
 export class ContactStateMachine {
   private state: ContactMachineState = 'NO_FINGER';
@@ -85,15 +97,22 @@ export class ContactStateMachine {
     const rb = i.rbRatio > 0.5 ? i.rbRatio : 0;
     const rbTerm =
       rb > 1.03 ? Math.max(0, Math.min(1, (rb - 1.03) / 0.55)) * 0.1 : 0;
+
+    // Spectral tissue boost: tiles con firma hemoglobina confirmada
+    const spectralBoost = (i.tileSpectralMean ?? 0) > 0.4
+      ? (i.tileSpectralMean! - 0.4) * 0.12
+      : 0;
+
     const base =
       i.coverage * 0.2 +
       Math.max(0, Math.min(1, (i.redDominance - 0.045) / 0.3)) * 0.15 +
       Math.max(0, Math.min(1, (i.rgRatio - 1.06) / 0.3)) * 0.13 +
       i.spatialStability * 0.12 +
-      i.temporalStability * 0.11 +
+      i.temporalStability * 0.10 +
       i.pulsatilityQuality * 0.17 +
-      i.tissueInstant * 0.14 +
-      rbTerm -
+      i.tissueInstant * 0.13 +
+      rbTerm +
+      spectralBoost -
       clipPen * 0.4 -
       i.dcDriftPenalty * 0.12;
 
@@ -103,6 +122,25 @@ export class ContactStateMachine {
     else if (pressure < 0.22) pressureAdj -= (0.22 - pressure) * 0.5;
 
     return Math.max(0, Math.min(1, base + pressureAdj));
+  }
+
+  /**
+   * Detecta si la firma actual es inequívocamente dedo+flash+tejido.
+   * Cuando todos los indicadores superan umbrales altos simultáneamente,
+   * la probabilidad de falso positivo es extremadamente baja.
+   */
+  private isUnequivocalFinger(i: ContactScoreInput): boolean {
+    return (
+      i.rgRatio >= 1.25 &&
+      i.coverage >= 0.5 &&
+      i.tissueInstant >= 0.6 &&
+      i.pulsatilityQuality >= 0.3 &&
+      (i.rbRatio < 0.5 || i.rbRatio >= 1.15) &&
+      i.clipHigh < 0.15 &&
+      i.spatialStability >= 0.45 &&
+      i.temporalStability >= 0.48 &&
+      (i.tileSpectralMean ?? 0) >= 0.35
+    );
   }
 
   private desiredState(i: ContactScoreInput, agg: number): ContactMachineState {
@@ -116,22 +154,28 @@ export class ContactStateMachine {
 
     const rb = i.rbRatio > 0.5 ? i.rbRatio : 0;
 
-    /** Fondo / plano sin firma sangre: R≈G≈B */
-    if (rb > 0.5 && rb < 1.02 && i.rgRatio < 1.14 && i.coverage > 0.1) return 'NO_FINGER';
+    // R/B mejorado con spectralTissueScore: ponderar ratio por confianza espectral
+    const specMean = i.tileSpectralMean ?? 0;
+    const rbWeighted = specMean > 0.4 ? rb * (1 + 0.15 * specMean) : rb;
+
+    /** Fondo / plano sin firma sangre: R≈G≈B — usar rbWeighted para mejor discriminación */
+    if (rbWeighted > 0.5 && rbWeighted < 1.02 && i.rgRatio < 1.14 && i.coverage > 0.1) return 'NO_FINGER';
     /** Aire / ambiente: poca firma R>G */
     if (i.rgRatio < 1.07 && i.redDominance < 0.1) return 'NO_FINGER';
     if (i.redDominance < 0.038 && i.coverage < 0.16) return 'NO_FINGER';
     if (i.tissueInstant < 0.2 && i.coverage < 0.13) return 'NO_FINGER';
-    /** Tejido dudoso: coherencia “instantánea” alta pero color no cardíaco */
+    /** Tejido dudoso: coherencia "instantánea" alta pero color no cardíaco */
     if (i.tissueInstant < 0.24 && i.rgRatio < 1.12) return 'NO_FINGER';
 
     if (agg < 0.35) return 'NO_FINGER';
     if (agg < 0.48) return 'ACQUIRING';
     if (i.temporalStability < 0.41 || i.spatialStability < 0.35) return 'CONTACT_UNSTABLE';
+
     /**
-     * Contacto estable: exige firma cromática + pulsatilidad + tejido (menos FP que superficies rojizas).
+     * Contacto estable: exige firma cromática + pulsatilidad + tejido.
+     * Usar rbWeighted para anti-falso-positivo mejorado.
      */
-    const rbOk = rb < 0.5 || rb >= 1.035;
+    const rbOk = rbWeighted < 0.5 || rbWeighted >= 1.035;
     if (
       agg >= 0.64 &&
       i.pulsatilityQuality >= 0.14 &&
@@ -167,7 +211,12 @@ export class ContactStateMachine {
       this.pendingFrames++;
     }
 
-    const need = HOLD[want] ?? 8;
+    // Determine hold frames: fast-path for unequivocal finger → CONTACT_STABLE
+    let need = HOLD[want] ?? 8;
+    if (want === 'CONTACT_STABLE' && this.isUnequivocalFinger(input)) {
+      need = FAST_HOLD_CONTACT_STABLE;
+    }
+
     if (this.pending === want && this.pendingFrames >= need) {
       this.state = want;
       this.pending = null;
