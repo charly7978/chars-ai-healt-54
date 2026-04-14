@@ -607,9 +607,23 @@ const Index = () => {
         });
       }
 
-      const usableRRData = heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.bpmConfidence > 0.18
-        ? heartBeatResult.rrData
-        : undefined;
+      /** `lastSignal.quality` es gatedQuality (a veces cap ~18 si contacto inestable); no usar umbrales de 20+. */
+      const q = lastSignal.quality ?? 0;
+      const rrIntervalsOk =
+        heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2;
+      const bpmConf = heartBeatResult.bpmConfidence;
+      const usableRRData =
+        rrIntervalsOk &&
+        (bpmConf > 0.1 || (q >= 8 && bpmConf > 0.05) || (q >= 12 && bpmConf > 0.035))
+          ? heartBeatResult.rrData
+          : undefined;
+
+      /** `measurementReady` tiene histéresis; si solo eso bloquea, vitales y arritmias nunca actualizan. */
+      const vitalsInputReady =
+        lastSignal.measurementReady === true ||
+        (lastSignal.fingerDetected === true &&
+          lastSignal.contactState !== 'NO_CONTACT' &&
+          q >= 8);
 
       setHeartRuntime({
         bpm: heartBeatResult.bpm,
@@ -617,7 +631,7 @@ const Index = () => {
         beatCount: heartBeatResult.debug.beatsAccepted,
       });
 
-      if (lastSignal.measurementReady === true) {
+      if (vitalsInputReady) {
         const vitals = processVitalSigns(
           lastSignal.filteredValue,
           usableRRData,
