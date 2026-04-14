@@ -502,6 +502,7 @@ export class FrameAnalysisEngine {
       pressureProxy: pressure.score,
       tissueInstant,
       highPressure: pressure.state === 'HIGH_PRESSURE',
+      tileSpectralMean: spectralMean,
     };
 
     const contactOut = this.contactMachine.update(contactInput);
