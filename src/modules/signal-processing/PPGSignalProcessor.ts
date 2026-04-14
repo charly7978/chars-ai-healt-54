@@ -307,16 +307,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     if (performance.now() - this.lastLogTime > 4000) {
       this.lastLogTime = performance.now();
+      const lct = this.lastCaptureTiming;
       console.log(
         `📷 PPG [${this.activeSourceLabel}] Q=${gatedQuality.toFixed(0)} PI=${perfusionIndex.toFixed(2)} ` +
           `${this.exportedContactState} worker=${pipeStats.workerActive ? 'on' : 'off'} ` +
-          `Fs=${ct.kalmanSampleRateHz.toFixed(1)}(raw=${ct.sampleRateHz.toFixed(1)}) ` +
-          `jitter=${ct.jitterMadMs.toFixed(1)}(std=${ct.jitterStdMs.toFixed(1)}) ` +
-          `drift=${ct.sampleRateDriftHzPerSec.toFixed(3)} ` +
-          `skew=${ct.deltaSkew.toFixed(3)} ` +
-          `conf=${ct.timingConfidence.toFixed(2)} ` +
-          `drops=${ct.frameDropCount} ` +
-          `win=${ct.windowSize} ` +
+          `Fs=${lct ? lct.kalmanSampleRateHz.toFixed(1) : this.estimatedSampleRate.toFixed(1)}` +
+          `(raw=${lct ? lct.sampleRateHz.toFixed(1) : this.realFps.toFixed(1)}) ` +
+          `jitter=${lct ? lct.jitterMadMs.toFixed(1) : '?'}(std=${lct ? lct.jitterStdMs.toFixed(1) : '?'}) ` +
+          `drift=${lct ? lct.sampleRateDriftHzPerSec.toFixed(3) : '?'} ` +
+          `skew=${lct ? lct.deltaSkew.toFixed(3) : '?'} ` +
+          `conf=${lct ? lct.timingConfidence.toFixed(2) : '0'} ` +
+          `drops=${lct ? lct.frameDropCount : 0} ` +
+          `win=${lct ? lct.windowSize : 0} ` +
           `dropped=${pipeStats.droppedFrames}`
       );
     }
