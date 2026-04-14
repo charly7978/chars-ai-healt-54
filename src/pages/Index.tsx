@@ -8,7 +8,8 @@ import { emptyHeartBeatResult } from "@/modules/signal-processing/beatContactGat
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
-import HospitalMonitorLayout from "@/components/HospitalMonitorLayout";
+import PPGSignalMeter from "@/components/PPGSignalMeter";
+import type { BeatFlags } from "@/types/beat";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -67,6 +68,14 @@ const Index = () => {
   const lastArrhythmiaToastRef = useRef<{ t: number; label: string }>({ t: 0, label: '' });
   const arrhythmiaToastPendingRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
+  /** Secuencia monótona por latido aceptado → `PPGSignalMeter` (marcadores morfológicos). */
+  const peakSeqRef = useRef(0);
+  const [peakEvent, setPeakEvent] = useState<{
+    seq: number;
+    flags: BeatFlags | null;
+    wallTime: number;
+    morphologyScore?: number | null;
+  }>({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
   const cameraRef = useRef<CameraViewHandle>(null);
   const autoFinalizeAt60Ref = useRef(false);
   const captureSchedulerRef = useRef<FrameCaptureScheduler | null>(null);
@@ -98,7 +107,6 @@ const Index = () => {
     startProcessing,
     stopProcessing,
     lastSignal,
-    lastEliteResult,
     getLastSignal,
     getLastBeatResult,
     getBeatMeasurementActive,
@@ -305,6 +313,8 @@ const Index = () => {
     lastArrhythmiaCountForBeatsRef.current = 0;
     captureSchedulerRef.current?.resetMetrology();
     setVitalSigns(prev => ({ ...prev, arrhythmiaStatus: "SINUS_STABLE|0" }));
+    peakSeqRef.current = 0;
+    setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
     startProcessing();
     setIsMonitoring(true);
     if (measurementTimerRef.current) clearInterval(measurementTimerRef.current);
@@ -418,6 +428,8 @@ const Index = () => {
     });
     setArrhythmiaCount("--");
     lastArrhythmiaData.current = null;
+    peakSeqRef.current = 0;
+    setPeakEvent({ seq: 0, flags: null, wallTime: 0, morphologyScore: null });
     setCalibrationProgress(0);
     arrhythmiaDetectedRef.current = false;
     arrhythmiaToastPendingRef.current = false;
@@ -505,6 +517,13 @@ const Index = () => {
     if (heartBeatResult.isPeak) {
       ingestBeatOpticalRatio();
       totalBeatsRef.current++;
+      peakSeqRef.current += 1;
+      setPeakEvent({
+        seq: peakSeqRef.current,
+        flags: heartBeatResult.beatFlags,
+        wallTime: performance.now(),
+        morphologyScore: heartBeatResult.debug.morphologyScore ?? null,
+      });
       const currentArrCount = vitalSignsRef.current.arrhythmiaCount || 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
         arrhythmiaBeatsRef.current++;
@@ -775,11 +794,10 @@ const Index = () => {
         />
       )}
 
-      {/* Monitor hospitalario original (CardiacMonitor): misma pipeline, sin segundo motor PPG */}
       <div className="font-display">
-        <HospitalMonitorLayout
-          eliteData={lastEliteResult}
-          quality={lastSignal?.quality || 0}
+        <PPGSignalMeter
+          value={lastSignal?.filteredValue ?? 0}
+          quality={lastSignal?.quality ?? 0}
           isFingerDetected={Boolean(
             lastSignal?.measurementReady &&
               lastSignal.contactState === 'STABLE_CONTACT' &&
@@ -789,6 +807,12 @@ const Index = () => {
           onReset={handleReset}
           isMonitoring={isMonitoring}
           diagnosticMessage={lastSignal?.diagnostics?.message}
+          arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
+          rawArrhythmiaData={vitalSigns.lastArrhythmiaData ?? null}
+          peakEvent={peakEvent}
+          bpm={heartRate}
+          spo2={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : 0}
+          rrIntervals={rrIntervals}
         />
       </div>
 

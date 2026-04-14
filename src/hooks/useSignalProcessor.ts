@@ -12,7 +12,7 @@ export const useSignalProcessor = () => {
   const processorRef = useRef<ElitePPGProcessor | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSignal, setLastSignal] = useState<ProcessedSignal | null>(null);
-  /** Alineado con `lastSignal` (mismo throttle UI); alimenta CardiacMonitor / vista hospitalaria. */
+  /** Alineado con `lastSignal` (mismo throttle UI); telemetría opcional / depuración. */
   const [lastEliteResult, setLastEliteResult] = useState<ElitePPGResult | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
