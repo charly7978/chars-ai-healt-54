@@ -111,18 +111,40 @@ export const useSignalProcessor = () => {
     }
   }, []);
 
-  // PROCESAMIENTO DE FRAME ÚNICO
-  const processFrame = useCallback((imageData: ImageData) => {
+  // PROCESAMIENTO DE FRAME ÚNICO — acepta timestamp real del frame
+  const processFrame = useCallback((imageData: ImageData, frameTimestamp?: number) => {
     if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
       return;
     }
     
     try {
-      processorRef.current.processFrame(imageData);
+      processorRef.current.processFrame(imageData, frameTimestamp);
     } catch (error) {
       // Error silenciado para rendimiento
     }
   }, [isProcessing]);
+
+  // OBTENER ESTADÍSTICAS RGB REALES PARA SpO2
+  const getRGBStats = useCallback(() => {
+    if (!processorRef.current) {
+      return {
+        redAC: 0,
+        redDC: 0,
+        greenAC: 0,
+        greenDC: 0,
+        rgRatio: 0,
+        ratioOfRatios: 0
+      };
+    }
+    return processorRef.current.getRGBStats();
+  }, []);
+
+  const getPositionQuality = useCallback(() => {
+    if (!processorRef.current) {
+      return { locked: false, drifting: false, spatialUniformity: 0, centerCoverage: 0, positionDrift: 0, guidance: 'COLOQUE SU DEDO', qualityScore: 0 };
+    }
+    return processorRef.current.getPositionQuality();
+  }, []);
 
   return {
     isProcessing,
@@ -133,6 +155,8 @@ export const useSignalProcessor = () => {
     stopProcessing,
     calibrate,
     processFrame,
+    getRGBStats,
+    getPositionQuality,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,

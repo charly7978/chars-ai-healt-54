@@ -1,11 +1,15 @@
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 
+export type ContactState = 'NO_CONTACT' | 'UNSTABLE_CONTACT' | 'STABLE_CONTACT';
+
 export interface ProcessedSignal {
   timestamp: number;
   rawValue: number;
   filteredValue: number;
   quality: number;
   fingerDetected: boolean;
+  contactState: ContactState;
+  motionArtifact?: boolean;
   roi: {
     x: number;
     y: number;
@@ -13,7 +17,8 @@ export interface ProcessedSignal {
     height: number;
   };
   perfusionIndex?: number;
-  // Diagnóstico de detección de dedo
+  rawRed?: number;
+  rawGreen?: number;
   diagnostics?: {
     message: string;
     hasPulsatility: boolean;
