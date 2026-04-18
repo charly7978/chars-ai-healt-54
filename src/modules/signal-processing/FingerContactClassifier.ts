@@ -402,20 +402,21 @@ export class FingerContactClassifier {
       return { state, confidence, features, guidance };
     }
 
-    // Finger detection thresholds (relaxed for better detection)
-    const hasFingerSignature =
-      redDominance > 5 &&
-      rgRatio > 1.02 &&
-      totalCoverage > 0.10 &&
-      spatialUniformity > 0.2 &&
-      meanR > 30;
+    // Finger detection thresholds
+    const hasFingerSignature = 
+      redDominance > 10 &&
+      rgRatio > 1.05 &&
+      totalCoverage > 0.15 &&
+      spatialUniformity > 0.3 &&
+      !saturationLow &&
+      meanR > 50;
 
     if (!hasFingerSignature) {
       state = 'NO_FINGER';
       confidence = 0.9;
-      if (totalCoverage < 0.08) {
+      if (totalCoverage < 0.1) {
         guidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA';
-      } else if (redDominance < 5) {
+      } else if (redDominance < 10) {
         guidance = 'ASEGÚRESE DE QUE SEA SU DEDO';
       } else {
         guidance = 'AJUSTE LA POSICIÓN DEL DEDO';
@@ -424,8 +425,8 @@ export class FingerContactClassifier {
       return { state, confidence, features, guidance };
     }
 
-    // Differentiate between partial and good contact (relaxed thresholds)
-    if (totalCoverage >= 0.30 && centerCoverage >= 0.25 && spatialUniformity >= 0.35) {
+    // Differentiate between partial and good contact
+    if (totalCoverage >= 0.45 && centerCoverage >= 0.4 && spatialUniformity >= 0.5) {
       state = 'GOOD_CONTACT';
       confidence = Math.min(0.95, 0.7 + totalCoverage * 0.2 + centerCoverage * 0.1);
       

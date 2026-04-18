@@ -36,10 +36,6 @@ interface PPGSignalMeterProps {
   coverageRatio?: number;
   perfusionIndex?: number;
   sampleRate?: number;
-  frameAccepted?: boolean;
-  rejectionReason?: string;
-  gateScore?: number;
-  fusionConfidence?: number;
 }
 
 const CONFIG = {
@@ -126,10 +122,6 @@ const PPGSignalMeter = ({
   coverageRatio = 0,
   perfusionIndex = 0,
   sampleRate = 30,
-  frameAccepted = false,
-  rejectionReason = '',
-  gateScore = 0,
-  fusionConfidence = 0,
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
@@ -892,31 +884,6 @@ const PPGSignalMeter = ({
             <div>
               <div className="text-slate-400">Sample Rate</div>
               <div className="text-slate-200">{sampleRate.toFixed(1)} Hz</div>
-            </div>
-          </div>
-
-          {/* Gate & Fusion Metrics */}
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <div>
-              <div className="text-slate-400">Frame Gate</div>
-              <div className={`${frameAccepted ? 'text-emerald-400' : 'text-red-400'}`}>
-                {frameAccepted ? 'PASS' : 'REJECT'}
-              </div>
-            </div>
-            <div>
-              <div className="text-slate-400">Gate Score</div>
-              <div className="text-slate-200">{gateScore.toFixed(2)}</div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <div>
-              <div className="text-slate-400">Fusión Conf</div>
-              <div className="text-slate-200">{(fusionConfidence * 100).toFixed(0)}%</div>
-            </div>
-            <div>
-              <div className="text-slate-400">Reject Reason</div>
-              <div className="text-slate-200 text-[9px]">{rejectionReason || '-'}</div>
             </div>
           </div>
 

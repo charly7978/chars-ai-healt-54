@@ -533,7 +533,7 @@ const Index = () => {
         sampleRate,
         detectorAgreement,
         rrStability,
-        motionScore: lastSignal?.motionScore || 0,
+        motionScore: 0,
       });
 
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
@@ -699,7 +699,7 @@ const Index = () => {
               // Enhanced metrics
               clipHighRatio={lastSignal?.clipHighRatio || 0}
               clipLowRatio={lastSignal?.clipLowRatio || 0}
-              motionScore={lastSignal?.motionScore || 0}
+              motionScore={0}
               globalSQI={lastSignal?.quality || 0}
               spectralSNR={lastSignal?.spectralSNR || 0}
               peakProminence={lastSignal?.peakProminence || 0}
@@ -708,13 +708,9 @@ const Index = () => {
               temporalStability={lastSignal?.temporalStability || 0}
               contactState={lastSignal?.contactState || 'NO_CONTACT'}
               spatialUniformity={getPositionQuality().spatialUniformity || 0}
-              coverageRatio={lastSignal?.perfusionIndex || 0}
+              coverageRatio={0}
               perfusionIndex={lastSignal?.perfusionIndex || 0}
               sampleRate={30}
-              frameAccepted={lastSignal?.frameAccepted || false}
-              rejectionReason={lastSignal?.rejectionReason || ''}
-              gateScore={lastSignal?.gateScore || 0}
-              fusionConfidence={lastSignal?.fusionConfidence || 0}
             />
           </div>
 
