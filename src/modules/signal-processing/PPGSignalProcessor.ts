@@ -5,6 +5,21 @@ import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { SignalSourceRanker } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
+import { FingerContactClassifier, type ContactClassification } from './FingerContactClassifier';
+import { TileFusionEngine, type TileSignal, type FusionResult } from './TileFusionEngine';
+import { FrameQualityGate, type FrameQualityInput } from '../core/FrameQualityGate';
+
+// Worker types for PPG metrics offloading
+type WorkerMessage = {
+  type: 'computeTileMetrics' | 'computeOpticalDensity' | 'computeVisualMotion' | 'computeClippingMap';
+  imageData: ImageData;
+  params?: Record<string, unknown>;
+};
+
+type WorkerResponse = {
+  type: 'tileMetrics' | 'opticalDensity' | 'visualMotion' | 'clippingMap';
+  result: unknown;
+};
 
 // Extended contact states
 type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
@@ -28,6 +43,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private roiMask = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
   private sourceRanker = new SignalSourceRanker();
+  private contactClassifier = new FingerContactClassifier();
+  private fusionEngine = new TileFusionEngine();
+  private qualityGate = new FrameQualityGate();
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -103,6 +121,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // --- Pressure ---
   private pressureState: PressureState = 'LOW_PRESSURE';
   private pressurePenalty = 1.0;
+  
+  // --- Calibration baselines ---
+  private noiseFloor = 0;
+  private minPerfusionThreshold = 0.002;
+  private contactStabilityThreshold = 0.3;
+  
+  // --- Fusion and gate state ---
+  private fusionResult: FusionResult | null = null;
+  private gateResult: { pass: boolean; reason: string; confidence: number } | null = null;
+  private lastContactClassification: ContactClassification | null = null;
+
+  // --- Worker for offloading heavy computations ---
+  private worker: Worker | null = null;
+  private workerAvailable = false;
+  private pendingWorkerRequests = new Map<number, (result: unknown) => void>();
+  private workerRequestId = 0;
 
   // --- Motion ---
   private motionScore = 0;
@@ -143,14 +177,133 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.isProcessing = true;
     this.initialize();
     this.startMotionListener();
+    this.initializeWorker();
   }
 
   stop(): void {
     this.isProcessing = false;
     this.stopMotionListener();
+    this.terminateWorker();
   }
 
-  async calibrate(): Promise<boolean> { return true; }
+  private initializeWorker(): void {
+    try {
+      this.worker = new Worker(new URL('../../workers/ppg.worker.ts', import.meta.url), {
+        type: 'module'
+      });
+
+      this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
+        const { type, result } = e.data;
+        const callback = this.pendingWorkerRequests.get(this.workerRequestId);
+        if (callback) {
+          callback(result);
+          this.pendingWorkerRequests.delete(this.workerRequestId);
+        }
+      };
+
+      this.worker.onerror = () => {
+        console.warn('⚠️ PPG worker failed, falling back to synchronous computation');
+        this.workerAvailable = false;
+        this.terminateWorker();
+      };
+
+      this.workerAvailable = true;
+      console.log('✅ PPG worker initialized successfully');
+    } catch (error) {
+      console.warn('⚠️ Failed to initialize PPG worker, using synchronous fallback:', error);
+      this.workerAvailable = false;
+    }
+  }
+
+  private terminateWorker(): void {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    this.workerAvailable = false;
+    this.pendingWorkerRequests.clear();
+  }
+
+  private async offloadToWorker<T>(type: WorkerMessage['type'], imageData: ImageData, params?: Record<string, unknown>): Promise<T | null> {
+    if (!this.workerAvailable || !this.worker) {
+      return null;
+    }
+
+    return new Promise((resolve) => {
+      const requestId = ++this.workerRequestId;
+      this.pendingWorkerRequests.set(requestId, resolve);
+
+      const message: WorkerMessage = { type, imageData, params };
+      this.worker.postMessage(message);
+
+      setTimeout(() => {
+        if (this.pendingWorkerRequests.has(requestId)) {
+          this.pendingWorkerRequests.delete(requestId);
+          resolve(null);
+        }
+      }, 100);
+    });
+  }
+
+  async calibrate(): Promise<boolean> {
+    const calibrationFrames = 90;
+    const calibrationBuffer: { r: number; g: number; b: number; coverage: number }[] = [];
+    
+    let collected = 0;
+    const startTime = performance.now();
+    
+    return new Promise((resolve) => {
+      const calibrationHandler = (signal: ProcessedSignal) => {
+        if (signal.fingerDetected && signal.rawRed && signal.rawGreen && signal.rawBlue) {
+          calibrationBuffer.push({
+            r: signal.rawRed,
+            g: signal.rawGreen,
+            b: signal.rawBlue,
+            coverage: signal.coverageRatio || 0
+          });
+          collected++;
+          
+          if (collected >= calibrationFrames) {
+            if (calibrationBuffer.length > 0) {
+              const avgR = calibrationBuffer.reduce((s, x) => s + x.r, 0) / calibrationBuffer.length;
+              const avgG = calibrationBuffer.reduce((s, x) => s + x.g, 0) / calibrationBuffer.length;
+              const avgB = calibrationBuffer.reduce((s, x) => s + x.b, 0) / calibrationBuffer.length;
+              
+              this.redBaseline = avgR;
+              this.greenBaseline = avgG;
+              this.blueBaseline = avgB;
+              
+              const varR = calibrationBuffer.reduce((s, x) => s + (x.r - avgR) ** 2, 0) / calibrationBuffer.length;
+              const varG = calibrationBuffer.reduce((s, x) => s + (x.g - avgG) ** 2, 0) / calibrationBuffer.length;
+              const varB = calibrationBuffer.reduce((s, x) => s + (x.b - avgB) ** 2, 0) / calibrationBuffer.length;
+              this.noiseFloor = Math.sqrt((varR + varG + varB) / 3);
+              
+              this.minPerfusionThreshold = Math.max(0.002, this.noiseFloor / avgG * 0.5);
+              
+              const avgCoverage = calibrationBuffer.reduce((s, x) => s + x.coverage, 0) / calibrationBuffer.length;
+              this.contactStabilityThreshold = avgCoverage > 0.4 ? 0.35 : 0.25;
+              
+              console.log(`✅ Calibration complete: R=${avgR.toFixed(0)} G=${avgG.toFixed(0)} B=${avgB.toFixed(0)} Noise=${this.noiseFloor.toFixed(2)}`);
+            }
+            
+            this.onSignalReady = originalHandler;
+            resolve(true);
+          }
+        }
+      };
+      
+      const originalHandler = this.onSignalReady;
+      this.onSignalReady = calibrationHandler;
+      
+      setTimeout(() => {
+        if (collected < calibrationFrames) {
+          console.warn(`⚠️ Calibration timeout after ${(performance.now() - startTime).toFixed(0)}ms, collected ${collected}/${calibrationFrames} frames`);
+          this.onSignalReady = originalHandler;
+          resolve(collected > 20);
+        }
+      }, 5000);
+    });
+  }
 
   /** Accept frame timestamp from requestVideoFrameCallback metadata */
   processFrame(imageData: ImageData, frameTimestamp?: number): void {
@@ -195,8 +348,55 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
     const motionArtifact = this.motionScore > this.MOTION_THRESH;
 
-    // --- CONTACT STATE ---
-    this.updateContactState(roi, pressure);
+    // --- CONTACT CLASSIFICATION (replaces heuristic) ---
+    const contactClassification = this.contactClassifier.classify(
+      this.contactClassifier.extractFeatures(imageData),
+      this.motionScore
+    );
+    this.lastContactClassification = contactClassification;
+    
+    // Map classifier state to extended contact state
+    const classifierToExtended = (state: string): ExtendedContactState => {
+      switch (state) {
+        case 'NO_FINGER': return 'NO_CONTACT';
+        case 'PARTIAL_CONTACT': return 'ACQUIRING_CONTACT';
+        case 'GOOD_CONTACT': return 'STABLE_CONTACT';
+        case 'OVERPRESSURE': return 'EXCESSIVE_PRESSURE';
+        case 'UNDERILLUMINATED': return 'UNSTABLE_CONTACT';
+        case 'EXCESSIVE_CLIPPING': return 'SATURATED_CONTACT';
+        case 'MOTION_CONTAMINATED': return 'UNSTABLE_CONTACT';
+        default: return 'NO_CONTACT';
+      }
+    };
+    
+    this.contactState = classifierToExtended(contactClassification.state);
+    this.fingerDetected = contactClassification.state !== 'NO_FINGER';
+    this.fingerConfidenceCount = contactClassification.confidence > 0.7 ? Math.min(this.fingerConfidenceCount + 1, 200) : Math.max(0, this.fingerConfidenceCount - 0.3);
+    
+    // Update smoothed metrics from classifier features
+    if (contactClassification.features) {
+      const f = contactClassification.features;
+      this.smoothedRed += (f.meanR - this.smoothedRed) * this.RGB_ALPHA;
+      this.smoothedGreen += (f.meanG - this.smoothedGreen) * this.RGB_ALPHA;
+      this.smoothedBlue += (f.meanB - this.smoothedBlue) * this.RGB_ALPHA;
+      this.smoothedCoverage += (f.totalCoverage - this.smoothedCoverage) * this.COV_ALPHA;
+    }
+
+    // Map extended state to standard ContactState for export
+    switch (this.contactState) {
+      case 'NO_CONTACT':
+        this.exportedContactState = 'NO_CONTACT';
+        break;
+      case 'ACQUIRING_CONTACT':
+      case 'UNSTABLE_CONTACT':
+      case 'SATURATED_CONTACT':
+      case 'EXCESSIVE_PRESSURE':
+        this.exportedContactState = 'UNSTABLE_CONTACT';
+        break;
+      case 'STABLE_CONTACT':
+        this.exportedContactState = 'STABLE_CONTACT';
+        break;
+    }
 
     if (this.exportedContactState === 'NO_CONTACT') {
       this.signalQuality = 0;
@@ -222,7 +422,57 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       return;
     }
 
-    // --- Contact detected: update baselines & buffers ---
+    // --- Contact detected: apply quality gate before buffering ---
+    const gateInput: FrameQualityInput = {
+      contactState: this.exportedContactState as any,
+      globalSQI: this.signalQuality,
+      motionScore: this.motionScore,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      brightness: roi.brightness,
+      coverageRatio: roi.coverageRatio,
+      spatialUniformity: roi.spatialUniformity,
+      perfusionIndex: this.calculatePerfusionIndex(),
+    };
+    this.gateResult = this.qualityGate.evaluate(gateInput);
+    
+    if (!this.gateResult.pass) {
+      this.onSignalReady({
+        timestamp,
+        rawValue: roi.rawRed + roi.rawGreen,
+        filteredValue: this.filteredBuf.length > 0 ? this.filteredBuf.get(this.filteredBuf.length - 1) : 0,
+        quality: this.signalQuality,
+        fingerDetected: this.fingerDetected,
+        contactState: this.exportedContactState,
+        motionArtifact,
+        roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
+        perfusionIndex: this.calculatePerfusionIndex(),
+        rawRed: roi.rawRed,
+        rawGreen: roi.rawGreen,
+        rawBlue: roi.rawBlue,
+        // New metrics
+        fusionConfidence: 0,
+        gateScore: this.gateResult.confidence,
+        frameAccepted: false,
+        rejectionReason: this.gateResult.reason,
+        motionScore: this.motionScore,
+        clipHighRatio: roi.clipHighRatio,
+        clipLowRatio: roi.clipLowRatio,
+        spectralSNR: 0,
+        peakProminence: 0,
+        harmonicConsistency: 0,
+        zeroCrossingRate: 0,
+        temporalStability: 0,
+        spatialUniformity: roi.spatialUniformity,
+        centerCoverage: roi.centerCoverage,
+        coverageRatio: roi.coverageRatio,
+        pressureState: this.pressureState,
+        sampleRate: this.estimatedSampleRate,
+      });
+      this.processingTimeMs = performance.now() - t0;
+      return;
+    }
+
     this.updateBaselines(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
     this.redBuf.push(roi.rawRed);
     this.greenBuf.push(roi.rawGreen);
@@ -253,6 +503,48 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.lastSourceLabel = source.label;
     }
     this.sourceStability = Math.min(1, this.sourceStableFrames / 60);
+
+    // --- TILE FUSION (real signal fusion) ---
+    const tileSignals: TileSignal[] = roi.tileMetrics.map((tm, idx) => {
+      const tileR = tm.trimmedMeanR || tm.meanR;
+      const tileG = tm.trimmedMeanG || tm.meanG;
+      const tileB = tm.trimmedMeanB || tm.meanB;
+      const tileDC = this.redBaseline > 0 ? this.redBaseline : tileR;
+      const tileGC = this.greenBaseline > 0 ? this.greenBaseline : tileG;
+      const tileBC = this.blueBaseline > 0 ? this.blueBaseline : tileB;
+      const eps = 1e-6;
+      
+      return {
+        tileIndex: idx,
+        redNorm: tileDC > 10 ? (tileDC - tileR) / tileDC : 0,
+        greenNorm: tileGC > 10 ? (tileGC - tileG) / tileGC : 0,
+        blueNorm: tileBC > 10 ? (tileBC - tileB) / tileBC : 0,
+        redOD: tileDC > 10 ? -Math.log((tileR + eps) / tileDC) : 0,
+        greenOD: tileGC > 10 ? -Math.log((tileG + eps) / tileGC) : 0,
+        blueOD: tileBC > 10 ? -Math.log((tileB + eps) / tileBC) : 0,
+        perfusionIndex: tileGC > 0 ? (tm.variance / tileGC) * 100 : 0,
+        clipHighRatio: tm.clipHighPct,
+        clipLowRatio: tm.clipLowPct,
+        variance: tm.variance,
+        temporalStability: tm.temporalStability,
+        centerDistance: tm.centerDistance,
+      };
+    }).filter(t => t.perfusionIndex > 0.1);
+    
+    const fusionRedPI = this.redDC > 0 ? (this.redAC / this.redDC) * 100 : 0;
+    const fusionGreenPI = this.greenDC > 0 ? (this.greenAC / this.greenDC) * 100 : 0;
+    const fusionBluePI = this.blueDC > 0 ? (this.blueAC / this.blueDC) * 100 : 0;
+    
+    const channelWeights = this.fusionEngine.computeChannelWeights(
+      fusionRedPI, fusionGreenPI, fusionBluePI,
+      roi.clipHighRatio, roi.clipHighRatio, roi.clipHighRatio,
+      this.motionScore
+    );
+    
+    this.fusionResult = this.fusionEngine.fuseTileSignals(tileSignals, channelWeights);
+    
+    const fusedSignal = this.fusionResult?.fusedSignal ?? (roi.rawRed + roi.rawGreen) / 2;
+    const fusionConfidence = this.fusionResult?.qualityScore ?? 0;
 
     // --- FILTERING (Dual-band) ---
     this.rawSignalBuf.push(source.value);
@@ -337,6 +629,23 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       // Enhanced metrics
       clipHighRatio: this.clipHighRatio,
       clipLowRatio: this.clipLowRatio,
+      // New metrics from integration
+      fusionConfidence,
+      gateScore: this.gateResult?.confidence ?? 1,
+      frameAccepted: true,
+      rejectionReason: undefined,
+      motionScore: this.motionScore,
+      spectralSNR: 0,
+      peakProminence: 0,
+      harmonicConsistency: 0,
+      zeroCrossingRate: 0,
+      temporalStability: roi.tileMetrics.reduce((s, t) => s + t.temporalStability, 0) / roi.tileMetrics.length,
+      sourceStability: this.sourceStability,
+      spatialUniformity: roi.spatialUniformity,
+      centerCoverage: roi.centerCoverage,
+      coverageRatio: roi.coverageRatio,
+      pressureState: this.pressureState,
+      sampleRate: this.estimatedSampleRate,
     });
   }
 
@@ -668,6 +977,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameTimeBuf.clear();
     this.roiMask.reset();
     this.pressureEstimator.reset();
+    this.contactClassifier.reset();
+    this.fusionEngine.reset();
+    this.qualityGate.resetStats();
     this.frameCount = 0;
     this.lastLogTime = 0;
     this.lastFrameTime = 0;
@@ -693,6 +1005,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.clipHighRatio = 0; this.clipLowRatio = 0;
     this.resetBaselines();
     this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
+    // Calibration baselines
+    this.noiseFloor = 0;
+    this.minPerfusionThreshold = 0.002;
+    this.contactStabilityThreshold = 0.3;
+    // Fusion and gate
+    this.fusionResult = null;
+    this.gateResult = null;
+    this.lastContactClassification = null;
     // Position lock
     this.positionLocked = false;
     this.lockedRedBase = 0; this.lockedGreenBase = 0; this.lockedCoverage = 0;

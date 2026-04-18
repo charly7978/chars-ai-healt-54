@@ -277,6 +277,99 @@ export class CameraCapabilityManager {
   }
 
   /**
+   * Adaptive camera adjustment based on PPG metrics
+   * Adjusts exposure/compensation to optimize signal quality
+   */
+  async adaptToSignalQuality(
+    track: MediaStreamTrack,
+    metrics: {
+      clipHighRatio: number;
+      clipLowRatio: number;
+      perfusionIndex: number;
+      coverageRatio: number;
+      brightness: number;
+    }
+  ): Promise<boolean> {
+    if (!this.track || !this.profile) return false;
+
+    const caps = this.getCapabilities(track);
+    const settings = this.getSettings(track);
+    let adjusted = false;
+
+    // High clipping: reduce exposure
+    if (metrics.clipHighRatio > 0.15) {
+      if (caps.exposureCompensation) {
+        const currentComp = settings.exposureCompensation ?? 0;
+        const min = caps.exposureCompensation.min;
+        const max = caps.exposureCompensation.max;
+        const step = 0.1;
+        const newComp = Math.max(min, currentComp - step);
+        
+        if (newComp !== currentComp) {
+          const success = await this.applyConstraint(track, 'exposureCompensation', newComp, true);
+          if (success) {
+            console.log(`🔽 Reduced exposure compensation: ${currentComp.toFixed(2)} → ${newComp.toFixed(2)} (clipHigh: ${(metrics.clipHighRatio * 100).toFixed(1)}%)`);
+            adjusted = true;
+          }
+        }
+      }
+
+      // Also reduce ISO if possible
+      if (caps.iso && adjusted === false) {
+        const currentISO = settings.iso ?? 0;
+        const min = caps.iso.min;
+        const step = 50;
+        const newISO = Math.max(min, currentISO - step);
+        
+        if (newISO !== currentISO) {
+          const success = await this.applyConstraint(track, 'iso', newISO, true);
+          if (success) {
+            console.log(`🔽 Reduced ISO: ${currentISO} → ${newISO} (clipHigh: ${(metrics.clipHighRatio * 100).toFixed(1)}%)`);
+            adjusted = true;
+          }
+        }
+      }
+    }
+
+    // Underexposed signal: increase exposure gradually
+    if (metrics.clipHighRatio < 0.05 && metrics.perfusionIndex < 0.01 && metrics.coverageRatio > 0.3 && metrics.brightness < 100) {
+      if (caps.exposureCompensation) {
+        const currentComp = settings.exposureCompensation ?? 0;
+        const min = caps.exposureCompensation.min;
+        const max = caps.exposureCompensation.max;
+        const step = 0.05;
+        const newComp = Math.min(max, currentComp + step);
+        
+        if (newComp !== currentComp) {
+          const success = await this.applyConstraint(track, 'exposureCompensation', newComp, true);
+          if (success) {
+            console.log(`🔼 Increased exposure compensation: ${currentComp.toFixed(2)} → ${newComp.toFixed(2)} (low perfusion, brightness: ${metrics.brightness.toFixed(0)})`);
+            adjusted = true;
+          }
+        }
+      }
+
+      // Also increase ISO if possible
+      if (caps.iso && adjusted === false) {
+        const currentISO = settings.iso ?? 0;
+        const max = caps.iso.max;
+        const step = 25;
+        const newISO = Math.min(max, currentISO + step);
+        
+        if (newISO !== currentISO) {
+          const success = await this.applyConstraint(track, 'iso', newISO, true);
+          if (success) {
+            console.log(`🔼 Increased ISO: ${currentISO} → ${newISO} (low perfusion, brightness: ${metrics.brightness.toFixed(0)})`);
+            adjusted = true;
+          }
+        }
+      }
+    }
+
+    return adjusted;
+  }
+
+  /**
    * Build camera profile from track
    */
   buildProfile(track: MediaStreamTrack, deviceId: string): CameraProfile {

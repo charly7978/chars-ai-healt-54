@@ -47,6 +47,11 @@ export const useVitalSignsProcessor = () => {
     detectorAgreement?: number;
     rrStability?: number;
     motionScore?: number;
+    fusionConfidence?: number;
+    gateScore?: number;
+    temporalStability?: number;
+    spatialUniformity?: number;
+    coverageRatio?: number;
   }) => {
     processorRef.current?.setUpstreamContext(ctx);
   }, []);
