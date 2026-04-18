@@ -9,6 +9,7 @@ import { FingerContactClassifier, type ContactClassification, type ContactFeatur
 import { TileFusionEngine, type FusionResult, type TileSignal } from './TileFusionEngine';
 import { FrameQualityGate, type FrameQualityInput, type FrameQualityOutput } from '../core/FrameQualityGate';
 import { RadiometricProcessor, type RadiometricResult, type RadiometricTileMetrics } from './RadiometricProcessor';
+import { MotionEstimator, type MotionEstimate, type IMUData } from './MotionEstimator';
 
 // Extended contact states - UNIFIED taxonomy (same as ContactState)
 type ExtendedContactState = ContactState;
@@ -56,9 +57,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private tileFusionEngine = new TileFusionEngine();
   private frameQualityGate = new FrameQualityGate();
   private radiometricProcessor = new RadiometricProcessor();
+  private motionEstimator = new MotionEstimator();
 
-  // --- Radiometric processing ---
+  // --- Processing results ---
   private lastRadiometricResult: RadiometricResult | null = null;
+  private lastMotionEstimate: MotionEstimate | null = null;
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -67,9 +70,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private blueBuf = new RingBuffer(300);
   private rawSignalBuf = new RingBuffer(300);
   private filteredBuf = new RingBuffer(300);
+  private displayTraceBuf = new RingBuffer(300); // For visualization only
   private vpgBuf = new RingBuffer(300);
   private apgBuf = new RingBuffer(300);
   private frameTimeBuf = new RingBuffer(120);
+  
+  // --- Display trace smoothing ---
+  private displayTraceSmoothing = 0.3; // EWMA alpha for display (0-1, lower = smoother)
+  private lastDisplayValue = 0;
 
   // --- AC/DC ---
   private redDC = 0; private redAC = 0;
@@ -138,14 +146,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // --- Motion ---
   private motionScore = 0;
   private motionListenerActive = false;
-  private lastAccel = { x: 0, y: 0, z: 0 };
-  private readonly MOTION_THRESH = 0.6;
-  
-  // Visual motion fallback (frame difference)
-  private prevImageData: ImageData | null = null;
-  private visualMotionScore = 0;
-  private readonly VISUAL_MOTION_WINDOW = 10;
-  private visualMotionHistory: number[] = [];
 
   // --- Debug / telemetry ---
   private debugEnabled = false;
@@ -323,15 +323,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.validTileRatio = radiometricResult.validTileRatio;
 
     // ══════════════════════════════════════════════════════
-    //  PHASE 3: MOTION DETECTION (IMU + Visual)
+    //  PHASE 3: MOTION ESTIMATION (IMU + Visual Fusion)
     // ══════════════════════════════════════════════════════
-    const visualMotion = this.computeVisualMotion(imageData);
-    if (this.motionListenerActive) {
-      this.motionScore = this.motionScore * 0.8 + visualMotion * 0.2;
-    } else {
-      this.motionScore = this.motionScore * 0.5 + visualMotion * 0.5;
-    }
-    const motionArtifact = this.motionScore > this.MOTION_THRESH;
+    // Update visual motion from frame
+    this.motionEstimator.updateVisual(imageData);
+    
+    // Get fused motion estimate
+    this.lastMotionEstimate = this.motionEstimator.getEstimate();
+    this.motionScore = this.lastMotionEstimate.score;
+    
+    // Motion artifact flag for gating
+    const motionArtifact = this.lastMotionEstimate.state === 'HIGH' || 
+                          this.lastMotionEstimate.state === 'EXTREME' ||
+                          (this.lastMotionEstimate.state === 'MODERATE' && this.lastMotionEstimate.confidence > 0.7);
 
     // ══════════════════════════════════════════════════════
     //  PHASE 4: FINGER CONTACT CLASSIFIER V2 (Radiometric-based)
@@ -443,13 +447,26 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.sourceStability = Math.min(1, this.sourceStableFrames / 60);
 
     // ══════════════════════════════════════════════════════
-    //  PHASE 9: FILTERING
+    //  PHASE 9: SIGNAL TRACE SEPARATION (Raw / Filtered / Display)
     // ══════════════════════════════════════════════════════
-    this.rawSignalBuf.push(source.value);
-    const filterResult = this.bandpassFilter.filter(source.value, timestamp);
-    const filtered = filterResult.heartBand;
-    this.filteredBuf.push(filtered);
-
+    
+    // RAW TRACE: Unmodified signal from source (for AC/DC, perfusion)
+    const rawTrace = source.value;
+    this.rawSignalBuf.push(rawTrace);
+    
+    // FILTERED TRACE: Bandpass for heart rate detection (0.5-4Hz)
+    const filterResult = this.bandpassFilter.filter(rawTrace, timestamp);
+    const filteredTrace = filterResult.heartBand;
+    this.filteredBuf.push(filteredTrace);
+    
+    // DISPLAY TRACE: Smoothed for visualization (does NOT affect measurements)
+    // EWMA smoothing purely for visual comfort, no algorithmic impact
+    const displayAlpha = this.displayTraceSmoothing;
+    const displayTrace = displayAlpha * filteredTrace + (1 - displayAlpha) * this.lastDisplayValue;
+    this.lastDisplayValue = displayTrace;
+    this.displayTraceBuf.push(displayTrace);
+    
+    // VPG/APG derivatives (from filtered trace for peak detection)
     if (this.filteredBuf.length >= 3) {
       const n = this.filteredBuf.length;
       this.vpgBuf.push((this.filteredBuf.get(n - 1) - this.filteredBuf.get(n - 3)) / 2);
@@ -509,15 +526,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // Get current source metrics for propagation
     const currentMetrics = this.allSourceMetrics[this.activeSourceLabel] ?? {};
     
-    // Señal REAL del pipeline - sin fallback artificial
-    // Si el ranker falla, se reporta LOW_SQI explícitamente
-    const finalRawValue = source.value;
-    const finalFilteredValue = filtered;
+    // ════════════════════════════════════════════════════════
+    //  TRACE VALUES (explicitly separated)
+    // ════════════════════════════════════════════════════════
+    // rawTrace: Unmodified signal (AC/DC, perfusion calculations)
+    // filteredTrace: Bandpass filtered (heart rate detection)
+    // displayTrace: Smoothed for visualization (no algorithmic impact)
+    const finalRawTrace = rawTrace;
+    const finalFilteredTrace = filteredTrace;
+    const finalDisplayTrace = displayTrace;
 
     this.onSignalReady({
       timestamp,
-      rawValue: finalRawValue,
-      filteredValue: finalFilteredValue,
+      // Explicit trace separation
+      rawTrace: finalRawTrace,
+      filteredTrace: finalFilteredTrace,
+      displayTrace: finalDisplayTrace,
+      // Legacy aliases
+      rawValue: finalRawTrace,
+      filteredValue: finalFilteredTrace,
       quality: gatedQuality,
       fingerDetected: this.fingerDetected,
       contactState: this.exportedContactState,
@@ -1040,6 +1067,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameTimeBuf.clear();
     this.roiMask.reset();
     this.pressureEstimator.reset();
+    this.fingerContactClassifier.reset();
+    this.motionEstimator.reset();
     this.frameCount = 0;
     this.lastLogTime = 0;
     this.lastFrameTime = 0;
@@ -1055,7 +1084,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.smoothedRed = 0; this.smoothedGreen = 0; this.smoothedBlue = 0;
     this.smoothedCoverage = 0; this.smoothedFingerScore = 0;
     this.motionScore = 0;
-    this.lastAccel = { x: 0, y: 0, z: 0 };
+    this.lastMotionEstimate = null;
     this.activeSourceLabel = 'RG';
     this.allSourceSQI = {};
     this.sourceStableFrames = 0;
@@ -1073,6 +1102,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.positionDrift = 0; this.positionDrifting = false;
     this.positionQualityScore = 0;
     this.positionGuidance = 'COLOQUE SU DEDO';
+    // Display trace
+    this.lastDisplayValue = 0;
   }
 
   // ══════════════════════════════════════════════════════
@@ -1080,76 +1111,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // ══════════════════════════════════════════════════════
 
   private handleMotionEvent = (event: DeviceMotionEvent) => {
-    const acc = event.accelerationIncludingGravity;
-    if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
-    const dx = (acc.x ?? 0) - this.lastAccel.x;
-    const dy = (acc.y ?? 0) - this.lastAccel.y;
-    const dz = (acc.z ?? 0) - this.lastAccel.z;
-    this.lastAccel = { x: acc.x ?? 0, y: acc.y ?? 0, z: acc.z ?? 0 };
-    const accelRMS = Math.sqrt(dx * dx + dy * dy + dz * dz) / 30;
-    let gyroRMS = 0;
-    const rot = event.rotationRate;
-    if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
-      gyroRMS = Math.sqrt((rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2) / 120;
-    }
-    this.motionScore = this.motionScore * 0.85 + (accelRMS * 0.5 + gyroRMS * 0.3) * 0.15;
+    const imuData: IMUData = {
+      acceleration: event.acceleration,
+      accelerationIncludingGravity: event.accelerationIncludingGravity,
+      rotationRate: event.rotationRate,
+      interval: event.interval,
+    };
+    this.motionEstimator.updateIMU(imuData);
   };
-
-  /**
-   * Visual motion detection using frame difference (fallback when IMU unavailable)
-   */
-  private computeVisualMotion(imageData: ImageData): number {
-    if (!this.prevImageData) {
-      this.prevImageData = imageData;
-      return 0;
-    }
-
-    const data = imageData.data;
-    const prevData = this.prevImageData.data;
-    const w = imageData.width;
-    const h = imageData.height;
-
-    // Sample central region for performance
-    const roiSize = Math.min(w, h) * 0.6;
-    const sx = Math.floor((w - roiSize) / 2);
-    const sy = Math.floor((h - roiSize) / 2);
-    const ex = sx + Math.floor(roiSize);
-    const ey = sy + Math.floor(roiSize);
-
-    let totalDiff = 0;
-    let sampleCount = 0;
-    const step = 4; // Sample every 4th pixel
-
-    for (let y = sy; y < ey; y += step) {
-      for (let x = sx; x < ex; x += step) {
-        const i = (y * w + x) * 4;
-        const rDiff = Math.abs(data[i] - prevData[i]);
-        const gDiff = Math.abs(data[i + 1] - prevData[i + 1]);
-        const bDiff = Math.abs(data[i + 2] - prevData[i + 2]);
-        totalDiff += (rDiff + gDiff + bDiff) / 3;
-        sampleCount++;
-      }
-    }
-
-    this.prevImageData = imageData;
-
-    if (sampleCount === 0) return 0;
-    const avgDiff = totalDiff / sampleCount;
-
-    // Normalize to 0-1 range
-    const normalizedMotion = Math.min(1, avgDiff / 30);
-
-    // Update visual motion history
-    this.visualMotionHistory.push(normalizedMotion);
-    if (this.visualMotionHistory.length > this.VISUAL_MOTION_WINDOW) {
-      this.visualMotionHistory.shift();
-    }
-
-    // EWMA of visual motion
-    this.visualMotionScore = this.visualMotionScore * 0.7 + normalizedMotion * 0.3;
-
-    return this.visualMotionScore;
-  }
 
   private startMotionListener(): void {
     if (this.motionListenerActive) return;

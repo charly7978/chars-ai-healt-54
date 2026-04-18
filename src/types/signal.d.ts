@@ -26,8 +26,33 @@ export type FingerContactState = ContactState;
 
 export interface ProcessedSignal {
   timestamp: number;
-  rawValue: number;
-  filteredValue: number;
+  
+  // ═══════════════════════════════════════════════════════════════
+  //  TRACE SEPARATION - Explicitly separated signal traces
+  // ═══════════════════════════════════════════════════════════════
+  
+  /**
+   * Raw physiological trace: Unfiltered, unmodified signal from source
+   * Used for: Algorithm input, AC/DC calculation, perfusion index
+   */
+  rawTrace: number;
+  
+  /**
+   * Filtered trace: Bandpass filtered (0.5-4Hz) for heart rate detection
+   * Used for: Peak detection, heart rate calculation, periodicity analysis
+   */
+  filteredTrace: number;
+  
+  /**
+   * Display trace: Smoothing for visualization only (does not affect measurements)
+   * Used for: Real-time waveform display, user feedback
+   */
+  displayTrace: number;
+  
+  // Legacy aliases (deprecated, use explicit traces above)
+  rawValue: number;      // alias for rawTrace
+  filteredValue: number; // alias for filteredTrace
+  
   quality: number;
   fingerDetected: boolean;
   contactState: ContactState;
