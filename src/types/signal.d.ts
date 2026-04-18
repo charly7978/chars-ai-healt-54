@@ -19,40 +19,19 @@ export interface ProcessedSignal {
   perfusionIndex?: number;
   rawRed?: number;
   rawGreen?: number;
-  rawBlue?: number;
   diagnostics?: {
     message: string;
     hasPulsatility: boolean;
     pulsatilityValue: number;
   };
-  // Clipping metrics
+  // Enhanced metrics
   clipHighRatio?: number;
   clipLowRatio?: number;
-  // Motion metrics
-  motionScore?: number;
-  // Fusion metrics
-  fusionConfidence?: number;
-  effectiveTileCount?: number;
-  // Source ranker enhanced metrics
   spectralSNR?: number;
   peakProminence?: number;
   harmonicConsistency?: number;
   zeroCrossingRate?: number;
-  // Temporal metrics
   temporalStability?: number;
-  sourceStability?: number;
-  // Quality gate metrics
-  gateScore?: number;
-  frameAccepted?: boolean;
-  rejectionReason?: string;
-  // Spatial metrics
-  spatialUniformity?: number;
-  centerCoverage?: number;
-  coverageRatio?: number;
-  // Pressure state
-  pressureState?: string;
-  // Sample rate
-  sampleRate?: number;
 }
 
 export interface ProcessingError {

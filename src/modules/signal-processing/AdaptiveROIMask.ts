@@ -303,13 +303,13 @@ export class AdaptiveROIMask {
       const m = tileMetrics[ti];
       const isFingerTile =
         m.score > fingerThreshold &&
-        m.meanR > 25 &&
-        m.rgRatio > 0.95 &&
-        m.redDominance > 3 &&
-        m.intensity > 50 &&
-        m.clipHighPct < 0.6 &&
-        m.clipLowPct < 0.6 &&
-        m.validPixels > 2;
+        m.meanR > 40 &&
+        m.rgRatio > 1.05 &&
+        m.redDominance > 5 &&
+        m.intensity > 80 &&
+        m.clipHighPct < 0.5 &&
+        m.clipLowPct < 0.5 &&
+        m.validPixels > 3;
 
       if (isFingerTile) {
         currentMask[ti] = 1;

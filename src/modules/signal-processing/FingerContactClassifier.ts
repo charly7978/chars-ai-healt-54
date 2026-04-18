@@ -384,8 +384,8 @@ export class FingerContactClassifier {
       return { state, confidence, features, guidance };
     }
 
-    // Check for under-illumination (relaxed threshold)
-    if (meanR < 25 && meanG < 25 && meanB < 25) {
+    // Check for under-illumination
+    if (meanR < 40 && meanG < 40 && meanB < 40) {
       state = 'UNDERILLUMINATED';
       confidence = 0.85;
       guidance = 'ACTIVE EL FLASH O ACERQUE EL DEDO';
@@ -402,14 +402,14 @@ export class FingerContactClassifier {
       return { state, confidence, features, guidance };
     }
 
-    // Finger detection thresholds (relaxed for better detection)
+    // Finger detection thresholds
     const hasFingerSignature = 
-      redDominance > 5 &&
-      rgRatio > 1.0 &&
-      totalCoverage > 0.08 &&
-      spatialUniformity > 0.2 &&
+      redDominance > 10 &&
+      rgRatio > 1.05 &&
+      totalCoverage > 0.15 &&
+      spatialUniformity > 0.3 &&
       !saturationLow &&
-      meanR > 30;
+      meanR > 50;
 
     if (!hasFingerSignature) {
       state = 'NO_FINGER';
