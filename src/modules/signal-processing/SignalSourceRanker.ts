@@ -66,7 +66,7 @@ export class SignalSourceRanker {
     baseR: number, baseG: number, baseB: number,
     redPI: number, greenPI: number,
     clipHigh: number, motionArtifact: boolean
-  ): { value: number; label: string; allSQI: Record<string, number> } {
+  ): { value: number; label: string; allSQI: Record<string, number>; enhancedMetrics: { spectralSNR: number; peakProminence: number; harmonicConsistency: number; zeroCrossingRate: number } } {
     this.frameCount++;
     const eps = 0.01;
 
@@ -136,7 +136,14 @@ export class SignalSourceRanker {
     }
 
     const value = Math.min(80, Math.max(-80, candidates[this.activeSource] ?? candidates['RG']));
-    return { value, label: this.activeSource, allSQI };
+    const activeSrc = this.sources.get(this.activeSource);
+    const enhancedMetrics = activeSrc ? {
+      spectralSNR: activeSrc.spectralSNR,
+      peakProminence: activeSrc.peakProminence,
+      harmonicConsistency: activeSrc.harmonicConsistency,
+      zeroCrossingRate: activeSrc.zeroCrossingRate,
+    } : { spectralSNR: 0, peakProminence: 0, harmonicConsistency: 0, zeroCrossingRate: 0 };
+    return { value, label: this.activeSource, allSQI, enhancedMetrics };
   }
 
   private computeSQI(src: SourceState, clipHigh: number, motion: boolean): number {

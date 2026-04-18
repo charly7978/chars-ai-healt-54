@@ -96,6 +96,11 @@ export class VitalSignsProcessor {
     detectorAgreement: 0,
     rrStability: 0,
     motionScore: 0,
+    fusionConfidence: 0,
+    gateScore: 1,
+    temporalStability: 0,
+    spatialUniformity: 0,
+    coverageRatio: 0,
   };
 
   private lastRhythm: RhythmResult | null = null;
@@ -145,6 +150,11 @@ export class VitalSignsProcessor {
     detectorAgreement?: number;
     rrStability?: number;
     motionScore?: number;
+    fusionConfidence?: number;
+    gateScore?: number;
+    temporalStability?: number;
+    spatialUniformity?: number;
+    coverageRatio?: number;
   }): void {
     if (ctx.contactStable !== undefined) this.upstreamContext.contactStable = ctx.contactStable;
     if (ctx.pressureOptimal !== undefined) this.upstreamContext.pressureOptimal = ctx.pressureOptimal;
@@ -156,6 +166,11 @@ export class VitalSignsProcessor {
     if (ctx.detectorAgreement !== undefined) this.upstreamContext.detectorAgreement = ctx.detectorAgreement;
     if (ctx.rrStability !== undefined) this.upstreamContext.rrStability = ctx.rrStability;
     if (ctx.motionScore !== undefined) this.upstreamContext.motionScore = ctx.motionScore;
+    if (ctx.fusionConfidence !== undefined) this.upstreamContext.fusionConfidence = ctx.fusionConfidence;
+    if (ctx.gateScore !== undefined) this.upstreamContext.gateScore = ctx.gateScore;
+    if (ctx.temporalStability !== undefined) this.upstreamContext.temporalStability = ctx.temporalStability;
+    if (ctx.spatialUniformity !== undefined) this.upstreamContext.spatialUniformity = ctx.spatialUniformity;
+    if (ctx.coverageRatio !== undefined) this.upstreamContext.coverageRatio = ctx.coverageRatio;
   }
 
   processSignal(
