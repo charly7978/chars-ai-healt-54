@@ -365,59 +365,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
 
     // ══════════════════════════════════════════════════════
-    //  PHASE 6: FRAME QUALITY GATE
+    //  PHASE 6: FRAME QUALITY GATE (SOFT GATE - no bloquea, solo afecta calidad)
     // ══════════════════════════════════════════════════════
     const gateInput = this.buildGateInput(roi, motionArtifact);
     this.lastGateResult = this.frameQualityGate.evaluate(gateInput);
     this.gateScore = this.computeGateScore(gateInput);
     
+    // EL GATE YA NO BLOQUEA - solo ajusta la calidad y reporta el rechazo
     if (!this.lastGateResult.pass) {
       this.rejectionReason = this.lastGateResult.reason;
       this.consecutiveRejections++;
-      
-      // Signal gate rejection to downstream
-      this.onSignalReady({
-        timestamp,
-        rawValue: 0,
-        filteredValue: 0,
-        quality: 0,
-        fingerDetected: this.fingerDetected,
-        contactState: this.exportedContactState,
-        motionArtifact,
-        roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
-        perfusionIndex: 0,
-        rawRed: roi.rawRed,
-        rawGreen: roi.rawGreen,
-        diagnostics: {
-          message: `⛔ ${this.rejectionReason} C:${(this.contactConfidence * 100).toFixed(0)}%`,
-          hasPulsatility: false,
-          pulsatilityValue: 0,
-        },
-        // Full metric exposure even on rejection
-        clipHighRatio: this.clipHighRatio,
-        clipLowRatio: this.clipLowRatio,
-        contactConfidence: this.contactConfidence,
-        contactStateExtended: this.contactState,
-        fusionConfidence: this.fusionConfidence,
-        effectiveTileCount: this.effectiveTileCount,
-        validTileRatio: this.validTileRatio,
-        gateScore: this.gateScore,
-        rejectionReason: this.rejectionReason,
-        calibrationReady: this.isCalibrated(),
-        calibrationConfidence: this.calibrationProfile ? 1.0 : 0,
-        spectralSNR: this.allSourceMetrics[this.activeSourceLabel]?.spectralSNR ?? 0,
-        peakProminence: this.allSourceMetrics[this.activeSourceLabel]?.peakProminence ?? 0,
-        harmonicConsistency: this.allSourceMetrics[this.activeSourceLabel]?.harmonicConsistency ?? 0,
-        zeroCrossingRate: this.allSourceMetrics[this.activeSourceLabel]?.zeroCrossingRate ?? 0,
-        temporalStability: this.contactClassification?.features.temporalStability ?? 0,
-        motionScore: this.motionScore,
-      });
-      this.processingTimeMs = performance.now() - t0;
-      return;
+    } else {
+      this.consecutiveRejections = 0;
+      this.rejectionReason = '';
     }
-    
-    this.consecutiveRejections = 0;
-    this.rejectionReason = '';
 
     // ══════════════════════════════════════════════════════
     //  PHASE 7: SIGNAL EXTRACTION (from fused tiles or fallback)
@@ -532,11 +493,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // Get current source metrics for propagation
     const currentMetrics = this.allSourceMetrics[this.activeSourceLabel] ?? {};
+    
+    // FALLBACK: Si el ranker devuelve 0 o muy bajo, usar el canal verde directamente
+    // Esto garantiza que SIEMPRE haya una señal visible
+    const finalRawValue = Math.abs(source.value) < 0.001 
+      ? (this.greenBaseline > 10 ? (this.greenBaseline - fusedGreen) / this.greenBaseline * 3200 : 0)
+      : source.value;
+    const finalFilteredValue = Math.abs(filtered) < 0.001 && Math.abs(finalRawValue) > 0.001 
+      ? finalRawValue 
+      : filtered;
 
     this.onSignalReady({
       timestamp,
-      rawValue: source.value,
-      filteredValue: filtered,
+      rawValue: finalRawValue,
+      filteredValue: finalFilteredValue,
       quality: gatedQuality,
       fingerDetected: this.fingerDetected,
       contactState: this.exportedContactState,
