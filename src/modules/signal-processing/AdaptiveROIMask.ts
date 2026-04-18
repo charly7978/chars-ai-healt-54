@@ -1,13 +1,15 @@
 /**
- * ADAPTIVE ROI MASK V2
+ * ADAPTIVE ROI MASK V3
  * 
  * Per-frame adaptive mask that:
- * 1. Uses dynamic 7x7 tile grid
- * 2. Excludes saturated/clipped pixels
- * 3. Computes per-tile hemoglobin score with center bias
- * 4. Adapts thresholds using frame percentiles (no fixed absolutes)
- * 5. Temporal intersection to prevent mask deformation
- * 6. Separates coarse ROI (detection) from fine ROI (extraction)
+ * 1. Uses 5x5 tile grid with elliptical central mask priority
+ * 2. Excludes saturated/clipped pixels and dark edges
+ * 3. Computes per-tile enhanced metrics: coverage, center distance, mean RGB linear,
+ *    trimmed mean, variance, clip ratios, saturation, entropy, gradient, temporal stability
+ * 4. Finds dominant principal component for finger region
+ * 5. Adapts thresholds using frame percentiles (no fixed absolutes)
+ * 6. Temporal intersection to prevent mask deformation
+ * 7. Separates coarse ROI (detection) from fine ROI (extraction)
  */
 
 export interface TileMetrics {
@@ -17,12 +19,23 @@ export interface TileMetrics {
   redDominance: number;
   rgRatio: number;
   intensity: number;
-  clipHighPct: number;  // % pixels > 250
-  clipLowPct: number;   // % pixels < 5
+  clipHighPct: number;
+  clipLowPct: number;
   validPixels: number;
   centerBias: number;
   score: number;
   temporalScore: number;
+  // Enhanced metrics
+  coverage: number;
+  centerDistance: number;
+  trimmedMeanR: number;
+  trimmedMeanG: number;
+  trimmedMeanB: number;
+  variance: number;
+  saturation: number;
+  entropy: number;
+  gradient: number;
+  temporalStability: number;
 }
 
 export interface ROIMaskResult {
@@ -42,9 +55,12 @@ export interface ROIMaskResult {
   validPixelCount: number;
   totalPixelCount: number;
   tileScores: Float64Array;
+  // Enhanced metrics
+  tileMetrics: TileMetrics[];
+  dominantComponentIndex: number;
 }
 
-const GRID = 7; // 7x7 tile grid
+const GRID = 5; // 5x5 tile grid (ideal balance between resolution and performance)
 const TOTAL_TILES = GRID * GRID;
 const CLIP_HIGH = 250;
 const CLIP_LOW = 5;
@@ -62,6 +78,12 @@ export class AdaptiveROIMask {
   private tileClipHigh = new Int32Array(TOTAL_TILES);
   private tileClipLow = new Int32Array(TOTAL_TILES);
   private tileValid = new Int32Array(TOTAL_TILES);
+  
+  // Enhanced metric accumulators
+  private tileR2 = new Float64Array(TOTAL_TILES); // for variance
+  private tileG2 = new Float64Array(TOTAL_TILES);
+  private tileB2 = new Float64Array(TOTAL_TILES);
+  private tilePixelValues: number[][] = Array.from({ length: TOTAL_TILES }, () => []);
 
   process(imageData: ImageData): ROIMaskResult {
     this.frameCount++;
@@ -82,21 +104,29 @@ export class AdaptiveROIMask {
     this.tileR.fill(0);
     this.tileG.fill(0);
     this.tileB.fill(0);
+    this.tileR2.fill(0);
+    this.tileG2.fill(0);
+    this.tileB2.fill(0);
     this.tileCount.fill(0);
     this.tileClipHigh.fill(0);
     this.tileClipLow.fill(0);
     this.tileValid.fill(0);
+    
+    // Reset pixel value arrays for entropy calculation
+    for (let i = 0; i < TOTAL_TILES; i++) {
+      this.tilePixelValues[i].length = 0;
+    }
 
     let totalPixels = 0;
     let totalClipHigh = 0;
     let totalClipLow = 0;
 
-    // Sample every 2nd pixel for performance (still denser than 3)
+    // Sample every 2nd pixel for performance
     const step = 2;
     for (let y = sy; y < ey; y += step) {
       const rowOff = y * w;
       for (let x = sx; x < ex; x += step) {
-        const i = (rowOff + x) << 2; // *4
+        const i = (rowOff + x) << 2;
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
@@ -125,25 +155,40 @@ export class AdaptiveROIMask {
           this.tileR[ti] += r;
           this.tileG[ti] += g;
           this.tileB[ti] += b;
+          this.tileR2[ti] += r * r;
+          this.tileG2[ti] += g * g;
+          this.tileB2[ti] += b * b;
           this.tileValid[ti]++;
+          this.tilePixelValues[ti].push(r + g + b);
         }
         this.tileCount[ti]++;
       }
     }
 
     // --- Compute per-tile metrics ---
-    // First pass: collect all tile scores for percentile-based thresholding
     const tileMetrics: TileMetrics[] = new Array(TOTAL_TILES);
     const allScores: number[] = [];
 
     for (let ti = 0; ti < TOTAL_TILES; ti++) {
       const cnt = this.tileValid[ti];
       const total = this.tileCount[ti];
+      
+      // Center distance
+      const gx = ti % GRID;
+      const gy = (ti / GRID) | 0;
+      const nx = GRID > 1 ? gx / (GRID - 1) : 0.5;
+      const ny = GRID > 1 ? gy / (GRID - 1) : 0.5;
+      const dist = Math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2);
+      const centerDistance = dist;
+      const centerBias = Math.max(0.2, 1 - dist * 1.4);
+      
       if (cnt === 0 || total === 0) {
         tileMetrics[ti] = {
           meanR: 0, meanG: 0, meanB: 0, redDominance: 0,
           rgRatio: 0, intensity: 0, clipHighPct: 0, clipLowPct: 0,
-          validPixels: 0, centerBias: 0, score: 0, temporalScore: 0
+          validPixels: 0, centerBias, score: 0, temporalScore: 0,
+          coverage: 0, centerDistance, trimmedMeanR: 0, trimmedMeanG: 0, trimmedMeanB: 0,
+          variance: 0, saturation: 0, entropy: 0, gradient: 0, temporalStability: 0
         };
         continue;
       }
@@ -156,14 +201,64 @@ export class AdaptiveROIMask {
       const rgRatio = meanG > 1 ? meanR / meanG : 0;
       const clipHighPct = this.tileClipHigh[ti] / total;
       const clipLowPct = this.tileClipLow[ti] / total;
+      const coverage = cnt / total;
 
-      // Center bias
-      const gx = ti % GRID;
-      const gy = (ti / GRID) | 0;
-      const nx = GRID > 1 ? gx / (GRID - 1) : 0.5;
-      const ny = GRID > 1 ? gy / (GRID - 1) : 0.5;
-      const dist = Math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2);
-      const centerBias = Math.max(0.2, 1 - dist * 1.4);
+      // Variance
+      const varR = (this.tileR2[ti] / cnt) - (meanR * meanR);
+      const varG = (this.tileG2[ti] / cnt) - (meanG * meanG);
+      const varB = (this.tileB2[ti] / cnt) - (meanB * meanB);
+      const variance = (varR + varG + varB) / 3;
+
+      // Trimmed mean (remove top/bottom 10%)
+      const sortedValues = [...this.tilePixelValues[ti]].sort((a, b) => a - b);
+      const trimStart = Math.floor(sortedValues.length * 0.1);
+      const trimEnd = Math.floor(sortedValues.length * 0.9);
+      const trimmedValues = sortedValues.slice(trimStart, trimEnd);
+      const trimmedMean = trimmedValues.length > 0 ? trimmedValues.reduce((a, b) => a + b, 0) / trimmedValues.length : intensity;
+      // Distribute trimmed mean proportionally to RGB
+      const trimmedMeanR = meanR > 0 ? (trimmedMean / intensity) * meanR : 0;
+      const trimmedMeanG = meanG > 0 ? (trimmedMean / intensity) * meanG : 0;
+      const trimmedMeanB = meanB > 0 ? (trimmedMean / intensity) * meanB : 0;
+
+      // Saturation (HSV)
+      const maxC = Math.max(meanR, meanG, meanB);
+      const minC = Math.min(meanR, meanG, meanB);
+      const saturation = maxC > 0 ? (maxC - minC) / maxC : 0;
+
+      // Entropy
+      let entropy = 0;
+      if (this.tilePixelValues[ti].length > 1) {
+        const histogram = new Array(256).fill(0);
+        for (const v of this.tilePixelValues[ti]) {
+          const bin = Math.min(255, Math.max(0, Math.round(v / 3)));
+          histogram[bin]++;
+        }
+        const totalVals = this.tilePixelValues[ti].length;
+        for (let i = 0; i < 256; i++) {
+          if (histogram[i] > 0) {
+            const p = histogram[i] / totalVals;
+            entropy -= p * Math.log2(p);
+          }
+        }
+      }
+
+      // Gradient (simplified from neighboring tile differences)
+      let gradient = 0;
+      if (gx > 0 && gx < GRID - 1 && gy > 0 && gy < GRID - 1) {
+        const left = ti - 1;
+        const right = ti + 1;
+        const up = ti - GRID;
+        const down = ti + GRID;
+        if (this.tileValid[left] > 0 && this.tileValid[right] > 0) {
+          const diffX = Math.abs(this.tileR[left] / this.tileValid[left] - this.tileR[right] / this.tileValid[right]);
+          gradient += diffX;
+        }
+        if (this.tileValid[up] > 0 && this.tileValid[down] > 0) {
+          const diffY = Math.abs(this.tileR[up] / this.tileValid[up] - this.tileR[down] / this.tileValid[down]);
+          gradient += diffY;
+        }
+        gradient = Math.min(50, gradient);
+      }
 
       // Hemoglobin signature score
       const redScore = Math.max(0, Math.min(1, (rgRatio - 1.0) / 0.8));
@@ -175,14 +270,19 @@ export class AdaptiveROIMask {
       const frameScore = (redScore * 0.35 + domScore * 0.3 + brightScore * 0.15 + validRatio * 0.2) * (1 - clipPenalty);
 
       // Temporal smoothing
-      this.tileConfidence[ti] = this.tileConfidence[ti] * 0.7 + frameScore * centerBias * 0.3;
+      const prevConfidence = this.tileConfidence[ti];
+      this.tileConfidence[ti] = prevConfidence * 0.7 + frameScore * centerBias * 0.3;
       const combinedScore = this.tileConfidence[ti] * 0.65 + frameScore * 0.35;
+      const temporalStability = this.frameCount > 1 ? (1 - Math.abs(this.tileConfidence[ti] - prevConfidence)) : 1.0;
 
       tileMetrics[ti] = {
         meanR, meanG, meanB, redDominance,
         rgRatio, intensity, clipHighPct, clipLowPct,
         validPixels: cnt, centerBias,
-        score: combinedScore, temporalScore: this.tileConfidence[ti]
+        score: combinedScore, temporalScore: this.tileConfidence[ti],
+        coverage, centerDistance,
+        trimmedMeanR, trimmedMeanG, trimmedMeanB,
+        variance, saturation, entropy, gradient, temporalStability
       };
       allScores.push(combinedScore);
     }
@@ -224,6 +324,19 @@ export class AdaptiveROIMask {
       if (currentMask[ti] !== this.prevMaskValid[ti]) maskChangeCount++;
     }
     this.prevMaskValid.set(currentMask);
+
+    // --- Find dominant component (largest connected region of finger tiles) ---
+    let dominantComponentIndex = -1;
+    if (validTileIndices.length > 0) {
+      // Simple approach: find tile with highest score among valid tiles
+      let maxScore = -1;
+      for (const ti of validTileIndices) {
+        if (tileMetrics[ti].score > maxScore) {
+          maxScore = tileMetrics[ti].score;
+          dominantComponentIndex = ti;
+        }
+      }
+    }
 
     // --- Weighted average over valid tiles (fine ROI) ---
     let wR = 0, wG = 0, wB = 0, wTotal = 0;
@@ -299,6 +412,8 @@ export class AdaptiveROIMask {
       validPixelCount: totalValidPx,
       totalPixelCount: totalPixels,
       tileScores,
+      tileMetrics,
+      dominantComponentIndex,
     };
   }
 

@@ -21,6 +21,21 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
+  // Enhanced metrics
+  clipHighRatio?: number;
+  clipLowRatio?: number;
+  motionScore?: number;
+  globalSQI?: number;
+  spectralSNR?: number;
+  peakProminence?: number;
+  harmonicConsistency?: number;
+  zeroCrossingRate?: number;
+  temporalStability?: number;
+  contactState?: string;
+  spatialUniformity?: number;
+  coverageRatio?: number;
+  perfusionIndex?: number;
+  sampleRate?: number;
 }
 
 const CONFIG = {
@@ -77,9 +92,9 @@ const parseRhythmStatus = (statusString?: string) => {
   return { label: normalized, count, display, isAlert, color };
 };
 
-const PPGSignalMeter = ({ 
-  value, 
-  quality, 
+const PPGSignalMeter = ({
+  value,
+  quality,
   isFingerDetected,
   onStartMeasurement,
   onReset,
@@ -91,7 +106,22 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = []
+  rrIntervals = [],
+  // Enhanced metrics
+  clipHighRatio = 0,
+  clipLowRatio = 0,
+  motionScore = 0,
+  globalSQI = 0,
+  spectralSNR = 0,
+  peakProminence = 0,
+  harmonicConsistency = 0,
+  zeroCrossingRate = 0,
+  temporalStability = 0,
+  contactState = 'NO_CONTACT',
+  spatialUniformity = 0,
+  coverageRatio = 0,
+  perfusionIndex = 0,
+  sampleRate = 30,
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
@@ -757,6 +787,116 @@ const PPGSignalMeter = ({
         <Activity className="w-3.5 h-3.5 text-emerald-400" />
         <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
       </div>
+      
+      {/* Enhanced Diagnostic Panel */}
+      {(isMonitoring || diagnosticMessage) && (
+        <div className="absolute top-12 right-2 z-10 w-64 bg-slate-900/95 backdrop-blur-md rounded-lg border border-slate-700/50 p-3 text-[10px] font-mono">
+          <div className="text-emerald-400 font-bold mb-2 border-b border-slate-700/50 pb-1">DIAGNÓSTICO</div>
+          
+          {/* Contact State */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-slate-400">Contacto</div>
+              <div className={`${contactState === 'STABLE_CONTACT' ? 'text-emerald-400' : contactState === 'NO_CONTACT' ? 'text-red-400' : 'text-amber-400'}`}>
+                {contactState}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400">Cobertura</div>
+              <div className="text-slate-200">{(coverageRatio * 100).toFixed(0)}%</div>
+            </div>
+          </div>
+
+          {/* Quality Metrics */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-slate-400">SQI Global</div>
+              <div className={`${globalSQI > 50 ? 'text-emerald-400' : globalSQI > 30 ? 'text-amber-400' : 'text-red-400'}`}>
+                {globalSQI.toFixed(1)}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400">Perfusión</div>
+              <div className="text-slate-200">{(perfusionIndex * 100).toFixed(2)}%</div>
+            </div>
+          </div>
+
+          {/* Clipping Metrics */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-slate-400">Clip Alto</div>
+              <div className={`${clipHighRatio > 0.05 ? 'text-red-400' : 'text-slate-200'}`}>
+                {(clipHighRatio * 100).toFixed(1)}%
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400">Clip Bajo</div>
+              <div className={`${clipLowRatio > 0.05 ? 'text-red-400' : 'text-slate-200'}`}>
+                {(clipLowRatio * 100).toFixed(1)}%
+              </div>
+            </div>
+          </div>
+
+          {/* Motion & Spatial */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-slate-400">Movimiento</div>
+              <div className={`${motionScore > 0.6 ? 'text-red-400' : motionScore > 0.3 ? 'text-amber-400' : 'text-slate-200'}`}>
+                {motionScore.toFixed(2)}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-400">Uniformidad</div>
+              <div className="text-slate-200">{spatialUniformity.toFixed(2)}</div>
+            </div>
+          </div>
+
+          {/* Spectral Metrics */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-slate-400">SNR Espectral</div>
+              <div className="text-slate-200">{spectralSNR.toFixed(1)} dB</div>
+            </div>
+            <div>
+              <div className="text-slate-400">Prominencia</div>
+              <div className="text-slate-200">{peakProminence.toFixed(2)}</div>
+            </div>
+          </div>
+
+          {/* Advanced SQI */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-slate-400">Armónico</div>
+              <div className="text-slate-200">{harmonicConsistency.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-slate-400">Zero-Cross</div>
+              <div className="text-slate-200">{zeroCrossingRate.toFixed(2)}</div>
+            </div>
+          </div>
+
+          {/* Temporal & Sample Rate */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-slate-400">Estabilidad</div>
+              <div className="text-slate-200">{temporalStability.toFixed(2)}</div>
+            </div>
+            <div>
+              <div className="text-slate-400">Sample Rate</div>
+              <div className="text-slate-200">{sampleRate.toFixed(1)} Hz</div>
+            </div>
+          </div>
+
+          {/* Diagnostic Message */}
+          {diagnosticMessage && (
+            <div className="mt-2 pt-2 border-t border-slate-700/50">
+              <div className="text-slate-400 mb-1">Mensaje</div>
+              <div className="text-amber-400">{diagnosticMessage}</div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button onClick={onStartMeasurement} className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${isMonitoring ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r' : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'}`}>
           {isMonitoring ? 'DETENER' : 'INICIAR'}

@@ -526,13 +526,14 @@ const Index = () => {
       setUpstreamContext({
         contactStable: stableHumanSignal,
         pressureOptimal,
-        clipHighRatio: 0,
+        clipHighRatio: lastSignal?.clipHighRatio || 0,
         sourceStability,
         avgBeatSQI: heartBeatResult.beatSQI || heartBeatResult.debug.lastBeatSQI || 0,
         beatCount: heartBeatResult.debug.beatsAccepted || heartBeatResult.rrData?.intervals.length || 0,
         sampleRate,
         detectorAgreement,
         rrStability,
+        motionScore: 0,
       });
 
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
@@ -680,7 +681,7 @@ const Index = () => {
 
         <div className="relative z-10 h-full">
           <div className="flex-1 h-full">
-            <PPGSignalMeter 
+            <PPGSignalMeter
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
               isFingerDetected={lastSignal?.fingerDetected || false}
@@ -695,6 +696,21 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
+              // Enhanced metrics
+              clipHighRatio={lastSignal?.clipHighRatio || 0}
+              clipLowRatio={lastSignal?.clipLowRatio || 0}
+              motionScore={0}
+              globalSQI={lastSignal?.quality || 0}
+              spectralSNR={lastSignal?.spectralSNR || 0}
+              peakProminence={lastSignal?.peakProminence || 0}
+              harmonicConsistency={lastSignal?.harmonicConsistency || 0}
+              zeroCrossingRate={lastSignal?.zeroCrossingRate || 0}
+              temporalStability={lastSignal?.temporalStability || 0}
+              contactState={lastSignal?.contactState || 'NO_CONTACT'}
+              spatialUniformity={getPositionQuality().spatialUniformity || 0}
+              coverageRatio={0}
+              perfusionIndex={lastSignal?.perfusionIndex || 0}
+              sampleRate={30}
             />
           </div>
 

@@ -95,6 +95,7 @@ export class VitalSignsProcessor {
     sampleRate: 30,
     detectorAgreement: 0,
     rrStability: 0,
+    motionScore: 0,
   };
 
   private lastRhythm: RhythmResult | null = null;
@@ -143,6 +144,7 @@ export class VitalSignsProcessor {
     sampleRate?: number;
     detectorAgreement?: number;
     rrStability?: number;
+    motionScore?: number;
   }): void {
     if (ctx.contactStable !== undefined) this.upstreamContext.contactStable = ctx.contactStable;
     if (ctx.pressureOptimal !== undefined) this.upstreamContext.pressureOptimal = ctx.pressureOptimal;
@@ -153,6 +155,7 @@ export class VitalSignsProcessor {
     if (ctx.sampleRate !== undefined && isFinite(ctx.sampleRate)) this.upstreamContext.sampleRate = Math.max(15, Math.min(60, ctx.sampleRate));
     if (ctx.detectorAgreement !== undefined) this.upstreamContext.detectorAgreement = ctx.detectorAgreement;
     if (ctx.rrStability !== undefined) this.upstreamContext.rrStability = ctx.rrStability;
+    if (ctx.motionScore !== undefined) this.upstreamContext.motionScore = ctx.motionScore;
   }
 
   processSignal(

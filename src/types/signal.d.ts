@@ -24,6 +24,14 @@ export interface ProcessedSignal {
     hasPulsatility: boolean;
     pulsatilityValue: number;
   };
+  // Enhanced metrics
+  clipHighRatio?: number;
+  clipLowRatio?: number;
+  spectralSNR?: number;
+  peakProminence?: number;
+  harmonicConsistency?: number;
+  zeroCrossingRate?: number;
+  temporalStability?: number;
 }
 
 export interface ProcessingError {

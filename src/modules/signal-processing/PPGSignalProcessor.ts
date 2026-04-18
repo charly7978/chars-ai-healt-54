@@ -45,6 +45,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private greenDC = 0; private greenAC = 0;
   private blueDC = 0; private blueAC = 0;
 
+  // --- Optical density and normalized channels ---
+  private redOD = 0;
+  private greenOD = 0;
+  private blueOD = 0;
+  private redNorm = 0;
+  private greenNorm = 0;
+  private blueNorm = 0;
+
   // --- Baselines ---
   private redBaseline = 0;
   private greenBaseline = 0;
@@ -101,6 +109,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private motionListenerActive = false;
   private lastAccel = { x: 0, y: 0, z: 0 };
   private readonly MOTION_THRESH = 0.6;
+  
+  // Visual motion fallback (frame difference)
+  private prevImageData: ImageData | null = null;
+  private visualMotionScore = 0;
+  private readonly VISUAL_MOTION_WINDOW = 10;
+  private visualMotionHistory: number[] = [];
 
   // --- Debug / telemetry ---
   private debugEnabled = false;
@@ -169,9 +183,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.pressureState = pressure.state;
     this.pressurePenalty = pressure.penalty;
 
+    // --- MOTION DETECTION (IMU + Visual Fallback) ---
+    const visualMotion = this.computeVisualMotion(imageData);
+    // Combine IMU and visual motion (prefer IMU if available, use visual as fallback)
+    if (this.motionListenerActive) {
+      // IMU is active, use it primarily with visual as supplementary
+      this.motionScore = this.motionScore * 0.8 + visualMotion * 0.2;
+    } else {
+      // No IMU, rely on visual motion
+      this.motionScore = this.motionScore * 0.5 + visualMotion * 0.5;
+    }
+    const motionArtifact = this.motionScore > this.MOTION_THRESH;
+
     // --- CONTACT STATE ---
     this.updateContactState(roi, pressure);
-    const motionArtifact = this.motionScore > this.MOTION_THRESH;
 
     if (this.exportedContactState === 'NO_CONTACT') {
       this.signalQuality = 0;
@@ -229,9 +254,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
     this.sourceStability = Math.min(1, this.sourceStableFrames / 60);
 
-    // --- FILTERING ---
+    // --- FILTERING (Dual-band) ---
     this.rawSignalBuf.push(source.value);
-    const filtered = this.bandpassFilter.filter(source.value);
+    const filterResult = this.bandpassFilter.filter(source.value, timestamp);
+    const filtered = filterResult.heartBand; // Use heart band for main signal
     this.filteredBuf.push(filtered);
 
     // Derivatives for morphology analysis
@@ -257,7 +283,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       periodicityScore,
       coverageRatio: this.smoothedCoverage,
       spatialUniformity: this.spatialUniformity,
-      pressurePenalty: this.pressurePenalty,
+      pressureState: this.pressureState,
       motionScore: this.motionScore,
       clipHighRatio: roi.clipHighRatio,
       clipLowRatio: roi.clipLowRatio,
@@ -266,6 +292,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       redDominance,
       contactState: this.exportedContactState,
       sourceStability: this.sourceStability,
+      pressurePenalty: this.pressurePenalty,
     });
 
     // Gate: drift penalty
@@ -307,6 +334,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         hasPulsatility: this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05,
         pulsatilityValue: this.exportedContactState === 'STABLE_CONTACT' ? perfusionIndex : 0,
       },
+      // Enhanced metrics
+      clipHighRatio: this.clipHighRatio,
+      clipLowRatio: this.clipLowRatio,
     });
   }
 
@@ -573,6 +603,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if ((this.redAC / this.redDC) < 0.0001 && (this.greenAC / this.greenDC) < 0.0001) {
       this.redAC = 0; this.greenAC = 0;
     }
+
+    // Calculate optical density: A_c = -log((I_c + eps) / (DC_c + eps))
+    const eps = 1e-6;
+    const currentR = this.redBuf.get(this.redBuf.length - 1);
+    const currentG = this.greenBuf.get(this.greenBuf.length - 1);
+    const currentB = this.blueBuf.get(this.blueBuf.length - 1);
+
+    this.redOD = -Math.log((currentR + eps) / (this.redDC + eps));
+    this.greenOD = -Math.log((currentG + eps) / (this.greenDC + eps));
+    this.blueOD = -Math.log((currentB + eps) / (this.blueDC + eps));
+
+    // Calculate AC/DC normalized channels: Rn = (R - DC_R) / DC_R
+    this.redNorm = (currentR - this.redDC) / (this.redDC + eps);
+    this.greenNorm = (currentG - this.greenDC) / (this.greenDC + eps);
+    this.blueNorm = (currentB - this.blueDC) / (this.blueDC + eps);
   }
 
   private calculatePerfusionIndex(): number {
@@ -669,14 +714,70 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const dy = (acc.y ?? 0) - this.lastAccel.y;
     const dz = (acc.z ?? 0) - this.lastAccel.z;
     this.lastAccel = { x: acc.x ?? 0, y: acc.y ?? 0, z: acc.z ?? 0 };
-    const accelRMS = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const rot = event.rotationRate;
+    const accelRMS = Math.sqrt(dx * dx + dy * dy + dz * dz) / 30;
     let gyroRMS = 0;
+    const rot = event.rotationRate;
     if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
       gyroRMS = Math.sqrt((rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2) / 120;
     }
     this.motionScore = this.motionScore * 0.85 + (accelRMS * 0.5 + gyroRMS * 0.3) * 0.15;
   };
+
+  /**
+   * Visual motion detection using frame difference (fallback when IMU unavailable)
+   */
+  private computeVisualMotion(imageData: ImageData): number {
+    if (!this.prevImageData) {
+      this.prevImageData = imageData;
+      return 0;
+    }
+
+    const data = imageData.data;
+    const prevData = this.prevImageData.data;
+    const w = imageData.width;
+    const h = imageData.height;
+
+    // Sample central region for performance
+    const roiSize = Math.min(w, h) * 0.6;
+    const sx = Math.floor((w - roiSize) / 2);
+    const sy = Math.floor((h - roiSize) / 2);
+    const ex = sx + Math.floor(roiSize);
+    const ey = sy + Math.floor(roiSize);
+
+    let totalDiff = 0;
+    let sampleCount = 0;
+    const step = 4; // Sample every 4th pixel
+
+    for (let y = sy; y < ey; y += step) {
+      for (let x = sx; x < ex; x += step) {
+        const i = (y * w + x) * 4;
+        const rDiff = Math.abs(data[i] - prevData[i]);
+        const gDiff = Math.abs(data[i + 1] - prevData[i + 1]);
+        const bDiff = Math.abs(data[i + 2] - prevData[i + 2]);
+        totalDiff += (rDiff + gDiff + bDiff) / 3;
+        sampleCount++;
+      }
+    }
+
+    this.prevImageData = imageData;
+
+    if (sampleCount === 0) return 0;
+    const avgDiff = totalDiff / sampleCount;
+
+    // Normalize to 0-1 range
+    const normalizedMotion = Math.min(1, avgDiff / 30);
+
+    // Update visual motion history
+    this.visualMotionHistory.push(normalizedMotion);
+    if (this.visualMotionHistory.length > this.VISUAL_MOTION_WINDOW) {
+      this.visualMotionHistory.shift();
+    }
+
+    // EWMA of visual motion
+    this.visualMotionScore = this.visualMotionScore * 0.7 + normalizedMotion * 0.3;
+
+    return this.visualMotionScore;
+  }
 
   private startMotionListener(): void {
     if (this.motionListenerActive) return;
@@ -716,6 +817,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0,
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) : 0,
+      redOD: this.redOD,
+      greenOD: this.greenOD,
+      blueOD: this.blueOD,
+      redNorm: this.redNorm,
+      greenNorm: this.greenNorm,
+      blueNorm: this.blueNorm,
     };
   }
 
