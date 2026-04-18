@@ -13,7 +13,7 @@
  * Returns pass/fail decision with rejection reason for diagnostics.
  */
 
-export type ContactState = 'NO_CONTACT' | 'PARTIAL_CONTACT' | 'GOOD_CONTACT' | 'OVERPRESSURE' | 'UNDERILLUMINATED' | 'EXCESSIVE_CLIPPING' | 'MOTION_CONTAMINATED';
+import type { FingerContactState as ContactState } from '../../types/signal';
 
 export interface FrameQualityInput {
   contactState: ContactState;
@@ -25,6 +25,13 @@ export interface FrameQualityInput {
   perfusionIndex: number;
   spatialUniformity: number;
   brightness: number;
+  // Extended metrics for advanced gating
+  contactConfidence?: number;
+  fusionConfidence?: number;
+  sourceQuality?: number;
+  spectralSNR?: number;
+  peakProminence?: number;
+  harmonicConsistency?: number;
 }
 
 export interface FrameQualityOutput {
@@ -59,7 +66,7 @@ export class FrameQualityGate {
     } = input;
 
     // Hard rejects - these conditions immediately fail the gate
-    if (contactState === 'NO_CONTACT') {
+    if (contactState === 'NO_FINGER') {
       return {
         pass: false,
         reason: 'NO_FINGER_DETECTED',

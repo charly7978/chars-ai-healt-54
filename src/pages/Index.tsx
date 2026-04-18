@@ -699,7 +699,7 @@ const Index = () => {
               // Enhanced metrics
               clipHighRatio={lastSignal?.clipHighRatio || 0}
               clipLowRatio={lastSignal?.clipLowRatio || 0}
-              motionScore={0}
+              motionScore={lastSignal?.motionScore ?? 0}
               globalSQI={lastSignal?.quality || 0}
               spectralSNR={lastSignal?.spectralSNR || 0}
               peakProminence={lastSignal?.peakProminence || 0}
@@ -708,9 +708,23 @@ const Index = () => {
               temporalStability={lastSignal?.temporalStability || 0}
               contactState={lastSignal?.contactState || 'NO_CONTACT'}
               spatialUniformity={getPositionQuality().spatialUniformity || 0}
-              coverageRatio={0}
+              coverageRatio={getPositionQuality().coverageRatio || 0}
               perfusionIndex={lastSignal?.perfusionIndex || 0}
               sampleRate={30}
+              // New pipeline V3 metrics
+              contactConfidence={lastSignal?.contactConfidence ?? 0}
+              contactStateExtended={lastSignal?.contactStateExtended ?? 'NO_CONTACT'}
+              fusionConfidence={lastSignal?.fusionConfidence ?? 0}
+              effectiveTileCount={lastSignal?.effectiveTileCount ?? 0}
+              validTileRatio={lastSignal?.validTileRatio ?? 0}
+              tileWeightMap={lastSignal?.tileWeightMap ?? []}
+              dominantTileIndices={lastSignal?.dominantTileIndices ?? []}
+              sourceQuality={lastSignal?.sourceQuality ?? 0}
+              sourceName={lastSignal?.sourceName ?? 'RG'}
+              gateScore={lastSignal?.gateScore ?? 0}
+              rejectionReason={lastSignal?.rejectionReason ?? ''}
+              calibrationReady={lastSignal?.calibrationReady ?? false}
+              calibrationConfidence={lastSignal?.calibrationConfidence ?? 0}
             />
           </div>
 

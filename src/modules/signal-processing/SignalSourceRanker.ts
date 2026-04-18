@@ -24,6 +24,16 @@ export interface SourceCandidate {
   sqi: number;
 }
 
+export interface SourceMetrics {
+  sqi: number;
+  spectralSNR: number;
+  peakProminence: number;
+  harmonicConsistency: number;
+  zeroCrossingRate: number;
+  autocorrPeak: number;
+  signalRange: number;
+}
+
 interface SourceState {
   buffer: RingBuffer;
   sqi: number;
@@ -66,7 +76,7 @@ export class SignalSourceRanker {
     baseR: number, baseG: number, baseB: number,
     redPI: number, greenPI: number,
     clipHigh: number, motionArtifact: boolean
-  ): { value: number; label: string; allSQI: Record<string, number> } {
+  ): { value: number; label: string; allSQI: Record<string, number>; allMetrics?: Record<string, SourceMetrics> } {
     this.frameCount++;
     const eps = 0.01;
 
@@ -136,7 +146,36 @@ export class SignalSourceRanker {
     }
 
     const value = Math.min(80, Math.max(-80, candidates[this.activeSource] ?? candidates['RG']));
-    return { value, label: this.activeSource, allSQI };
+    
+    // Build allMetrics for external propagation
+    const allMetrics: Record<string, SourceMetrics> = {};
+    for (const [label, src] of this.sources) {
+      allMetrics[label] = {
+        sqi: src.sqi,
+        spectralSNR: src.spectralSNR,
+        peakProminence: src.peakProminence,
+        harmonicConsistency: src.harmonicConsistency,
+        zeroCrossingRate: src.zeroCrossingRate,
+        autocorrPeak: this.computeBestAutocorr(src),
+        signalRange: src.buffer.length > 0 ? 
+          (src.buffer.percentile(0.9, Math.min(120, src.buffer.length)) - 
+           src.buffer.percentile(0.1, Math.min(120, src.buffer.length))) : 0,
+      };
+    }
+    
+    return { value, label: this.activeSource, allSQI, allMetrics };
+  }
+  
+  private computeBestAutocorr(src: SourceState): number {
+    const buf = src.buffer;
+    const n = Math.min(120, buf.length);
+    if (n < 30) return 0;
+    let best = 0;
+    for (let lag = 8; lag <= 60; lag++) {
+      const ac = buf.autocorrelation(lag, n);
+      if (ac > best) best = ac;
+    }
+    return best;
   }
 
   private computeSQI(src: SourceState, clipHigh: number, motion: boolean): number {

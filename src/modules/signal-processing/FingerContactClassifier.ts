@@ -13,24 +13,12 @@
  * - spatial uniformity
  * - hot spots (specular reflections)
  * 
- * Classifies states:
- * - NO_FINGER
- * - PARTIAL_CONTACT
- * - GOOD_CONTACT
- * - OVERPRESSURE
- * - UNDERILLUMINATED
- * - EXCESSIVE_CLIPPING
- * - MOTION_CONTAMINATED
+ * Classifies states compatible with signal.d.ts
  */
 
-export type ContactState =
-  | 'NO_FINGER'
-  | 'PARTIAL_CONTACT'
-  | 'GOOD_CONTACT'
-  | 'OVERPRESSURE'
-  | 'UNDERILLUMINATED'
-  | 'EXCESSIVE_CLIPPING'
-  | 'MOTION_CONTAMINATED';
+import type { FingerContactState as ContactState } from '../../types/signal';
+
+export type { ContactState };
 
 export interface ContactFeatures {
   // RGB features

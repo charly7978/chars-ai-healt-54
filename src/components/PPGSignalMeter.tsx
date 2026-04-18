@@ -36,6 +36,20 @@ interface PPGSignalMeterProps {
   coverageRatio?: number;
   perfusionIndex?: number;
   sampleRate?: number;
+  // New pipeline metrics
+  contactConfidence?: number;
+  contactStateExtended?: string;
+  fusionConfidence?: number;
+  effectiveTileCount?: number;
+  validTileRatio?: number;
+  tileWeightMap?: number[];
+  dominantTileIndices?: number[];
+  sourceQuality?: number;
+  sourceName?: string;
+  gateScore?: number;
+  rejectionReason?: string;
+  calibrationReady?: boolean;
+  calibrationConfidence?: number;
 }
 
 const CONFIG = {
@@ -122,6 +136,20 @@ const PPGSignalMeter = ({
   coverageRatio = 0,
   perfusionIndex = 0,
   sampleRate = 30,
+  // New pipeline metrics
+  contactConfidence = 0,
+  contactStateExtended = 'NO_CONTACT',
+  fusionConfidence = 0,
+  effectiveTileCount = 0,
+  validTileRatio = 0,
+  tileWeightMap = [],
+  dominantTileIndices = [],
+  sourceQuality = 0,
+  sourceName = 'RG',
+  gateScore = 0,
+  rejectionReason = '',
+  calibrationReady = false,
+  calibrationConfidence = 0,
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
@@ -885,6 +913,73 @@ const PPGSignalMeter = ({
               <div className="text-slate-400">Sample Rate</div>
               <div className="text-slate-200">{sampleRate.toFixed(1)} Hz</div>
             </div>
+          </div>
+
+          {/* New Pipeline Metrics */}
+          <div className="mt-2 pt-2 border-t border-slate-700/50">
+            <div className="text-slate-500 font-bold mb-1">PIPELINE V3</div>
+            
+            {/* Contact & Fusion */}
+            <div className="grid grid-cols-2 gap-2 mb-1">
+              <div>
+                <div className="text-slate-400">Conf. Contacto</div>
+                <div className={`${contactConfidence > 0.7 ? 'text-emerald-400' : contactConfidence > 0.4 ? 'text-amber-400' : 'text-red-400'}`}>
+                  {(contactConfidence * 100).toFixed(0)}%
+                </div>
+              </div>
+              <div>
+                <div className="text-slate-400">Conf. Fusión</div>
+                <div className={`${fusionConfidence > 0.7 ? 'text-emerald-400' : fusionConfidence > 0.4 ? 'text-amber-400' : 'text-red-400'}`}>
+                  {(fusionConfidence * 100).toFixed(0)}%
+                </div>
+              </div>
+            </div>
+
+            {/* Tiles & Gate */}
+            <div className="grid grid-cols-2 gap-2 mb-1">
+              <div>
+                <div className="text-slate-400">Tiles Válidos</div>
+                <div className="text-slate-200">{effectiveTileCount}/25 ({(validTileRatio * 100).toFixed(0)}%)</div>
+              </div>
+              <div>
+                <div className="text-slate-400">Gate Score</div>
+                <div className={`${gateScore > 0.7 ? 'text-emerald-400' : gateScore > 0.4 ? 'text-amber-400' : 'text-red-400'}`}>
+                  {(gateScore * 100).toFixed(0)}%
+                </div>
+              </div>
+            </div>
+
+            {/* Source & Calibration */}
+            <div className="grid grid-cols-2 gap-2 mb-1">
+              <div>
+                <div className="text-slate-400">Fuente</div>
+                <div className="text-slate-200">{sourceName} ({(sourceQuality).toFixed(0)})</div>
+              </div>
+              <div>
+                <div className="text-slate-400">Calibración</div>
+                <div className={`${calibrationReady ? 'text-emerald-400' : 'text-amber-400'}`}>
+                  {calibrationReady ? '✓' : '○'} {(calibrationConfidence * 100).toFixed(0)}%
+                </div>
+              </div>
+            </div>
+
+            {/* Extended State */}
+            <div className="mb-1">
+              <div className="text-slate-400">Estado Extendido</div>
+              <div className={`${
+                contactStateExtended === 'STABLE_CONTACT' ? 'text-emerald-400' : 
+                contactStateExtended === 'NO_CONTACT' ? 'text-red-400' : 'text-amber-400'
+              }`}>
+                {contactStateExtended}
+              </div>
+            </div>
+
+            {/* Rejection Reason */}
+            {rejectionReason && (
+              <div className="mb-1">
+                <div className="text-red-400">⛔ {rejectionReason}</div>
+              </div>
+            )}
           </div>
 
           {/* Diagnostic Message */}
