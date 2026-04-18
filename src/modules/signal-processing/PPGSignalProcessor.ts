@@ -8,9 +8,10 @@ import { computeGlobalSQI } from './SignalQualityEstimator';
 import { FingerContactClassifier, type ContactClassification, type ContactFeatures } from './FingerContactClassifier';
 import { TileFusionEngine, type FusionResult, type TileSignal } from './TileFusionEngine';
 import { FrameQualityGate, type FrameQualityInput, type FrameQualityOutput } from '../core/FrameQualityGate';
+import { RadiometricProcessor, type RadiometricResult, type RadiometricTileMetrics } from './RadiometricProcessor';
 
-// Extended contact states for internal use
-type ExtendedContactState = 'NO_CONTACT' | 'ACQUIRING_CONTACT' | 'UNSTABLE_CONTACT' | 'STABLE_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE' | 'LOW_PERFUSION_CONTACT' | 'MOTION_CONTAMINATED_CONTACT';
+// Extended contact states - UNIFIED taxonomy (same as ContactState)
+type ExtendedContactState = ContactState;
 
 // Calibration profile from calibrate()
 interface CalibrationProfile {
@@ -54,6 +55,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private fingerContactClassifier = new FingerContactClassifier();
   private tileFusionEngine = new TileFusionEngine();
   private frameQualityGate = new FrameQualityGate();
+  private radiometricProcessor = new RadiometricProcessor();
+
+  // --- Radiometric processing ---
+  private lastRadiometricResult: RadiometricResult | null = null;
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -300,19 +305,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.updateSampleRate(timestamp);
 
     // ══════════════════════════════════════════════════════
-    //  PHASE 1: ADAPTIVE ROI + TILE METRICS
+    //  PHASE 1: RADIOMETRIC PREPROCESSING (sRGB → Linear → OD)
+    // ══════════════════════════════════════════════════════
+    const radiometricResult = this.radiometricProcessor.processFrame(imageData, 5);
+    this.lastRadiometricResult = radiometricResult;
+    this.clipHighRatio = radiometricResult.global.clipHighRatio;
+    this.clipLowRatio = radiometricResult.global.clipLowRatio;
+    this.spatialUniformity = radiometricResult.global.entropy > 0 ? 1 - radiometricResult.global.entropy / 8 : 0;
+
+    // ══════════════════════════════════════════════════════
+    //  PHASE 2: ADAPTIVE ROI + TILE METRICS (Legacy compat)
     // ══════════════════════════════════════════════════════
     const roi = this.roiMask.process(imageData);
     this.lastROIResult = roi;
-    this.clipHighRatio = roi.clipHighRatio;
-    this.clipLowRatio = roi.clipLowRatio;
-    this.spatialUniformity = roi.spatialUniformity;
     this.centerCoverage = roi.centerCoverage;
-    this.effectiveTileCount = roi.tileMetrics.filter(t => t.score > 0.3).length;
-    this.validTileRatio = this.effectiveTileCount / roi.tileMetrics.length;
+    this.effectiveTileCount = radiometricResult.validTileCount;
+    this.validTileRatio = radiometricResult.validTileRatio;
 
     // ══════════════════════════════════════════════════════
-    //  PHASE 2: MOTION DETECTION (IMU + Visual)
+    //  PHASE 3: MOTION DETECTION (IMU + Visual)
     // ══════════════════════════════════════════════════════
     const visualMotion = this.computeVisualMotion(imageData);
     if (this.motionListenerActive) {
@@ -323,10 +334,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const motionArtifact = this.motionScore > this.MOTION_THRESH;
 
     // ══════════════════════════════════════════════════════
-    //  PHASE 3: FINGER CONTACT CLASSIFIER (NEW AUTHORITY)
+    //  PHASE 4: FINGER CONTACT CLASSIFIER V2 (Radiometric-based)
     // ══════════════════════════════════════════════════════
-    const contactFeatures = this.extractContactFeatures(roi, imageData);
-    this.contactClassification = this.fingerContactClassifier.classify(contactFeatures, this.motionScore);
+    // Extract features from radiometric tiles
+    const contactFeatures = this.fingerContactClassifier.extractFeaturesFromTiles(
+      radiometricResult.tileMetrics, 
+      this.motionScore
+    );
+    this.contactClassification = this.fingerContactClassifier.classify(contactFeatures);
     this.contactConfidence = this.contactClassification.confidence;
     
     // Map classifier state to extended state machine
@@ -494,14 +509,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // Get current source metrics for propagation
     const currentMetrics = this.allSourceMetrics[this.activeSourceLabel] ?? {};
     
-    // FALLBACK: Si el ranker devuelve 0 o muy bajo, usar el canal verde directamente
-    // Esto garantiza que SIEMPRE haya una señal visible
-    const finalRawValue = Math.abs(source.value) < 0.001 
-      ? (this.greenBaseline > 10 ? (this.greenBaseline - fusedGreen) / this.greenBaseline * 3200 : 0)
-      : source.value;
-    const finalFilteredValue = Math.abs(filtered) < 0.001 && Math.abs(finalRawValue) > 0.001 
-      ? finalRawValue 
-      : filtered;
+    // Señal REAL del pipeline - sin fallback artificial
+    // Si el ranker falla, se reporta LOW_SQI explícitamente
+    const finalRawValue = source.value;
+    const finalFilteredValue = filtered;
 
     this.onSignalReady({
       timestamp,
@@ -545,53 +556,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     });
   }
 
-  // ══════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════
   //  HELPER METHODS FOR NEW PIPELINE
-  // ══════════════════════════════════════════════════════
-
-  private extractContactFeatures(roi: ROIMaskResult, imageData: ImageData): ContactFeatures {
-    // Compute temporal stability from history
-    let temporalStability = 1.0;
-    if (this.smoothedRed > 0) {
-      const dr = Math.abs(roi.rawRed - this.smoothedRed) / this.smoothedRed;
-      const dg = Math.abs(roi.rawGreen - this.smoothedGreen) / Math.max(1, this.smoothedGreen);
-      temporalStability = Math.max(0, 1 - (dr + dg) / 2);
-    }
-
-    // Compute pressure proxy
-    this.pressureProxy = roi.coverageRatio * (1 + roi.clipHighRatio * 2);
-
-    return {
-      meanR: roi.rawRed,
-      meanG: roi.rawGreen,
-      meanB: roi.rawBlue,
-      normalizedR: roi.rawRed / Math.max(1, roi.rawRed + roi.rawGreen + roi.rawBlue),
-      normalizedG: roi.rawGreen / Math.max(1, roi.rawRed + roi.rawGreen + roi.rawBlue),
-      normalizedB: roi.rawBlue / Math.max(1, roi.rawRed + roi.rawGreen + roi.rawBlue),
-      redDominance: roi.rawRed - (roi.rawGreen + roi.rawBlue) / 2,
-      rgRatio: roi.rawGreen > 1 ? roi.rawRed / roi.rawGreen : 0,
-      hue: 0, // Computed by classifier if needed
-      saturation: roi.tileMetrics[0]?.saturation ?? 0,
-      value: (roi.rawRed + roi.rawGreen + roi.rawBlue) / 3 / 255,
-      saturationHigh: (roi.tileMetrics[0]?.saturation ?? 0) > 0.6,
-      saturationLow: (roi.tileMetrics[0]?.saturation ?? 0) < 0.1,
-      y: 0.299 * roi.rawRed + 0.587 * roi.rawGreen + 0.114 * roi.rawBlue,
-      cb: 128 - 0.168736 * roi.rawRed - 0.331264 * roi.rawGreen + 0.5 * roi.rawBlue,
-      cr: 128 + 0.5 * roi.rawRed - 0.418688 * roi.rawGreen - 0.081312 * roi.rawBlue,
-      totalCoverage: roi.coverageRatio,
-      centerCoverage: roi.centerCoverage,
-      circularity: roi.spatialUniformity,
-      compactness: roi.spatialUniformity,
-      edgePenalty: 1 - roi.spatialUniformity,
-      entropy: roi.tileMetrics.reduce((s, t) => s + t.entropy, 0) / roi.tileMetrics.length,
-      gradient: roi.tileMetrics.reduce((s, t) => s + t.gradient, 0) / roi.tileMetrics.length,
-      spatialUniformity: roi.spatialUniformity,
-      hotSpotRatio: roi.clipHighRatio,
-      clipHighRatio: roi.clipHighRatio,
-      clipLowRatio: roi.clipLowRatio,
-      temporalStability,
-    };
-  }
+  // ════════════════════════════════════════════════════════
 
   private updateContactStateFromClassifier(classification: ContactClassification, roi: ROIMaskResult): void {
     const prev = this.contactState;

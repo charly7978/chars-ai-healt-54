@@ -1,23 +1,128 @@
 /**
- * CAMERA CAPABILITY MANAGER
+ * CAMERA CAPABILITY MANAGER V2
  * 
- * Manages real camera capabilities, settings, and constraint application
- * with fallback and runtime diagnostics. No assumptions - only real capabilities.
+ * Real camera negotiation with:
+ * - Post-constraint verification (getSettings, getCapabilities)
+ * - Acquisition profile with negotiated values
+ * - Drift detection for exposure/WB
+ * - AcquisitionAdapter interface for web/native abstraction
  */
 
-export interface CameraProfile {
+// Real acquisition profile after constraint negotiation
+export interface AcquisitionProfile {
+  // Identity
   deviceId: string;
-  width: number;
-  height: number;
-  frameRate: number;
-  torch: boolean;
+  deviceLabel: string;
+  facingMode: 'environment' | 'user' | 'unknown';
+  
+  // Negotiated resolution
+  requestedWidth: number;
+  requestedHeight: number;
+  actualWidth: number;
+  actualHeight: number;
+  aspectRatio: number;
+  
+  // Negotiated frame rate
+  requestedFrameRate: number;
+  actualFrameRate: number;
+  frameRateStable: boolean;
+  frameRateChanges: number;
+  
+  // Torch
+  torchSupported: boolean;
+  torchRequested: boolean;
   torchActive: boolean;
-  focusMode: string;
-  exposureMode: string;
-  whiteBalanceMode: string;
-  iso: number;
-  exposureCompensation: number;
-  zoom: number;
+  torchOffEvents: number;
+  
+  // Exposure
+  exposureModeSupported: boolean;
+  exposureModeRequested: string;
+  exposureModeActual: string;
+  exposureCompensationSupported: boolean;
+  exposureCompensationRequested: number;
+  exposureCompensationActual: number;
+  exposureTime?: number; // If available
+  
+  // White Balance
+  whiteBalanceModeSupported: boolean;
+  whiteBalanceModeRequested: string;
+  whiteBalanceModeActual: string;
+  colorTemperature?: number; // If available
+  
+  // ISO
+  isoSupported: boolean;
+  isoRange: { min: number; max: number };
+  isoRequested: number;
+  isoActual: number;
+  
+  // Focus
+  focusModeSupported: boolean;
+  focusModeRequested: string;
+  focusModeActual: string;
+  focusDistance?: number; // If available
+  
+  // Zoom
+  zoomSupported: boolean;
+  zoomRange: { min: number; max: number };
+  zoomRequested: number;
+  zoomActual: number;
+  
+  // Browser capability support
+  supportedConstraints: string[];
+  
+  // Timestamps
+  profileCreatedAt: number;
+  lastVerifiedAt: number;
+}
+
+// Drift detection for baseline stability
+export interface DriftEvent {
+  timestamp: number;
+  type: 'EXPOSURE' | 'WHITE_BALANCE' | 'FRAME_RATE' | 'TORCH';
+  previousValue: number | string | boolean;
+  currentValue: number | string | boolean;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH';
+}
+
+// Acquisition Adapter Interface (Web + Native ready)
+export interface AcquisitionAdapter {
+  // Lifecycle
+  initialize(constraints: MediaStreamConstraints): Promise<boolean>;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  
+  // Profile
+  getAcquisitionProfile(): AcquisitionProfile | null;
+  refreshProfile(): AcquisitionProfile | null;
+  
+  // Drift monitoring
+  checkDrift(): DriftEvent[];
+  resetBaselines(): void;
+  
+  // Constraint application with verification
+  applyConstraint(constraint: string, value: any): Promise<boolean>;
+  verifyConstraint(constraint: string): boolean;
+  
+  // Stream access
+  getVideoElement(): HTMLVideoElement | null;
+  getMediaStream(): MediaStream | null;
+  
+  // Diagnostics
+  getDiagnostics(): CameraDiagnostics;
+}
+
+// Legacy profile (maintained for compatibility)
+export interface CameraProfile extends AcquisitionProfile {
+  width: number; // alias for actualWidth
+  height: number; // alias for actualHeight
+  frameRate: number; // alias for actualFrameRate
+  torch: boolean; // alias for torchSupported
+  focusMode: string; // alias for focusModeActual
+  exposureMode: string; // alias for exposureModeActual
+  whiteBalanceMode: string; // alias for whiteBalanceModeActual
+  iso: number; // alias for isoActual
+  exposureCompensation: number; // alias for exposureCompensationActual
+  zoom: number; // alias for zoomActual
   resizeMode: string;
   capabilities: CameraCapabilities;
   settings: CameraSettings;
@@ -277,35 +382,19 @@ export class CameraCapabilityManager {
   }
 
   /**
-   * Build camera profile from track
+   * Build camera profile from track (legacy method - delegates to buildAcquisitionProfile)
    */
-  buildProfile(track: MediaStreamTrack, deviceId: string): CameraProfile {
-    this.track = track;
-    const caps = this.getCapabilities(track);
-    const settings = this.getSettings(track);
-
-    this.profile = {
-      deviceId,
-      width: settings.width ?? 0,
-      height: settings.height ?? 0,
-      frameRate: settings.frameRate ?? 30,
-      torch: caps.torch ?? false,
-      torchActive: settings.torch ?? false,
-      focusMode: settings.focusMode ?? 'unknown',
-      exposureMode: settings.exposureMode ?? 'unknown',
-      whiteBalanceMode: settings.whiteBalanceMode ?? 'unknown',
-      iso: settings.iso ?? 0,
-      exposureCompensation: settings.exposureCompensation ?? 0,
-      zoom: settings.zoom ?? 1,
-      resizeMode: settings.resizeMode ?? 'unknown',
-      capabilities: caps,
-      settings,
-      diagnostics: { ...this.diagnostics },
-    };
-
-    this.lastFrameRate = this.profile.frameRate;
-
-    return this.profile;
+  buildProfile(track: MediaStreamTrack, deviceId: string, deviceLabel: string = ''): CameraProfile {
+    // Use new acquisition profile builder with default constraints
+    const acquisitionProfile = this.buildAcquisitionProfile(
+      track, 
+      deviceId, 
+      deviceLabel,
+      {} // Use actual settings as requested
+    );
+    
+    // Return as CameraProfile (full compatibility)
+    return acquisitionProfile as CameraProfile;
   }
 
   /**
@@ -386,5 +475,346 @@ export class CameraCapabilityManager {
     this.track = null;
     this.resetDiagnostics();
     this.lastFrameRate = 0;
+    this.baselineSettings = null;
+    this.driftEvents = [];
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  DRIFT DETECTION & BASELINE MANAGEMENT (FASE 2)
+  // ═══════════════════════════════════════════════════════════════════
+  
+  private baselineSettings: CameraSettings | null = null;
+  private driftEvents: DriftEvent[] = [];
+  private readonly DRIFT_THRESHOLD_EXPOSURE = 0.5; // exposureCompensation units
+  private readonly DRIFT_THRESHOLD_WB_TEMP = 200; // Kelvin (approx)
+  private readonly DRIFT_THRESHOLD_ISO = 50;
+  private readonly DRIFT_THRESHOLD_FPS = 5;
+  private readonly DRIFT_WINDOW_MS = 300; // min time between drift checks
+  private lastDriftCheck = 0;
+
+  /**
+   * Establish baseline settings after warmup period
+   * Call this after camera has stabilized (~2 seconds)
+   */
+  establishBaseline(): void {
+    if (!this.track) return;
+    this.baselineSettings = this.getSettings(this.track);
+    this.lastDriftCheck = performance.now();
+    this.driftEvents = [];
+    console.log('📷 Baseline established:', {
+      exposure: this.baselineSettings.exposureCompensation,
+      wb: this.baselineSettings.whiteBalanceMode,
+      iso: this.baselineSettings.iso,
+      fps: this.baselineSettings.frameRate,
+    });
+  }
+
+  /**
+   * Check for drift from baseline
+   * Returns array of drift events detected
+   */
+  checkDrift(): DriftEvent[] {
+    if (!this.track || !this.baselineSettings) return [];
+    
+    const now = performance.now();
+    if (now - this.lastDriftCheck < this.DRIFT_WINDOW_MS) {
+      return []; // Rate limited
+    }
+    this.lastDriftCheck = now;
+
+    const current = this.getSettings(this.track);
+    const newEvents: DriftEvent[] = [];
+
+    // Exposure drift
+    if (this.baselineSettings.exposureCompensation !== undefined && 
+        current.exposureCompensation !== undefined) {
+      const expDiff = Math.abs(current.exposureCompensation - this.baselineSettings.exposureCompensation);
+      if (expDiff > this.DRIFT_THRESHOLD_EXPOSURE) {
+        newEvents.push({
+          timestamp: now,
+          type: 'EXPOSURE',
+          previousValue: this.baselineSettings.exposureCompensation,
+          currentValue: current.exposureCompensation,
+          severity: expDiff > 1.0 ? 'HIGH' : 'MEDIUM',
+        });
+      }
+    }
+
+    // White Balance mode drift (manual -> auto is bad)
+    if (this.baselineSettings.whiteBalanceMode === 'manual' && 
+        current.whiteBalanceMode !== 'manual') {
+      newEvents.push({
+        timestamp: now,
+        type: 'WHITE_BALANCE',
+        previousValue: this.baselineSettings.whiteBalanceMode,
+        currentValue: current.whiteBalanceMode,
+        severity: 'HIGH',
+      });
+    }
+
+    // ISO drift (significant change)
+    if (this.baselineSettings.iso !== undefined && current.iso !== undefined) {
+      const isoDiff = Math.abs(current.iso - this.baselineSettings.iso);
+      if (isoDiff > this.DRIFT_THRESHOLD_ISO) {
+        newEvents.push({
+          timestamp: now,
+          type: 'EXPOSURE', // ISO affects exposure
+          previousValue: this.baselineSettings.iso,
+          currentValue: current.iso,
+          severity: isoDiff > 100 ? 'HIGH' : 'MEDIUM',
+        });
+      }
+    }
+
+    // Frame rate drift
+    if (this.baselineSettings.frameRate !== undefined && current.frameRate !== undefined) {
+      const fpsDiff = Math.abs(current.frameRate - this.baselineSettings.frameRate);
+      if (fpsDiff > this.DRIFT_THRESHOLD_FPS) {
+        newEvents.push({
+          timestamp: now,
+          type: 'FRAME_RATE',
+          previousValue: this.baselineSettings.frameRate,
+          currentValue: current.frameRate,
+          severity: 'MEDIUM',
+        });
+      }
+    }
+
+    // Torch drift (off when it should be on)
+    if (this.baselineSettings.torch === true && current.torch === false) {
+      newEvents.push({
+        timestamp: now,
+        type: 'TORCH',
+        previousValue: true,
+        currentValue: false,
+        severity: 'HIGH',
+      });
+    }
+
+    this.driftEvents.push(...newEvents);
+    // Keep only last 50 events
+    if (this.driftEvents.length > 50) {
+      this.driftEvents = this.driftEvents.slice(-50);
+    }
+
+    return newEvents;
+  }
+
+  /**
+   * Get all drift events
+   */
+  getDriftEvents(): DriftEvent[] {
+    return [...this.driftEvents];
+  }
+
+  /**
+   * Reset drift detection baselines
+   */
+  resetBaselines(): void {
+    this.establishBaseline();
+  }
+
+  /**
+   * Check if significant drift occurred (for pipeline invalidation)
+   */
+  hasSignificantDrift(): boolean {
+    const recentEvents = this.driftEvents.filter(
+      e => performance.now() - e.timestamp < 1000 // Last second
+    );
+    return recentEvents.some(e => e.severity === 'HIGH');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  POST-CONSTRAINT VERIFICATION (FASE 2)
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Verify that a constraint was actually applied by checking getSettings()
+   */
+  verifyConstraint(constraintName: string): boolean {
+    if (!this.track || !this.profile) return false;
+    
+    const settings = this.getSettings(this.track);
+    const requested = (this.profile as any)[`${constraintName}Requested`] ?? 
+                      (this.profile as any)[constraintName];
+    const actual = (settings as any)[constraintName];
+    
+    if (actual === undefined) return false;
+    
+    // For numeric values, allow small tolerance
+    if (typeof requested === 'number' && typeof actual === 'number') {
+      const tolerance = constraintName === 'frameRate' ? 2 : 0.1;
+      return Math.abs(actual - requested) <= tolerance;
+    }
+    
+    // For strings/booleans, exact match
+    return actual === requested;
+  }
+
+  /**
+   * Refresh profile with current actual settings
+   */
+  refreshProfile(): CameraProfile | null {
+    if (!this.track || !this.profile) return null;
+    
+    const currentSettings = this.getSettings(this.track);
+    const currentCaps = this.getCapabilities(this.track);
+    
+    // Update actual values
+    this.profile.actualWidth = currentSettings.width ?? this.profile.actualWidth;
+    this.profile.actualHeight = currentSettings.height ?? this.profile.actualHeight;
+    this.profile.actualFrameRate = currentSettings.frameRate ?? this.profile.actualFrameRate;
+    this.profile.torchActive = currentSettings.torch ?? this.profile.torchActive;
+    this.profile.exposureModeActual = currentSettings.exposureMode ?? this.profile.exposureModeActual;
+    this.profile.exposureCompensationActual = currentSettings.exposureCompensation ?? this.profile.exposureCompensationActual;
+    this.profile.whiteBalanceModeActual = currentSettings.whiteBalanceMode ?? this.profile.whiteBalanceModeActual;
+    this.profile.isoActual = currentSettings.iso ?? this.profile.isoActual;
+    this.profile.focusModeActual = currentSettings.focusMode ?? this.profile.focusModeActual;
+    this.profile.zoomActual = currentSettings.zoom ?? this.profile.zoomActual;
+    this.profile.lastVerifiedAt = performance.now();
+    
+    // Update legacy aliases
+    this.profile.width = this.profile.actualWidth;
+    this.profile.height = this.profile.actualHeight;
+    this.profile.frameRate = this.profile.actualFrameRate;
+    this.profile.torch = this.profile.torchSupported;
+    this.profile.torchActive = this.profile.torchActive;
+    this.profile.focusMode = this.profile.focusModeActual;
+    this.profile.exposureMode = this.profile.exposureModeActual;
+    this.profile.whiteBalanceMode = this.profile.whiteBalanceModeActual;
+    this.profile.iso = this.profile.isoActual;
+    this.profile.exposureCompensation = this.profile.exposureCompensationActual;
+    this.profile.zoom = this.profile.zoomActual;
+    this.profile.settings = currentSettings;
+    this.profile.capabilities = currentCaps;
+    
+    return this.profile;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  SUPPORTED CONSTRAINTS DISCOVERY (FASE 2)
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Get browser-supported constraints from getSupportedConstraints()
+   */
+  getBrowserSupportedConstraints(): string[] {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
+      return [];
+    }
+    
+    try {
+      const supported = navigator.mediaDevices.getSupportedConstraints();
+      return Object.keys(supported).filter(k => supported[k as keyof MediaTrackSupportedConstraints]);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Build complete acquisition profile with negotiation tracking
+   */
+  buildAcquisitionProfile(
+    track: MediaStreamTrack, 
+    deviceId: string,
+    deviceLabel: string,
+    requestedConstraints: {
+      width?: number;
+      height?: number;
+      frameRate?: number;
+      torch?: boolean;
+      exposureMode?: string;
+      exposureCompensation?: number;
+      whiteBalanceMode?: string;
+      iso?: number;
+      focusMode?: string;
+      zoom?: number;
+    }
+  ): AcquisitionProfile {
+    const caps = this.getCapabilities(track);
+    const settings = this.getSettings(track);
+    const browserConstraints = this.getBrowserSupportedConstraints();
+    
+    // Determine facing mode from label or capabilities
+    let facingMode: 'environment' | 'user' | 'unknown' = 'unknown';
+    const label = deviceLabel.toLowerCase();
+    if (label.includes('back') || label.includes('rear') || label.includes('trasera') || label.includes('environment')) {
+      facingMode = 'environment';
+    } else if (label.includes('front') || label.includes('user') || label.includes('frontal') || label.includes('selfie')) {
+      facingMode = 'user';
+    }
+    
+    const now = performance.now();
+    
+    const profile: AcquisitionProfile = {
+      // Identity
+      deviceId,
+      deviceLabel,
+      facingMode,
+      
+      // Resolution
+      requestedWidth: requestedConstraints.width ?? 0,
+      requestedHeight: requestedConstraints.height ?? 0,
+      actualWidth: settings.width ?? 0,
+      actualHeight: settings.height ?? 0,
+      aspectRatio: (settings.width ?? 0) / (settings.height ?? 1),
+      
+      // Frame rate
+      requestedFrameRate: requestedConstraints.frameRate ?? 30,
+      actualFrameRate: settings.frameRate ?? 30,
+      frameRateStable: true,
+      frameRateChanges: 0,
+      
+      // Torch
+      torchSupported: caps.torch ?? false,
+      torchRequested: requestedConstraints.torch ?? false,
+      torchActive: settings.torch ?? false,
+      torchOffEvents: 0,
+      
+      // Exposure
+      exposureModeSupported: caps.exposureMode !== undefined,
+      exposureModeRequested: requestedConstraints.exposureMode ?? 'unknown',
+      exposureModeActual: settings.exposureMode ?? 'unknown',
+      exposureCompensationSupported: caps.exposureCompensation !== undefined,
+      exposureCompensationRequested: requestedConstraints.exposureCompensation ?? 0,
+      exposureCompensationActual: settings.exposureCompensation ?? 0,
+      
+      // White Balance
+      whiteBalanceModeSupported: caps.whiteBalanceMode !== undefined,
+      whiteBalanceModeRequested: requestedConstraints.whiteBalanceMode ?? 'unknown',
+      whiteBalanceModeActual: settings.whiteBalanceMode ?? 'unknown',
+      
+      // ISO
+      isoSupported: caps.iso !== undefined,
+      isoRange: caps.iso ?? { min: 50, max: 1600 },
+      isoRequested: requestedConstraints.iso ?? 0,
+      isoActual: settings.iso ?? 0,
+      
+      // Focus
+      focusModeSupported: caps.focusMode !== undefined,
+      focusModeRequested: requestedConstraints.focusMode ?? 'unknown',
+      focusModeActual: settings.focusMode ?? 'unknown',
+      
+      // Zoom
+      zoomSupported: caps.zoom !== undefined,
+      zoomRange: caps.zoom ?? { min: 1, max: 1 },
+      zoomRequested: requestedConstraints.zoom ?? 1,
+      zoomActual: settings.zoom ?? 1,
+      
+      // Browser support
+      supportedConstraints: browserConstraints,
+      
+      // Timestamps
+      profileCreatedAt: now,
+      lastVerifiedAt: now,
+    };
+    
+    this.profile = profile as CameraProfile;
+    this.profile.capabilities = caps;
+    this.profile.settings = settings;
+    this.profile.diagnostics = { ...this.diagnostics };
+    this.track = track;
+    
+    return profile;
   }
 }

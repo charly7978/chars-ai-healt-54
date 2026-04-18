@@ -386,9 +386,10 @@ export class AdaptiveROIMask {
       uniformity = Math.max(0, Math.min(1, 1 - cv));
     }
 
-    // Center coverage (inner 3x3 of 7x7)
-    const centerIndices = [16, 17, 18, 23, 24, 25, 30, 31, 32];
-    const centerCount = centerIndices.filter(ti => currentMask[ti] === 1).length;
+    // Center coverage (inner 3x3 of 5x5 grid)
+    // Grid 5x5 = 25 tiles (índices 0-24). Inner 3x3 = tiles [6,7,8,11,12,13,16,17,18]
+    const centerIndices = [6, 7, 8, 11, 12, 13, 16, 17, 18];
+    const centerCount = centerIndices.filter(ti => ti < TOTAL_TILES && currentMask[ti] === 1).length;
     const centerCov = centerCount / centerIndices.length;
 
     const brightness = validTileIndices.length > 0
