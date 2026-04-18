@@ -155,15 +155,13 @@ export class BloodPressureProcessor {
 
   estimate(signalBuffer: number[], rrIntervals: number[], sampleRate: number = 30): BPEstimate {
     const insufficient: BPEstimate = {
-      value: { systolic: 0, diastolic: 0, map: 0 },
-      unit: 'mmHg',
-      confidence: 0,
-      status: OutputStatus.NEEDS_CALIBRATION,
-      qualityFlags: [],
-      evidence: { sqi: 0 },
-      
-      systolic: 0, diastolic: 0, map: 0,pulsePressure: 0,
-      confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
+      systolic: 0,
+      diastolic: 0,
+      map: 0,
+      pulsePressure: 0,
+      confidence: 'INSUFFICIENT',
+      cyclesUsed: 0,
+      featureQuality: 0
     };
 
     if (signalBuffer.length < 30 || rrIntervals.length < 2) return insufficient;
@@ -213,20 +211,15 @@ export class BloodPressureProcessor {
     const map = dbp + (sbp - dbp) / 3;
     const featureQuality = this.assessFeatureQuality(mf, useCycles.length);
     const confStr = this.assessConfidence(featureQuality, useCycles.length);
-    
-    const confNum = confStr === 'HIGH' ? 0.8 : confStr === 'MEDIUM' ? 0.5 : 0.2;
-    const status = this.userCalibration.isCalibrated ? OutputStatus.OK : OutputStatus.NEEDS_CALIBRATION;
 
     return {
-      value: { systolic: sbp, diastolic: dbp, map },
-      unit: 'mmHg',
-      confidence: Math.max(confNum, this.userCalibration.calibrationConfidence),
-      status,
-      qualityFlags: [],
-      evidence: { sqi: featureQuality * 100, userCalibration: this.userCalibration.isCalibrated ? `${this.userCalibration.calibrationPoints.length} points` : 'uncalibrated' },
-      
-      systolic: sbp, diastolic: dbp, map, pulsePressure: sbp - dbp,
-      confidence: confStr, cyclesUsed: useCycles.length, featureQuality
+      systolic: sbp,
+      diastolic: dbp,
+      map,
+      pulsePressure: sbp - dbp,
+      confidence: confStr,
+      cyclesUsed: useCycles.length,
+      featureQuality
     };
   }
   
@@ -240,6 +233,8 @@ export class BloodPressureProcessor {
     return this.userCalibration;
   }
 
+  /** Process signal and estimate blood pressure */
+  public process(signalBuffer: Float64Array, rrIntervals: number[], sampleRate: number): BPEstimate {
     const insufficient: BPEstimate = {
       systolic: 0, diastolic: 0, map: 0, pulsePressure: 0,
       confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
