@@ -348,66 +348,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
     const motionArtifact = this.motionScore > this.MOTION_THRESH;
 
-    // --- CONTACT CLASSIFICATION (replaces heuristic) ---
-    // Build features from ROI data instead of extracting from full image
-    const features = {
-      meanR: roi.rawRed,
-      meanG: roi.rawGreen,
-      meanB: roi.rawBlue,
-      normalizedR: roi.rawRed / (roi.rawRed + roi.rawGreen + roi.rawBlue + 1),
-      normalizedG: roi.rawGreen / (roi.rawRed + roi.rawGreen + roi.rawBlue + 1),
-      normalizedB: roi.rawBlue / (roi.rawRed + roi.rawGreen + roi.rawBlue + 1),
-      redDominance: roi.rawRed - (roi.rawGreen + roi.rawBlue) / 2,
-      rgRatio: roi.rawGreen > 1 ? roi.rawRed / roi.rawGreen : 0,
-      hue: 0, // Calculated from RGB
-      saturation: 0, // Calculated from RGB
-      value: 0, // Calculated from RGB
-      saturationHigh: false,
-      saturationLow: false,
-      y: 0.299 * roi.rawRed + 0.587 * roi.rawGreen + 0.114 * roi.rawBlue,
-      cb: 128 - 0.168736 * roi.rawRed - 0.331264 * roi.rawGreen + 0.5 * roi.rawBlue,
-      cr: 128 + 0.5 * roi.rawRed - 0.418688 * roi.rawGreen - 0.081312 * roi.rawBlue,
-      totalCoverage: roi.coverageRatio,
-      centerCoverage: roi.centerCoverage,
-      circularity: roi.coverageRatio > 0.5 ? 1.0 : roi.coverageRatio * 2,
-      compactness: roi.spatialUniformity,
-      edgePenalty: 0, // Not available from ROI
-      entropy: 0, // Not available from ROI
-      gradient: 0, // Not available from ROI
-      spatialUniformity: roi.spatialUniformity,
-      hotSpotRatio: 0, // Not available from ROI
-      clipHighRatio: roi.clipHighRatio,
-      clipLowRatio: roi.clipLowRatio,
-      temporalStability: 1.0, // Will be updated by classifier
-    };
-    
-    // Calculate HSV from mean RGB
-    const rn = roi.rawRed / 255;
-    const gn = roi.rawGreen / 255;
-    const bn = roi.rawBlue / 255;
-    const max = Math.max(rn, gn, bn);
-    const min = Math.min(rn, gn, bn);
-    const delta = max - min;
-    let h = 0;
-    let s = 0;
-    const v = max;
-    if (delta !== 0) {
-      s = delta / max;
-      if (max === rn) {
-        h = ((gn - bn) / delta) % 6;
-      } else if (max === gn) {
-        h = (bn - rn) / delta + 2;
-      } else {
-        h = (rn - gn) / delta + 4;
-      }
-      h = Math.round(h * 60);
-      if (h < 0) h += 360;
-    }
-    features.hue = h;
-    features.saturation = s;
-    features.value = v;
-    features.saturationHigh = s > 0.6;
-    features.saturationLow = s < 0.1;
+    // --- CONTACT CLASSIFICATION ---
+    // Use classifier's extractFeatures method to compute all features from the full image
+    const features = this.contactClassifier.extractFeatures(imageData);
 
     const contactClassification = this.contactClassifier.classify(features, this.motionScore);
     this.lastContactClassification = contactClassification;
@@ -481,7 +424,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // --- Contact detected: apply quality gate before buffering ---
     // Map standard ContactState to FrameQualityGate's ContactState
-    const mapToGateContactState = (state: ContactState): import('./core/FrameQualityGate').ContactState => {
+    const mapToGateContactState = (state: ContactState): import('../core/FrameQualityGate').ContactState => {
       switch (state) {
         case 'NO_CONTACT': return 'NO_CONTACT';
         case 'UNSTABLE_CONTACT': return 'PARTIAL_CONTACT';
