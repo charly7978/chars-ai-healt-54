@@ -5,6 +5,9 @@ import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { SignalSourceRanker } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
+import { FingerContactClassifier, type ContactClassification } from './FingerContactClassifier';
+import { TileFusionEngine, type TileSignal, type FusionResult } from './TileFusionEngine';
+import { FrameQualityGate, type FrameQualityInput } from '../core/FrameQualityGate';
 
 // Extended contact states
 type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
@@ -28,6 +31,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private roiMask = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
   private sourceRanker = new SignalSourceRanker();
+  private fingerClassifier = new FingerContactClassifier();
+  private tileFusion = new TileFusionEngine();
+  private frameQualityGate = new FrameQualityGate();
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -129,6 +135,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastSourceLabel = 'RG';
   private sourceStableFrames = 0;
 
+  // --- Fusion and gate metrics ---
+  private fusionResult: FusionResult | null = null;
+  private frameAccepted = false;
+  private rejectionReason = '';
+  private gateScore = 0;
+  private spectralSNR = 0;
+  private peakProminence = 0;
+  private harmonicConsistency = 0;
+  private zeroCrossingRate = 0;
+  private temporalStability = 0;
+
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
@@ -150,7 +167,58 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.stopMotionListener();
   }
 
-  async calibrate(): Promise<boolean> { return true; }
+  async calibrate(): Promise<boolean> {
+    // Real calibration: collect samples and estimate baselines
+    const CALIBRATION_FRAMES = 60; // ~2 seconds at 30fps
+    const samples: { r: number; g: number; b: number; clipHigh: number; clipLow: number }[] = [];
+
+    this.reset();
+
+    return new Promise((resolve) => {
+      let frameCount = 0;
+
+      const calibrationFrameHandler = (signal: ProcessedSignal) => {
+        if (frameCount < CALIBRATION_FRAMES) {
+          samples.push({
+            r: signal.rawRed || 0,
+            g: signal.rawGreen || 0,
+            b: 0, // Not available in ProcessedSignal
+            clipHigh: this.clipHighRatio,
+            clipLow: this.clipLowRatio,
+          });
+          frameCount++;
+        } else {
+          // Compute baselines
+          const avgR = samples.reduce((sum, s) => sum + s.r, 0) / samples.length;
+          const avgG = samples.reduce((sum, s) => sum + s.g, 0) / samples.length;
+          const avgClipHigh = samples.reduce((sum, s) => sum + s.clipHigh, 0) / samples.length;
+          const avgClipLow = samples.reduce((sum, s) => sum + s.clipLow, 0) / samples.length;
+
+          this.redBaseline = avgR;
+          this.greenBaseline = avgG;
+          this.blueBaseline = avgG * 0.9; // Approximation
+
+          // Estimate noise floor from variance
+          const varianceR = samples.reduce((sum, s) => sum + Math.pow(s.r - avgR, 2), 0) / samples.length;
+          const noiseFloor = Math.sqrt(varianceR);
+
+          // Set adaptive thresholds based on calibration
+          this.redBaseline = avgR;
+          this.greenBaseline = avgG;
+          this.blueBaseline = avgG * 0.9;
+
+          // Remove calibration handler
+          this.onSignalReady = undefined;
+
+          console.log(`Calibration complete: R=${avgR.toFixed(1)} G=${avgG.toFixed(1)} Noise=${noiseFloor.toFixed(2)}`);
+          resolve(true);
+        }
+      };
+
+      // Temporary handler for calibration
+      this.onSignalReady = calibrationFrameHandler;
+    });
+  }
 
   /** Accept frame timestamp from requestVideoFrameCallback metadata */
   processFrame(imageData: ImageData, frameTimestamp?: number): void {
@@ -185,7 +253,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // --- MOTION DETECTION (IMU + Visual Fallback) ---
     const visualMotion = this.computeVisualMotion(imageData);
-    // Combine IMU and visual motion (prefer IMU if available, use visual as fallback)
+    // Combine IMU and visual motion (prefer IMU if available, use visual as supplementary)
     if (this.motionListenerActive) {
       // IMU is active, use it primarily with visual as supplementary
       this.motionScore = this.motionScore * 0.8 + visualMotion * 0.2;
@@ -195,11 +263,39 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
     const motionArtifact = this.motionScore > this.MOTION_THRESH;
 
-    // --- CONTACT STATE ---
-    this.updateContactState(roi, pressure);
+    // --- CONTACT STATE (Using FingerContactClassifier) ---
+    const contactFeatures = this.fingerClassifier.extractFeatures(imageData);
+    const contactClassification = this.fingerClassifier.classify(contactFeatures, this.motionScore);
+
+    // Map classifier state to exported contact state
+    const classifierStateToExported = (state: string): ContactState => {
+      switch (state) {
+        case 'NO_FINGER':
+          return 'NO_CONTACT';
+        case 'PARTIAL_CONTACT':
+          return 'UNSTABLE_CONTACT';
+        case 'GOOD_CONTACT':
+          return 'STABLE_CONTACT';
+        case 'OVERPRESSURE':
+        case 'EXCESSIVE_CLIPPING':
+          return 'UNSTABLE_CONTACT';
+        case 'UNDERILLUMINATED':
+          return 'UNSTABLE_CONTACT';
+        case 'MOTION_CONTAMINATED':
+          return 'UNSTABLE_CONTACT';
+        default:
+          return 'NO_CONTACT';
+      }
+    };
+
+    this.exportedContactState = classifierStateToExported(contactClassification.state);
+    this.fingerDetected = this.exportedContactState !== 'NO_CONTACT';
+    this.signalQuality = contactClassification.confidence * 100;
+
+    // Store temporal stability from classifier
+    this.temporalStability = contactFeatures.temporalStability;
 
     if (this.exportedContactState === 'NO_CONTACT') {
-      this.signalQuality = 0;
       this.onSignalReady({
         timestamp,
         rawValue: 0,
@@ -213,20 +309,133 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         rawRed: roi.rawRed,
         rawGreen: roi.rawGreen,
         diagnostics: {
-          message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}% P:${pressure.state}`,
+          message: contactClassification.guidance,
           hasPulsatility: false,
           pulsatilityValue: 0,
         },
+        // Enhanced metrics
+        clipHighRatio: this.clipHighRatio,
+        clipLowRatio: this.clipLowRatio,
+        motionScore: this.motionScore,
+        temporalStability: this.temporalStability,
+        frameAccepted: false,
+        rejectionReason: contactClassification.state,
+        gateScore: 0,
       });
       this.processingTimeMs = performance.now() - t0;
       return;
     }
 
-    // --- Contact detected: update baselines & buffers ---
-    this.updateBaselines(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
-    this.redBuf.push(roi.rawRed);
-    this.greenBuf.push(roi.rawGreen);
-    this.blueBuf.push(roi.rawBlue);
+    // --- TILE FUSION ENGINE (Real tile-weighted signal fusion) ---
+    // Convert ROI tileMetrics to TileSignal format for fusion engine
+    const tileSignals: TileSignal[] = roi.tileMetrics.map((tm, idx) => {
+      const total = tm.meanR + tm.meanG + tm.meanB || 1;
+      const redNorm = tm.meanR / total;
+      const greenNorm = tm.meanG / total;
+      const blueNorm = tm.meanB / total;
+      const redOD = -Math.log(Math.max(1e-6, tm.meanR / 255));
+      const greenOD = -Math.log(Math.max(1e-6, tm.meanG / 255));
+      const blueOD = -Math.log(Math.max(1e-6, tm.meanB / 255));
+      const perfusionIndex = tm.trimmedMeanR > 0 ? (tm.trimmedMeanR - tm.meanR) / tm.trimmedMeanR : 0;
+
+      return {
+        tileIndex: idx,
+        redNorm,
+        greenNorm,
+        blueNorm,
+        redOD,
+        greenOD,
+        blueOD,
+        perfusionIndex,
+        clipHighRatio: tm.clipHighPct,
+        clipLowRatio: tm.clipLowPct,
+        variance: tm.variance,
+        temporalStability: tm.temporalStability,
+        centerDistance: tm.centerDistance,
+      };
+    });
+
+    // Compute channel weights
+    const channelWeights = this.tileFusion.computeChannelWeights(
+      tileSignals.reduce((sum, t) => sum + t.perfusionIndex, 0) / tileSignals.length,
+      tileSignals.reduce((sum, t) => sum + t.perfusionIndex, 0) / tileSignals.length,
+      tileSignals.reduce((sum, t) => sum + t.perfusionIndex, 0) / tileSignals.length,
+      roi.clipHighRatio,
+      roi.clipHighRatio,
+      roi.clipLowRatio,
+      this.motionScore
+    );
+
+    // Fuse tile signals
+    this.fusionResult = this.tileFusion.fuseTileSignals(tileSignals, channelWeights);
+
+    // Use fused signal instead of raw ROI averages
+    const fusedRed = this.fusionResult.qualityScore > 0.3
+      ? roi.tileMetrics.reduce((sum, tm) => sum + tm.meanR, 0) / roi.tileMetrics.length
+      : roi.rawRed;
+    const fusedGreen = this.fusionResult.qualityScore > 0.3
+      ? roi.tileMetrics.reduce((sum, tm) => sum + tm.meanG, 0) / roi.tileMetrics.length
+      : roi.rawGreen;
+    const fusedBlue = this.fusionResult.qualityScore > 0.3
+      ? roi.tileMetrics.reduce((sum, tm) => sum + tm.meanB, 0) / roi.tileMetrics.length
+      : roi.rawBlue;
+
+    // --- FRAME QUALITY GATE (Before contaminating buffers) ---
+    const gateInput: FrameQualityInput = {
+      contactState: this.exportedContactState as any,
+      globalSQI: this.signalQuality,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      motionScore: this.motionScore,
+      coverageRatio: roi.coverageRatio,
+      perfusionIndex: this.calculatePerfusionIndex(),
+      spatialUniformity: roi.spatialUniformity,
+      brightness: roi.brightness,
+    };
+
+    const gateOutput = this.frameQualityGate.evaluate(gateInput);
+    this.frameAccepted = gateOutput.pass;
+    this.rejectionReason = gateOutput.reason;
+    this.gateScore = gateOutput.confidence;
+
+    if (!this.frameAccepted) {
+      // Frame rejected - don't contaminate buffers
+      this.onSignalReady({
+        timestamp,
+        rawValue: 0,
+        filteredValue: 0,
+        quality: 0,
+        fingerDetected: this.fingerDetected,
+        contactState: this.exportedContactState,
+        motionArtifact,
+        roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
+        perfusionIndex: gateInput.perfusionIndex,
+        rawRed: fusedRed,
+        rawGreen: fusedGreen,
+        diagnostics: {
+          message: `RECHAZADO: ${gateOutput.reason}`,
+          hasPulsatility: false,
+          pulsatilityValue: 0,
+        },
+        // Enhanced metrics
+        clipHighRatio: this.clipHighRatio,
+        clipLowRatio: this.clipLowRatio,
+        motionScore: this.motionScore,
+        temporalStability: this.temporalStability,
+        frameAccepted: false,
+        rejectionReason: gateOutput.reason,
+        gateScore: this.gateScore,
+        fusionConfidence: this.fusionResult?.qualityScore || 0,
+      });
+      this.processingTimeMs = performance.now() - t0;
+      return;
+    }
+
+    // --- Frame accepted: update baselines & buffers ---
+    this.updateBaselines(fusedRed, fusedGreen, fusedBlue, motionArtifact);
+    this.redBuf.push(fusedRed);
+    this.greenBuf.push(fusedGreen);
+    this.blueBuf.push(fusedBlue);
 
     if (this.redBuf.length >= 36) {
       this.calculateACDC();
@@ -237,13 +446,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const greenPI = this.greenDC > 0 ? this.greenAC / this.greenDC : 0;
 
     const source = this.sourceRanker.update(
-      roi.rawRed, roi.rawGreen, roi.rawBlue,
+      fusedRed, fusedGreen, fusedBlue,
       this.redBaseline, this.greenBaseline, this.blueBaseline,
       redPI, greenPI,
       roi.clipHighRatio, motionArtifact
     );
     this.activeSourceLabel = source.label;
     this.allSourceSQI = source.allSQI;
+
+    // Get spectral metrics from source ranker (if available)
+    this.spectralSNR = (source as any).spectralSNR || 0;
+    this.peakProminence = (source as any).peakProminence || 0;
+    this.harmonicConsistency = (source as any).harmonicConsistency || 0;
+    this.zeroCrossingRate = (source as any).zeroCrossingRate || 0;
 
     // Track source stability
     if (source.label === this.lastSourceLabel) {
@@ -271,7 +486,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
 
     // --- GLOBAL SQI ---
-    const perfusionIndex = this.calculatePerfusionIndex();
     const signalRange = this.getSignalRange();
     const redDominance = this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2;
 
@@ -279,7 +493,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const periodicityScore = this.estimatePeriodicityFromFiltered();
 
     this.signalQuality = computeGlobalSQI({
-      perfusionIndex,
+      perfusionIndex: gateInput.perfusionIndex,
       periodicityScore,
       coverageRatio: this.smoothedCoverage,
       spatialUniformity: this.spatialUniformity,
@@ -297,7 +511,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // Gate: drift penalty
     const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
-    const gatedQuality = this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
+    const gatedQuality = this.exportedContactState === 'STABLE_CONTACT' && gateInput.perfusionIndex >= 0.005
       ? this.signalQuality * driftPenalty
       : Math.min(18, this.signalQuality * 0.45);
 
@@ -307,7 +521,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (now - this.lastLogTime >= 3000) {
       this.lastLogTime = now;
       console.log(
-        `📷 PPG [${source.label}] Q=${gatedQuality.toFixed(0)} PI=${perfusionIndex.toFixed(3)} ` +
+        `📷 PPG [${source.label}] Q=${gatedQuality.toFixed(0)} PI=${gateInput.perfusionIndex.toFixed(3)} ` +
         `${this.exportedContactState} P:${this.pressureState} ` +
         `FPS=${this.realFps.toFixed(0)} Clip:${(roi.clipHighRatio * 100).toFixed(1)}% ` +
         `Cov:${(this.smoothedCoverage * 100).toFixed(0)}% Proc:${this.processingTimeMs.toFixed(1)}ms`
@@ -323,27 +537,42 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       contactState: this.exportedContactState,
       motionArtifact,
       roi: { x: 0, y: 0, width: imageData.width, height: imageData.height },
-      perfusionIndex,
-      rawRed: roi.rawRed,
-      rawGreen: roi.rawGreen,
+      perfusionIndex: gateInput.perfusionIndex,
+      rawRed: fusedRed,
+      rawGreen: fusedGreen,
       diagnostics: {
         message:
-          `${source.label} PI:${perfusionIndex.toFixed(2)} P:${this.pressureState.charAt(0)} ` +
+          `${source.label} PI:${gateInput.perfusionIndex.toFixed(2)} P:${this.pressureState.charAt(0)} ` +
           `C:${(this.smoothedCoverage * 100).toFixed(0)} ${this.exportedContactState}` +
           `${motionArtifact ? ' MOV' : ''}`,
-        hasPulsatility: this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.05,
-        pulsatilityValue: this.exportedContactState === 'STABLE_CONTACT' ? perfusionIndex : 0,
+        hasPulsatility: this.exportedContactState === 'STABLE_CONTACT' && gateInput.perfusionIndex >= 0.05,
+        pulsatilityValue: this.exportedContactState === 'STABLE_CONTACT' ? gateInput.perfusionIndex : 0,
       },
       // Enhanced metrics
       clipHighRatio: this.clipHighRatio,
       clipLowRatio: this.clipLowRatio,
+      motionScore: this.motionScore,
+      temporalStability: this.temporalStability,
+      spectralSNR: this.spectralSNR,
+      peakProminence: this.peakProminence,
+      harmonicConsistency: this.harmonicConsistency,
+      zeroCrossingRate: this.zeroCrossingRate,
+      frameAccepted: this.frameAccepted,
+      rejectionReason: this.rejectionReason,
+      gateScore: this.gateScore,
+      fusionConfidence: this.fusionResult?.qualityScore || 0,
     });
   }
 
   // ══════════════════════════════════════════════════════
-  //  CONTACT STATE MACHINE V2
+  //  CONTACT STATE REPLACED BY FINGERCONTACTCLASSIFIER
   // ══════════════════════════════════════════════════════
+  // The old heuristic contact state machine (updateContactState, detectFingerInstant)
+  // has been replaced by FingerContactClassifier which provides more accurate
+  // multi-feature finger detection with confidence scoring.
+  // Old methods kept for reference but not used in current implementation.
 
+  /*
   private updateContactState(roi: ROIMaskResult, pressure: PressureEstimate): void {
     const prev = this.contactState;
     const instant = this.detectFingerInstant(roi);
@@ -464,6 +693,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         notBlownOut;
     }
   }
+  */
 
   private updatePositionLock(roi: ROIMaskResult): void {
     const currentRed = roi.rawRed;

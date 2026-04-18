@@ -32,6 +32,11 @@ export interface ProcessedSignal {
   harmonicConsistency?: number;
   zeroCrossingRate?: number;
   temporalStability?: number;
+  motionScore?: number;
+  frameAccepted?: boolean;
+  rejectionReason?: string;
+  gateScore?: number;
+  fusionConfidence?: number;
 }
 
 export interface ProcessingError {
