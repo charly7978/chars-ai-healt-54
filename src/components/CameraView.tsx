@@ -1,10 +1,8 @@
-import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from "react";
-import { CameraCapabilityManager, type CameraProfile } from "../modules/camera/CameraCapabilityManager";
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
   getDiagnostics: () => CameraDiagnostics;
-  getCameraProfile: () => CameraProfile | null;
 }
 
 export interface CameraDiagnostics {
@@ -18,12 +16,6 @@ export interface CameraDiagnostics {
   focusLocked: boolean;
   isoValue: number;
   supportedConstraints: string[];
-  warmupComplete: boolean;
-  frameRateStable: boolean;
-  frameRateChanges: number;
-  torchOffEvents: number;
-  appliedConstraints: string[];
-  failedConstraints: string[];
 }
 
 interface CameraViewProps {
@@ -32,15 +24,13 @@ interface CameraViewProps {
 }
 
 /**
- * CAMERA PPG V3 — CAMERA CAPABILITY MANAGER INTEGRATION
+ * CAMERA PPG V2 — PHASED CONSTRAINT APPLICATION
  * 
  * Phase 1: Find best back camera with torch
  * Phase 2: Open stream with stable base constraints
- * Phase 3: WARMUP (1.5-2.0s) - allow camera to stabilize
- * Phase 4: Activate torch with CameraCapabilityManager
- * Phase 5: Apply optimal constraints in sequence via CameraCapabilityManager
- * Phase 6: Monitor frame rate and torch stability
- * Phase 7: Export diagnostics and camera profile for processor
+ * Phase 3: Activate torch
+ * Phase 4: Lock fine controls (exposure, WB, focus, ISO) with graceful degradation
+ * Phase 5: Export diagnostics for processor
  */
 const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   onStreamReady,
@@ -49,10 +39,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
-  const cameraManagerRef = useRef<CameraCapabilityManager>(new CameraCapabilityManager());
-  const monitoringIntervalRef = useRef<number | null>(null);
-  const [warmupComplete, setWarmupComplete] = useState(false);
-  
   const diagnosticsRef = useRef<CameraDiagnostics>({
     deviceLabel: '',
     hasTorch: false,
@@ -64,30 +50,17 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     focusLocked: false,
     isoValue: 0,
     supportedConstraints: [],
-    warmupComplete: false,
-    frameRateStable: true,
-    frameRateChanges: 0,
-    torchOffEvents: 0,
-    appliedConstraints: [],
-    failedConstraints: [],
   });
 
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current,
     getDiagnostics: () => ({ ...diagnosticsRef.current }),
-    getCameraProfile: () => cameraManagerRef.current.getProfile(),
   }), []);
 
   useEffect(() => {
     let mounted = true;
 
     const stopCamera = async () => {
-      // Clear monitoring interval
-      if (monitoringIntervalRef.current) {
-        clearInterval(monitoringIntervalRef.current);
-        monitoringIntervalRef.current = null;
-      }
-
       if (streamRef.current) {
         for (const track of streamRef.current.getVideoTracks()) {
           try {
@@ -101,12 +74,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         streamRef.current = null;
       }
       if (videoRef.current) videoRef.current.srcObject = null;
-      
-      // Clear camera manager and warmup state
-      cameraManagerRef.current.clear();
-      setWarmupComplete(false);
-      diagnosticsRef.current.warmupComplete = false;
-      
       isStartingRef.current = false;
     };
 
@@ -171,15 +138,11 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       await stopCamera();
       if (!mounted) { isStartingRef.current = false; return; }
 
-      // Reset camera manager and warmup state
-      cameraManagerRef.current.clear();
-      setWarmupComplete(false);
-
       try {
-        // PHASE 1: Find best back camera with torch
+        // PHASE 1
         const cameraId = await findMainBackCamera();
 
-        // PHASE 2: Open stream with stable base constraints
+        // PHASE 2: Open stream with stable base
         const baseConstraints: MediaTrackConstraints = cameraId
           ? {
               deviceId: { exact: cameraId },
@@ -227,87 +190,93 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         const supported = navigator.mediaDevices.getSupportedConstraints?.() || {};
         diagnosticsRef.current.supportedConstraints = Object.keys(supported).filter(k => (supported as any)[k]);
 
-        // PHASE 3: WARMUP (1.5-2.0s) - allow camera to stabilize
-        console.log('🌡️ Camera warmup started (1.8s)...');
-        await new Promise(r => setTimeout(r, 1800));
-        if (!mounted) { stream.getTracks().forEach(t => t.stop()); isStartingRef.current = false; return; }
-        setWarmupComplete(true);
-        diagnosticsRef.current.warmupComplete = true;
-        console.log('✅ Camera warmup complete');
+        // Record real settings
+        const settings = track.getSettings() as any;
+        diagnosticsRef.current.resolution = {
+          width: settings.width || 0,
+          height: settings.height || 0
+        };
+        diagnosticsRef.current.realFrameRate = settings.frameRate || 30;
 
-        // PHASE 4: Build initial camera profile
-        const deviceId = cameraId || track.getSettings()?.deviceId || 'unknown';
-        cameraManagerRef.current.buildProfile(track, deviceId);
-        const profile = cameraManagerRef.current.getProfile();
-        
-        if (profile) {
-          diagnosticsRef.current.deviceLabel = diagnosticsRef.current.deviceLabel || deviceId;
-          diagnosticsRef.current.hasTorch = profile.capabilities.torch || false;
-          diagnosticsRef.current.resolution = { width: profile.width, height: profile.height };
-          diagnosticsRef.current.realFrameRate = profile.frameRate;
-          diagnosticsRef.current.isoValue = profile.iso;
+        // PHASE 3: Activate torch
+        await new Promise(r => setTimeout(r, 400));
+        const caps = track.getCapabilities?.() as any;
+        diagnosticsRef.current.hasTorch = caps?.torch === true;
+
+        if (caps?.torch) {
+          let torchOk = false;
+          for (let attempt = 0; attempt < 5 && !torchOk; attempt++) {
+            try {
+              await track.applyConstraints({ advanced: [{ torch: true } as any] });
+              torchOk = true;
+              diagnosticsRef.current.torchActive = true;
+              console.log('🔦 Torch ON');
+            } catch {
+              await new Promise(r => setTimeout(r, 250));
+            }
+          }
+          if (!torchOk) console.warn('⚠️ Torch failed after 5 attempts');
         }
 
-        // PHASE 5: Apply optimal constraints via CameraCapabilityManager
-        console.log('🔧 Applying optimal camera constraints...');
-        await cameraManagerRef.current.applyOptimalConstraints(track);
+        // PHASE 4: Fine lock — apply each independently, log what succeeds
+        await new Promise(r => setTimeout(r, 300));
         
-        // Re-read profile after constraint application
-        cameraManagerRef.current.buildProfile(track, deviceId);
-        const updatedProfile = cameraManagerRef.current.getProfile();
-        const managerDiagnostics = cameraManagerRef.current.getDiagnostics();
-        
-        if (updatedProfile) {
-          diagnosticsRef.current.torchActive = updatedProfile.torchActive;
-          diagnosticsRef.current.exposureLocked = managerDiagnostics.exposureLocked;
-          diagnosticsRef.current.wbLocked = managerDiagnostics.wbLocked;
-          diagnosticsRef.current.focusLocked = managerDiagnostics.focusLocked;
-          diagnosticsRef.current.isoValue = updatedProfile.iso;
-          diagnosticsRef.current.realFrameRate = updatedProfile.frameRate;
-          diagnosticsRef.current.appliedConstraints = managerDiagnostics.appliedConstraints;
-          diagnosticsRef.current.failedConstraints = managerDiagnostics.failedConstraints;
+        const tryConstraint = async (name: string, value: any): Promise<boolean> => {
+          try {
+            await track.applyConstraints({ advanced: [{ [name]: value } as any] });
+            return true;
+          } catch {
+            return false;
+          }
+        };
+
+        // Frame rate lock
+        await tryConstraint('frameRate', 30);
+
+        // Exposure
+        if (caps?.exposureMode?.includes('manual')) {
+          diagnosticsRef.current.exposureLocked = await tryConstraint('exposureMode', 'manual');
+        } else if (caps?.exposureMode?.includes('continuous')) {
+          await tryConstraint('exposureMode', 'continuous');
+        }
+
+        if (caps?.exposureCompensation) {
+          const min = caps.exposureCompensation.min ?? -2;
+          const max = caps.exposureCompensation.max ?? 2;
+          const target = Math.max(min, Math.min(max, -0.35));
+          await tryConstraint('exposureCompensation', target);
+        }
+
+        // White balance
+        if (caps?.whiteBalanceMode?.includes('manual')) {
+          diagnosticsRef.current.wbLocked = await tryConstraint('whiteBalanceMode', 'manual');
+        }
+
+        // ISO
+        if (caps?.iso) {
+          const minISO = caps.iso.min ?? 50;
+          const maxISO = caps.iso.max ?? 400;
+          const targetISO = Math.max(minISO, Math.min(maxISO, 140));
+          if (await tryConstraint('iso', targetISO)) {
+            diagnosticsRef.current.isoValue = targetISO;
+          }
+        }
+
+        // Focus
+        if (caps?.focusMode?.includes('manual')) {
+          diagnosticsRef.current.focusLocked = await tryConstraint('focusMode', 'manual');
+        } else if (caps?.focusMode?.includes('continuous')) {
+          await tryConstraint('focusMode', 'continuous');
         }
 
         // Log final settings
-        const finalSettings = cameraManagerRef.current.getSettings(track);
+        const finalSettings = track.getSettings() as any;
         console.log('📹 Camera ready:', finalSettings.width, 'x', finalSettings.height,
           '@', finalSettings.frameRate, 'fps',
           '| Torch:', diagnosticsRef.current.torchActive,
           '| Exp:', diagnosticsRef.current.exposureLocked,
           '| WB:', diagnosticsRef.current.wbLocked,
-          '| ISO:', diagnosticsRef.current.isoValue,
-          '| Applied:', diagnosticsRef.current.appliedConstraints.join(','),
-          '| Failed:', diagnosticsRef.current.failedConstraints.join(','));
-
-        // PHASE 6: Start monitoring frame rate and torch stability
-        monitoringIntervalRef.current = window.setInterval(() => {
-          if (!streamRef.current) return;
-          const currentTrack = streamRef.current.getVideoTracks()[0];
-          if (currentTrack) {
-            cameraManagerRef.current.monitorFrameRate();
-            cameraManagerRef.current.monitorTorch();
-            
-            const updatedProfile = cameraManagerRef.current.getProfile();
-            const updatedDiagnostics = cameraManagerRef.current.getDiagnostics();
-            
-            if (updatedProfile) {
-              diagnosticsRef.current.realFrameRate = updatedProfile.frameRate;
-              diagnosticsRef.current.torchActive = updatedProfile.torchActive;
-            }
-            
-            diagnosticsRef.current.frameRateStable = updatedDiagnostics.frameRateStable;
-            diagnosticsRef.current.frameRateChanges = updatedDiagnostics.frameRateChanges;
-            diagnosticsRef.current.torchOffEvents = updatedDiagnostics.torchOffEvents;
-            
-            // Log significant changes
-            if (updatedDiagnostics.frameRateChanges > 3) {
-              console.warn('⚠️ Frame rate unstable, changes:', updatedDiagnostics.frameRateChanges);
-            }
-            if (updatedDiagnostics.torchOffEvents > 0) {
-              console.warn('⚠️ Torch turned off unexpectedly, events:', updatedDiagnostics.torchOffEvents);
-            }
-          }
-        }, 2000);
+          '| ISO:', diagnosticsRef.current.isoValue);
 
         onStreamReady?.(stream);
         isStartingRef.current = false;

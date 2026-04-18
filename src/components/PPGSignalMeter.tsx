@@ -21,35 +21,6 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
-  // Enhanced metrics
-  clipHighRatio?: number;
-  clipLowRatio?: number;
-  motionScore?: number;
-  globalSQI?: number;
-  spectralSNR?: number;
-  peakProminence?: number;
-  harmonicConsistency?: number;
-  zeroCrossingRate?: number;
-  temporalStability?: number;
-  contactState?: string;
-  spatialUniformity?: number;
-  coverageRatio?: number;
-  perfusionIndex?: number;
-  sampleRate?: number;
-  // New pipeline metrics
-  contactConfidence?: number;
-  contactStateExtended?: string;
-  fusionConfidence?: number;
-  effectiveTileCount?: number;
-  validTileRatio?: number;
-  tileWeightMap?: number[];
-  dominantTileIndices?: number[];
-  sourceQuality?: number;
-  sourceName?: string;
-  gateScore?: number;
-  rejectionReason?: string;
-  calibrationReady?: boolean;
-  calibrationConfidence?: number;
 }
 
 const CONFIG = {
@@ -106,9 +77,9 @@ const parseRhythmStatus = (statusString?: string) => {
   return { label: normalized, count, display, isAlert, color };
 };
 
-const PPGSignalMeter = ({
-  value,
-  quality,
+const PPGSignalMeter = ({ 
+  value, 
+  quality, 
   isFingerDetected,
   onStartMeasurement,
   onReset,
@@ -120,36 +91,7 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = [],
-  // Enhanced metrics
-  clipHighRatio = 0,
-  clipLowRatio = 0,
-  motionScore = 0,
-  globalSQI = 0,
-  spectralSNR = 0,
-  peakProminence = 0,
-  harmonicConsistency = 0,
-  zeroCrossingRate = 0,
-  temporalStability = 0,
-  contactState = 'NO_CONTACT',
-  spatialUniformity = 0,
-  coverageRatio = 0,
-  perfusionIndex = 0,
-  sampleRate = 30,
-  // New pipeline metrics
-  contactConfidence = 0,
-  contactStateExtended = 'NO_CONTACT',
-  fusionConfidence = 0,
-  effectiveTileCount = 0,
-  validTileRatio = 0,
-  tileWeightMap = [],
-  dominantTileIndices = [],
-  sourceQuality = 0,
-  sourceName = 'RG',
-  gateScore = 0,
-  rejectionReason = '',
-  calibrationReady = false,
-  calibrationConfidence = 0,
+  rrIntervals = []
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
@@ -815,7 +757,6 @@ const PPGSignalMeter = ({
         <Activity className="w-3.5 h-3.5 text-emerald-400" />
         <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
       </div>
-      
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button onClick={onStartMeasurement} className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${isMonitoring ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r' : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'}`}>
           {isMonitoring ? 'DETENER' : 'INICIAR'}

@@ -526,14 +526,13 @@ const Index = () => {
       setUpstreamContext({
         contactStable: stableHumanSignal,
         pressureOptimal,
-        clipHighRatio: lastSignal?.clipHighRatio || 0,
+        clipHighRatio: 0,
         sourceStability,
         avgBeatSQI: heartBeatResult.beatSQI || heartBeatResult.debug.lastBeatSQI || 0,
         beatCount: heartBeatResult.debug.beatsAccepted || heartBeatResult.rrData?.intervals.length || 0,
         sampleRate,
         detectorAgreement,
         rrStability,
-        motionScore: 0,
       });
 
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
@@ -681,7 +680,7 @@ const Index = () => {
 
         <div className="relative z-10 h-full">
           <div className="flex-1 h-full">
-            <PPGSignalMeter
+            <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
               isFingerDetected={lastSignal?.fingerDetected || false}
@@ -696,35 +695,6 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
-              // Enhanced metrics
-              clipHighRatio={lastSignal?.clipHighRatio || 0}
-              clipLowRatio={lastSignal?.clipLowRatio || 0}
-              motionScore={lastSignal?.motionScore ?? 0}
-              globalSQI={lastSignal?.quality || 0}
-              spectralSNR={lastSignal?.spectralSNR || 0}
-              peakProminence={lastSignal?.peakProminence || 0}
-              harmonicConsistency={lastSignal?.harmonicConsistency || 0}
-              zeroCrossingRate={lastSignal?.zeroCrossingRate || 0}
-              temporalStability={lastSignal?.temporalStability || 0}
-              contactState={lastSignal?.contactState || 'NO_CONTACT'}
-              spatialUniformity={getPositionQuality().spatialUniformity || 0}
-              coverageRatio={getPositionQuality().coverageRatio || 0}
-              perfusionIndex={lastSignal?.perfusionIndex || 0}
-              sampleRate={30}
-              // New pipeline V3 metrics
-              contactConfidence={lastSignal?.contactConfidence ?? 0}
-              contactStateExtended={lastSignal?.contactStateExtended ?? 'NO_CONTACT'}
-              fusionConfidence={lastSignal?.fusionConfidence ?? 0}
-              effectiveTileCount={lastSignal?.effectiveTileCount ?? 0}
-              validTileRatio={lastSignal?.validTileRatio ?? 0}
-              tileWeightMap={lastSignal?.tileWeightMap ?? []}
-              dominantTileIndices={lastSignal?.dominantTileIndices ?? []}
-              sourceQuality={lastSignal?.sourceQuality ?? 0}
-              sourceName={lastSignal?.sourceName ?? 'RG'}
-              gateScore={lastSignal?.gateScore ?? 0}
-              rejectionReason={lastSignal?.rejectionReason ?? ''}
-              calibrationReady={lastSignal?.calibrationReady ?? false}
-              calibrationConfidence={lastSignal?.calibrationConfidence ?? 0}
             />
           </div>
 

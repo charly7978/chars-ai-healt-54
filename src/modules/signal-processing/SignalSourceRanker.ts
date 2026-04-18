@@ -1,15 +1,10 @@
 /**
- * SIGNAL SOURCE RANKER V3
+ * MULTI-SOURCE SIGNAL RANKER V2
  * 
- * Multi-source PPG signal candidates with hysteresis:
- * - R, G, B raw channels
- * - RG, RB, GB differences
- * - abs(R), abs(G) (absolute value)
- * - Per-channel SQI with periodicity, SNR, clipping, drift
- * - Hysteresis to prevent rapid switching
- * - Enhanced SQI: spectral SNR, peak prominence, harmonic consistency, zero-crossing rate
+ * Generates 6 candidate PPG signals, scores each by SQI metrics,
+ * applies winner-take-all with temporal hysteresis.
+ * No simulation — pure competitive extraction.
  */
-
 import { RingBuffer } from './RingBuffer';
 
 export interface SourceCandidate {
@@ -24,26 +19,10 @@ export interface SourceCandidate {
   sqi: number;
 }
 
-export interface SourceMetrics {
-  sqi: number;
-  spectralSNR: number;
-  peakProminence: number;
-  harmonicConsistency: number;
-  zeroCrossingRate: number;
-  autocorrPeak: number;
-  signalRange: number;
-}
-
 interface SourceState {
   buffer: RingBuffer;
-  sqi: number;
-  stableFrames: number;
   dcEWMA: number;
-  // Enhanced SQI metrics
-  spectralSNR: number;
-  peakProminence: number;
-  harmonicConsistency: number;
-  zeroCrossingRate: number;
+  sqi: number;
 }
 
 export class SignalSourceRanker {
@@ -59,13 +38,8 @@ export class SignalSourceRanker {
     for (const l of labels) {
       this.sources.set(l, {
         buffer: new RingBuffer(this.BUFFER_SIZE),
-        sqi: 0,
-        stableFrames: 0,
         dcEWMA: 0,
-        spectralSNR: 0,
-        peakProminence: 0,
-        harmonicConsistency: 0,
-        zeroCrossingRate: 0,
+        sqi: 0,
       });
     }
   }
@@ -76,7 +50,7 @@ export class SignalSourceRanker {
     baseR: number, baseG: number, baseB: number,
     redPI: number, greenPI: number,
     clipHigh: number, motionArtifact: boolean
-  ): { value: number; label: string; allSQI: Record<string, number>; allMetrics?: Record<string, SourceMetrics> } {
+  ): { value: number; label: string; allSQI: Record<string, number> } {
     this.frameCount++;
     const eps = 0.01;
 
@@ -146,36 +120,7 @@ export class SignalSourceRanker {
     }
 
     const value = Math.min(80, Math.max(-80, candidates[this.activeSource] ?? candidates['RG']));
-    
-    // Build allMetrics for external propagation
-    const allMetrics: Record<string, SourceMetrics> = {};
-    for (const [label, src] of this.sources) {
-      allMetrics[label] = {
-        sqi: src.sqi,
-        spectralSNR: src.spectralSNR,
-        peakProminence: src.peakProminence,
-        harmonicConsistency: src.harmonicConsistency,
-        zeroCrossingRate: src.zeroCrossingRate,
-        autocorrPeak: this.computeBestAutocorr(src),
-        signalRange: src.buffer.length > 0 ? 
-          (src.buffer.percentile(0.9, Math.min(120, src.buffer.length)) - 
-           src.buffer.percentile(0.1, Math.min(120, src.buffer.length))) : 0,
-      };
-    }
-    
-    return { value, label: this.activeSource, allSQI, allMetrics };
-  }
-  
-  private computeBestAutocorr(src: SourceState): number {
-    const buf = src.buffer;
-    const n = Math.min(120, buf.length);
-    if (n < 30) return 0;
-    let best = 0;
-    for (let lag = 8; lag <= 60; lag++) {
-      const ac = buf.autocorrelation(lag, n);
-      if (ac > best) best = ac;
-    }
-    return best;
+    return { value, label: this.activeSource, allSQI };
   }
 
   private computeSQI(src: SourceState, clipHigh: number, motion: boolean): number {
@@ -196,14 +141,10 @@ export class SignalSourceRanker {
 
     // Periodicity via autocorrelation peak
     let bestAutoCorr = 0;
-    let bestLag = 0;
     // Search for peaks in cardiac range: 0.5-3Hz at ~30fps = lags 10-60
     for (let lag = 8; lag <= 60; lag++) {
       const ac = buf.autocorrelation(lag, n);
-      if (ac > bestAutoCorr) {
-        bestAutoCorr = ac;
-        bestLag = lag;
-      }
+      if (ac > bestAutoCorr) bestAutoCorr = ac;
     }
 
     // Zero-crossing count (too many = noise)
@@ -221,116 +162,12 @@ export class SignalSourceRanker {
     const drift = Math.abs(firstHalfMean - mean) / (range + 0.1);
     const driftPenalty = drift * 10;
 
-    // --- Enhanced SQI metrics ---
-    
-    // Spectral SNR: ratio of signal power in cardiac band to noise in adjacent bands
-    const spectralSNR = this.computeSpectralSNR(buf, n, bestLag);
-    
-    // Peak prominence: how prominent the autocorrelation peak is relative to neighbors
-    const peakProminence = this.computePeakProminence(buf, n, bestLag, bestAutoCorr);
-    
-    // Harmonic consistency: check if harmonics of the fundamental frequency exist
-    const harmonicConsistency = this.computeHarmonicConsistency(buf, n, bestLag);
-    
-    // Update source metrics
-    src.spectralSNR = spectralSNR;
-    src.peakProminence = peakProminence;
-    src.harmonicConsistency = harmonicConsistency;
-    src.zeroCrossingRate = zcRate;
-
     const snrScore = Math.min(30, snr * 10);
     const periodicityScore = bestAutoCorr * 35;
-    const spectralScore = Math.min(10, spectralSNR * 5);
-    const peakScore = Math.min(8, peakProminence * 8);
-    const harmonicScore = Math.min(6, harmonicConsistency * 6);
     const clipPenalty = clipHigh * 25;
     const motionPenalty = motion ? 10 : 0;
 
-    return Math.max(0, 
-      snrScore + periodicityScore + spectralScore + peakScore + harmonicScore 
-      - clipPenalty - motionPenalty - zcPenalty - driftPenalty
-    );
-  }
-
-  private computeSpectralSNR(buf: RingBuffer, n: number, peakLag: number): number {
-    if (peakLag < 10) return 0;
-    
-    // Estimate power in cardiac band (around the peak)
-    const bandWidth = Math.max(2, Math.floor(peakLag * 0.2));
-    let signalPower = 0;
-    let signalCount = 0;
-    
-    for (let lag = peakLag - bandWidth; lag <= peakLag + bandWidth; lag++) {
-      if (lag >= 1 && lag < n) {
-        const ac = buf.autocorrelation(lag, n);
-        signalPower += ac * ac;
-        signalCount++;
-      }
-    }
-    
-    if (signalCount === 0) return 0;
-    signalPower /= signalCount;
-    
-    // Estimate noise power in adjacent non-cardiac bands
-    let noisePower = 0;
-    let noiseCount = 0;
-    
-    for (let lag = 1; lag < n; lag++) {
-      if (Math.abs(lag - peakLag) > bandWidth * 1.5) {
-        const ac = buf.autocorrelation(lag, n);
-        noisePower += ac * ac;
-        noiseCount++;
-      }
-    }
-    
-    if (noiseCount === 0) return signalPower > 0 ? 1 : 0;
-    noisePower /= noiseCount;
-    
-    return noisePower > 0 ? Math.min(3, signalPower / noisePower) : 0;
-  }
-
-  private computePeakProminence(buf: RingBuffer, n: number, peakLag: number, peakValue: number): number {
-    if (peakLag < 5 || peakLag >= n - 5) return 0;
-    
-    // Find local minimum before peak
-    let minBefore = peakValue;
-    for (let lag = Math.max(1, peakLag - 10); lag < peakLag; lag++) {
-      const ac = buf.autocorrelation(lag, n);
-      if (ac < minBefore) minBefore = ac;
-    }
-    
-    // Find local minimum after peak
-    let minAfter = peakValue;
-    for (let lag = peakLag + 1; lag <= Math.min(n - 1, peakLag + 10); lag++) {
-      const ac = buf.autocorrelation(lag, n);
-      if (ac < minAfter) minAfter = ac;
-    }
-    
-    const minNeighbor = Math.min(minBefore, minAfter);
-    const prominence = peakValue - minNeighbor;
-    
-    return Math.max(0, prominence);
-  }
-
-  private computeHarmonicConsistency(buf: RingBuffer, n: number, peakLag: number): number {
-    if (peakLag < 5) return 0;
-    
-    // Check for harmonics at 2x and 3x the fundamental frequency
-    const harmonics = [2, 3];
-    let harmonicScore = 0;
-    
-    for (const h of harmonics) {
-      const harmonicLag = peakLag * h;
-      if (harmonicLag < n) {
-        const ac = buf.autocorrelation(harmonicLag, n);
-        // Harmonic should be weaker but still significant
-        if (ac > 0.1) {
-          harmonicScore += ac * 0.5;
-        }
-      }
-    }
-    
-    return Math.min(1, harmonicScore);
+    return Math.max(0, snrScore + periodicityScore - clipPenalty - motionPenalty - zcPenalty - driftPenalty);
   }
 
   getActiveSource(): string { return this.activeSource; }
@@ -338,13 +175,8 @@ export class SignalSourceRanker {
   reset(): void {
     for (const src of this.sources.values()) {
       src.buffer.clear();
-      src.sqi = 0;
-      src.stableFrames = 0;
       src.dcEWMA = 0;
-      src.spectralSNR = 0;
-      src.peakProminence = 0;
-      src.harmonicConsistency = 0;
-      src.zeroCrossingRate = 0;
+      src.sqi = 0;
     }
     this.activeSource = 'RG';
     this.lastSwitchFrame = 0;
