@@ -7,7 +7,7 @@ import { SignalSourceRanker, type SourceMetrics } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
 import { FingerContactClassifier, type ContactClassification, type ContactFeatures } from './FingerContactClassifier';
 import { TileFusionEngine, type FusionResult, type TileSignal } from './TileFusionEngine';
-import { FrameQualityGate, type FrameQualityInput, type FrameQualityOutput } from '../core/FrameQualityGate';
+import { FrameQualityGate, type FrameQualityInput, type FrameQualityOutput, type RejectionSeverity } from '../core/FrameQualityGate';
 import { RadiometricProcessor, type RadiometricResult, type RadiometricTileMetrics } from './RadiometricProcessor';
 import { MotionEstimator, type MotionEstimate, type IMUData } from './MotionEstimator';
 
@@ -524,7 +524,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
 
     // Get current source metrics for propagation
-    const currentMetrics = this.allSourceMetrics[this.activeSourceLabel] ?? {};
+    const currentMetrics: Partial<SourceMetrics> = this.allSourceMetrics[this.activeSourceLabel] ?? {};
     
     // ════════════════════════════════════════════════════════
     //  TRACE VALUES (explicitly separated)
@@ -675,25 +675,34 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private buildGateInput(roi: ROIMaskResult, motionArtifact: boolean): FrameQualityInput {
     const perfusion = this.calculatePerfusionIndex();
-    const currentMetrics = this.allSourceMetrics[this.activeSourceLabel] ?? {};
+    const currentMetrics: Partial<SourceMetrics> = this.allSourceMetrics[this.activeSourceLabel] ?? {};
     
     return {
       contactState: this.contactClassification?.state || 'NO_FINGER',
+      contactConfidence: this.contactConfidence,
       globalSQI: this.signalQuality,
+      perfusionIndex: perfusion,
+      sourceQuality: this.allSourceSQI[this.activeSourceLabel] ?? 0,
+      // Environmental
       clipHighRatio: roi.clipHighRatio,
       clipLowRatio: roi.clipLowRatio,
       motionScore: this.motionScore,
+      motionState: this.lastMotionEstimate?.state || 'STATIONARY',
+      // Spatial
       coverageRatio: roi.coverageRatio,
-      perfusionIndex: perfusion,
       spatialUniformity: roi.spatialUniformity,
+      centerCoverage: roi.centerCoverage,
+      // Illumination
       brightness: roi.brightness,
-      // Extended metrics
-      contactConfidence: this.contactConfidence,
-      fusionConfidence: this.fusionConfidence,
-      sourceQuality: this.allSourceSQI[this.activeSourceLabel] ?? 0,
+      // Extended spectral metrics
       spectralSNR: currentMetrics.spectralSNR ?? 0,
       peakProminence: currentMetrics.peakProminence ?? 0,
       harmonicConsistency: currentMetrics.harmonicConsistency ?? 0,
+      zeroCrossingRate: currentMetrics.zeroCrossingRate ?? 0,
+      // Temporal
+      temporalStability: this.contactClassification?.features.temporalStability ?? 0.5,
+      // Fusion
+      fusionConfidence: this.fusionConfidence,
     };
   }
 
