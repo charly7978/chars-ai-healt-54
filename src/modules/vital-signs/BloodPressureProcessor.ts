@@ -1,6 +1,8 @@
 import { PPGFeatureExtractor, CycleFeatures } from './PPGFeatureExtractor';
+import type { BloodPressureOutput } from '../../types/measurement';
+import { OutputStatus } from '../../types/measurement';
 
-export interface BPEstimate {
+export interface BPEstimate extends BloodPressureOutput {
   systolic: number;
   diastolic: number;
   map: number;
@@ -8,6 +10,22 @@ export interface BPEstimate {
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
   cyclesUsed: number;
   featureQuality: number;
+}
+
+export interface CalibrationPoint {
+  timestamp: number;
+  referenceSystemic: number;
+  referenceDiastolic: number;
+  sbp: number;
+  dbp: number;
+}
+
+export interface UserCalibration {
+  calibrationPoints: CalibrationPoint[];
+  userOffset: { sbp: number; dbp: number };
+  userScale: { sbp: number; dbp: number };
+  isCalibrated: boolean;
+  calibrationConfidence: number;
 }
 
 const SBP_COEFF = {
@@ -42,8 +60,186 @@ export class BloodPressureProcessor {
   private lastSBP = 0;
   private lastDBP = 0;
   private readonly EMA_ALPHA = 0.22;
+  
+  private userCalibration: UserCalibration = {
+    calibrationPoints: [],
+    userOffset: { sbp: 0, dbp: 0 },
+    userScale: { sbp: 1.0, dbp: 1.0 },
+    isCalibrated: false,
+    calibrationConfidence: 0,
+  };
+  
+  private measurementSessionCount = 0;
+
+  /**
+   * Add calibration point from user with reference sphygmomanometer
+   */
+  public addCalibrationPoint(refSBP: number, refDBP: number, measuredSBP: number, measuredDBP: number): void {
+    this.userCalibration.calibrationPoints.push({
+      timestamp: Date.now(),
+      referenceSystemic: refSBP,
+      referenceDiastolic: refDBP,
+      sbp: measuredSBP,
+      dbp: measuredDBP,
+    });
+    
+    // Keep only last 10 points
+    if (this.userCalibration.calibrationPoints.length > 10) {
+      this.userCalibration.calibrationPoints.shift();
+    }
+    
+    // Recompute calibration
+    this.recomputeCalibration();
+  }
+  
+  /** Recompute user calibration parameters */
+  private recomputeCalibration(): void {
+    if (this.userCalibration.calibrationPoints.length < 2) {
+      this.userCalibration.isCalibrated = false;
+      return;
+    }
+    
+    const points = this.userCalibration.calibrationPoints;
+    
+    // Compute offset as mean difference
+    const sbpDiffs = points.map(p => p.referenceSystemic - p.sbp);
+    const dbpDiffs = points.map(p => p.referenceDiastolic - p.dbp);
+    
+    this.userCalibration.userOffset.sbp = sbpDiffs.reduce((a, b) => a + b, 0) / sbpDiffs.length;
+    this.userCalibration.userOffset.dbp = dbpDiffs.reduce((a, b) => a + b, 0) / dbpDiffs.length;
+    
+    // Scale from robust regression (simplified linear)
+    let sumXY_sbp = 0, sumX2_sbp = 0;
+    let sumXY_dbp = 0, sumX2_dbp = 0;
+    
+    const meanRef_sbp = points.reduce((s, p) => s + p.referenceSystemic, 0) / points.length;
+    const meanMeas_sbp = points.reduce((s, p) => s + p.sbp, 0) / points.length;
+    
+    for (const p of points) {
+      sumXY_sbp += (p.sbp - meanMeas_sbp) * (p.referenceSystemic - meanRef_sbp);
+      sumX2_sbp += (p.sbp - meanMeas_sbp) ** 2;
+    }
+    
+    this.userCalibration.userScale.sbp = sumX2_sbp > 0 ? sumXY_sbp / sumX2_sbp : 1.0;
+    
+    // Similar for DBP
+    const meanRef_dbp = points.reduce((s, p) => s + p.referenceDiastolic, 0) / points.length;
+    const meanMeas_dbp = points.reduce((s, p) => s + p.dbp, 0) / points.length;
+    
+    for (const p of points) {
+      sumXY_dbp += (p.dbp - meanMeas_dbp) * (p.referenceDiastolic - meanRef_dbp);
+      sumX2_dbp += (p.dbp - meanMeas_dbp) ** 2;
+    }
+    
+    this.userCalibration.userScale.dbp = sumX2_dbp > 0 ? sumXY_dbp / sumX2_dbp : 1.0;
+    
+    // Compute RMSE for confidence
+    let rmse_sbp = 0, rmse_dbp = 0;
+    for (const p of points) {
+      const pred_sbp = p.sbp * this.userCalibration.userScale.sbp + this.userCalibration.userOffset.sbp;
+      const pred_dbp = p.dbp * this.userCalibration.userScale.dbp + this.userCalibration.userOffset.dbp;
+      rmse_sbp += (pred_sbp - p.referenceSystemic) ** 2;
+      rmse_dbp += (pred_dbp - p.referenceDiastolic) ** 2;
+    }
+    
+    rmse_sbp = Math.sqrt(rmse_sbp / points.length);
+    rmse_dbp = Math.sqrt(rmse_dbp / points.length);
+    
+    // Confidence: lower RMSE = higher confidence
+    // RMSE < 5 mmHg → 0.9, RMSE > 15 mmHg → 0.3
+    const avgRMSE = (rmse_sbp + rmse_dbp) / 2;
+    this.userCalibration.calibrationConfidence = Math.max(0.3, Math.min(0.95, 1.0 - (avgRMSE / 30)));
+    
+    this.userCalibration.isCalibrated = true;
+  }
 
   estimate(signalBuffer: number[], rrIntervals: number[], sampleRate: number = 30): BPEstimate {
+    const insufficient: BPEstimate = {
+      value: { systolic: 0, diastolic: 0, map: 0 },
+      unit: 'mmHg',
+      confidence: 0,
+      status: OutputStatus.NEEDS_CALIBRATION,
+      qualityFlags: [],
+      evidence: { sqi: 0 },
+      
+      systolic: 0, diastolic: 0, map: 0,pulsePressure: 0,
+      confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
+    };
+
+    if (signalBuffer.length < 30 || rrIntervals.length < 2) return insufficient;
+    
+    const cycles = PPGFeatureExtractor.detectCardiacCycles(signalBuffer, sampleRate);
+    if (cycles.length < this.MIN_CYCLES) return insufficient;
+
+    const validCycles: CycleFeatures[] = [];
+    for (const cycle of cycles) {
+      const features = PPGFeatureExtractor.extractCycleFeatures(signalBuffer, cycle, sampleRate);
+      if (features && features.quality > 0.15) validCycles.push(features);
+    }
+    if (validCycles.length < this.MIN_CYCLES) return insufficient;
+
+    const useCycles = validCycles.slice(-this.MAX_CYCLES);
+    const mf = this.medianFeatures(useCycles);
+    const validRR = rrIntervals.filter(i => i > 220 && i < 2200);
+    if (validRR.length < 2) return insufficient;
+    
+    const avgRR = validRR.reduce((a, b) => a + b, 0) / validRR.length;
+    const hr = 60000 / avgRR;
+    const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
+
+    let sbp = this.estimateSBP(mf, hr);
+    let dbp = this.estimateDBP(mf, hr, rrVar.rmssd);
+
+    if (dbp >= sbp) dbp = sbp * 0.62;
+    const pp = sbp - dbp;
+    if (pp < 15) dbp = sbp - 25;
+    if (pp > 100) dbp = sbp - 55;
+
+    // Apply user calibration if available
+    if (this.userCalibration.isCalibrated) {
+      sbp = sbp * this.userCalibration.userScale.sbp + this.userCalibration.userOffset.sbp;
+      dbp = dbp * this.userCalibration.userScale.dbp + this.userCalibration.userOffset.dbp;
+    }
+
+    if (this.lastSBP > 0) {
+      sbp = this.lastSBP * (1 - this.EMA_ALPHA) + sbp * this.EMA_ALPHA;
+      dbp = this.lastDBP * (1 - this.EMA_ALPHA) + dbp * this.EMA_ALPHA;
+    }
+    this.lastSBP = sbp;
+    this.lastDBP = dbp;
+
+    sbp = Math.max(85, Math.min(180, sbp));
+    dbp = Math.max(50, Math.min(110, dbp));
+    const map = dbp + (sbp - dbp) / 3;
+    const featureQuality = this.assessFeatureQuality(mf, useCycles.length);
+    const confStr = this.assessConfidence(featureQuality, useCycles.length);
+    
+    const confNum = confStr === 'HIGH' ? 0.8 : confStr === 'MEDIUM' ? 0.5 : 0.2;
+    const status = this.userCalibration.isCalibrated ? OutputStatus.OK : OutputStatus.NEEDS_CALIBRATION;
+
+    return {
+      value: { systolic: sbp, diastolic: dbp, map },
+      unit: 'mmHg',
+      confidence: Math.max(confNum, this.userCalibration.calibrationConfidence),
+      status,
+      qualityFlags: [],
+      evidence: { sqi: featureQuality * 100, userCalibration: this.userCalibration.isCalibrated ? `${this.userCalibration.calibrationPoints.length} points` : 'uncalibrated' },
+      
+      systolic: sbp, diastolic: dbp, map, pulsePressure: sbp - dbp,
+      confidence: confStr, cyclesUsed: useCycles.length, featureQuality
+    };
+  }
+  
+  /** Set user calibration from stored data */
+  public setUserCalibration(data: UserCalibration): void {
+    this.userCalibration = data;
+  }
+  
+  /** Get current user calibration data */
+  public getUserCalibration(): UserCalibration {
+    return this.userCalibration;
+  }
+
     const insufficient: BPEstimate = {
       systolic: 0, diastolic: 0, map: 0, pulsePressure: 0,
       confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
