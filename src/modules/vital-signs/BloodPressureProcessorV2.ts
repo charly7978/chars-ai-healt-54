@@ -47,7 +47,7 @@ interface BPCalibrationPoint {
   referenceDBP: number;
 }
 
-interface BPFeatureVector {
+export interface BPFeatureVector {
   // Morphology
   pulseAmplitude: number;
   acdcRatio: number;

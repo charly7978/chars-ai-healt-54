@@ -16,7 +16,7 @@
 
 import type { LipidOutput, QualityFlag } from '../../types/measurement';
 
-interface LipidFeatureVector {
+export interface LipidFeatureVector {
   // Vascular aging proxies
   stiffnessIndex: number;
   augmentationIndex: number;
@@ -43,7 +43,7 @@ interface LipidFeatureVector {
   gender?: 'M' | 'F';
 }
 
-interface LipidDatasetSample {
+export interface LipidDatasetSample {
   timestamp: number;
   ppgFeatures: LipidFeatureVector;
   referenceLabs: {

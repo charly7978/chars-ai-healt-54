@@ -30,7 +30,7 @@ import type { GlucoseOutput, QualityFlag } from '../../types/measurement';
 //  TYPES
 // ═══════════════════════════════════════════════════════════════════
 
-interface GlucoseFeatureVector {
+export interface GlucoseFeatureVector {
   // PPG morphology
   pulseAmplitude: number;
   systolicUpstrokeTime: number;

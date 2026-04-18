@@ -29,7 +29,7 @@ import type { SpO2Output, QualityFlag, DeviceCalibrationProfile } from '../../ty
 //  TYPES
 // ═══════════════════════════════════════════════════════════════════
 
-interface SpO2Calibration {
+export interface SpO2Calibration {
   // Coeficientes cuadráticos: SpO2 = A + B*R + C*R²
   A: number;
   B: number;
