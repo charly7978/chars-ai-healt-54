@@ -1,5 +1,5 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
-import { BloodPressureProcessor } from './BloodPressureProcessor';
+import { BloodPressureProcessor, type BPEstimate } from './BloodPressureProcessor';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
 import { SpO2Processor, type SpO2Result } from './SpO2Processor';
 import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
@@ -14,12 +14,17 @@ export interface VitalSignsResult {
     diastolic: number;
     confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
     featureQuality: number;
+    map?: number;
+    pulsePressure?: number;
+    status?: 'ok' | 'low_quality' | 'needs_calibration' | 'blocked';
   };
   arrhythmiaCount: number;
   arrhythmiaStatus: string;
   lipids: {
     totalCholesterol: number;
     triglycerides: number;
+    ldl?: number;
+    hdl?: number;
   };
   isCalibrating: boolean;
   calibrationProgress: number;
@@ -31,14 +36,33 @@ export interface VitalSignsResult {
   signalQuality: number;
   measurementConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID';
   rhythm?: {
-    label: RhythmLabel;
+    label: RhythmLabelV2;
     confidence: number;
     burden: number;
     recentEvents: any[];
+    evidence?: RhythmEvidence;
   };
-  spo2Detail?: SpO2Result;
-  glucoseDetail?: GlucoseResult;
-  lipidsDetail?: LipidResult;
+  spo2Detail?: {
+    value: number | null;
+    confidence: number;
+    status: string;
+    calibrationState?: string;
+    rawRatioR?: number;
+  };
+  glucoseDetail?: {
+    value: number | null;
+    confidence: number;
+    status: string;
+    trend?: 'RISING' | 'FALLING' | 'STABLE' | 'UNKNOWN';
+  };
+  lipidsDetail?: {
+    totalCholesterol: number | null;
+    ldl: number | null;
+    hdl: number | null;
+    triglycerides: number | null;
+    confidence: number;
+    status: string;
+  };
   outputStates?: {
     bpm: OutputState;
     spo2: OutputState;
@@ -46,6 +70,16 @@ export interface VitalSignsResult {
     glucose: OutputState;
     lipids: OutputState;
     rhythm: OutputState;
+  };
+  // Debug telemetry
+  debugMetrics?: {
+    motionScore: number;
+    clipHighRatio: number;
+    clipLowRatio: number;
+    sourceStability: number;
+    contactState: string;
+    perfusionIndex: number;
+    beatCount: number;
   };
 }
 
@@ -57,11 +91,11 @@ export interface RGBData {
 }
 
 export class VitalSignsProcessor {
-  private bloodPressureProcessor: BloodPressureProcessor;
-  private rhythmClassifier: RhythmClassifier;
-  private spo2Processor: SpO2Processor;
-  private glucoseProcessor: GlucoseResearchProcessor;
-  private lipidProcessor: LipidResearchProcessor;
+  private bloodPressureProcessor: BloodPressureProcessorV2;
+  private rhythmClassifier: RhythmClassifierV2;
+  private spo2Processor: SpO2ProcessorV2;
+  private glucoseProcessor: GlucoseResearchProcessorV2;
+  private lipidProcessor: LipidResearchProcessorV2;
 
   private lastBPConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT' = 'INSUFFICIENT';
   private lastBPFeatureQuality = 0;
@@ -104,11 +138,93 @@ export class VitalSignsProcessor {
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
 
   constructor() {
-    this.bloodPressureProcessor = new BloodPressureProcessor();
-    this.rhythmClassifier = new RhythmClassifier();
-    this.spo2Processor = new SpO2Processor();
-    this.glucoseProcessor = new GlucoseResearchProcessor();
-    this.lipidProcessor = new LipidResearchProcessor();
+    this.bloodPressureProcessor = new BloodPressureProcessorV2();
+    this.rhythmClassifier = new RhythmClassifierV2();
+    this.spo2Processor = new SpO2ProcessorV2();
+    this.glucoseProcessor = new GlucoseResearchProcessorV2();
+    this.lipidProcessor = new LipidResearchProcessorV2();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  CALIBRATION WIZARDS (V2)
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * Iniciar wizard de calibración de presión arterial
+   */
+  startBPCalibrationWizard(referenceDevice: string, userId: string): void {
+    this.bloodPressureProcessor.startCalibrationWizard(referenceDevice, userId);
+  }
+
+  /**
+   * Agregar punto de calibración de BP con referencia real
+   */
+  addBPCalibrationPoint(
+    ppgFeatures: BPFeatureVector,
+    referenceSBP: number,
+    referenceDBP: number
+  ): { success: boolean; pointsCollected: number; pointsNeeded: number } {
+    return this.bloodPressureProcessor.addCalibrationPoint(ppgFeatures, referenceSBP, referenceDBP);
+  }
+
+  /**
+   * Finalizar wizard de calibración de BP
+   */
+  finishBPCalibrationWizard(): { success: boolean; rmseSBP: number; rmseDBP: number } {
+    return this.bloodPressureProcessor.finishCalibrationWizard();
+  }
+
+  /**
+   * Cargar calibración de dispositivo SpO2
+   */
+  loadSpO2DeviceCalibration(profile: SpO2Calibration): void {
+    this.spo2Processor.loadDeviceCalibration(profile);
+  }
+
+  /**
+   * Agregar punto de calibración SpO2 de usuario
+   */
+  addSpO2UserCalibrationPoint(referenceSpO2: number, measuredR: number): void {
+    this.spo2Processor.addUserCalibrationPoint(referenceSpO2, measuredR);
+  }
+
+  /**
+   * Iniciar modo entrenamiento de glucosa
+   */
+  startGlucoseTraining(userId: string, referenceDevice: string): void {
+    this.glucoseProcessor.startTrainingMode(userId, referenceDevice);
+  }
+
+  /**
+   * Agregar muestra de entrenamiento de glucosa
+   */
+  addGlucoseTrainingSample(
+    ppgFeatures: GlucoseFeatureVector,
+    referenceGlucose: number
+  ): { success: boolean; samplesCollected: number; canTrain: boolean } {
+    return this.glucoseProcessor.addTrainingSample(ppgFeatures, referenceGlucose);
+  }
+
+  /**
+   * Iniciar modo entrenamiento de lípidos
+   */
+  startLipidTraining(userId: string, labSource: string): void {
+    this.lipidProcessor.startTraining(userId, labSource);
+  }
+
+  /**
+   * Agregar muestra de entrenamiento de lípidos
+   */
+  addLipidTrainingSample(
+    ppgFeatures: LipidFeatureVector,
+    referenceLabs: {
+      totalCholesterol: number;
+      ldl: number;
+      hdl: number;
+      triglycerides: number;
+    }
+  ): { success: boolean; samples: number; canTrain: boolean } {
+    return this.lipidProcessor.addTrainingSample(ppgFeatures, referenceLabs);
   }
 
   startCalibration(): void {

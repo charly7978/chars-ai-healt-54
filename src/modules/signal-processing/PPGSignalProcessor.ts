@@ -340,6 +340,25 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       perfusionIndex,
       rawRed: roi.rawRed,
       rawGreen: roi.rawGreen,
+      rawBlue: roi.rawBlue,
+      // Extended telemetry for downstream processors
+      telemetry: {
+        clipHighRatio: roi.clipHighRatio,
+        clipLowRatio: roi.clipLowRatio,
+        spatialUniformity: roi.spatialUniformity,
+        centerCoverage: roi.centerCoverage,
+        activeSourceLabel: source.label,
+        sourceStability: this.sourceStability,
+        allSourceSQI: source.allSQI || {},
+        pressureState: this.pressureState,
+        pressurePenalty: this.pressurePenalty,
+        motionScore: this.motionScore,
+        fingerConfidenceCount: this.fingerConfidenceCount,
+        stableContactCount: this.stableContactCount,
+        processingTimeMs: this.processingTimeMs,
+        realFps: this.realFps,
+        coverageRatio: roi.coverageRatio,
+      },
       diagnostics: {
         message:
           `${source.label} PI:${perfusionIndex.toFixed(2)} P:${this.pressureState.charAt(0)} ` +
