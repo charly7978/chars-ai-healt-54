@@ -128,6 +128,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   ) {
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
     this.radiometricProcessor = new RadiometricProcessor('generic', 1280, 720);
+    // Wire the radiometric processor into the ROI mask so each tile is
+    // linearized in Beer-Lambert space and exposes OD downstream.
+    this.roiMask.setRadiometricProcessor(this.radiometricProcessor);
   }
 
   async initialize(): Promise<void> { this.reset(); }
@@ -155,16 +158,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const timestamp = frameTimestamp ?? performance.now();
     this.updateSampleRate(timestamp);
 
-    // --- RADIOMETRIC LINEARIZATION ---
-    const linearizedFrame = this.radiometricProcessor.process(imageData);
-
-    // --- ADAPTIVE ROI ---
+    // --- ADAPTIVE ROI (Beer-Lambert per-tile inside) ---
+    // The ROI mask now linearizes each tile via RadiometricProcessor.processTileRGB,
+    // so we get linRed/linGreen/linBlue (linear sRGB mapped 0..255) AND OD per
+    // channel, ALL with O(49) work per frame instead of O(W*H).
     const roi = this.roiMask.process(imageData);
     this.lastROIResult = roi;
     this.clipHighRatio = roi.clipHighRatio;
     this.clipLowRatio = roi.clipLowRatio;
     this.spatialUniformity = roi.spatialUniformity;
     this.centerCoverage = roi.centerCoverage;
+
+    // --- WHITE-POINT DRIFT TRACKING (sparse, very cheap) ---
+    if (this.frameCount % 8 === 0) {
+      this.radiometricProcessor.trackWhitePointDrift(imageData);
+    }
 
     // --- TILE FUSION ---
     const fusion = this.tileFusionEngine.fuse(roi.tileData ?? []);
@@ -238,11 +246,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       return;
     }
 
-    // --- Contact detected: update baselines & buffers ---
-    this.updateBaselines(roi.rawRed, roi.rawGreen, roi.rawBlue, motionArtifact);
-    this.redBuf.push(roi.rawRed);
-    this.greenBuf.push(roi.rawGreen);
-    this.blueBuf.push(roi.rawBlue);
+    // --- Contact detected: update baselines & buffers (LINEAR space) ---
+    // We feed AC/DC, source ranking and downstream processors with the
+    // linearized RGB. This gives device-independent ratio-of-ratios for SpO2
+    // and a more physically meaningful Beer-Lambert AC/DC for HR/perfusion.
+    const lR = roi.linRed;
+    const lG = roi.linGreen;
+    const lB = roi.linBlue;
+    this.updateBaselines(lR, lG, lB, motionArtifact);
+    this.redBuf.push(lR);
+    this.greenBuf.push(lG);
+    this.blueBuf.push(lB);
 
     if (this.redBuf.length >= 36) {
       this.calculateACDC();
@@ -253,7 +267,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const greenPI = this.greenDC > 0 ? this.greenAC / this.greenDC : 0;
 
     const source = this.sourceRanker.update(
-      roi.rawRed, roi.rawGreen, roi.rawBlue,
+      lR, lG, lB,
       this.redBaseline, this.greenBaseline, this.blueBaseline,
       redPI, greenPI,
       roi.clipHighRatio, motionArtifact
@@ -358,6 +372,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         processingTimeMs: this.processingTimeMs,
         realFps: this.realFps,
         coverageRatio: roi.coverageRatio,
+        // Beer-Lambert telemetry (Fase 1)
+        odR: roi.odR,
+        odG: roi.odG,
+        odB: roi.odB,
+        linRed: roi.linRed,
+        linGreen: roi.linGreen,
+        linBlue: roi.linBlue,
       },
       diagnostics: {
         message:

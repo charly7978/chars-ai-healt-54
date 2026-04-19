@@ -1,75 +1,59 @@
 /**
- * BANDPASS FILTER V3 — CASCADED BIQUAD + ADAPTIVE NOTCH
+ * BANDPASS FILTER V3 — ADAPTIVE RESPIRATORY NOTCH + DETRENDING
  *
- * Architecture:
+ * Architecture (backward-compatible with V2 for beat detection):
  *   1. EWMA baseline detrending (removes DC + slow drift)
- *   2. Cascaded 4th-order Butterworth HPF at 0.5 Hz (2 biquad sections)
- *   3. Cascaded 4th-order Butterworth LPF at 8 Hz  (2 biquad sections)
- *   4. Optional 2nd-order IIR notch at respiratory frequency (~0.3 Hz,
- *      adaptively updated every 600 ms)
+ *   2. 2nd-order Butterworth HPF at 0.5 Hz  (same poles as V2 — preserves beat detector)
+ *   3. 2nd-order Butterworth LPF at 5.0 Hz  (same poles as V2 — preserves beat detector)
+ *   4. Optional 2nd-order IIR notch at dominant respiratory frequency (0.1–0.5 Hz),
+ *      adaptively estimated every 3 s from the low-frequency power of the raw signal.
  *
- * Why 4th order?
- *   - Steeper roll-off (-80 dB/dec vs -40 dB/dec) removes baseline drift
- *     and motion-induced LF noise far more aggressively while still passing
- *     the full cardiac bandwidth (0.5–8 Hz covers up to 480 BPM harmonics).
- *   - Butterworth maximally-flat passband avoids amplitude distortion on
- *     the PPG systolic upstroke used for morphology features.
- *
- * Respiratory notch:
- *   - The 0.15–0.4 Hz respiratory component couples into PPG via VVC (venous
- *     volume change) and modulates the DC baseline.  A narrow IIR notch
- *     centred on the dominant respiratory frequency removes it without
- *     affecting the 0.5 Hz HPF corner.
+ * Why NOT upgrade to 4th-order here?
+ *   The HeartBeatProcessor's normalisation and peak-detection thresholds are tuned
+ *   to the 2nd-order filter's phase and amplitude response.  Changing the filter order
+ *   without retuning the detector would double-count harmonics and corrupt BPM estimates.
+ *   The notch alone removes the dominant respiratory coupling without touching the
+ *   cardiac-band response.
  *
  * References:
  *   - Proakis & Manolakis "Digital Signal Processing" 4th ed. §10.3
  *   - Elgendi 2016 "Systolic Peak Detection in PPG" Algorithms 9(1)
- *   - Charlton et al. 2022 "Assessing Cardiac and Vascular Function" npj
+ *   - Mejia-Mejia 2022 Computers in Biology (respiratory notch in PPG)
  */
 
 interface BiquadState { x: number[]; y: number[] }
 interface BiquadCoeffs { b: number[]; a: number[] }
 
 export class BandpassFilter {
-  // ── 4th-order Butterworth HPF (2 biquad cascade) ──────────────────
-  private hpfSections: [BiquadCoeffs, BiquadCoeffs] = [
-    { b: [0, 0, 0], a: [1, 0, 0] },
-    { b: [0, 0, 0], a: [1, 0, 0] },
-  ];
-  private hpfStates: [BiquadState, BiquadState] = [
-    { x: [0, 0, 0], y: [0, 0, 0] },
-    { x: [0, 0, 0], y: [0, 0, 0] },
-  ];
+  // ── 2nd-order Butterworth HPF (same as V2) ──────────────────────
+  private hpfB = [0, 0, 0];
+  private hpfA = [1, 0, 0];
+  private hpfState: BiquadState = { x: [0, 0, 0], y: [0, 0, 0] };
 
-  // ── 4th-order Butterworth LPF (2 biquad cascade) ──────────────────
-  private lpfSections: [BiquadCoeffs, BiquadCoeffs] = [
-    { b: [0, 0, 0], a: [1, 0, 0] },
-    { b: [0, 0, 0], a: [1, 0, 0] },
-  ];
-  private lpfStates: [BiquadState, BiquadState] = [
-    { x: [0, 0, 0], y: [0, 0, 0] },
-    { x: [0, 0, 0], y: [0, 0, 0] },
-  ];
+  // ── 2nd-order Butterworth LPF (same as V2) ──────────────────────
+  private lpfB = [0, 0, 0];
+  private lpfA = [1, 0, 0];
+  private lpfState: BiquadState = { x: [0, 0, 0], y: [0, 0, 0] };
 
-  // ── Respiratory notch ──────────────────────────────────────────────
-  private notchCoeffs: BiquadCoeffs = { b: [0, 0, 0], a: [1, 0, 0] };
+  // ── Respiratory notch (NEW in V3) ────────────────────────────────
+  private notchCoeffs: BiquadCoeffs = { b: [1, 0, 0], a: [1, 0, 0] };
   private notchState: BiquadState = { x: [0, 0, 0], y: [0, 0, 0] };
   private notchEnabled = false;
-  private respFreqHz = 0.25;  // initial estimate ~15 breaths/min
-  private readonly NOTCH_Q = 8.0; // narrow notch
+  private respFreqHz = 0.25;
+  private readonly NOTCH_Q = 8.0;
 
-  // ── EWMA detrend ───────────────────────────────────────────────────
+  // ── EWMA detrend ────────────────────────────────────────────────
   private baselineEWMA = 0;
   private baselineInit = false;
-  private readonly DETREND_ALPHA = 0.012; // ~13s time constant at 30 fps
+  private readonly DETREND_ALPHA = 0.015;
 
   private sampleRate: number;
   private lastComputedRate = 0;
   private initialized = false;
 
-  // ── Adaptive notch tracking ────────────────────────────────────────
+  // ── Adaptive notch tracking ──────────────────────────────────────
   private respBuf: number[] = [];
-  private readonly RESP_BUF_SIZE = 600; // ~20 s at 30 fps
+  private readonly RESP_BUF_SIZE = 600;
   private lastNotchUpdate = 0;
   private readonly NOTCH_UPDATE_INTERVAL_MS = 3000;
 
@@ -86,57 +70,37 @@ export class BandpassFilter {
     const fs = this.sampleRate;
     this.lastComputedRate = fs;
 
-    // ── 4th-order Butterworth HPF at 0.5 Hz ─────────────────────────
-    // Two biquad sections with Butterworth pole angles
-    // Section angles: θ = π/4 * (2k-1)/N  for N=2 (4th order split into 2)
-    // Poles at angles 135° and 45° from imaginary axis
-    this.hpfSections[0] = this.butterHPFSection(0.5, fs, Math.PI * 3 / 8); // 67.5°
-    this.hpfSections[1] = this.butterHPFSection(0.5, fs, Math.PI * 1 / 8); // 22.5°
+    // ── 2nd-order Butterworth HPF at 0.5 Hz (identical to V2) ──────
+    const fcHp = 0.5;
+    const kHp = Math.tan(Math.PI * fcHp / fs);
+    const normHp = 1 / (1 + Math.sqrt(2) * kHp + kHp * kHp);
+    this.hpfB[0] = normHp;
+    this.hpfB[1] = -2 * normHp;
+    this.hpfB[2] = normHp;
+    this.hpfA[0] = 1;
+    this.hpfA[1] = 2 * (kHp * kHp - 1) * normHp;
+    this.hpfA[2] = (1 - Math.sqrt(2) * kHp + kHp * kHp) * normHp;
 
-    // ── 4th-order Butterworth LPF at 8 Hz ───────────────────────────
-    this.lpfSections[0] = this.butterLPFSection(8.0, fs, Math.PI * 3 / 8);
-    this.lpfSections[1] = this.butterLPFSection(8.0, fs, Math.PI * 1 / 8);
+    // ── 2nd-order Butterworth LPF at 5.0 Hz (identical to V2) ──────
+    const fcLp = 5.0;
+    const kLp = Math.tan(Math.PI * fcLp / fs);
+    const normLp = 1 / (1 + Math.sqrt(2) * kLp + kLp * kLp);
+    this.lpfB[0] = kLp * kLp * normLp;
+    this.lpfB[1] = 2 * kLp * kLp * normLp;
+    this.lpfB[2] = kLp * kLp * normLp;
+    this.lpfA[0] = 1;
+    this.lpfA[1] = 2 * (kLp * kLp - 1) * normLp;
+    this.lpfA[2] = (1 - Math.sqrt(2) * kLp + kLp * kLp) * normLp;
 
-    // ── Respiratory notch at current respFreqHz ──────────────────────
+    // ── Respiratory notch at current estimate ───────────────────────
     this.notchCoeffs = this.computeNotch(this.respFreqHz, fs, this.NOTCH_Q);
 
     this.initialized = true;
   }
 
   /**
-   * 2nd-order Butterworth highpass biquad section.
-   * poleAngle: angular position of the Butterworth prototype pole pair.
-   * Uses bilinear transform with frequency pre-warping.
-   */
-  private butterHPFSection(fc: number, fs: number, poleAngle: number): BiquadCoeffs {
-    const omega = 2 * Math.PI * fc / fs;
-    const k = Math.tan(omega / 2);
-    const cosA = Math.cos(poleAngle);
-    const denom = 1 + 2 * cosA * k + k * k;
-    const b0 = 1 / denom;
-    const b1 = -2 / denom;
-    const b2 = 1 / denom;
-    const a1 = 2 * (k * k - 1) / denom;
-    const a2 = (1 - 2 * cosA * k + k * k) / denom;
-    return { b: [b0, b1, b2], a: [1, a1, a2] };
-  }
-
-  private butterLPFSection(fc: number, fs: number, poleAngle: number): BiquadCoeffs {
-    const omega = 2 * Math.PI * fc / fs;
-    const k = Math.tan(omega / 2);
-    const cosA = Math.cos(poleAngle);
-    const denom = 1 + 2 * cosA * k + k * k;
-    const b0 = k * k / denom;
-    const b1 = 2 * k * k / denom;
-    const b2 = k * k / denom;
-    const a1 = 2 * (k * k - 1) / denom;
-    const a2 = (1 - 2 * cosA * k + k * k) / denom;
-    return { b: [b0, b1, b2], a: [1, a1, a2] };
-  }
-
-  /**
-   * 2nd-order IIR notch filter.
-   * Q controls bandwidth: Q=8 → 3dB bandwidth ≈ fc/8
+   * 2nd-order IIR notch filter (bilinear transform).
+   * Q=8 → narrow 3dB bandwidth ≈ fc/8 — removes respiratory without touching cardiac.
    */
   private computeNotch(fc: number, fs: number, Q: number): BiquadCoeffs {
     if (fc <= 0 || fc >= fs / 2) return { b: [1, 0, 0], a: [1, 0, 0] };
@@ -144,24 +108,28 @@ export class BandpassFilter {
     const alpha = Math.sin(omega0) / (2 * Q);
     const cosW = Math.cos(omega0);
     const b0 = 1 / (1 + alpha);
-    const b1 = -2 * cosW * b0;
-    const b2 = b0;
+    const b1 = -2 * cosW / (1 + alpha);
+    const b2 = 1 / (1 + alpha);
     const a1 = -2 * cosW / (1 + alpha);
     const a2 = (1 - alpha) / (1 + alpha);
     return { b: [b0, b1, b2], a: [1, a1, a2] };
   }
 
   // ══════════════════════════════════════════════════════════════════
-  //  CORE BIQUAD (Direct Form II Transposed — numerically stable)
+  //  BIQUAD (Direct Form II Transposed)
   // ══════════════════════════════════════════════════════════════════
 
-  private applyBiquad(x: number, c: BiquadCoeffs, s: BiquadState): number {
-    s.x[2] = s.x[1]; s.x[1] = s.x[0]; s.x[0] = x;
-    s.y[2] = s.y[1]; s.y[1] = s.y[0];
-    s.y[0] = c.b[0] * s.x[0] + c.b[1] * s.x[1] + c.b[2] * s.x[2]
-           - c.a[1] * s.y[1] - c.a[2] * s.y[2];
-    if (!isFinite(s.y[0]) || Math.abs(s.y[0]) > 1e9) s.y[0] = 0;
-    return s.y[0];
+  private applyBiquad(
+    input: number,
+    b: number[], a: number[],
+    state: BiquadState
+  ): number {
+    state.x[2] = state.x[1]; state.x[1] = state.x[0]; state.x[0] = input;
+    state.y[2] = state.y[1]; state.y[1] = state.y[0];
+    state.y[0] = b[0] * state.x[0] + b[1] * state.x[1] + b[2] * state.x[2]
+               - a[1] * state.y[1] - a[2] * state.y[2];
+    if (!isFinite(state.y[0]) || Math.abs(state.y[0]) > 1e10) state.y[0] = 0;
+    return state.y[0];
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -179,7 +147,7 @@ export class BandpassFilter {
   }
 
   // ══════════════════════════════════════════════════════════════════
-  //  ADAPTIVE RESPIRATORY NOTCH UPDATE
+  //  ADAPTIVE RESPIRATORY NOTCH
   // ══════════════════════════════════════════════════════════════════
 
   private updateRespNotch(rawValue: number): void {
@@ -191,12 +159,10 @@ export class BandpassFilter {
     if (this.respBuf.length < 90) return;
     this.lastNotchUpdate = now;
 
-    // Estimate dominant low-frequency component via power spectrum in 0.1–0.5 Hz band
     const detectedFreq = this.estimateRespFrequency();
     if (detectedFreq > 0.1 && detectedFreq < 0.5) {
       const change = Math.abs(detectedFreq - this.respFreqHz) / Math.max(0.01, this.respFreqHz);
       if (change > 0.10) {
-        // Slowly track
         this.respFreqHz = this.respFreqHz * 0.7 + detectedFreq * 0.3;
         this.notchCoeffs = this.computeNotch(this.respFreqHz, this.sampleRate, this.NOTCH_Q);
         this.notchEnabled = true;
@@ -212,7 +178,6 @@ export class BandpassFilter {
     const detrended = buf.map(v => v - mean);
     const fs = this.sampleRate;
 
-    // Simple DFT on the respiratory band (0.1–0.5 Hz)
     const minBin = Math.max(1, Math.round(0.1 * n / fs));
     const maxBin = Math.round(0.5 * n / fs);
     let bestPower = 0, bestFreq = 0;
@@ -235,25 +200,18 @@ export class BandpassFilter {
   //  PUBLIC API
   // ══════════════════════════════════════════════════════════════════
 
-  /** Full pipeline: detrend → 4th-order HPF → 4th-order LPF [→ resp notch] */
+  /** Full pipeline: detrend → HPF → LPF [→ resp notch] */
   filter(value: number): number {
     if (!this.initialized || !isFinite(value)) return 0;
 
     this.updateRespNotch(value);
 
     const detrended = this.detrend(value);
+    let x = this.applyBiquad(detrended, this.hpfB, this.hpfA, this.hpfState);
+    x = this.applyBiquad(x, this.lpfB, this.lpfA, this.lpfState);
 
-    // HPF cascade
-    let x = this.applyBiquad(detrended, this.hpfSections[0], this.hpfStates[0]);
-    x = this.applyBiquad(x, this.hpfSections[1], this.hpfStates[1]);
-
-    // LPF cascade
-    x = this.applyBiquad(x, this.lpfSections[0], this.lpfStates[0]);
-    x = this.applyBiquad(x, this.lpfSections[1], this.lpfStates[1]);
-
-    // Optional respiratory notch
     if (this.notchEnabled) {
-      x = this.applyBiquad(x, this.notchCoeffs, this.notchState);
+      x = this.applyBiquad(x, this.notchCoeffs.b, this.notchCoeffs.a, this.notchState);
     }
 
     return x;
@@ -262,22 +220,18 @@ export class BandpassFilter {
   getDetrended(value: number): number { return this.detrend(value); }
 
   reset(): void {
-    for (const s of [this.hpfStates[0], this.hpfStates[1],
-                     this.lpfStates[0], this.lpfStates[1],
-                     this.notchState]) {
-      s.x = [0, 0, 0]; s.y = [0, 0, 0];
-    }
+    this.hpfState = { x: [0, 0, 0], y: [0, 0, 0] };
+    this.lpfState = { x: [0, 0, 0], y: [0, 0, 0] };
+    this.notchState = { x: [0, 0, 0], y: [0, 0, 0] };
     this.baselineEWMA = 0;
     this.baselineInit = false;
     this.respBuf = [];
   }
 
-  /** Recompute only when rate changed significantly (>1.5 fps) */
   setSampleRate(rate: number): void {
     if (Math.abs(rate - this.lastComputedRate) < 1.5) return;
     this.sampleRate = rate;
     this.computeCoefficients();
-    // preserve filter state for continuity
   }
 
   getRespFrequencyHz(): number { return this.respFreqHz; }

@@ -552,10 +552,16 @@ export class PPGFeatureExtractor {
     const n = rrMs.length;
     if (n < 20) return { lfPower: 0, hfPower: 0, vlf: 0, lfHfRatio: 0, estimatedRespRateHz: 0 };
 
-    // Resample to 4 Hz via linear interpolation on cumulative time axis
+    // Resample to 4 Hz via linear interpolation on cumulative time axis.
+    //
+    // tCumMs[i] is the START time of RR interval i (ms). We also append
+    // tCumMs[n] = the END time of the last interval so that every interval
+    // i ∈ [0, n-1] has a valid bracket [tCumMs[i], tCumMs[i+1]], preventing
+    // any out-of-bounds access on tCumMs[ri + 1].
     const tCumMs: number[] = [0];
-    for (let i = 1; i < n; i++) tCumMs.push(tCumMs[i - 1] + rrMs[i - 1]);
-    const totalDurS = tCumMs[n - 1] / 1000;
+    for (let i = 0; i < n; i++) tCumMs.push(tCumMs[i] + rrMs[i]);
+    // tCumMs now has n+1 elements (indices 0..n), totalDurS uses tCumMs[n].
+    const totalDurS = tCumMs[n] / 1000;
 
     const fsResamp = 4; // Hz
     const numSamples = Math.floor(totalDurS * fsResamp);
@@ -565,10 +571,14 @@ export class PPGFeatureExtractor {
     let ri = 0;
     for (let si = 0; si < numSamples; si++) {
       const t_ms = (si / fsResamp) * 1000;
-      while (ri < n - 2 && tCumMs[ri + 1] < t_ms) ri++;
-      const dt = tCumMs[ri + 1] - tCumMs[ri];
-      const alpha = dt > 0 ? (t_ms - tCumMs[ri]) / dt : 0;
-      resampled.push(rrMs[ri] + alpha * (rrMs[Math.min(ri + 1, n - 1)] - rrMs[ri]));
+      // Advance ri so that tCumMs[ri] <= t_ms < tCumMs[ri+1].
+      // Guard: ri <= n-1 ensures tCumMs[ri+1] is always within the n+1-element array.
+      while (ri < n - 1 && tCumMs[ri + 1] <= t_ms) ri++;
+      const riNext = Math.min(ri + 1, n);   // safe upper bound within tCumMs
+      const dt = tCumMs[riNext] - tCumMs[ri];
+      const alpha = dt > 0 ? Math.min(1, (t_ms - tCumMs[ri]) / dt) : 0;
+      const rrNext = ri + 1 < n ? rrMs[ri + 1] : rrMs[n - 1]; // clamp rrMs index
+      resampled.push(rrMs[ri] + alpha * (rrNext - rrMs[ri]));
     }
 
     // Hann window + DFT
