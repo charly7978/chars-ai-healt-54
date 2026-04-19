@@ -170,7 +170,9 @@ const PPGSignalMeter = ({
   const beatArrhythmiaRef = useRef(false);
   const lastArrhythmiaCountRef = useRef(0);
   const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
-  const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
+  // Phase 21 — narrower initial range so a small signal still occupies a
+  // meaningful fraction of the plot before the autoscaler kicks in.
+  const amplitudeStatsRef = useRef({ min: -8, max: 8, range: 16 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
 
@@ -265,44 +267,53 @@ const PPGSignalMeter = ({
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
     const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
     const plot = getPlotArea();
+    // Pure black plot — clinical monitor look
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = COLORS.PLOT_BG;
     ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
+
+    // Phase 21 — proper ECG-grade grid with 5 mm minor + 25 mm major.
+    // Canvas is 2100×4200; we use 35-px minor cells (5 mm at 25 mm/s @ 30 fps)
+    // and 5 minor cells per major (175 px), matching standard ECG paper.
+    const MINOR = 35;
+    const MAJOR = MINOR * 5;
+
+    // Minor grid (very faint mint)
     ctx.strokeStyle = COLORS.GRID_MINOR;
-    ctx.lineWidth = 0.5;
-    ctx.beginPath();
-    for (let x = plot.x; x <= plot.x + plot.width; x += 20) {
-      ctx.moveTo(x, plot.y);
-      ctx.lineTo(x, plot.y + plot.height);
-    }
-    for (let y = plot.y; y <= plot.y + plot.height; y += 20) {
-      ctx.moveTo(plot.x, y);
-      ctx.lineTo(plot.x + plot.width, y);
-    }
-    ctx.stroke();
-    ctx.strokeStyle = COLORS.GRID_MAJOR;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let x = plot.x; x <= plot.x + plot.width; x += 100) {
-      ctx.moveTo(x, plot.y);
-      ctx.lineTo(x, plot.y + plot.height);
+    for (let x = plot.x; x <= plot.x + plot.width + 0.5; x += MINOR) {
+      ctx.moveTo(x, plot.y); ctx.lineTo(x, plot.y + plot.height);
     }
-    for (let y = plot.y; y <= plot.y + plot.height; y += 100) {
-      ctx.moveTo(plot.x, y);
-      ctx.lineTo(plot.x + plot.width, y);
+    for (let y = plot.y; y <= plot.y + plot.height + 0.5; y += MINOR) {
+      ctx.moveTo(plot.x, y); ctx.lineTo(plot.x + plot.width, y);
     }
     ctx.stroke();
+
+    // Major grid (more visible mint)
+    ctx.strokeStyle = COLORS.GRID_MAJOR;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    for (let x = plot.x; x <= plot.x + plot.width + 0.5; x += MAJOR) {
+      ctx.moveTo(x, plot.y); ctx.lineTo(x, plot.y + plot.height);
+    }
+    for (let y = plot.y; y <= plot.y + plot.height + 0.5; y += MAJOR) {
+      ctx.moveTo(plot.x, y); ctx.lineTo(plot.x + plot.width, y);
+    }
+    ctx.stroke();
+
+    // Center baseline — solid white, soft alpha (no dashing → looks more medical)
     ctx.strokeStyle = COLORS.BASELINE;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([8, 4]);
+    ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.moveTo(plot.x, plot.centerY);
     ctx.lineTo(plot.x + plot.width, plot.centerY);
     ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
-    ctx.lineWidth = 1;
+
+    // Plot frame
+    ctx.strokeStyle = COLORS.FRAME;
+    ctx.lineWidth = 1.4;
     ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
   }, [getPlotArea]);
 
@@ -537,7 +548,10 @@ const PPGSignalMeter = ({
         animationRef.current = requestAnimationFrame(render);
         return;
       }
-      const scaledValue = signalValue * 2;
+      // Phase 21 — much higher gain so the QRS-like complex actually fills
+      // the plot. Combined with the auto-EMA scaler below this gives us a
+      // peak excursion of ~60% of the plot height instead of ~10%.
+      const scaledValue = signalValue * 8;
       
       if (peak) {
         const currentCount = rhythm.count;
@@ -564,7 +578,9 @@ const PPGSignalMeter = ({
         const values = recentPoints.map(p => p.value);
         const min = Math.min(...values);
         const max = Math.max(...values);
-        const range = Math.max(40, max - min);
+        // Phase 21 — lower autoscaler floor so weak signals still spread
+        // across most of the plot height (was 40 → made the trace tiny).
+        const range = Math.max(8, max - min);
         const stats = amplitudeStatsRef.current;
         stats.min = stats.min * 0.95 + (min - range * 0.1) * 0.05;
         stats.max = stats.max * 0.95 + (max + range * 0.1) * 0.05;
@@ -635,13 +651,13 @@ const PPGSignalMeter = ({
           if (curr.isArr) {
             ctx.strokeStyle = COLORS.SIGNAL_ARRHYTHMIA;
             ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
-            ctx.shadowBlur = 18;
-            ctx.lineWidth = 4;
+            ctx.shadowBlur = 22;
+            ctx.lineWidth = 8;            // Phase 21 — much thicker for visibility
           } else {
             ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
             ctx.shadowColor = COLORS.SIGNAL_GLOW;
-            ctx.shadowBlur = 12;
-            ctx.lineWidth = 2.5;
+            ctx.shadowBlur = 14;
+            ctx.lineWidth = 6;            // Phase 21 — much thicker for visibility
           }
           ctx.stroke();
           ctx.shadowBlur = 0;
@@ -854,7 +870,7 @@ const PPGSignalMeter = ({
 
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
-    amplitudeStatsRef.current = { min: -50, max: 50, range: 100 };
+    amplitudeStatsRef.current = { min: -8, max: 8, range: 16 };
     beatHistoryRef.current = [];
     lastArrhythmiaCountRef.current = 0;
     ibiDisplayRef.current = 0;

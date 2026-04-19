@@ -779,8 +779,10 @@ const Index = () => {
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-3 overflow-y-auto">
-            <div className="grid grid-cols-3 gap-3 place-items-center">
+          {/* Phase 21 — clinical vital-sign grid (Philips IntelliVue style)
+              6 cols × 2 rows, fixed-height compact cards, no scroll */}
+          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black px-1.5 py-1.5">
+            <div className="grid grid-cols-6 grid-rows-2 gap-1.5 w-full h-full">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
               <VitalSign
@@ -791,55 +793,39 @@ const Index = () => {
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
-              <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
-              <VitalSign
-                label="COLEST./TRIGL. (EST.)"
-                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
-                unit="mg/dL"
-                highlighted={showResults}
-              />
-              <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
-
-              {/* Phase 5/6/10 — new vital signs */}
-              <VitalSign
-                label="RESPIRACIÓN"
+              <VitalSign label="RESPIRACIÓN"
                 value={vitalSigns.respiration && vitalSigns.respiration.brpm > 0 ? Math.round(vitalSigns.respiration.brpm) : "--"}
-                unit="rpm"
-                highlighted={showResults}
-              />
-              <VitalSign
-                label="HRV (RMSSD)"
+                unit="rpm" highlighted={showResults} />
+              <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
+              <VitalSign label="HRV (RMSSD)"
                 value={vitalSigns.hrv && vitalSigns.hrv.time.rmssd > 0 ? Math.round(vitalSigns.hrv.time.rmssd) : "--"}
-                unit="ms"
-                highlighted={showResults}
-              />
-              <VitalSign
-                label="ESTRÉS"
+                unit="ms" highlighted={showResults} />
+
+              <VitalSign label="GLUCOSA (EST.)"
+                value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
+              <VitalSign label="COLEST./TRIGL. (EST.)"
+                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
+                  ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`
+                  : "--/--"}
+                unit="mg/dL" highlighted={showResults} />
+              <VitalSign label="HEMOGLOBINA (EST.)"
+                value={vitalSigns.hemoglobin && typeof vitalSigns.hemoglobin.value === 'number' ? vitalSigns.hemoglobin.value : "--"}
+                unit="g/dL" highlighted={showResults} />
+              <VitalSign label="ESTRÉS"
                 value={vitalSigns.stress && vitalSigns.stress.confidence > 0
-                  ? `${vitalSigns.stress.index} ${vitalSigns.stress.label.split('_').join(' ')}`
+                  ? `${vitalSigns.stress.index}`
                   : "--"}
-                highlighted={showResults}
-              />
-              <VitalSign
-                label="LF/HF"
+                highlighted={showResults} />
+              <VitalSign label="LF/HF"
                 value={vitalSigns.hrv && vitalSigns.hrv.freq.lfHfRatio > 0
                   ? vitalSigns.hrv.freq.lfHfRatio.toFixed(2)
                   : "--"}
-                highlighted={showResults}
-              />
-              <VitalSign
-                label="HEMOGLOBINA (EST.)"
-                value={vitalSigns.hemoglobin && typeof vitalSigns.hemoglobin.value === 'number' ? vitalSigns.hemoglobin.value : "--"}
-                unit="g/dL"
-                highlighted={showResults}
-              />
-              <VitalSign
-                label="DFA α1"
+                highlighted={showResults} />
+              <VitalSign label="DFA α1"
                 value={vitalSigns.hrv && vitalSigns.hrv.nonlinear.dfaAlpha1 !== 0
                   ? vitalSigns.hrv.nonlinear.dfaAlpha1.toFixed(2)
                   : "--"}
-                highlighted={showResults}
-              />
+                highlighted={showResults} />
             </div>
           </div>
 
