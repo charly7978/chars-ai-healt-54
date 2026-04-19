@@ -5,6 +5,8 @@ import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
 import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessorV2';
 import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
+import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
+import { StressProcessor, type StressResult } from './StressProcessor';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -71,6 +73,10 @@ export interface VitalSignsResult {
     lipids: OutputState;
     rhythm: OutputState;
   };
+  // HRV (time + frequency + non-linear) — Phase 5
+  hrv?: HRVResult;
+  // Stress index 0..100 + label — Phase 5
+  stress?: StressResult;
   // Debug telemetry
   debugMetrics?: {
     motionScore: number;
@@ -96,6 +102,12 @@ export class VitalSignsProcessor {
   private spo2Processor: SpO2ProcessorV2;
   private glucoseProcessor: GlucoseResearchProcessorV2;
   private lipidProcessor: LipidResearchProcessorV2;
+  private hrvProcessor: HRVTimeFreqProcessor;
+  private stressProcessor: StressProcessor;
+  private piHistory: number[] = [];
+  private readonly PI_HISTORY_SIZE = 30;
+  private lastHRV: HRVResult | null = null;
+  private lastStress: StressResult | null = null;
 
   private lastBPConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT' = 'INSUFFICIENT';
   private lastBPFeatureQuality = 0;
@@ -143,6 +155,8 @@ export class VitalSignsProcessor {
     this.spo2Processor = new SpO2ProcessorV2();
     this.glucoseProcessor = new GlucoseResearchProcessorV2();
     this.lipidProcessor = new LipidResearchProcessorV2();
+    this.hrvProcessor = new HRVTimeFreqProcessor();
+    this.stressProcessor = new StressProcessor();
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -437,6 +451,24 @@ export class VitalSignsProcessor {
       }
     }
 
+    // ── HRV (time + frequency + non-linear) and Stress index — Phase 5 ──
+    // Track perfusion-index history as a vasomotor proxy for sympathetic tone.
+    if (piGreen > 0 && isFinite(piGreen)) {
+      this.piHistory.push(piGreen);
+      if (this.piHistory.length > this.PI_HISTORY_SIZE) this.piHistory.shift();
+    }
+    if (validRR.length >= 8) {
+      this.lastHRV = this.hrvProcessor.compute(validRR);
+      this.lastStress = this.stressProcessor.process({
+        rrIntervals: validRR,
+        lfHfRatio: this.lastHRV.freq.lfHfRatio,
+        rmssd: this.lastHRV.time.rmssd,
+        meanHR: this.lastHRV.time.hr || hr,
+        perfusionIndexHistory: [...this.piHistory],
+        signalQuality: this.measurements.signalQuality,
+      });
+    }
+
     // ── Hierarchical rhythm classification (single source of truth) ──
     if (beatInputs && beatInputs.length >= 4) {
       const rhythmResult = this.rhythmClassifier.classify(
@@ -505,6 +537,8 @@ export class VitalSignsProcessor {
         lipids: lipidsState,
         rhythm: this.lastRhythm ? (this.lastRhythm.rhythmQuality > 40 ? 'ENABLED_MEDIUM_CONFIDENCE' : 'ENABLED_LOW_CONFIDENCE') : 'WITHHELD_LOW_QUALITY',
       },
+      hrv: this.lastHRV ?? undefined,
+      stress: this.lastStress ?? undefined,
     };
   }
 
@@ -592,5 +626,8 @@ export class VitalSignsProcessor {
     this.lastSpo2 = null;
     this.lastGlucose = null;
     this.lastLipids = null;
+    this.lastHRV = null;
+    this.lastStress = null;
+    this.piHistory = [];
   }
 }
