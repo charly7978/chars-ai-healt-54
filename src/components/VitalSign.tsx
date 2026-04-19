@@ -152,7 +152,7 @@ const VitalSign = ({
       )}
       onClick={handleClick}
     >
-      <div className="text-[11px] font-medium uppercase tracking-wider text-black/70 mb-1">
+      <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-white/95 drop-shadow-[0_1px_8px_rgba(255,255,255,0.12)]">
         {label}
       </div>
 
