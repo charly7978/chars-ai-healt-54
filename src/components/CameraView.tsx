@@ -16,6 +16,13 @@ export interface CameraDiagnostics {
   focusLocked: boolean;
   isoValue: number;
   supportedConstraints: string[];
+  // Phase 13 — runtime drift monitoring
+  exposureDriftScore: number;     // 0..1
+  exposureDriftWarning: boolean;  // true when EMA drift > 0.20
+  initialIso?: number;
+  initialExposureCompensation?: number;
+  initialWhiteBalanceMode?: string;
+  driftSamples?: number;
 }
 
 interface CameraViewProps {
@@ -50,7 +57,11 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     focusLocked: false,
     isoValue: 0,
     supportedConstraints: [],
+    exposureDriftScore: 0,
+    exposureDriftWarning: false,
+    driftSamples: 0,
   });
+  const driftMonitorRef = useRef<number | null>(null);
 
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current,
@@ -61,6 +72,11 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     let mounted = true;
 
     const stopCamera = async () => {
+      // Phase 13 — clear drift monitor
+      if (driftMonitorRef.current !== null) {
+        clearInterval(driftMonitorRef.current);
+        driftMonitorRef.current = null;
+      }
       if (streamRef.current) {
         for (const track of streamRef.current.getVideoTracks()) {
           try {
@@ -198,6 +214,28 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         };
         diagnosticsRef.current.realFrameRate = settings.frameRate || 30;
 
+        // PHASE 2.5 (Phase 13) — capture a few "dark" frames BEFORE torch ON
+        // and forward them to RadiometricProcessor.bootstrapDarkFrame via a
+        // global event. Best-effort; failure does not stall the pipeline.
+        try {
+          await new Promise(r => setTimeout(r, 200));
+          const v = videoRef.current;
+          if (v && v.videoWidth > 0) {
+            const c = document.createElement('canvas');
+            c.width = 64; c.height = 48;
+            const ctx = c.getContext('2d', { willReadFrequently: true });
+            if (ctx) {
+              for (let i = 0; i < 5; i++) {
+                ctx.drawImage(v, 0, 0, c.width, c.height);
+                const img = ctx.getImageData(0, 0, c.width, c.height);
+                window.dispatchEvent(new CustomEvent('cppg:dark-frame', { detail: img }));
+                await new Promise(r => setTimeout(r, 80));
+              }
+              console.log('🌑 5 dark frames captured for radiometric bootstrap');
+            }
+          }
+        } catch { /* */ }
+
         // PHASE 3: Activate torch
         await new Promise(r => setTimeout(r, 400));
         const caps = track.getCapabilities?.() as any;
@@ -271,12 +309,74 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 
         // Log final settings
         const finalSettings = track.getSettings() as any;
+        diagnosticsRef.current.initialIso = finalSettings.iso ?? diagnosticsRef.current.isoValue;
+        diagnosticsRef.current.initialExposureCompensation = finalSettings.exposureCompensation;
+        diagnosticsRef.current.initialWhiteBalanceMode = finalSettings.whiteBalanceMode;
         console.log('📹 Camera ready:', finalSettings.width, 'x', finalSettings.height,
           '@', finalSettings.frameRate, 'fps',
           '| Torch:', diagnosticsRef.current.torchActive,
           '| Exp:', diagnosticsRef.current.exposureLocked,
           '| WB:', diagnosticsRef.current.wbLocked,
           '| ISO:', diagnosticsRef.current.isoValue);
+
+        // Phase 13 — runtime drift monitor: every 5 s compare current
+        // settings against initial; populate exposureDriftScore (EMA 0..1).
+        // If drift > 0.20 over multiple checks, attempt to re-lock.
+        const initial = {
+          iso: diagnosticsRef.current.initialIso,
+          ec: diagnosticsRef.current.initialExposureCompensation,
+          wb: diagnosticsRef.current.initialWhiteBalanceMode,
+        };
+        let driftEMA = 0;
+        let driftHits = 0;
+        if (driftMonitorRef.current !== null) clearInterval(driftMonitorRef.current);
+        driftMonitorRef.current = window.setInterval(async () => {
+          try {
+            const s = track.getSettings() as any;
+            let drift = 0;
+            let n = 0;
+            if (initial.iso && s.iso) {
+              drift += Math.abs(s.iso - initial.iso) / Math.max(1, initial.iso);
+              n++;
+            }
+            if (initial.ec !== undefined && s.exposureCompensation !== undefined) {
+              drift += Math.abs((s.exposureCompensation - initial.ec)) / 4; // ±2 stops range
+              n++;
+            }
+            if (initial.wb && s.whiteBalanceMode && initial.wb !== s.whiteBalanceMode) {
+              drift += 0.5; n++;
+            }
+            const norm = n > 0 ? Math.min(1, drift / n) : 0;
+            driftEMA = driftEMA * 0.7 + norm * 0.3;
+            diagnosticsRef.current.exposureDriftScore = driftEMA;
+            diagnosticsRef.current.driftSamples = (diagnosticsRef.current.driftSamples ?? 0) + 1;
+            const warn = driftEMA > 0.20;
+            diagnosticsRef.current.exposureDriftWarning = warn;
+            // Dispatch event so the PPG processor can penalize SQI in real time
+            window.dispatchEvent(new CustomEvent('cppg:camera-drift', {
+              detail: { score: driftEMA, warning: warn },
+            }));
+
+            if (warn) {
+              driftHits++;
+              if (driftHits >= 2) {
+                // Re-apply lock attempt (cheap; failures ignored)
+                if (initial.iso && initial.iso > 0) {
+                  await track.applyConstraints({ advanced: [{ iso: initial.iso } as any] }).catch(() => {});
+                }
+                if (initial.ec !== undefined) {
+                  await track.applyConstraints({ advanced: [{ exposureCompensation: initial.ec } as any] }).catch(() => {});
+                }
+                if (initial.wb === 'manual') {
+                  await track.applyConstraints({ advanced: [{ whiteBalanceMode: 'manual' } as any] }).catch(() => {});
+                }
+                driftHits = 0;
+              }
+            } else {
+              driftHits = 0;
+            }
+          } catch { /* */ }
+        }, 5000);
 
         onStreamReady?.(stream);
         isStartingRef.current = false;

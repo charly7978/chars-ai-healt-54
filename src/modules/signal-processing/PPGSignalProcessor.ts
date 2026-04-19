@@ -136,7 +136,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // Wire the radiometric processor into the ROI mask so each tile is
     // linearized in Beer-Lambert space and exposes OD downstream.
     this.roiMask.setRadiometricProcessor(this.radiometricProcessor);
+
+    // Phase 13 — receive dark-frame + drift events from CameraView
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('cppg:dark-frame', this.handleDarkFrameEvent as EventListener);
+      window.addEventListener('cppg:camera-drift', this.handleCameraDriftEvent as EventListener);
+    }
   }
+
+  /** Phase 13 — consume dark-frame events from CameraView. */
+  private handleDarkFrameEvent = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail && (detail as ImageData).data) {
+      try { this.radiometricProcessor.bootstrapDarkFrame(detail as ImageData); } catch { /* */ }
+    }
+  };
+
+  /** Phase 13 — consume camera-drift events; penalize SQI accordingly. */
+  private cameraDriftScore = 0;
+  private handleCameraDriftEvent = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail && typeof detail.score === 'number') {
+      this.cameraDriftScore = Math.max(0, Math.min(1, detail.score));
+    }
+  };
 
   async initialize(): Promise<void> { this.reset(); }
 
@@ -150,6 +173,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   stop(): void {
     this.isProcessing = false;
     this.stopMotionListener();
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('cppg:dark-frame', this.handleDarkFrameEvent as EventListener);
+      window.removeEventListener('cppg:camera-drift', this.handleCameraDriftEvent as EventListener);
+    }
   }
 
   async calibrate(): Promise<boolean> { return true; }
@@ -336,10 +363,12 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       sourceStability: this.sourceStability,
     });
 
-    // Gate: drift penalty
+    // Gate: drift penalty (position) + camera-exposure-drift penalty (Phase 13)
     const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
+    // cameraDriftScore: 0 → factor 1.0, 0.5+ → factor ≈ 0.5
+    const cameraDriftFactor = Math.max(0.4, 1 - this.cameraDriftScore * 1.0);
     const gatedQuality = this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
-      ? this.signalQuality * driftPenalty
+      ? this.signalQuality * driftPenalty * cameraDriftFactor
       : Math.min(18, this.signalQuality * 0.45);
 
     // --- LOGGING ---
