@@ -213,7 +213,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const fusedBlue = fusion.fusedB;
     const fusedQuality = fusion.fusedQuality;
 
-    // --- CONTACT CLASSIFICATION ---
+    // --- CONTACT CLASSIFICATION (multicriteria, audited) ---
+    // The classifier's output (signalUsabilityScore, rejectionReasons,
+    // pressureIndex, contactConfidence) is now consumed by the gate, by
+    // the SQI penalty, and forwarded in the telemetry payload so the
+    // debug panel and tests can audit every frame deterministically.
     const contactResult = this.contactClassifier.classify({
       colorStatsRaw: {
         meanR: fusedRed,
@@ -268,6 +272,31 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         perfusionIndex: 0,
         rawRed: roi.rawRed,
         rawGreen: roi.rawGreen,
+        // Surface evidence even on rejection so the debug panel can show
+        // why we are still in NO_CONTACT (audit trail, never silent).
+        telemetry: {
+          clipHighRatio: roi.clipHighRatio,
+          clipLowRatio: roi.clipLowRatio,
+          spatialUniformity: roi.spatialUniformity,
+          centerCoverage: roi.centerCoverage,
+          activeSourceLabel: this.activeSourceLabel,
+          sourceStability: this.sourceStability,
+          allSourceSQI: this.allSourceSQI,
+          pressureState: this.pressureState,
+          pressurePenalty: this.pressurePenalty,
+          motionScore: this.motionScore,
+          fingerConfidenceCount: this.fingerConfidenceCount,
+          stableContactCount: this.stableContactCount,
+          processingTimeMs: performance.now() - t0,
+          realFps: this.realFps,
+          coverageRatio: roi.coverageRatio,
+          contactConfidence: contactResult.contactConfidence,
+          signalUsabilityScore: contactResult.signalUsabilityScore,
+          pressureIndex: contactResult.pressureIndex,
+          pressureExcessive: contactResult.pressureExcessive,
+          rejectionReasons: contactResult.rejectionReasons,
+          contactGuidance: contactResult.guidance,
+        },
         diagnostics: {
           message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}% P:${pressure.state}`,
           hasPulsatility: false,
@@ -364,12 +393,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     });
 
     // Gate: drift penalty (position) + camera-exposure-drift penalty (Phase 13)
+    // + finger-contact-classifier penalty (audit fix: previously ignored).
     const driftPenalty = this.positionDrifting ? 0.15 : 1.0;
     // cameraDriftScore: 0 → factor 1.0, 0.5+ → factor ≈ 0.5
     const cameraDriftFactor = Math.max(0.4, 1 - this.cameraDriftScore * 1.0);
-    const gatedQuality = this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
-      ? this.signalQuality * driftPenalty * cameraDriftFactor
-      : Math.min(18, this.signalQuality * 0.45);
+    // Classifier returns a usability score in 0..1; we never inflate the
+    // SQI from it, only attenuate. Anything below 0.4 is considered
+    // "noisy contact" and quality is hard-capped at 35.
+    const usability = contactResult.signalUsabilityScore;
+    const usabilityFactor = Math.max(0.25, Math.min(1.0, 0.4 + usability * 0.7));
+    const baseGated = this.exportedContactState === 'STABLE_CONTACT' && perfusionIndex >= 0.005
+      ? this.signalQuality * driftPenalty * cameraDriftFactor * usabilityFactor
+      : Math.min(18, this.signalQuality * 0.45 * usabilityFactor);
+    const gatedQuality = (usability < 0.4 || contactResult.pressureExcessive)
+      ? Math.min(35, baseGated)
+      : baseGated;
 
     // --- LOGGING ---
     const now = performance.now();
@@ -421,6 +459,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         linRed: roi.linRed,
         linGreen: roi.linGreen,
         linBlue: roi.linBlue,
+        // Finger contact engine evidence (audit fix — was being computed
+        // every frame but never exposed). Read-only telemetry; downstream
+        // consumers MUST treat these as evidence, never as a value.
+        contactConfidence: contactResult.contactConfidence,
+        signalUsabilityScore: contactResult.signalUsabilityScore,
+        pressureIndex: contactResult.pressureIndex,
+        pressureExcessive: contactResult.pressureExcessive,
+        rejectionReasons: contactResult.rejectionReasons,
+        contactGuidance: contactResult.guidance,
       },
       diagnostics: {
         message:
@@ -887,6 +934,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       motionScore: this.motionScore,
       validROIPixels: this.lastROIResult?.validPixelCount ?? 0,
       guidance: this.positionGuidance,
+      // Contact evidence (audit-traceable). Always populated when a frame
+      // has been processed; otherwise undefined.
+      contactConfidence: this.lastContactClassification?.contactConfidence,
+      signalUsabilityScore: this.lastContactClassification?.signalUsabilityScore,
+      pressureIndex: this.lastContactClassification?.pressureIndex,
+      pressureExcessive: this.lastContactClassification?.pressureExcessive,
+      rejectionReasons: this.lastContactClassification?.rejectionReasons,
+      contactGuidance: this.lastContactClassification?.guidance,
     };
   }
 }

@@ -207,11 +207,14 @@ export class BloodPressureProcessor {
     let sbp = this.estimateSBP(mf, hr);
     let dbp = this.estimateDBP(mf, hr, rrVar.rmssd);
 
-    // Physical constraints
-    if (dbp >= sbp) dbp = sbp * 0.62;
-    let pp = sbp - dbp;
-    if (pp < 15) dbp = sbp - 25;
-    if (pp > 100) dbp = sbp - 55;
+    // Physical constraints — when the model produces an unphysiological
+    // pulse-pressure we refuse to publish a fabricated correction.
+    // (Audit fix: previously we forced dbp = sbp - 25 / sbp - 55, which
+    // synthesised a number that no longer reflected the real PPG.)
+    if (!isFinite(sbp) || !isFinite(dbp)) return insufficient;
+    if (dbp >= sbp) return insufficient;
+    const pp = sbp - dbp;
+    if (pp < 15 || pp > 100) return insufficient;
 
     // User calibration
     if (this.userCalibration.isCalibrated) {
@@ -240,10 +243,12 @@ export class BloodPressureProcessor {
     sbp = this.kfSBP;
     dbp = this.kfDBP;
 
-    // Clamp to physiological range
+    // Clamp to physiological range. If the post-Kalman pair still
+    // collapses below the minimum pulse pressure, withhold instead of
+    // synthesising a "safe-looking" diastolic.
     sbp = Math.max(85, Math.min(190, sbp));
     dbp = Math.max(50, Math.min(120, dbp));
-    if (sbp - dbp < 15) dbp = sbp - 25;
+    if (sbp - dbp < 15) return insufficient;
     const map = dbp + (sbp - dbp) / 3;
 
     this.lastSBP = sbp; this.lastDBP = dbp;
