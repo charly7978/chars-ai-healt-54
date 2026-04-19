@@ -1,6 +1,7 @@
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
+import type { RuntimeContactState } from './contracts';
 
-export type ContactState = 'NO_CONTACT' | 'UNSTABLE_CONTACT' | 'STABLE_CONTACT';
+export type ContactState = RuntimeContactState;
 
 export interface ProcessedSignal {
   timestamp: number;
@@ -61,6 +62,21 @@ export interface ProcessedSignal {
     pressureExcessive?: boolean;
     rejectionReasons?: string[];
     contactGuidance?: string;
+    // ROI / source explainability
+    selectedROI?: {
+      tileIndex?: number;
+      topTileIndices?: number[];
+      coverage?: number;
+      spatialUniformity?: number;
+    };
+    roiStability?: number;
+    winningReason?: string;
+    confidencePerSignal?: Record<string, number>;
+    usableForBPM?: boolean;
+    usableForSpO2?: boolean;
+    usableForRhythm?: boolean;
+    usableForBP?: boolean;
+    usableForBiomarkers?: boolean;
   };
   diagnostics?: {
     message: string;

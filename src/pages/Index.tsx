@@ -774,7 +774,13 @@ const Index = () => {
           <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-3 overflow-y-auto">
             <div className="grid grid-cols-3 gap-3 place-items-center">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
-              <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
+              <VitalSign
+                label="SPO2"
+                value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"}
+                unit="%"
+                highlighted={showResults}
+                outputState={vitalSigns.outputStates?.spo2}
+              />
               <VitalSign
                 label="PRESIÓN ARTERIAL"
                 value={vitalSigns.pressure && vitalSigns.pressure.systolic > 0 ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` : "--/--"}
@@ -782,15 +788,28 @@ const Index = () => {
                 highlighted={showResults}
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
+                outputState={vitalSigns.outputStates?.bp}
               />
-              <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
               <VitalSign
-                label="COLEST./TRIGL. (EST.)"
+                label="GLUCOSA (RESEARCH)"
+                value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
+                unit="mg/dL"
+                highlighted={showResults}
+                outputState={vitalSigns.outputStates?.glucose}
+              />
+              <VitalSign
+                label="COLEST./TRIGL. (RESEARCH)"
                 value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
                 unit="mg/dL"
                 highlighted={showResults}
+                outputState={vitalSigns.outputStates?.lipids}
               />
-              <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
+              <VitalSign
+                label="ARRITMIAS"
+                value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"}
+                highlighted={showResults}
+                outputState={vitalSigns.outputStates?.rhythm}
+              />
 
               {/* Phase 5/6/10 — new vital signs */}
               <VitalSign
@@ -820,10 +839,11 @@ const Index = () => {
                 highlighted={showResults}
               />
               <VitalSign
-                label="HEMOGLOBINA (EST.)"
+                label="HEMOGLOBINA"
                 value={vitalSigns.hemoglobin && typeof vitalSigns.hemoglobin.value === 'number' ? vitalSigns.hemoglobin.value : "--"}
                 unit="g/dL"
                 highlighted={showResults}
+                outputState={vitalSigns.hemoglobin?.status === 'research_only' ? 'RESEARCH_ONLY' : undefined}
               />
               <VitalSign
                 label="DFA α1"

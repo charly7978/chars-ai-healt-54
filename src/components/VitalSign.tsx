@@ -13,6 +13,8 @@ interface VitalSignProps {
   average?: number;
   confidenceLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
   featureQuality?: number;
+  outputState?: string;
+  modeLabel?: string;
 }
 
 const VitalSign = ({ 
@@ -25,7 +27,9 @@ const VitalSign = ({
   median,
   average,
   confidenceLevel,
-  featureQuality
+  featureQuality,
+  outputState,
+  modeLabel,
 }: VitalSignProps) => {
   const [showDetails, setShowDetails] = useState(false);
 
@@ -122,6 +126,19 @@ const VitalSign = ({
   const riskColor = getRiskColor(riskLabel);
   const isArrhytmia = label === 'ARRITMIAS';
   const detailedInfo = getDetailedInfo(label, value);
+  const outputBadge = outputState === 'RESEARCH_ONLY'
+    ? 'RESEARCH'
+    : outputState === 'WITHHELD_LOW_QUALITY'
+      ? 'BLOQUEADO'
+      : outputState === 'ENABLED_LOW_CONFIDENCE'
+        ? 'LOW Q'
+        : outputState === 'ENABLED_MEDIUM_CONFIDENCE'
+          ? 'MEDIUM'
+          : outputState === 'ENABLED_HIGH_CONFIDENCE'
+            ? 'HIGH'
+            : outputState === 'NEEDS_CALIBRATION'
+              ? 'CALIBRAR'
+              : '';
 
   const handleClick = () => {
     setShowDetails(!showDetails);
@@ -138,6 +155,29 @@ const VitalSign = ({
       <div className="text-[11px] font-medium uppercase tracking-wider text-black/70 mb-1">
         {label}
       </div>
+
+      {(outputBadge || modeLabel) && (
+        <div className="flex items-center gap-1 mb-1">
+          {outputBadge && (
+            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
+              outputState === 'RESEARCH_ONLY'
+                ? 'bg-violet-500/20 text-violet-300'
+                : outputState === 'WITHHELD_LOW_QUALITY'
+                  ? 'bg-red-500/20 text-red-300'
+                  : outputState === 'NEEDS_CALIBRATION'
+                    ? 'bg-cyan-500/20 text-cyan-300'
+                    : 'bg-emerald-500/20 text-emerald-300'
+            }`}>
+              {outputBadge}
+            </span>
+          )}
+          {modeLabel && (
+            <span className="text-[9px] uppercase tracking-wide text-slate-300">
+              {modeLabel}
+            </span>
+          )}
+        </div>
+      )}
       
       <div className="font-bold text-xl sm:text-2xl transition-all duration-300">
         <span className="text-gradient-soft animate-value-glow">

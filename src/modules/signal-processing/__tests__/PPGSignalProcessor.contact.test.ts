@@ -32,6 +32,11 @@ describe('PPGSignalProcessor — contact evidence wiring', () => {
       expect(s.telemetry?.signalUsabilityScore).toBeTypeOf('number');
       expect(s.telemetry?.pressureIndex).toBeTypeOf('number');
       expect(Array.isArray(s.telemetry?.rejectionReasons)).toBe(true);
+      expect(s.telemetry?.selectedROI).toBeDefined();
+      expect(s.telemetry?.roiStability).toBeTypeOf('number');
+      expect(typeof s.telemetry?.winningReason).toBe('string');
+      expect(s.telemetry?.confidencePerSignal).toBeDefined();
+      expect(typeof s.telemetry?.usableForBPM).toBe('boolean');
     }
   });
 

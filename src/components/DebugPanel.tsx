@@ -123,6 +123,19 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
           <Row k="OD R / G / B" v={`${(tel.odR ?? 0).toFixed(2)} / ${(tel.odG ?? 0).toFixed(2)} / ${(tel.odB ?? 0).toFixed(2)}`} />
           <Row k="Lin RGB" v={`${Math.round(tel.linRed ?? 0)} / ${Math.round(tel.linGreen ?? 0)} / ${Math.round(tel.linBlue ?? 0)}`} />
           <Row k="Perfusion index" v={lastSignal?.perfusionIndex !== undefined ? lastSignal.perfusionIndex.toFixed(2) : '—'} />
+          <Row k="Selected ROI" v={tel.selectedROI?.tileIndex ?? '—'} />
+          <Row k="Top ROI tiles" v={Array.isArray(tel.selectedROI?.topTileIndices) ? tel.selectedROI.topTileIndices.join(', ') : '—'} />
+          <Row k="ROI stability" v={tel.roiStability !== undefined ? tel.roiStability.toFixed(2) : '—'}
+               tone={(tel.roiStability ?? 0) >= 0.6 ? 'ok' : (tel.roiStability ?? 0) >= 0.35 ? 'warn' : 'bad'} />
+          <Row k="Winning reason" v={tel.winningReason ?? '—'} />
+          {tel.confidencePerSignal && Object.keys(tel.confidencePerSignal).length > 0 && (
+            <div className="px-2 py-1 text-[10px] text-slate-300 font-mono break-words">
+              <span className="text-slate-400">signal confidence: </span>
+              {Object.entries(tel.confidencePerSignal)
+                .map(([label, value]) => `${label}:${typeof value === 'number' ? value.toFixed(2) : value}`)
+                .join(' · ')}
+            </div>
+          )}
 
           {/* HRV / Stress / Resp / Hb */}
           <div className="text-slate-500 text-[10px] uppercase tracking-wide px-2 mt-3">HRV / Stress / Resp / Hb</div>
@@ -146,6 +159,11 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
               {Object.entries(vitalSigns.outputStates).map(([k, v]) => (
                 <Row key={k} k={k} v={String(v)} tone={String(v).includes('HIGH') ? 'ok' : String(v).includes('WITHHELD') ? 'bad' : 'warn'} />
               ))}
+              <Row k="usableForBPM" v={tel.usableForBPM ? 'YES' : 'NO'} tone={tel.usableForBPM ? 'ok' : 'bad'} />
+              <Row k="usableForSpO2" v={tel.usableForSpO2 ? 'YES' : 'NO'} tone={tel.usableForSpO2 ? 'ok' : 'bad'} />
+              <Row k="usableForRhythm" v={tel.usableForRhythm ? 'YES' : 'NO'} tone={tel.usableForRhythm ? 'ok' : 'bad'} />
+              <Row k="usableForBP" v={tel.usableForBP ? 'YES' : 'NO'} tone={tel.usableForBP ? 'ok' : 'bad'} />
+              <Row k="usableForBiomarkers" v={tel.usableForBiomarkers ? 'YES' : 'NO'} tone={tel.usableForBiomarkers ? 'ok' : 'bad'} />
             </>
           )}
         </div>

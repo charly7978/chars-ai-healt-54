@@ -4,7 +4,7 @@ import { RingBuffer } from './RingBuffer';
 import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { SignalSourceRanker } from './SignalSourceRanker';
-import { computeGlobalSQI } from './SignalQualityEstimator';
+import { computeGlobalSQI, computeModalSQI } from './SignalQualityEstimator';
 import { RadiometricProcessor } from './RadiometricProcessor';
 import { TileFusionEngine, type TileData, type FusionResult } from './TileFusionEngine';
 import { FingerContactClassifier, type ContactClassResult } from './FingerContactClassifier';
@@ -124,8 +124,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private processingTimeMs = 0;
   private realFps = 0;
   private sourceStability = 0;
+  private roiStability = 0;
   private lastSourceLabel = 'RG';
   private sourceStableFrames = 0;
+  private winningReason = 'initial_rg_default';
+  private confidencePerSignal: Record<string, number> = {};
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -212,6 +215,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const fusedGreen = fusion.fusedG;
     const fusedBlue = fusion.fusedB;
     const fusedQuality = fusion.fusedQuality;
+    this.roiStability = fusion.roiStability;
 
     // --- CONTACT CLASSIFICATION (multicriteria, audited) ---
     // The classifier's output (signalUsabilityScore, rejectionReasons,
@@ -260,6 +264,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     if (this.exportedContactState === 'NO_CONTACT') {
       this.signalQuality = 0;
+      const modalSQI = computeModalSQI({
+        sqiGlobal: 0,
+        periodicityScore: 0,
+        motionScore: this.motionScore,
+        clipHighRatio: roi.clipHighRatio,
+        clipLowRatio: roi.clipLowRatio,
+        sourceStability: this.sourceStability,
+        spatialUniformity: roi.spatialUniformity,
+        perfusionIndex: 0,
+        contactState: this.exportedContactState,
+      });
       this.onSignalReady({
         timestamp,
         rawValue: 0,
@@ -296,6 +311,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           pressureExcessive: contactResult.pressureExcessive,
           rejectionReasons: contactResult.rejectionReasons,
           contactGuidance: contactResult.guidance,
+          selectedROI: {
+            tileIndex: fusion.selectedTile?.tileIndex,
+            topTileIndices: fusion.topTiles.map((tile) => tile.tileIndex),
+            coverage: fusion.selectedTile?.coverage ?? roi.coverageRatio,
+            spatialUniformity: fusion.spatialUniformity,
+          },
+          roiStability: fusion.roiStability,
+          winningReason: this.winningReason,
+          confidencePerSignal: this.confidencePerSignal,
+          usableForBPM: modalSQI.usableForBPM,
+          usableForSpO2: modalSQI.usableForSpO2,
+          usableForRhythm: modalSQI.usableForRhythm,
+          usableForBP: modalSQI.usableForBP,
+          usableForBiomarkers: modalSQI.usableForBiomarkers,
         },
         diagnostics: {
           message: `BUSCANDO DEDO C:${(roi.coverageRatio * 100).toFixed(0)}% P:${pressure.state}`,
@@ -311,9 +340,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     // We feed AC/DC, source ranking and downstream processors with the
     // linearized RGB. This gives device-independent ratio-of-ratios for SpO2
     // and a more physically meaningful Beer-Lambert AC/DC for HR/perfusion.
-    const lR = roi.linRed;
-    const lG = roi.linGreen;
-    const lB = roi.linBlue;
+    const lR = fusion.selectedTile ? fusion.fusedR : roi.linRed;
+    const lG = fusion.selectedTile ? fusion.fusedG : roi.linGreen;
+    const lB = fusion.selectedTile ? fusion.fusedB : roi.linBlue;
     this.updateBaselines(lR, lG, lB, motionArtifact);
     this.redBuf.push(lR);
     this.greenBuf.push(lG);
@@ -343,6 +372,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     );
     this.activeSourceLabel = source.label;
     this.allSourceSQI = source.allSQI;
+    this.winningReason = source.winningReason;
+    this.confidencePerSignal = source.confidencePerSignal;
 
     // Track source stability
     if (source.label === this.lastSourceLabel) {
@@ -390,6 +421,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       redDominance,
       contactState: this.exportedContactState,
       sourceStability: this.sourceStability,
+    });
+    const modalSQI = computeModalSQI({
+      sqiGlobal: this.signalQuality,
+      periodicityScore,
+      motionScore: this.motionScore,
+      clipHighRatio: roi.clipHighRatio,
+      clipLowRatio: roi.clipLowRatio,
+      sourceStability: this.sourceStability,
+      spatialUniformity: this.spatialUniformity,
+      perfusionIndex,
+      contactState: this.exportedContactState,
     });
 
     // Gate: drift penalty (position) + camera-exposure-drift penalty (Phase 13)
@@ -468,6 +510,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
         pressureExcessive: contactResult.pressureExcessive,
         rejectionReasons: contactResult.rejectionReasons,
         contactGuidance: contactResult.guidance,
+        selectedROI: {
+          tileIndex: fusion.selectedTile?.tileIndex,
+          topTileIndices: fusion.topTiles.map((tile) => tile.tileIndex),
+          coverage: fusion.selectedTile?.coverage ?? roi.coverageRatio,
+          spatialUniformity: fusion.spatialUniformity,
+        },
+        roiStability: fusion.roiStability,
+        winningReason: source.winningReason,
+        confidencePerSignal: source.confidencePerSignal,
+        usableForBPM: modalSQI.usableForBPM,
+        usableForSpO2: modalSQI.usableForSpO2,
+        usableForRhythm: modalSQI.usableForRhythm,
+        usableForBP: modalSQI.usableForBP,
+        usableForBiomarkers: modalSQI.usableForBiomarkers,
       },
       diagnostics: {
         message:
@@ -931,6 +987,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       positionLocked: this.positionLocked,
       spatialUniformity: this.spatialUniformity,
       sourceStability: this.sourceStability,
+      roiStability: this.roiStability,
       motionScore: this.motionScore,
       validROIPixels: this.lastROIResult?.validPixelCount ?? 0,
       guidance: this.positionGuidance,
@@ -942,6 +999,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       pressureExcessive: this.lastContactClassification?.pressureExcessive,
       rejectionReasons: this.lastContactClassification?.rejectionReasons,
       contactGuidance: this.lastContactClassification?.guidance,
+      winningReason: this.winningReason,
+      confidencePerSignal: this.confidencePerSignal,
     };
   }
 }

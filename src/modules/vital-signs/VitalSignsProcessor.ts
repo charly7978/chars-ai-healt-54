@@ -1,22 +1,18 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
+import { BloodPressureProcessor as BloodPressureProcessorV1 } from './BloodPressureProcessor';
 import { BloodPressureProcessorV2, type BPFeatureVector } from './BloodPressureProcessorV2';
 import { BloodPressureProcessorV3, type BPV3Features } from './BloodPressureProcessorV3';
-// Phase 18 — Ultra-Optimize legacy V1 has the .estimate(buffer, RR, fs) API
-// that VitalSignsProcessor relies on for the primary SBP/DBP estimate.
-import { BloodPressureProcessor as BloodPressureProcessorV1, type BPEstimate } from './BloodPressureProcessor';
 import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
 import { RhythmClassifier, type RhythmResult as RhythmResultV3 } from './RhythmClassifier';
+import { SpO2Processor as SpO2ProcessorV1 } from './SpO2Processor';
 import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
 import { SpO2ProcessorV3 } from './SpO2ProcessorV3';
+import { GlucoseResearchProcessor as GlucoseResearchProcessorV1 } from '../biomarkers/GlucoseResearchProcessor';
 import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessorV2';
+import { LipidResearchProcessor as LipidResearchProcessorV1 } from '../biomarkers/LipidResearchProcessor';
 import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
 import { GlucoseResearchProcessorV3, type GlucoseV3Features } from '../biomarkers/GlucoseResearchProcessorV3';
 import { LipidResearchProcessorV3, type LipidV3Features } from '../biomarkers/LipidResearchProcessorV3';
-// Phase 18 — Ultra-Optimize V1 has the rich .process({cycleFeatures, hr, rrVar, ...})
-// signature that VitalSignsProcessor uses. V2 below keeps the wizard API.
-import { GlucoseResearchProcessor as GlucoseResearchProcessorV1 } from '../biomarkers/GlucoseResearchProcessor';
-import { LipidResearchProcessor as LipidResearchProcessorV1 } from '../biomarkers/LipidResearchProcessor';
-import { SpO2Processor as SpO2ProcessorV1 } from './SpO2Processor';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
@@ -28,6 +24,63 @@ import {
   loadCalibrationLocal,
   type CalibrationModality,
 } from '@/services/calibrationStore';
+import {
+  OutputStatus,
+  type SpO2Output,
+  type BloodPressureOutput,
+  type GlucoseOutput,
+  type LipidsOutput,
+} from '@/types/measurement';
+import {
+  toLegacyOutputState,
+  type MetricOperationalMode,
+} from '@/types/contracts';
+
+type LegacyBPConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
+
+type OutputStateLike =
+  | 'ENABLED_HIGH_CONFIDENCE'
+  | 'ENABLED_MEDIUM_CONFIDENCE'
+  | 'ENABLED_LOW_CONFIDENCE'
+  | 'WITHHELD_LOW_QUALITY'
+  | 'RESEARCH_ONLY'
+  | 'NEEDS_CALIBRATION';
+
+interface LegacySpO2Result {
+  value: number;
+  confidence: number;
+  quality?: number;
+  calibrationState?: string;
+  enabledState: OutputStateLike;
+  rawR?: number;
+  medianR?: number;
+}
+
+interface LegacyGlucoseResult {
+  value: number;
+  confidence: number;
+  enabledState: OutputStateLike;
+  trend?: 'RISING' | 'FALLING' | 'STABLE' | 'UNKNOWN';
+}
+
+interface LegacyLipidResult {
+  totalCholesterol: number;
+  triglycerides: number;
+  ldl?: number;
+  hdl?: number;
+  confidence: number;
+  enabledState: OutputStateLike;
+}
+
+interface RhythmSummary {
+  label: RhythmLabelV2;
+  confidence: number;
+  burden: number;
+  recentEvents: Array<{ type: string; timestamp: number }>;
+  blockedReasons: string[];
+  stabilityTimeline: Array<{ label: RhythmLabelV2; confidence: number }>;
+  requiredNextDataWindow: number;
+}
 
 export interface VitalSignsResult {
   spo2: number;
@@ -202,9 +255,9 @@ export class VitalSignsProcessor {
   };
 
   private lastRhythm: RhythmResult | null = null;
-  private lastSpo2: SpO2Result | null = null;
-  private lastGlucose: GlucoseResult | null = null;
-  private lastLipids: LipidResult | null = null;
+  private lastSpo2: SpO2Output | null = null;
+  private lastGlucose: GlucoseOutput | null = null;
+  private lastLipids: LipidsOutput | null = null;
 
   private readonly EMA_ALPHA_STABLE = 0.20;
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
@@ -599,37 +652,20 @@ export class VitalSignsProcessor {
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
     const sampleRate = this.upstreamContext.sampleRate || 30;
 
-    // ── SpO2 (V3 multi-channel preferred, V2 fallback) — Phase 7 ──
-    const v2Result = this.spo2Processor.process({
+    // ── SpO2 V3-first: no legacy emitter should dominate the operational path ──
+    const spo2Result = this.asSpO2Result(this.spo2ProcessorV3.process({
       redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
       greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
+      blueAC: this.rgbData.blueAC, blueDC: this.rgbData.blueDC,
       contactStable: this.upstreamContext.contactStable,
       pressureOptimal: this.upstreamContext.pressureOptimal,
       clipHighRatio: this.upstreamContext.clipHighRatio,
       beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
       avgBeatSQI: this.upstreamContext.avgBeatSQI,
       sourceStability: this.upstreamContext.sourceStability,
-    });
-    let spo2Result = v2Result;
-    if (this.useSpO2V3) {
-      const v3Result = this.spo2ProcessorV3.process({
-        redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
-        greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
-        blueAC: this.rgbData.blueAC, blueDC: this.rgbData.blueDC,
-        contactStable: this.upstreamContext.contactStable,
-        pressureOptimal: this.upstreamContext.pressureOptimal,
-        clipHighRatio: this.upstreamContext.clipHighRatio,
-        beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
-        avgBeatSQI: this.upstreamContext.avgBeatSQI,
-        sourceStability: this.upstreamContext.sourceStability,
-      });
-      // Use V3 only when it actually published a value with usable confidence
-      if (v3Result.value !== null && v3Result.confidence > Math.max(0.3, v2Result.confidence)) {
-        spo2Result = v3Result;
-      }
-    }
+    }), 'calibration_dependent');
     this.lastSpo2 = spo2Result;
-    if (typeof spo2Result.value === 'number' && spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
+    if (typeof spo2Result.value === 'number' && spo2Result.value > 0 && spo2Result.status !== OutputStatus.BLOCKED) {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
     }
 
@@ -650,16 +686,7 @@ export class VitalSignsProcessor {
     const rgACRatio = this.rgbData.greenAC > 0 ? this.rgbData.redAC / this.rgbData.greenAC : 0;
 
     if (validRR.length >= 2) {
-      const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, sampleRate);
-      this.lastBPConfidence = bpEstimate.confidence;
-      this.lastBPFeatureQuality = bpEstimate.featureQuality;
-      if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
-        this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
-        this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
-      }
-
-      // ── V3 ridge predictor (Phase 8). Runs only when a calibrated model
-      // exists AND we have median cycle features to feed the regressor. ──
+      // ── BP V3-first: calibration-dependent only, no V1 publication ──
       if (this.useBPV3 && medianF) {
         const v3Features: BPV3Features = {
           stiffnessIndex: medianF.stiffnessIndex,
@@ -687,69 +714,30 @@ export class VitalSignsProcessor {
           this.upstreamContext.beatCount,
           this.signalHistory.length / Math.max(1, sampleRate) * 1000
         );
-        // Use V3 only when calibrated and confident; V2 stays the default.
         if (
           v3Out.value &&
           typeof v3Out.value === 'object' &&
-          v3Out.confidence > 0.5
+          v3Out.status !== OutputStatus.BLOCKED &&
+          v3Out.status !== OutputStatus.NEEDS_CALIBRATION
         ) {
           const sys = (v3Out.value as any).systolic;
           const dia = (v3Out.value as any).diastolic;
           if (sys > 0 && dia > 0) {
             this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, sys, 'stable');
             this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, dia, 'stable');
-            // Map V3's confidence into the legacy enum so the gate keeps working.
             this.lastBPConfidence = v3Out.confidence > 0.75 ? 'HIGH'
               : v3Out.confidence > 0.55 ? 'MEDIUM'
               : 'LOW';
             this.lastBPFeatureQuality = Math.max(this.lastBPFeatureQuality, Math.round(v3Out.confidence * 100));
           }
+        } else {
+          this.lastBPConfidence = 'INSUFFICIENT';
+          this.lastBPFeatureQuality = 0;
         }
       }
     }
 
     if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 10) {
-      const glucoseResult = this.glucoseProcessor.process({
-        cycleFeatures: {
-          sutMs: medianF.sutMs, pw50Ms: medianF.pw50Ms,
-          pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
-          augmentationIndex: medianF.augmentationIndex,
-          stiffnessIndex: medianF.stiffnessIndex,
-          dicroticDepth: medianF.dicroticDepth,
-          areaRatio: medianF.areaRatio,
-        },
-        hr, rrVar, piGreen, rgACRatio,
-        contactStable: this.upstreamContext.contactStable,
-        signalQuality: this.measurements.signalQuality,
-        beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
-      });
-      this.lastGlucose = glucoseResult;
-      if (glucoseResult.value > 0 && glucoseResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
-        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseResult.value, 'dynamic');
-      }
-
-      const lipidResult = this.lipidProcessor.process({
-        cycleFeatures: {
-          stiffnessIndex: medianF.stiffnessIndex,
-          augmentationIndex: medianF.augmentationIndex,
-          areaRatio: medianF.areaRatio,
-          dicroticDepth: medianF.dicroticDepth,
-          pwvProxy: medianF.pwvProxy,
-          pw50Ms: medianF.pw50Ms, pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
-          diastolicTimeMs: medianF.diastolicTimeMs,
-        },
-        hr, rrVar, piGreen,
-        contactStable: this.upstreamContext.contactStable,
-        signalQuality: this.measurements.signalQuality,
-      });
-      this.lastLipids = lipidResult;
-      if (lipidResult.totalCholesterol > 0 && lipidResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
-        this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipidResult.totalCholesterol, 'dynamic');
-        this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipidResult.triglycerides, 'dynamic');
-      }
-
-      // Phase 9 — V3 ridge regressors run in parallel; values overwrite V2
-      // when the V3 model is calibrated AND publishes (researchMode flag stays).
       const odR = this.rgbData.redDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.redDC / 255)) : 0;
       const odG = this.rgbData.greenDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.greenDC / 255)) : 0;
       const odB = (this.rgbData.blueDC ?? 0) > 0 ? -Math.log(Math.max(1e-6, (this.rgbData.blueDC ?? 1) / 255)) : 0;
@@ -763,10 +751,13 @@ export class VitalSignsProcessor {
         rgRatio: this.rgbData.greenDC > 0 ? this.rgbData.redDC / this.rgbData.greenDC : 0,
         odR, odG, odB,
       };
-      const glucoseV3Result = this.glucoseProcessorV3.process(gV3Features, Math.max(0, this.measurements.signalQuality / 100));
-      if (glucoseV3Result.value !== null && glucoseV3Result.confidence > 0.3) {
-        this.lastGlucose = glucoseV3Result as any;
-        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseV3Result.value as number, 'dynamic');
+      const glucoseV3Result = this.asGlucoseResult(
+        this.glucoseProcessorV3.process(gV3Features, Math.max(0, this.measurements.signalQuality / 100)),
+        'research_calibrated',
+      );
+      this.lastGlucose = glucoseV3Result;
+      if (typeof glucoseV3Result.value === 'number' && glucoseV3Result.status === OutputStatus.RESEARCH_ONLY) {
+        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseV3Result.value, 'dynamic');
       }
 
       const lV3Features: LipidV3Features = {
@@ -778,9 +769,12 @@ export class VitalSignsProcessor {
         hr, rrSDNN: rrVar.sdnn,
         perfusionGreen: this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0,
       };
-      const lipidsV3Result = this.lipidProcessorV3.process(lV3Features, Math.max(0, this.measurements.signalQuality / 100));
-      if (lipidsV3Result.value && typeof lipidsV3Result.value === 'object' && lipidsV3Result.confidence > 0.25) {
-        this.lastLipids = lipidsV3Result as any;
+      const lipidsV3Result = this.asLipidsResult(
+        this.lipidProcessorV3.process(lV3Features, Math.max(0, this.measurements.signalQuality / 100)),
+        'research_calibrated',
+      );
+      this.lastLipids = lipidsV3Result;
+      if (lipidsV3Result.value && typeof lipidsV3Result.value === 'object' && lipidsV3Result.status === OutputStatus.RESEARCH_ONLY) {
         const v = lipidsV3Result.value as any;
         if (v.totalCholesterol > 0) this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, v.totalCholesterol, 'dynamic');
         if (v.triglycerides > 0) this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, v.triglycerides, 'dynamic');
@@ -882,8 +876,8 @@ export class VitalSignsProcessor {
 
   private getFormattedResult(): VitalSignsResult {
     const spo2State = this.lastSpo2?.enabledState ?? 'WITHHELD_LOW_QUALITY';
-    const glucoseState = this.lastGlucose?.enabledState ?? 'WITHHELD_LOW_QUALITY';
-    const lipidsState = this.lastLipids?.enabledState ?? 'WITHHELD_LOW_QUALITY';
+    const glucoseState = this.lastGlucose?.enabledState ?? 'RESEARCH_ONLY';
+    const lipidsState = this.lastLipids?.enabledState ?? 'RESEARCH_ONLY';
 
     const bpGated = MeasurementGate.gateBP(
       this.measurements.systolicPressure, this.measurements.diastolicPressure,
@@ -920,12 +914,27 @@ export class VitalSignsProcessor {
       glucoseDetail: this.lastGlucose ?? undefined,
       lipidsDetail: this.lastLipids ?? undefined,
       outputStates: {
-        bpm: 'ENABLED_MEDIUM_CONFIDENCE',
+        bpm: toLegacyOutputState(
+          this.getMeasurementConfidence() === 'HIGH' ? OutputStatus.OK
+            : this.getMeasurementConfidence() === 'INVALID' ? OutputStatus.BLOCKED
+            : OutputStatus.LOW_QUALITY,
+          this.getMeasurementConfidence() === 'HIGH' ? 0.85
+            : this.getMeasurementConfidence() === 'MEDIUM' ? 0.55
+            : this.getMeasurementConfidence() === 'LOW' ? 0.30
+            : 0,
+          'production_grade',
+        ),
         spo2: spo2State,
         bp: bpGated.state,
         glucose: glucoseState,
         lipids: lipidsState,
-        rhythm: this.lastRhythm ? (this.lastRhythm.rhythmQuality > 40 ? 'ENABLED_MEDIUM_CONFIDENCE' : 'ENABLED_LOW_CONFIDENCE') : 'WITHHELD_LOW_QUALITY',
+        rhythm: this.lastRhythm
+          ? toLegacyOutputState(
+              this.lastRhythm.rhythmQuality > 50 ? OutputStatus.OK : OutputStatus.LOW_QUALITY,
+              this.lastRhythm.rhythmConfidence,
+              'production_grade',
+            )
+          : 'WITHHELD_LOW_QUALITY',
       },
       hrv: this.lastHRV ?? undefined,
       stress: this.lastStress ?? undefined,
@@ -1045,5 +1054,65 @@ export class VitalSignsProcessor {
     this.lastHemoglobin = null;
     this.piHistory = [];
     this.respFrameCounter = 0;
+  }
+
+  private normalizeOutputStatus(status: OutputStatus, mode: MetricOperationalMode): OutputStatus {
+    if (mode === 'research_calibrated' && status === OutputStatus.OK) {
+      return OutputStatus.RESEARCH_ONLY;
+    }
+    return status;
+  }
+
+  private asSpO2Result(output: SpO2Output, mode: MetricOperationalMode): SpO2Result {
+    const normalizedStatus = this.normalizeOutputStatus(output.status, mode);
+    return {
+      value: typeof output.value === 'number' ? output.value : null,
+      confidence: output.confidence,
+      quality: typeof output.evidence?.sqi === 'number' ? output.evidence.sqi : 0,
+      calibrationState: output.calibrationState ?? (normalizedStatus === OutputStatus.NEEDS_CALIBRATION ? 'UNCALIBRATED' : 'DEVICE_CALIBRATED'),
+      enabledState: toLegacyOutputState(normalizedStatus, output.confidence, mode),
+      rawR: typeof output.debug?.rawRatio === 'number' ? output.debug.rawRatio : 0,
+      medianR: typeof output.debug?.R === 'number' ? output.debug.R : 0,
+      piRed: typeof output.evidence?.perfusionIndex === 'number' ? output.evidence.perfusionIndex : 0,
+      piGreen: typeof output.evidence?.perfusionIndex === 'number' ? output.evidence.perfusionIndex : 0,
+      validBeatRatios: output.evidence?.acceptedBeats ?? 0,
+      rFused: typeof output.debug?.R === 'number' ? output.debug.R : 0,
+      rRG: typeof output.debug?.Rrg === 'number' ? output.debug.Rrg : 0,
+      rRB: typeof output.debug?.Rrb === 'number' ? output.debug.Rrb : 0,
+      kalmanEstimate: typeof output.value === 'number' ? output.value : 0,
+      status: normalizedStatus,
+      mode,
+      rejectionReasons: output.qualityFlags?.map((flag) => flag.flag) ?? [],
+    };
+  }
+
+  private asGlucoseResult(output: GlucoseOutput, mode: MetricOperationalMode): GlucoseResult {
+    const normalizedStatus = this.normalizeOutputStatus(output.status, mode);
+    return {
+      value: typeof output.value === 'number' ? output.value : null,
+      confidence: output.confidence,
+      enabledState: toLegacyOutputState(normalizedStatus, output.confidence, mode),
+      trend: output.trend ? output.trend.toUpperCase() as GlucoseResult['trend'] : 'UNKNOWN',
+      uncertainty: typeof output.debug?.looRMSE === 'number' ? output.debug.looRMSE : 0,
+      status: normalizedStatus,
+      mode,
+      rejectionReasons: output.qualityFlags?.map((flag) => flag.flag) ?? [],
+    };
+  }
+
+  private asLipidsResult(output: LipidsOutput, mode: MetricOperationalMode): LipidResult {
+    const normalizedStatus = this.normalizeOutputStatus(output.status, mode);
+    const value = output.value && typeof output.value === 'object' ? output.value : null;
+    return {
+      totalCholesterol: value?.totalCholesterol ?? 0,
+      triglycerides: value?.triglycerides ?? 0,
+      ldl: value?.ldl ?? 0,
+      hdl: value?.hdl ?? 0,
+      confidence: output.confidence,
+      enabledState: toLegacyOutputState(normalizedStatus, output.confidence, mode),
+      status: normalizedStatus,
+      mode,
+      rejectionReasons: output.qualityFlags?.map((flag) => flag.flag) ?? [],
+    };
   }
 }

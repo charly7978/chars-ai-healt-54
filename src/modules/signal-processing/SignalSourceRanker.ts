@@ -17,6 +17,7 @@ export interface SourceCandidate {
   clipPenalty: number;
   driftPenalty: number;
   sqi: number;
+  confidence: number;
 }
 
 interface SourceState {
@@ -55,7 +56,13 @@ export class SignalSourceRanker {
     redPI: number, greenPI: number,
     clipHigh: number, motionArtifact: boolean,
     posSample = 0, chromSample = 0
-  ): { value: number; label: string; allSQI: Record<string, number> } {
+  ): {
+    value: number;
+    label: string;
+    allSQI: Record<string, number>;
+    winningReason: string;
+    confidencePerSignal: Record<string, number>;
+  } {
     this.frameCount++;
     const eps = 0.01;
 
@@ -98,6 +105,8 @@ export class SignalSourceRanker {
 
     // Rank every 30 frames
     const allSQI: Record<string, number> = {};
+    const confidencePerSignal: Record<string, number> = {};
+    let winningReason = 'initial_rg_default';
     if (this.frameCount % 30 === 0) {
       let bestLabel = this.activeSource;
       let bestSQI = -1;
@@ -111,6 +120,7 @@ export class SignalSourceRanker {
         }
         src.sqi = sqi;
         allSQI[label] = sqi;
+        confidencePerSignal[label] = Math.max(0, Math.min(1, sqi / 100));
         if (sqi > bestSQI) {
           bestSQI = sqi;
           bestLabel = label;
@@ -124,15 +134,28 @@ export class SignalSourceRanker {
         this.frameCount - this.lastSwitchFrame > this.HYSTERESIS_FRAMES) {
         this.activeSource = bestLabel;
         this.lastSwitchFrame = this.frameCount;
+        winningReason = `switch:${bestLabel}:better_sqi`;
+      } else {
+        winningReason = bestLabel === this.activeSource
+          ? `hold:${this.activeSource}:stable_best`
+          : `hold:${this.activeSource}:hysteresis`;
       }
     } else {
       for (const [label, src] of this.sources) {
         allSQI[label] = src.sqi;
+        confidencePerSignal[label] = Math.max(0, Math.min(1, src.sqi / 100));
       }
+      winningReason = `hold:${this.activeSource}:intermediate_frame`;
     }
 
     const value = Math.min(80, Math.max(-80, candidates[this.activeSource] ?? candidates['RG']));
-    return { value, label: this.activeSource, allSQI };
+    return {
+      value,
+      label: this.activeSource,
+      allSQI,
+      winningReason,
+      confidencePerSignal,
+    };
   }
 
   private computeSQI(src: SourceState, clipHigh: number, motion: boolean): number {

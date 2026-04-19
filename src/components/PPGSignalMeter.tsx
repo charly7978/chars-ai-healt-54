@@ -228,7 +228,7 @@ const PPGSignalMeter = ({
     ctx.textAlign = 'center';
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.font = '10px "SF Mono", Consolas, monospace';
-    ctx.fillText('AMPLITUD (μV)', 0, 0);
+    ctx.fillText('AMPLITUD PPG (u.a.)', 0, 0);
     ctx.restore();
   }, [getPlotArea]);
 

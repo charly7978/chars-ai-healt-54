@@ -34,8 +34,10 @@ export interface FusionResult {
   fusedB: number;
   fusedQuality: number;
   topTiles: TileData[]; // Best 3 tiles
+  selectedTile: TileData | null;
   spatialUniformity: number; // 0-1, how similar tiles are
   tileWeights: number[]; // For debugging
+  roiStability: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -51,6 +53,8 @@ export class TileFusionEngine {
   private lastFusedValues: { r: number; g: number; b: number } = { r: 128, g: 128, b: 128 };
   private lastTileCenters: number[] = new Array(this.TILE_COUNT).fill(0);
   private readonly TEMPORAL_ALPHA = 0.15; // Smoothing factor
+  private lastSelectedTileIndex: number | null = null;
+  private roiStabilityEWMA = 0;
   
   /**
    * Fuse multiple tiles into consolidated PPG signal
@@ -96,6 +100,8 @@ export class TileFusionEngine {
     
     // Find top-K tiles for reference
     const topTiles = this.selectTopTiles(normalizedTiles, this.TOP_K);
+    const selectedTile = topTiles.length > 0 ? topTiles[0] : null;
+    const roiStability = this.computeROIStability(selectedTile);
     
     // Compute tile weights for debugging
     const tileWeights = this.computeWeights(normalizedTiles);
@@ -106,9 +112,27 @@ export class TileFusionEngine {
       fusedB: smoothB,
       fusedQuality,
       topTiles,
+      selectedTile,
       spatialUniformity,
       tileWeights,
+      roiStability,
     };
+  }
+
+  private computeROIStability(selectedTile: TileData | null): number {
+    if (!selectedTile) {
+      this.lastSelectedTileIndex = null;
+      this.roiStabilityEWMA = this.roiStabilityEWMA * 0.85;
+      return this.roiStabilityEWMA;
+    }
+
+    const stable =
+      this.lastSelectedTileIndex === null ||
+      this.lastSelectedTileIndex === selectedTile.tileIndex;
+    const instant = stable ? 1 : 0.2;
+    this.roiStabilityEWMA = this.roiStabilityEWMA * 0.82 + instant * 0.18;
+    this.lastSelectedTileIndex = selectedTile.tileIndex;
+    return this.roiStabilityEWMA;
   }
   
   /**
@@ -223,7 +247,7 @@ export class TileFusionEngine {
     const sorted = [...tiles].sort((a, b) => b.quality - a.quality);
     return sorted.slice(0, Math.min(k, sorted.length));
   }
-  
+
   /**
    * Compute weight per tile (for debugging/visualization)
    */
@@ -268,8 +292,10 @@ export class TileFusionEngine {
       fusedB: 128,
       fusedQuality: 0,
       topTiles: [],
+      selectedTile: null,
       spatialUniformity: 0,
       tileWeights: [],
+      roiStability: 0,
     };
   }
 }

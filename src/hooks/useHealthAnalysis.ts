@@ -17,6 +17,7 @@ export const useHealthAnalysis = () => {
     if (isAnalyzing) return;
 
     const { heartRate, vitalSigns, quality } = data;
+    const outputStates = vitalSigns.outputStates;
 
     const hasHeartRate = Number.isFinite(heartRate) && heartRate > 0;
     const hasSpo2 = Number.isFinite(vitalSigns.spo2) && vitalSigns.spo2 > 0;
@@ -24,13 +25,15 @@ export const useHealthAnalysis = () => {
       Number.isFinite(vitalSigns.pressure?.diastolic) &&
       (vitalSigns.pressure?.systolic ?? 0) > 0 &&
       (vitalSigns.pressure?.diastolic ?? 0) > 0;
+    const spo2Operational = outputStates?.spo2 === 'ENABLED_HIGH_CONFIDENCE' || outputStates?.spo2 === 'ENABLED_MEDIUM_CONFIDENCE';
+    const bpOperational = outputStates?.bp === 'ENABLED_HIGH_CONFIDENCE' || outputStates?.bp === 'ENABLED_MEDIUM_CONFIDENCE';
 
     // Regla anti-simulación: no enviar valores por defecto inventados al backend.
     // Si falta alguna señal núcleo (HR/SpO2/BP) se bloquea el análisis AI.
-    if (!hasHeartRate || !hasSpo2 || !hasPressure) {
+    if (!hasHeartRate || !hasSpo2 || !hasPressure || !spo2Operational || !bpOperational) {
       toast({
         title: "Datos insuficientes",
-        description: "Se requieren HR, SpO2 y presión arterial reales para analizar.",
+        description: "Se requieren HR, SpO2 y presión arterial operativas, reales y habilitadas por calidad/calibración.",
         variant: "destructive",
         duration: 3000
       });
