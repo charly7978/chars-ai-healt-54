@@ -4,11 +4,7 @@ import { BloodPressureProcessorV3, type BPV3Features } from './BloodPressureProc
 import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
 import { RhythmClassifier, type RhythmResult as RhythmResultV3 } from './RhythmClassifier';
 import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
-<<<<<<< HEAD
-import { SpO2Processor } from './SpO2Processor';
-=======
 import { SpO2ProcessorV3 } from './SpO2ProcessorV3';
->>>>>>> 3bb70e818ffcb33a7c6acd5dd11bba1a71a146e9
 import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessorV2';
 import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
@@ -116,14 +112,10 @@ export class VitalSignsProcessor {
   private rhythmClassifier: RhythmClassifierV2;
   private rhythmClassifierV3: RhythmClassifier;
   private spo2Processor: SpO2ProcessorV2;
-<<<<<<< HEAD
-  private spo2ProcessorV3: SpO2Processor;
-=======
   private spo2ProcessorV3: SpO2ProcessorV3;
-  /** Fasea opt-in: when true, V3 runs in parallel and its result is published
+  /** Phase 7 opt-in: when true, V3 runs in parallel and its result is published
    *  if (and only if) it has a calibration loaded — otherwise V2 is used. */
   private useSpO2V3 = true;
->>>>>>> 3bb70e818ffcb33a7c6acd5dd11bba1a71a146e9
   private glucoseProcessor: GlucoseResearchProcessorV2;
   private lipidProcessor: LipidResearchProcessorV2;
   private hrvProcessor: HRVTimeFreqProcessor;
@@ -187,11 +179,7 @@ export class VitalSignsProcessor {
     this.rhythmClassifier = new RhythmClassifierV2();
     this.rhythmClassifierV3 = new RhythmClassifier();
     this.spo2Processor = new SpO2ProcessorV2();
-<<<<<<< HEAD
-    this.spo2ProcessorV3 = new SpO2Processor();
-=======
     this.spo2ProcessorV3 = new SpO2ProcessorV3();
->>>>>>> 3bb70e818ffcb33a7c6acd5dd11bba1a71a146e9
     this.glucoseProcessor = new GlucoseResearchProcessorV2();
     this.lipidProcessor = new LipidResearchProcessorV2();
     this.hrvProcessor = new HRVTimeFreqProcessor();
@@ -446,13 +434,8 @@ export class VitalSignsProcessor {
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
     const sampleRate = this.upstreamContext.sampleRate || 30;
 
-<<<<<<< HEAD
-    // ── SpO2 V3 (multi-canal + Kalman) ──────────────────────────────
-    const spo2V3Result = this.spo2ProcessorV3.process({
-=======
     // ── SpO2 (V3 multi-channel preferred, V2 fallback) — Phase 7 ──
     const v2Result = this.spo2Processor.process({
->>>>>>> 3bb70e818ffcb33a7c6acd5dd11bba1a71a146e9
       redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
       greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
       contactStable: this.upstreamContext.contactStable,
@@ -462,27 +445,6 @@ export class VitalSignsProcessor {
       avgBeatSQI: this.upstreamContext.avgBeatSQI,
       sourceStability: this.upstreamContext.sourceStability,
     });
-<<<<<<< HEAD
-
-    const spo2Result = this.spo2Processor.process({
-      redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
-      greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
-      contactStable: this.upstreamContext.contactStable,
-      pressureOptimal: this.upstreamContext.pressureOptimal,
-      clipHighRatio: this.upstreamContext.clipHighRatio,
-      beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
-      avgBeatSQI: this.upstreamContext.avgBeatSQI,
-      sourceStability: this.upstreamContext.sourceStability,
-      timestamp: Date.now(),
-    });
-    this.lastSpo2 = spo2Result;
-
-    // Use V3 if it has higher confidence, otherwise fall back to V2
-    const bestSpo2Value = (spo2V3Result.value > 0 && spo2V3Result.enabledState !== 'WITHHELD_LOW_QUALITY')
-      ? spo2V3Result.value : (spo2Result.value ?? 0);
-    if (bestSpo2Value > 0) {
-      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, bestSpo2Value, 'stable');
-=======
     let spo2Result = v2Result;
     if (this.useSpO2V3) {
       const v3Result = this.spo2ProcessorV3.process({
@@ -504,7 +466,6 @@ export class VitalSignsProcessor {
     this.lastSpo2 = spo2Result;
     if (typeof spo2Result.value === 'number' && spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
->>>>>>> 3bb70e818ffcb33a7c6acd5dd11bba1a71a146e9
     }
 
     const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, sampleRate);
@@ -651,11 +612,7 @@ export class VitalSignsProcessor {
       });
     }
 
-<<<<<<< HEAD
-    // ── Rhythm classification V3 (DFA + SampEn + full HRV) ───────────
-=======
-    // ── Hierarchical rhythm classification (single source of truth) ──
->>>>>>> 3bb70e818ffcb33a7c6acd5dd11bba1a71a146e9
+    // ── Hierarchical rhythm classification — V3 + V2 fallback ────────
     if (beatInputs && beatInputs.length >= 4) {
       const sourceQuality = Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement);
       const winSQI = Math.max(this.upstreamContext.avgBeatSQI, 20) / 100;

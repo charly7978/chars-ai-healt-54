@@ -1,7 +1,22 @@
 /**
- * HEARTBEAT PROCESSOR V2 — LAYERED ARCHITECTURE
+ * HEARTBEAT PROCESSOR V2.1 — LAYERED ARCHITECTURE + TRIPLE DETECTOR
+ *
+ * Phase 4 additions (in-place, API-preserving):
+ *   - Third detector: Pan-Tompkins-like (derivative² + moving-window
+ *     integrator + adaptive threshold).
+ *   - Goertzel filter bank (cardiac band) for selective spectral evidence
+ *     of HR; populates `spectralBPM`.
+ *   - 1-D Kalman filter on the fused BPM (smoothBPM) — adaptive R from SQI.
+ *
+ * Detection arbitration:
+ *   • A candidate is "strongly accepted" when ≥2 of {prominence, slope-sum,
+ *     pan-tompkins} agree. The single-detector path is kept for low-rhythm
+ *     warm-up (consecutivePeaks < 3) so we don't lose first beats.
  */
 import { RingBuffer } from './signal-processing/RingBuffer';
+import { PanTompkinsDetector } from './signal-processing/PanTompkinsDetector';
+import { GoertzelBank } from './signal-processing/GoertzelBank';
+import { Kalman1D } from './signal-processing/Kalman1D';
 import type {
   BeatCandidate, AcceptedBeat, BeatFlags, BPMHypothesis,
   HeartBeatResult, HeartBeatDebug
@@ -53,6 +68,17 @@ export class HeartBeatProcessor {
   private contactStable = true;
   private sourceSwitchRecent = false;
 
+  // Phase 4: triple detector + spectral + Kalman
+  private panTompkins = new PanTompkinsDetector({ sampleRate: 30 });
+  private goertzel: GoertzelBank = GoertzelBank.cardiac(30, 256);
+  private bpmKalman = new Kalman1D(0.5, 4);
+  private lastPTpeakSample = -Infinity;
+  private samplesProcessed = 0;
+  /** Latest sample-index at which Pan-Tompkins fired (within ±3 samples
+   *  counts as "agreement" with the prominence/slope-sum candidate). */
+  private ptAgreementWindow = 3;
+  private ptDetectorConfidence = 0;
+
   constructor() {
     this.setupAudio();
   }
@@ -94,6 +120,21 @@ export class HeartBeatProcessor {
 
     const ssf = this.computeSlopeSum();
     this.slopeSum.push(ssf);
+
+    // ── Phase 4: third detector (Pan-Tompkins) and spectral bank ──
+    const fs = this.estimateSampleRate();
+    this.panTompkins.setSampleRate(fs);
+    this.goertzel.setSampleRate(fs);
+    this.samplesProcessed++;
+    const pt = this.panTompkins.push(filteredValue);
+    if (pt.isPeak) {
+      this.lastPTpeakSample = this.samplesProcessed - 1;
+      this.ptDetectorConfidence = Math.min(1, pt.quality);
+    }
+    if (this.goertzel.push(filteredValue)) {
+      const best = this.goertzel.bestBpmInRange(38, 200);
+      if (best.bpm > 0) this.spectralBPM = best.bpm;
+    }
 
     if (this.signalBuf.length < 25) {
       return this.makeEmptyResult(0);
@@ -273,10 +314,16 @@ export class HeartBeatProcessor {
 
     const det2Hit = zeroCrossing && (ssfPeak || risingSlope > 1.0);
 
-    const detectorHits = (det1Hit ? 1 : 0) + (det2Hit ? 1 : 0);
+    // Detector 3: Pan-Tompkins agreement — fires within ±N samples of a real
+    // peak. We look at how recently PT fired relative to current sample.
+    const ptDelta = this.samplesProcessed - 1 - this.lastPTpeakSample;
+    const det3Hit = ptDelta >= 0 && ptDelta <= this.ptAgreementWindow;
+
+    const detectorHits = (det1Hit ? 1 : 0) + (det2Hit ? 1 : 0) + (det3Hit ? 1 : 0);
     if (detectorHits === 0) return null;
 
-    const detectorAgreement = detectorHits / 2;
+    // Score remains in [0..1] regardless of detector count
+    const detectorAgreement = detectorHits / 3;
     const templateCorrelation = this.templateValid ? this.correlateWithTemplate() : 0;
     const nearExpected = expectedRR > 0 &&
       timeSinceLast >= expectedRR * 0.55 && timeSinceLast <= expectedRR * 1.45;
@@ -335,6 +382,7 @@ export class HeartBeatProcessor {
     if (c.localClipPenalty > 0.6) {
       c.status = 'rejected'; c.rejectionReason = 'high_clipping'; return;
     }
+    // With 3 detectors: only reject single-detector beats when contact is bad.
     if (!this.contactStable && c.detectorHits < 2) {
       c.status = 'rejected'; c.rejectionReason = 'unstable_contact_single_detector'; return;
     }
@@ -344,7 +392,9 @@ export class HeartBeatProcessor {
     if (c.downSlope < 0.2) {
       c.status = 'rejected'; c.rejectionReason = 'no_falling_edge'; return;
     }
-    if (this.consecutivePeaks === 0 && c.detectorAgreement < 0.5 && !c.periodicitySupport) {
+    // First peak: if 0 consecutive yet, demand at least one strong corroborator
+    // (≥1/3 detector agreement or known periodicity). Was 0.5/2 in V2.
+    if (this.consecutivePeaks === 0 && c.detectorAgreement < 0.34 && !c.periodicitySupport) {
       c.status = 'rejected'; c.rejectionReason = 'first_peak_weak_support'; return;
     }
     if (refractoryState === 'soft') {
@@ -368,7 +418,12 @@ export class HeartBeatProcessor {
     if (c.totalScore < minScore && !thresholdMet) {
       c.status = 'rejected'; c.rejectionReason = 'low_total_score'; return;
     }
-    if (c.detectorAgreement >= 1.0 && c.morphologyScore > 40 && thresholdMet) {
+    // 3-of-3 agreement always accepts (was 2-of-2 in V2 at agreement===1.0)
+    if (c.detectorAgreement >= 0.99 && c.morphologyScore > 35 && thresholdMet) {
+      c.status = 'accepted'; return;
+    }
+    // 2-of-3 detectors with reasonable corroborator
+    if (c.detectorHits >= 2 && c.totalScore >= minScore - 5 && thresholdMet) {
       c.status = 'accepted'; return;
     }
     if (c.detectorHits >= 1 && c.totalScore >= minScore && thresholdMet) {
@@ -523,12 +578,11 @@ export class HeartBeatProcessor {
     }
 
     if (finalBpm > 0) {
-      if (this.smoothBPM === 0) this.smoothBPM = finalBpm;
-      else {
-        const diff = Math.abs(finalBpm - this.smoothBPM) / Math.max(1, this.smoothBPM);
-        const alpha = diff > 0.25 ? 0.08 : diff > 0.12 ? 0.18 : 0.28;
-        this.smoothBPM = this.smoothBPM * (1 - alpha) + finalBpm * alpha;
-      }
+      // Phase 4: 1-D Kalman with adaptive R based on hypothesis confidence and SQI.
+      // Higher confidence → smaller R → more weight on the new observation.
+      const sqiNorm = Math.max(0.05, Math.min(1, this.upstreamSQI / 100));
+      const r = Math.max(0.5, 18 * (1 - confidence) * (1 - sqiNorm + 0.4));
+      this.smoothBPM = this.bpmKalman.update(finalBpm, r);
     }
 
     return { fromLastIBI, fromMedianIBI, fromTrimmedIBI, fromAutocorrelation, fromSpectral, finalBpm: this.smoothBPM, confidence, dominantSource };
@@ -852,6 +906,13 @@ export class HeartBeatProcessor {
     this.templateValid = false;
     this.templateLen = 0;
     this.lastHypothesis = null;
+    // Phase 4: reset triple-detector state
+    this.panTompkins.reset();
+    this.goertzel.reset();
+    this.bpmKalman.reset();
+    this.lastPTpeakSample = -Infinity;
+    this.samplesProcessed = 0;
+    this.ptDetectorConfidence = 0;
   }
 
   dispose(): void {
