@@ -7,6 +7,8 @@ import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
 import { SpO2ProcessorV3 } from './SpO2ProcessorV3';
 import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessorV2';
 import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
+import { GlucoseResearchProcessorV3, type GlucoseV3Features } from '../biomarkers/GlucoseResearchProcessorV3';
+import { LipidResearchProcessorV3, type LipidV3Features } from '../biomarkers/LipidResearchProcessorV3';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
@@ -126,7 +128,9 @@ export class VitalSignsProcessor {
    *  if (and only if) it has a calibration loaded — otherwise V2 is used. */
   private useSpO2V3 = true;
   private glucoseProcessor: GlucoseResearchProcessorV2;
+  private glucoseProcessorV3: GlucoseResearchProcessorV3;
   private lipidProcessor: LipidResearchProcessorV2;
+  private lipidProcessorV3: LipidResearchProcessorV3;
   private hrvProcessor: HRVTimeFreqProcessor;
   private stressProcessor: StressProcessor;
   private respProcessor: RespiratoryRateProcessor;
@@ -192,7 +196,9 @@ export class VitalSignsProcessor {
     this.spo2Processor = new SpO2ProcessorV2();
     this.spo2ProcessorV3 = new SpO2ProcessorV3();
     this.glucoseProcessor = new GlucoseResearchProcessorV2();
+    this.glucoseProcessorV3 = new GlucoseResearchProcessorV3();
     this.lipidProcessor = new LipidResearchProcessorV2();
+    this.lipidProcessorV3 = new LipidResearchProcessorV3();
     this.hrvProcessor = new HRVTimeFreqProcessor();
     this.stressProcessor = new StressProcessor();
     this.respProcessor = new RespiratoryRateProcessor();
@@ -207,6 +213,10 @@ export class VitalSignsProcessor {
       if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
       const hbv1 = loadCalibrationLocal<any>('hemoglobin_v1');
       if (hbv1) this.hemoglobinProcessor.loadSerializedCalibration(hbv1);
+      const glucoseV3 = loadCalibrationLocal<any>('glucose_v3');
+      if (glucoseV3) this.glucoseProcessorV3.loadSerializedCalibration(glucoseV3);
+      const lipidsV3 = loadCalibrationLocal<any>('lipids_v3');
+      if (lipidsV3) this.lipidProcessorV3.loadSerializedCalibration(lipidsV3);
     } catch { /* private mode etc. */ }
   }
 
@@ -222,6 +232,10 @@ export class VitalSignsProcessor {
       if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
       const hbv1 = await loadCalibration<any>('hemoglobin_v1');
       if (hbv1) this.hemoglobinProcessor.loadSerializedCalibration(hbv1);
+      const glucoseV3 = await loadCalibration<any>('glucose_v3');
+      if (glucoseV3) this.glucoseProcessorV3.loadSerializedCalibration(glucoseV3);
+      const lipidsV3 = await loadCalibration<any>('lipids_v3');
+      if (lipidsV3) this.lipidProcessorV3.loadSerializedCalibration(lipidsV3);
     } catch (e) {
       console.warn('[vitals] autoLoadCalibrations failed:', (e as any)?.message ?? e);
     }
@@ -236,6 +250,10 @@ export class VitalSignsProcessor {
       if (bpv3.model) await saveCalibration('bp_v3' as CalibrationModality, bpv3);
       const hbv1 = this.hemoglobinProcessor.serializeCalibration();
       if (hbv1.model) await saveCalibration('hemoglobin_v1' as CalibrationModality, hbv1);
+      const glucoseV3 = this.glucoseProcessorV3.serializeCalibration();
+      if (glucoseV3.model) await saveCalibration('glucose_v3' as CalibrationModality, glucoseV3);
+      const lipidsV3 = this.lipidProcessorV3.serializeCalibration();
+      if (lipidsV3.models) await saveCalibration('lipids_v3' as CalibrationModality, lipidsV3);
     } catch (e) {
       console.warn('[vitals] persistCalibrations failed:', (e as any)?.message ?? e);
     }
@@ -312,6 +330,34 @@ export class VitalSignsProcessor {
     return r;
   }
   getHemoglobinCalibrationStatus() { return this.hemoglobinProcessor.getCalibrationStatus(); }
+
+  // ─── Glucose V3 (Phase 9) ───
+  startGlucoseV3Training(): void { this.glucoseProcessorV3.startTrainingMode(); }
+  addGlucoseV3TrainingSample(features: GlucoseV3Features, refMgDl: number) {
+    const r = this.glucoseProcessorV3.addTrainingSample(features, refMgDl);
+    this.persistCalibrations().catch(() => { /* */ });
+    return r;
+  }
+  finishGlucoseV3Training() {
+    const r = this.glucoseProcessorV3.finishTraining();
+    if (r.success) this.persistCalibrations().catch(() => { /* */ });
+    return r;
+  }
+  getGlucoseV3CalibrationStatus() { return this.glucoseProcessorV3.getCalibrationStatus(); }
+
+  // ─── Lipids V3 (Phase 9) ───
+  startLipidsV3Training(): void { this.lipidProcessorV3.startTraining(); }
+  addLipidsV3TrainingSample(features: LipidV3Features, refLabs: { totalCholesterol: number; ldl: number; hdl: number; triglycerides: number }) {
+    const r = this.lipidProcessorV3.addTrainingSample(features, refLabs);
+    this.persistCalibrations().catch(() => { /* */ });
+    return r;
+  }
+  finishLipidsV3Training() {
+    const r = this.lipidProcessorV3.finishTraining();
+    if (r.success) this.persistCalibrations().catch(() => { /* */ });
+    return r;
+  }
+  getLipidsV3CalibrationStatus() { return this.lipidProcessorV3.getCalibrationStatus(); }
 
   /**
    * Cargar calibración de dispositivo SpO2 (aplicada a V2 y V3)
@@ -655,6 +701,44 @@ export class VitalSignsProcessor {
         this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipidResult.totalCholesterol, 'dynamic');
         this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipidResult.triglycerides, 'dynamic');
       }
+
+      // Phase 9 — V3 ridge regressors run in parallel; values overwrite V2
+      // when the V3 model is calibrated AND publishes (researchMode flag stays).
+      const odR = this.rgbData.redDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.redDC / 255)) : 0;
+      const odG = this.rgbData.greenDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.greenDC / 255)) : 0;
+      const odB = (this.rgbData.blueDC ?? 0) > 0 ? -Math.log(Math.max(1e-6, (this.rgbData.blueDC ?? 1) / 255)) : 0;
+
+      const gV3Features: GlucoseV3Features = {
+        sutMs: medianF.sutMs, pw50Ms: medianF.pw50Ms, pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
+        augmentationIndex: medianF.augmentationIndex, stiffnessIndex: medianF.stiffnessIndex,
+        dicroticDepth: medianF.dicroticDepth, areaRatio: medianF.areaRatio,
+        hr, rrSDNN: rrVar.sdnn,
+        perfusionGreen: this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0,
+        rgRatio: this.rgbData.greenDC > 0 ? this.rgbData.redDC / this.rgbData.greenDC : 0,
+        odR, odG, odB,
+      };
+      const glucoseV3Result = this.glucoseProcessorV3.process(gV3Features, Math.max(0, this.measurements.signalQuality / 100));
+      if (glucoseV3Result.value !== null && glucoseV3Result.confidence > 0.3) {
+        this.lastGlucose = glucoseV3Result as any;
+        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseV3Result.value as number, 'dynamic');
+      }
+
+      const lV3Features: LipidV3Features = {
+        stiffnessIndex: medianF.stiffnessIndex, augmentationIndex: medianF.augmentationIndex,
+        pwvProxy: medianF.pwvProxy, pulseAmplitude: medianF.systolicAmplitude,
+        pw50Ms: medianF.pw50Ms, pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
+        diastolicTimeMs: medianF.diastolicTimeMs, areaRatio: medianF.areaRatio,
+        dicroticDepth: medianF.dicroticDepth,
+        hr, rrSDNN: rrVar.sdnn,
+        perfusionGreen: this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0,
+      };
+      const lipidsV3Result = this.lipidProcessorV3.process(lV3Features, Math.max(0, this.measurements.signalQuality / 100));
+      if (lipidsV3Result.value && typeof lipidsV3Result.value === 'object' && lipidsV3Result.confidence > 0.25) {
+        this.lastLipids = lipidsV3Result as any;
+        const v = lipidsV3Result.value as any;
+        if (v.totalCholesterol > 0) this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, v.totalCholesterol, 'dynamic');
+        if (v.triglycerides > 0) this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, v.triglycerides, 'dynamic');
+      }
     }
 
     // ── HRV (time + frequency + non-linear) and Stress index — Phase 5 ──
@@ -850,7 +934,9 @@ export class VitalSignsProcessor {
     this.bloodPressureProcessorV3.reset();
     this.hemoglobinProcessor.reset();
     this.glucoseProcessor.reset();
+    this.glucoseProcessorV3.reset();
     this.lipidProcessor.reset();
+    this.lipidProcessorV3.reset();
     this.rhythmClassifier.reset();
     this.rhythmClassifierV3.reset();
     this.spo2ProcessorV3.reset();
@@ -881,6 +967,8 @@ export class VitalSignsProcessor {
     this.spo2ProcessorV3.fullReset();
     this.hemoglobinProcessor.fullReset();
     this.glucoseProcessor.fullReset();
+    this.glucoseProcessorV3.fullReset();
+    this.lipidProcessorV3.fullReset();
     this.lipidProcessor.fullReset();
     this.rhythmClassifier.reset();
     this.rhythmClassifierV3.reset();
