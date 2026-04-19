@@ -9,6 +9,7 @@ import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
 import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
+import DebugPanel from "@/components/DebugPanel";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -146,6 +147,18 @@ const Index = () => {
   const { saveMeasurement } = useSaveMeasurement();
   const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
   const [showAIAnalysis, setShowAIAnalysis] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const cameraDriftRef = useRef(0);
+
+  // Listen for Phase 13 camera-drift events to surface in DebugPanel
+  useEffect(() => {
+    const onDrift = (e: Event) => {
+      const detail: any = (e as CustomEvent).detail;
+      if (typeof detail?.score === 'number') cameraDriftRef.current = detail.score;
+    };
+    window.addEventListener('cppg:camera-drift', onDrift as EventListener);
+    return () => window.removeEventListener('cppg:camera-drift', onDrift as EventListener);
+  }, []);
 
   useEffect(() => {
     if (!canvasRef.current) {
@@ -648,6 +661,25 @@ const Index = () => {
       WebkitTouchCallout: 'none',
       WebkitUserSelect: 'none'
     }}>
+      {/* Phase 16 — floating debug toggle (top-right) */}
+      <button
+        onClick={() => setShowDebug(true)}
+        className="fixed top-2 right-2 z-40 px-2 py-1 rounded bg-slate-900/70 border border-slate-700 text-slate-300 text-[10px] font-mono backdrop-blur-sm"
+        aria-label="Open debug panel"
+      >
+        ⚙ DBG
+      </button>
+      <DebugPanel
+        open={showDebug}
+        onClose={() => setShowDebug(false)}
+        lastSignal={lastSignal}
+        vitalSigns={vitalSigns}
+        positionQuality={getPositionQuality()}
+        realFps={(lastSignal as any)?.telemetry?.realFps}
+        processingTimeMs={(lastSignal as any)?.telemetry?.processingTimeMs}
+        cameraDriftScore={cameraDriftRef.current}
+      />
+
       {!isFullscreen && (
         <button onClick={enterFullScreen} className="fixed inset-0 z-50 w-full h-full flex items-center justify-center bg-black/90 text-white">
           <div className="text-center p-4 bg-primary/20 rounded-lg backdrop-blur-sm">
@@ -706,11 +738,11 @@ const Index = () => {
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
-            <div className="grid grid-cols-3 gap-4 place-items-center">
+          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-3 overflow-y-auto">
+            <div className="grid grid-cols-3 gap-3 place-items-center">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
-              <VitalSign 
+              <VitalSign
                 label="PRESIÓN ARTERIAL"
                 value={vitalSigns.pressure && vitalSigns.pressure.systolic > 0 ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}` : "--/--"}
                 unit="mmHg"
@@ -719,13 +751,54 @@ const Index = () => {
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
               <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
-              <VitalSign 
+              <VitalSign
                 label="COLEST./TRIGL. (EST.)"
                 value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
                 unit="mg/dL"
                 highlighted={showResults}
               />
               <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
+
+              {/* Phase 5/6/10 — new vital signs */}
+              <VitalSign
+                label="RESPIRACIÓN"
+                value={vitalSigns.respiration && vitalSigns.respiration.brpm > 0 ? Math.round(vitalSigns.respiration.brpm) : "--"}
+                unit="rpm"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="HRV (RMSSD)"
+                value={vitalSigns.hrv && vitalSigns.hrv.time.rmssd > 0 ? Math.round(vitalSigns.hrv.time.rmssd) : "--"}
+                unit="ms"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="ESTRÉS"
+                value={vitalSigns.stress && vitalSigns.stress.confidence > 0
+                  ? `${vitalSigns.stress.index} ${vitalSigns.stress.label.split('_').join(' ')}`
+                  : "--"}
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="LF/HF"
+                value={vitalSigns.hrv && vitalSigns.hrv.freq.lfHfRatio > 0
+                  ? vitalSigns.hrv.freq.lfHfRatio.toFixed(2)
+                  : "--"}
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="HEMOGLOBINA (EST.)"
+                value={vitalSigns.hemoglobin && typeof vitalSigns.hemoglobin.value === 'number' ? vitalSigns.hemoglobin.value : "--"}
+                unit="g/dL"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="DFA α1"
+                value={vitalSigns.hrv && vitalSigns.hrv.nonlinear.dfaAlpha1 !== 0
+                  ? vitalSigns.hrv.nonlinear.dfaAlpha1.toFixed(2)
+                  : "--"}
+                highlighted={showResults}
+              />
             </div>
           </div>
 
