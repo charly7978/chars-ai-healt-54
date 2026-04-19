@@ -62,6 +62,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     driftSamples: 0,
   });
   const driftMonitorRef = useRef<number | null>(null);
+  const torchKeepAliveRef = useRef<number | null>(null);
 
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current,
@@ -72,10 +73,14 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     let mounted = true;
 
     const stopCamera = async () => {
-      // Phase 13 — clear drift monitor
+      // Phase 13 — clear drift monitor + torch keepalive
       if (driftMonitorRef.current !== null) {
         clearInterval(driftMonitorRef.current);
         driftMonitorRef.current = null;
+      }
+      if (torchKeepAliveRef.current !== null) {
+        clearInterval(torchKeepAliveRef.current);
+        torchKeepAliveRef.current = null;
       }
       if (streamRef.current) {
         for (const track of streamRef.current.getVideoTracks()) {
@@ -256,14 +261,38 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             }
           }
           if (!torchOk) console.warn('⚠️ Torch failed after 5 attempts');
+
+          // Phase 20 — Torch KEEPALIVE: re-assert torch:true every 1.5 s.
+          // Many Android pipelines momentarily drop the torch on AGC / focus
+          // events even when manual mode succeeded. Re-applying the same
+          // 'advanced: [{ torch: true }]' constraint is idempotent and
+          // imperceptible to the user. This single change fixes the
+          // "el flash prende y se apaga" symptom on Pixel/Samsung.
+          if (torchKeepAliveRef.current !== null) clearInterval(torchKeepAliveRef.current);
+          torchKeepAliveRef.current = window.setInterval(async () => {
+            try {
+              const settings = track.getSettings?.() as any;
+              const torchActuallyOn = (settings && (settings as any).torch !== false);
+              if (!torchActuallyOn) {
+                await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                diagnosticsRef.current.torchActive = true;
+              }
+            } catch { /* ignore — next tick will retry */ }
+          }, 1500);
         }
 
         // PHASE 4: Fine lock — apply each independently, log what succeeds
         await new Promise(r => setTimeout(r, 300));
         
         const tryConstraint = async (name: string, value: any): Promise<boolean> => {
+          // Phase 20 — ALWAYS include torch:true in the same advanced
+          // descriptor when caps?.torch is supported. On Android, every
+          // applyConstraints call replaces the previous 'advanced' array,
+          // so omitting torch here would silently turn the flash off.
+          const adv: Record<string, any> = { [name]: value };
+          if (caps?.torch) adv.torch = true;
           try {
-            await track.applyConstraints({ advanced: [{ [name]: value } as any] });
+            await track.applyConstraints({ advanced: [adv as any] });
             return true;
           } catch {
             return false;
@@ -309,6 +338,18 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           await tryConstraint('focusMode', 'continuous');
         }
 
+        // Phase 20 — final torch re-assertion after fine-lock cascade.
+        // Defensive: even with the bundled-torch trick, some drivers reset
+        // torch after the last applyConstraints. One extra explicit call is
+        // imperceptible and guarantees the flash is on by the time we hand
+        // the stream to the app.
+        if (caps?.torch) {
+          try {
+            await track.applyConstraints({ advanced: [{ torch: true } as any] });
+            diagnosticsRef.current.torchActive = true;
+          } catch { /* keepalive will retry */ }
+        }
+
         // Log final settings
         const finalSettings = track.getSettings() as any;
         diagnosticsRef.current.initialIso = finalSettings.iso ?? diagnosticsRef.current.isoValue;
@@ -321,16 +362,26 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           '| WB:', diagnosticsRef.current.wbLocked,
           '| ISO:', diagnosticsRef.current.isoValue);
 
-        // Phase 13 — runtime drift monitor: every 5 s compare current
-        // settings against initial; populate exposureDriftScore (EMA 0..1).
-        // If drift > 0.20 over multiple checks, attempt to re-lock.
+        // Phase 13 + 19 — runtime drift monitor (OBSERVE-ONLY).
+        //
+        // CRITICAL FIX (Phase 20): the previous version called
+        // track.applyConstraints({ advanced: [{ iso }] }) whenever drift was
+        // detected. On many Android phones (Pixel, Samsung One UI) any new
+        // 'advanced' constraint replaces the entire previous advanced array
+        // — which **silently turns the torch off**, producing the
+        // "el flash prende y se apaga" symptom the user reported.
+        //
+        // We now only OBSERVE drift (populate exposureDriftScore + dispatch
+        // 'cppg:camera-drift') so the PPG processor can still penalize SQI.
+        // We never re-apply iso/ec/wb constraints in the loop. We DO re-apply
+        // torch:true as a defensive guard every monitor tick on devices that
+        // support it, in case the OS dropped it for any reason.
         const initial = {
           iso: diagnosticsRef.current.initialIso,
           ec: diagnosticsRef.current.initialExposureCompensation,
           wb: diagnosticsRef.current.initialWhiteBalanceMode,
         };
         let driftEMA = 0;
-        let driftHits = 0;
         if (driftMonitorRef.current !== null) clearInterval(driftMonitorRef.current);
         driftMonitorRef.current = window.setInterval(async () => {
           try {
@@ -342,7 +393,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
               n++;
             }
             if (initial.ec !== undefined && s.exposureCompensation !== undefined) {
-              drift += Math.abs((s.exposureCompensation - initial.ec)) / 4; // ±2 stops range
+              drift += Math.abs((s.exposureCompensation - initial.ec)) / 4;
               n++;
             }
             if (initial.wb && s.whiteBalanceMode && initial.wb !== s.whiteBalanceMode) {
@@ -354,28 +405,19 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             diagnosticsRef.current.driftSamples = (diagnosticsRef.current.driftSamples ?? 0) + 1;
             const warn = driftEMA > 0.20;
             diagnosticsRef.current.exposureDriftWarning = warn;
-            // Dispatch event so the PPG processor can penalize SQI in real time
             window.dispatchEvent(new CustomEvent('cppg:camera-drift', {
               detail: { score: driftEMA, warning: warn },
             }));
 
-            if (warn) {
-              driftHits++;
-              if (driftHits >= 2) {
-                // Re-apply lock attempt (cheap; failures ignored)
-                if (initial.iso && initial.iso > 0) {
-                  await track.applyConstraints({ advanced: [{ iso: initial.iso } as any] }).catch(() => {});
-                }
-                if (initial.ec !== undefined) {
-                  await track.applyConstraints({ advanced: [{ exposureCompensation: initial.ec } as any] }).catch(() => {});
-                }
-                if (initial.wb === 'manual') {
-                  await track.applyConstraints({ advanced: [{ whiteBalanceMode: 'manual' } as any] }).catch(() => {});
-                }
-                driftHits = 0;
+            // Defensive torch re-apply: do NOT touch iso/ec/wb here.
+            // Many Android pipelines drop the torch on focus/AGC events;
+            // re-asserting torch:true alone is safe and idempotent.
+            if (caps?.torch && diagnosticsRef.current.hasTorch) {
+              const torchStillOn = (s as any).torch !== false;
+              if (!torchStillOn) {
+                await track.applyConstraints({ advanced: [{ torch: true } as any] }).catch(() => {});
+                diagnosticsRef.current.torchActive = true;
               }
-            } else {
-              driftHits = 0;
             }
           } catch { /* */ }
         }, 5000);
