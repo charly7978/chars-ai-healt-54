@@ -1,69 +1,46 @@
-# Welcome to your Lovable project
+# cPPG Vitals — Smartphone-Camera Vital Signs
 
-## Project info
+A contact-PPG (cPPG) web app that turns the rear camera + flash of any
+modern phone into a multi-modal vital signs monitor. The pipeline is
+fully deterministic: every value emitted to the UI comes from real signal
+math (no `Math.random()`, no fakes, no fallbacks that hide failures).
 
-**URL**: https://lovable.dev/projects/d19c3295-2b5b-4a30-ba82-d64b04ac6a03
+## What it measures
 
-## How can I edit this code?
+| Vital sign | Method | Status |
+|---|---|---|
+| Heart rate (BPM) | Triple detector (prominence + slope-sum + Pan-Tompkins) + Goertzel + Kalman1D | ✅ |
+| SpO2 | Multi-channel R/G + R/B ratio-of-ratios, ridge calibration | ✅ |
+| Blood pressure | 16-feature ridge regression (LOO-RMSE), ≥5 cuff calibration points | ✅ calibrable |
+| Respiratory rate | AM+FM+BW modulations + Welch PSD over the 0.10–0.50 Hz band | ✅ |
+| HRV (time + freq + non-linear) | SDNN, RMSSD, pNN50, SD1/SD2, LF/HF via Lomb-Scargle, DFA α1, SampEn | ✅ |
+| Stress index | Baevsky SI + LF/HF + RMSSD + HR elev + PI variability | ✅ |
+| Hemoglobin (g/dL) | Ridge over RGB + Beer-Lambert OD; WHO anemia screening | 🔬 research |
+| Glucose (mg/dL) | Ridge with OD features + morphology | 🔬 research |
+| Lipids (TC/LDL/HDL/Trig) | Per-target ridge | 🔬 research |
+| Arrhythmia detection | Hierarchical: AF / bigeminy / trigeminy / ectopia + Poincaré 3D + morphology | ✅ |
 
-There are several ways of editing your application.
+## Getting started
 
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/d19c3295-2b5b-4a30-ba82-d64b04ac6a03) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```bash
+npm install
+npm run dev          # http://localhost:8080
+npm run build        # production build
+npm run test:run     # unit tests
+npm run test:coverage  # coverage report
 ```
 
-**Edit a file directly in GitHub**
+## Documentation
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- [`docs/architecture.md`](./docs/architecture.md) — pipeline + data flow
+- [`docs/algorithms.md`](./docs/algorithms.md) — math + paper references
+- [`docs/calibration-guide.md`](./docs/calibration-guide.md) — per-modality calibration
+- [`docs/medical-validation.md`](./docs/medical-validation.md) — anti-simulation policy
 
-**Use GitHub Codespaces**
+## Disclaimer
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with .
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/d19c3295-2b5b-4a30-ba82-d64b04ac6a03) and click on Share -> Publish.
-
-## I want to use a custom domain - is that possible?
-
-We don't support custom domains (yet). If you want to deploy your project under your own domain then we recommend using Netlify. Visit our docs for more details: [Custom domains](https://docs.lovable.dev/tips-tricks/custom-domain/)
+This is a research-grade tool for personal monitoring and informatics
+study. It is NOT a medical device and is NOT FDA/CE cleared. BP and
+biomarker estimates require user calibration against a validated reference
+device; without calibration, the app marks them as RESEARCH_ONLY and
+withholds high-confidence claims.
