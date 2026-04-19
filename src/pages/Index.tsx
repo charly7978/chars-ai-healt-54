@@ -13,12 +13,18 @@ import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
+// Rhythms that should NOT trigger an alert toast/vibration.
+// Includes both v2 canonical labels and legacy labels still emitted
+// during transition windows so we never raise false alarms.
 const NON_ALERT_RHYTHMS = new Set([
   'SIN ARRITMIAS',
-  'SINUS_STABLE',
+  'SINUS_REGULAR',
+  'SINUS_STABLE',           // legacy
   'SINUS_VARIABLE',
   'CALIBRANDO...',
-  'UNDETERMINED_LOW_QUALITY'
+  'INSUFFICIENT_DATA',
+  'NOISE_OR_UNRELIABLE',
+  'UNDETERMINED_LOW_QUALITY' // legacy
 ]);
 
 const Index = () => {

@@ -1,4 +1,3 @@
-import { ArrhythmiaProcessor } from './arrhythmia-processor';
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessor } from './BloodPressureProcessor';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
@@ -58,7 +57,6 @@ export interface RGBData {
 }
 
 export class VitalSignsProcessor {
-  private arrhythmiaProcessor: ArrhythmiaProcessor;
   private bloodPressureProcessor: BloodPressureProcessor;
   private rhythmClassifier: RhythmClassifier;
   private spo2Processor: SpO2Processor;
@@ -106,7 +104,6 @@ export class VitalSignsProcessor {
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
 
   constructor() {
-    this.arrhythmiaProcessor = new ArrhythmiaProcessor();
     this.bloodPressureProcessor = new BloodPressureProcessor();
     this.rhythmClassifier = new RhythmClassifier();
     this.spo2Processor = new SpO2Processor();
@@ -324,6 +321,7 @@ export class VitalSignsProcessor {
       }
     }
 
+    // ── Hierarchical rhythm classification (single source of truth) ──
     if (beatInputs && beatInputs.length >= 4) {
       const rhythmResult = this.rhythmClassifier.classify(
         beatInputs,
@@ -331,35 +329,16 @@ export class VitalSignsProcessor {
         Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement)
       );
       this.lastRhythm = rhythmResult;
-    }
 
-    // Arrhythmia classification via new hierarchical pipeline (classify())
-    const arrhythmiaRR = validRR.slice(-12);
-    if (
-      arrhythmiaRR.length >= 4 &&
-      this.measurements.signalQuality >= 18 &&
-      hr >= 35 && hr <= 180
-    ) {
-      const arrhythmiaResult = this.arrhythmiaProcessor.classify({
-        ibiMs: arrhythmiaRR,
-        beatAcceptanceRate: Math.min(1, this.upstreamContext.detectorAgreement || 0.7),
-        sqi: this.measurements.signalQuality,
-        contactStable: !!this.upstreamContext.contactStable,
-        perfusionIndex: 0.01,
-        samplesPerSecond: this.upstreamContext.sampleRate || 30,
-      });
-      const label = String(arrhythmiaResult.classification);
-      const eventCount = arrhythmiaResult.evidenceBreakdown?.windowsAnalyzed ?? 0;
-      this.measurements.arrhythmiaStatus = `${label}|${eventCount}`;
-      this.measurements.arrhythmiaCount = eventCount;
-      this.measurements.lastArrhythmiaData = null;
-    }
-
-    if (this.lastRhythm && this.lastRhythm.rhythmConfidence >= 0.2) {
-      const rhythmLabel = this.lastRhythm.rhythmLabel;
-      const rhythmCount = this.lastRhythm.recentEvents?.length ?? this.measurements.arrhythmiaCount ?? 0;
-      this.measurements.arrhythmiaStatus = `${rhythmLabel}|${rhythmCount}`;
-      this.measurements.arrhythmiaCount = rhythmCount;
+      // Publish rhythm status only when classifier has minimum confidence;
+      // otherwise keep previous status (no false positives from low-quality windows).
+      if (rhythmResult.rhythmConfidence >= 0.2 && rhythmResult.rhythmLabel !== 'INSUFFICIENT_DATA') {
+        const rhythmLabel = rhythmResult.rhythmLabel;
+        const rhythmCount = rhythmResult.recentEvents?.length ?? 0;
+        this.measurements.arrhythmiaStatus = `${rhythmLabel}|${rhythmCount}`;
+        this.measurements.arrhythmiaCount = rhythmCount;
+        this.measurements.lastArrhythmiaData = null;
+      }
     }
   }
 
@@ -463,7 +442,6 @@ export class VitalSignsProcessor {
     const result = this.getFormattedResult();
     this.signalHistory = [];
     this.validPulseCount = 0;
-    this.arrhythmiaProcessor.reset();
     this.spo2Processor.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
@@ -489,7 +467,6 @@ export class VitalSignsProcessor {
     this.rgbData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
     this.isCalibrating = false;
     this.calibrationSamples = 0;
-    this.arrhythmiaProcessor.reset();
     this.bloodPressureProcessor.fullReset();
     this.spo2Processor.fullReset();
     this.glucoseProcessor.fullReset();
