@@ -171,14 +171,12 @@ export class LipidResearchProcessor {
       confidence: 0, enabledState: 'NEEDS_CALIBRATION',
     };
 
-    // Phase 21 — gate ONLY on signal quality. Without a calibrated model we
-    // still publish a population prior (RESEARCH_ONLY, low confidence) so
-    // the UI doesn't show '--' indefinitely.
+    // Gate estricto: sin señal usable no se publica.
     if (!input.contactStable || input.signalQuality < 12) {
       return { ...blocked, enabledState: 'WITHHELD_LOW_QUALITY' };
     }
     const ageDays = this.model ? (Date.now() - this.model.createdAt) / 86400000 : Infinity;
-    const haveCalib = !!this.model && ageDays <= RECAL_DAYS;
+    if (!this.model || ageDays > RECAL_DAYS) return blocked;
 
     const cf = input.cycleFeatures;
     const features: LipidFeatureVector = {
@@ -204,53 +202,26 @@ export class LipidResearchProcessor {
 
     const targets = ['totalCholesterol', 'ldl', 'hdl', 'triglycerides'] as const;
     const predictions: Record<string, number> = {};
-    let confidence: number;
-
-    if (haveCalib) {
-      const model = this.model!;
-      const fnames = Object.keys(model.weights.totalCholesterol);
-      for (const target of targets) {
-        let pred = model.intercepts[target];
-        for (const fname of fnames) {
-          const raw = (features as any)[fname] ?? 0;
-          const norm = (raw - model.featureMeans[fname]) / model.featureStds[fname];
-          pred += (model.weights[target][fname] ?? 0) * norm;
-        }
-        predictions[target] = Math.max(50, Math.min(500, Math.round(pred)));
+    const model = this.model;
+    const fnames = Object.keys(model.weights.totalCholesterol);
+    for (const target of targets) {
+      let pred = model.intercepts[target];
+      for (const fname of fnames) {
+        const raw = (features as any)[fname] ?? 0;
+        const norm = (raw - model.featureMeans[fname]) / model.featureStds[fname];
+        pred += (model.weights[target][fname] ?? 0) * norm;
       }
-      confidence = 0.25;
-      confidence += Math.min(0.15, model.samples.length / 200);
-      for (const t of targets) { if (model.rmse[t] < 20) confidence += 0.08; }
-      confidence = Math.min(0.75, confidence);
-    } else {
-      // Phase 21 — population prior (RESEARCH_ONLY) — uses arterial
-      // stiffness + augmentation + dicrotic depth as proxies for vascular
-      // age, which loosely correlates with lipid status. Output stays at
-      // LOW confidence until calibrated.
-      const stiff = features.stiffnessIndex;     // typical 8–15
-      const ai   = features.augmentationIndex;   // typical 15–35
-      const dn   = features.dicroticDepth;       // 0–1
-      // Total cholesterol baseline 180 mg/dL
-      const tc  = 180 + (stiff - 12) * 4 + (ai - 25) * 0.5 - (dn - 0.4) * 25;
-      // LDL ≈ TC × 0.55
-      const ldl = tc * 0.55 + (ai - 25) * 0.3;
-      // HDL ≈ 50 mg/dL, slight inverse with stiffness
-      const hdl = 55 - (stiff - 12) * 0.8 + (dn - 0.4) * 12;
-      // TG baseline 110 mg/dL
-      const tg  = 110 + (stiff - 12) * 5 + (ai - 25) * 0.4;
-      predictions.totalCholesterol = Math.round(Math.max(120, Math.min(280, tc)));
-      predictions.ldl              = Math.round(Math.max(60,  Math.min(200, ldl)));
-      predictions.hdl              = Math.round(Math.max(30,  Math.min(80,  hdl)));
-      predictions.triglycerides    = Math.round(Math.max(50,  Math.min(250, tg)));
-      confidence = 0.18 + Math.min(0.07, input.signalQuality / 1000);
+      predictions[target] = Math.max(50, Math.min(500, Math.round(pred)));
     }
+    let confidence = 0.25;
+    confidence += Math.min(0.15, model.samples.length / 200);
+    for (const t of targets) { if (model.rmse[t] < 20) confidence += 0.08; }
+    confidence = Math.min(0.75, confidence);
 
-    const enabledState = haveCalib
-      ? (confidence >= 0.60 ? 'ENABLED_HIGH_CONFIDENCE'
-        : confidence >= 0.40 ? 'ENABLED_MEDIUM_CONFIDENCE'
-        : confidence >= 0.20 ? 'ENABLED_LOW_CONFIDENCE'
-        : 'WITHHELD_LOW_QUALITY')
-      : 'ENABLED_LOW_CONFIDENCE';
+    const enabledState = confidence >= 0.60 ? 'ENABLED_HIGH_CONFIDENCE'
+      : confidence >= 0.40 ? 'ENABLED_MEDIUM_CONFIDENCE'
+      : confidence >= 0.20 ? 'ENABLED_LOW_CONFIDENCE'
+      : 'WITHHELD_LOW_QUALITY';
 
     this.lastOutput = {
       totalCholesterol: predictions.totalCholesterol,

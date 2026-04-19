@@ -18,10 +18,19 @@ export const useHealthAnalysis = () => {
 
     const { heartRate, vitalSigns, quality } = data;
 
-    if (heartRate <= 0 && vitalSigns.spo2 <= 0) {
+    const hasHeartRate = Number.isFinite(heartRate) && heartRate > 0;
+    const hasSpo2 = Number.isFinite(vitalSigns.spo2) && vitalSigns.spo2 > 0;
+    const hasPressure = Number.isFinite(vitalSigns.pressure?.systolic) &&
+      Number.isFinite(vitalSigns.pressure?.diastolic) &&
+      (vitalSigns.pressure?.systolic ?? 0) > 0 &&
+      (vitalSigns.pressure?.diastolic ?? 0) > 0;
+
+    // Regla anti-simulación: no enviar valores por defecto inventados al backend.
+    // Si falta alguna señal núcleo (HR/SpO2/BP) se bloquea el análisis AI.
+    if (!hasHeartRate || !hasSpo2 || !hasPressure) {
       toast({
         title: "Datos insuficientes",
-        description: "Se necesitan datos de medición válidos para el análisis.",
+        description: "Se requieren HR, SpO2 y presión arterial reales para analizar.",
         variant: "destructive",
         duration: 3000
       });
@@ -34,10 +43,10 @@ export const useHealthAnalysis = () => {
     try {
       const { data: result, error } = await supabase.functions.invoke('analyze-vitals', {
         body: {
-          heartRate: heartRate || 70,
-          spo2: vitalSigns.spo2 || 97,
-          systolic: vitalSigns.pressure?.systolic || 120,
-          diastolic: vitalSigns.pressure?.diastolic || 80,
+          heartRate,
+          spo2: vitalSigns.spo2,
+          systolic: vitalSigns.pressure.systolic,
+          diastolic: vitalSigns.pressure.diastolic,
           arrhythmiaCount: vitalSigns.arrhythmiaCount || 0,
           glucose: vitalSigns.glucose || undefined,
           
