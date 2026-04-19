@@ -163,19 +163,34 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         // PHASE 1
         const cameraId = await findMainBackCamera();
 
-        // PHASE 2: Open stream with stable base
+        // PHASE 2: Open stream with MAXIMUM resolution and frame rate
+        // Optimized for PPG: high resolution = better ROI analysis
+        // 60fps = better temporal resolution for cardiac signal
         const baseConstraints: MediaTrackConstraints = cameraId
           ? {
               deviceId: { exact: cameraId },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1080, min: 720 },
+              frameRate: { ideal: 60, min: 30, max: 60 },
+              // Advanced imaging constraints for PPG stability
+              exposureMode: { ideal: 'manual' },
+              whiteBalanceMode: { ideal: 'manual' },
+              focusMode: { ideal: 'manual' },
+              iso: { ideal: 100, min: 50, max: 400 },
+              brightness: { ideal: 128, min: 100, max: 150 },
+              contrast: { ideal: 0 },
+              saturation: { ideal: 0 },
+              sharpness: { ideal: 0 }
             }
           : {
-              facingMode: { ideal: 'environment' },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              facingMode: { exact: 'environment' },
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1080, min: 720 },
+              frameRate: { ideal: 60, min: 30, max: 60 },
+              exposureMode: { ideal: 'manual' },
+              whiteBalanceMode: { ideal: 'manual' },
+              focusMode: { ideal: 'manual' },
+              iso: { ideal: 100, min: 50, max: 400 }
             };
 
         let stream: MediaStream;
@@ -279,55 +294,85 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           }, 1500);
         }
 
-        // PHASE 4: Fine lock — apply each independently, log what succeeds
+        // PHASE 4: AGGRESSIVE manual lock — prevent any automatic adjustments
+        // This is critical for PPG: AGC and AWB destroy the AC/DC ratio
         await new Promise(r => setTimeout(r, 300));
         
-        const tryConstraint = async (name: string, value: any): Promise<boolean> => {
-          try {
-            await track.applyConstraints({ advanced: [{ [name]: value } as any] });
-            return true;
-          } catch {
-            return false;
+        const tryConstraint = async (name: string, value: any, retries = 3): Promise<boolean> => {
+          for (let i = 0; i < retries; i++) {
+            try {
+              await track.applyConstraints({ advanced: [{ [name]: value } as any] });
+              return true;
+            } catch {
+              await new Promise(r => setTimeout(r, 50));
+            }
           }
+          return false;
         };
 
-        // Frame rate lock
-        await tryConstraint('frameRate', 30);
+        // Frame rate lock at maximum
+        const targetFps = Math.min(60, caps?.frameRate?.max ?? 60);
+        await tryConstraint('frameRate', targetFps);
 
-        // Exposure
+        // EXPOSURE: Lock to manual to prevent AGC interference
         if (caps?.exposureMode?.includes('manual')) {
           diagnosticsRef.current.exposureLocked = await tryConstraint('exposureMode', 'manual');
-        } else if (caps?.exposureMode?.includes('continuous')) {
-          await tryConstraint('exposureMode', 'continuous');
+          // Set specific exposure time if available (shorter = less motion blur)
+          if (caps?.exposureTime) {
+            const minExp = caps.exposureTime.min ?? 100;
+            const maxExp = caps.exposureTime.max ?? 10000;
+            const targetExp = Math.max(minExp, Math.min(maxExp, 8333)); // ~1/120s
+            await tryConstraint('exposureTime', targetExp);
+          }
         }
 
+        // Exposure compensation: lock to 0 (neutral)
         if (caps?.exposureCompensation) {
-          const min = caps.exposureCompensation.min ?? -2;
-          const max = caps.exposureCompensation.max ?? 2;
-          const target = Math.max(min, Math.min(max, -0.35));
-          await tryConstraint('exposureCompensation', target);
+          await tryConstraint('exposureCompensation', 0);
         }
 
-        // White balance
+        // WHITE BALANCE: Manual with custom temperature for consistent red channel
         if (caps?.whiteBalanceMode?.includes('manual')) {
           diagnosticsRef.current.wbLocked = await tryConstraint('whiteBalanceMode', 'manual');
+          // Set color temperature for consistent tissue reflectance
+          if (caps?.colorTemperature) {
+            const minCT = caps.colorTemperature.min ?? 3000;
+            const maxCT = caps.colorTemperature.max ?? 6500;
+            const targetCT = Math.max(minCT, Math.min(maxCT, 4500)); // Neutral daylight
+            await tryConstraint('colorTemperature', targetCT);
+          }
         }
 
-        // ISO
+        // ISO: Lock to low value for minimal noise, maximum dynamic range
         if (caps?.iso) {
           const minISO = caps.iso.min ?? 50;
-          const maxISO = caps.iso.max ?? 400;
-          const targetISO = Math.max(minISO, Math.min(maxISO, 140));
-          if (await tryConstraint('iso', targetISO)) {
+          const maxISO = caps.iso.max ?? 1600;
+          // Target lowest ISO for best signal-to-noise ratio
+          const targetISO = Math.max(minISO, Math.min(maxISO, minISO * 2));
+          if (await tryConstraint('iso', targetISO, 5)) {
             diagnosticsRef.current.isoValue = targetISO;
           }
         }
 
-        // Focus
+        // FOCUS: Lock to infinity (finger is effectively at infinity for macro)
         if (caps?.focusMode?.includes('manual')) {
           diagnosticsRef.current.focusLocked = await tryConstraint('focusMode', 'manual');
-        } else if (caps?.focusMode?.includes('continuous')) {
-          await tryConstraint('focusMode', 'continuous');
+          if (caps?.focusDistance) {
+            const minFocus = caps.focusDistance.min ?? 0;
+            const maxFocus = caps.focusDistance.max ?? 1;
+            // Focus at infinity end for uniform finger illumination
+            await tryConstraint('focusDistance', maxFocus * 0.9);
+          }
+        } else if (caps?.focusMode?.includes('single-shot')) {
+          await tryConstraint('focusMode', 'single-shot');
+        }
+
+        // BRIGHTNESS/CONTRAST: Neutral for linear response
+        if (caps?.brightness) {
+          await tryConstraint('brightness', 128); // Midpoint
+        }
+        if (caps?.contrast) {
+          await tryConstraint('contrast', 0); // Neutral
         }
 
         // Log final settings
