@@ -783,10 +783,17 @@ const Index = () => {
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
-              <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
               <VitalSign
-                label="COLEST./TRIGL. (EST.)"
-                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
+                label="GLUCOSA (RESEARCH)"
+                value={vitalSigns.outputStates?.glucose?.startsWith('ENABLED') && vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
+                unit="mg/dL"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="COLEST./TRIGL. (RESEARCH)"
+                value={vitalSigns.outputStates?.lipids?.startsWith('ENABLED') && (vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0)
+                  ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`
+                  : "--/--"}
                 unit="mg/dL"
                 highlighted={showResults}
               />
@@ -820,7 +827,7 @@ const Index = () => {
                 highlighted={showResults}
               />
               <VitalSign
-                label="HEMOGLOBINA (EST.)"
+                label="HEMOGLOBINA (RESEARCH)"
                 value={vitalSigns.hemoglobin && typeof vitalSigns.hemoglobin.value === 'number' ? vitalSigns.hemoglobin.value : "--"}
                 unit="g/dL"
                 highlighted={showResults}

@@ -146,6 +146,27 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
               {Object.entries(vitalSigns.outputStates).map(([k, v]) => (
                 <Row key={k} k={k} v={String(v)} tone={String(v).includes('HIGH') ? 'ok' : String(v).includes('WITHHELD') ? 'bad' : 'warn'} />
               ))}
+              <Row
+                k="Rhythm gate"
+                v={vitalSigns.debugMetrics?.rhythmGatePassed ? 'PASSED' : 'BLOCKED'}
+                tone={vitalSigns.debugMetrics?.rhythmGatePassed ? 'ok' : 'bad'}
+              />
+              {!!vitalSigns.debugMetrics?.rhythmBlockedReasons?.length && (
+                <div className="px-2 py-1 text-[10px] text-amber-300 font-mono break-words">
+                  <span className="text-slate-400">rhythm blocked: </span>
+                  {vitalSigns.debugMetrics.rhythmBlockedReasons.join(', ')}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Maturity map */}
+          {vitalSigns.moduleMaturity && (
+            <>
+              <div className="text-slate-500 text-[10px] uppercase tracking-wide px-2 mt-3">Module maturity</div>
+              {Object.entries(vitalSigns.moduleMaturity).map(([k, v]) => (
+                <Row key={k} k={k} v={String(v)} tone={String(v).includes('production') ? 'ok' : String(v).includes('advanced') ? 'warn' : 'info'} />
+              ))}
             </>
           )}
         </div>

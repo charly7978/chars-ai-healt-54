@@ -111,6 +111,19 @@ export interface VitalSignsResult {
     contactState: string;
     perfusionIndex: number;
     beatCount: number;
+    rhythmGatePassed?: boolean;
+    rhythmBlockedReasons?: string[];
+  };
+  moduleMaturity?: {
+    bpm: 'production-grade';
+    ppgWaveform: 'production-grade';
+    hrv: 'advanced-calibration-dependent';
+    spo2: 'advanced-calibration-dependent';
+    bloodPressure: 'research-calibrated';
+    glucose: 'research-calibrated';
+    lipids: 'research-calibrated';
+    rhythm: 'advanced-calibration-dependent';
+    hemoglobin: 'research-calibrated';
   };
 }
 
@@ -205,6 +218,8 @@ export class VitalSignsProcessor {
   private lastSpo2: SpO2Result | null = null;
   private lastGlucose: GlucoseResult | null = null;
   private lastLipids: LipidResult | null = null;
+  private lastRhythmBlockedReasons: string[] = [];
+  private lastRhythmGatePassed = false;
 
   private readonly EMA_ALPHA_STABLE = 0.20;
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
@@ -838,10 +853,13 @@ export class VitalSignsProcessor {
       });
     }
 
-    // ── Hierarchical rhythm classification — V3 + V2 fallback ────────
-    if (beatInputs && beatInputs.length >= 4) {
+    // ── Hierarchical rhythm classification — strict quality gate first ────────
+    const rhythmGate = this.evaluateRhythmGate(beatInputs);
+    this.lastRhythmGatePassed = rhythmGate.passed;
+    this.lastRhythmBlockedReasons = rhythmGate.blockedReasons;
+    if (rhythmGate.passed && beatInputs && beatInputs.length >= 4) {
       const sourceQuality = Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement);
-      const winSQI = Math.max(this.upstreamContext.avgBeatSQI, 20) / 100;
+      const winSQI = this.upstreamContext.avgBeatSQI / 100;
 
       // V3 classifier has DFA α1, SampEn, bigeminy/trigeminy patterns
       const rhythmV3 = this.rhythmClassifierV3.classify(beatInputs, winSQI, sourceQuality);
@@ -878,6 +896,21 @@ export class VitalSignsProcessor {
         } : null;
       }
     }
+  }
+
+  private evaluateRhythmGate(
+    beatInputs?: Array<{ beatSQI: number }>
+  ): { passed: boolean; blockedReasons: string[] } {
+    const blockedReasons: string[] = [];
+    const beatCount = beatInputs?.length ?? 0;
+    if (beatCount < 4) blockedReasons.push('INSUFFICIENT_BEATS');
+    if (!this.upstreamContext.contactStable) blockedReasons.push('UNSTABLE_CONTACT');
+    if (this.measurements.signalQuality < 25) blockedReasons.push('LOW_SIGNAL_QUALITY');
+    if (this.upstreamContext.avgBeatSQI < 30) blockedReasons.push('LOW_BEAT_SQI');
+    if (this.upstreamContext.sourceStability < 0.35) blockedReasons.push('LOW_SOURCE_STABILITY');
+    if (this.upstreamContext.clipHighRatio > 0.18) blockedReasons.push('EXCESSIVE_CLIPPING');
+    const passed = blockedReasons.length === 0;
+    return { passed, blockedReasons };
   }
 
   private getFormattedResult(): VitalSignsResult {
@@ -931,6 +964,28 @@ export class VitalSignsProcessor {
       stress: this.lastStress ?? undefined,
       respiration: this.lastResp ?? undefined,
       hemoglobin: this.lastHemoglobin ?? undefined,
+      debugMetrics: {
+        motionScore: 1 - Math.max(0, Math.min(1, this.upstreamContext.sourceStability)),
+        clipHighRatio: this.upstreamContext.clipHighRatio,
+        clipLowRatio: 0,
+        sourceStability: this.upstreamContext.sourceStability,
+        contactState: this.upstreamContext.contactStable ? 'STABLE_CONTACT' : 'UNSTABLE_CONTACT',
+        perfusionIndex: this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0,
+        beatCount: this.upstreamContext.beatCount,
+        rhythmGatePassed: this.lastRhythmGatePassed,
+        rhythmBlockedReasons: this.lastRhythmBlockedReasons,
+      },
+      moduleMaturity: {
+        bpm: 'production-grade',
+        ppgWaveform: 'production-grade',
+        hrv: 'advanced-calibration-dependent',
+        spo2: 'advanced-calibration-dependent',
+        bloodPressure: 'research-calibrated',
+        glucose: 'research-calibrated',
+        lipids: 'research-calibrated',
+        rhythm: 'advanced-calibration-dependent',
+        hemoglobin: 'research-calibrated',
+      },
     };
   }
 
