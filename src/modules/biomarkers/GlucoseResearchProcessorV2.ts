@@ -226,4 +226,11 @@ export class GlucoseResearchProcessorV2 {
     this.featureHistory = [];
     this.lastOutput = null;
   }
+
+  fullReset(): void {
+    this.reset();
+    this.pendingSamples = [];
+    this.isTrainingMode = false;
+    this.calibration = null;
+  }
 }

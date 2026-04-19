@@ -220,4 +220,9 @@ export class LipidResearchProcessorV2 {
     this.pendingSamples = [];
     this.isTrainingMode = false;
   }
+
+  fullReset(): void {
+    this.reset();
+    this.calibration = null;
+  }
 }

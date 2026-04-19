@@ -340,4 +340,11 @@ export class BloodPressureProcessorV2 {
     this.featureHistory = [];
     this.lastOutput = null;
   }
+
+  fullReset(): void {
+    this.reset();
+    this.pendingCalibrationPoints = [];
+    this.calibration = null;
+    this.calibrationWizardActive = false;
+  }
 }
