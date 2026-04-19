@@ -333,14 +333,27 @@ export class VitalSignsProcessor {
       this.lastRhythm = rhythmResult;
     }
 
-    const arrhythmiaRR = validRR.slice(-10);
-    const arrhythmiaInput = (arrhythmiaRR.length >= 4 && this.measurements.signalQuality >= 18 && hr >= 35 && hr <= 180)
-      ? { ...rrData, intervals: arrhythmiaRR } : undefined;
-    const arrhythmiaResult = this.arrhythmiaProcessor.processRRData(arrhythmiaInput);
-    this.measurements.arrhythmiaStatus = arrhythmiaResult.arrhythmiaStatus;
-    this.measurements.lastArrhythmiaData = arrhythmiaResult.lastArrhythmiaData;
-    const parts = arrhythmiaResult.arrhythmiaStatus.split('|');
-    this.measurements.arrhythmiaCount = parts.length > 1 ? (parseInt(parts[1]) || 0) : 0;
+    // Arrhythmia classification via new hierarchical pipeline (classify())
+    const arrhythmiaRR = validRR.slice(-12);
+    if (
+      arrhythmiaRR.length >= 4 &&
+      this.measurements.signalQuality >= 18 &&
+      hr >= 35 && hr <= 180
+    ) {
+      const arrhythmiaResult = this.arrhythmiaProcessor.classify({
+        ibiMs: arrhythmiaRR,
+        beatAcceptanceRate: Math.min(1, this.upstreamContext.detectorAgreement || 0.7),
+        sqi: this.measurements.signalQuality,
+        contactStable: !!this.upstreamContext.contactStable,
+        perfusionIndex: 0.01,
+        samplesPerSecond: this.upstreamContext.sampleRate || 30,
+      });
+      const label = String(arrhythmiaResult.classification);
+      const eventCount = arrhythmiaResult.evidenceBreakdown?.windowsAnalyzed ?? 0;
+      this.measurements.arrhythmiaStatus = `${label}|${eventCount}`;
+      this.measurements.arrhythmiaCount = eventCount;
+      this.measurements.lastArrhythmiaData = null;
+    }
 
     if (this.lastRhythm && this.lastRhythm.rhythmConfidence >= 0.2) {
       const rhythmLabel = this.lastRhythm.rhythmLabel;
