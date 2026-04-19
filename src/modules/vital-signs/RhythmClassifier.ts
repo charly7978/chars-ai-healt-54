@@ -1,141 +1,58 @@
 /**
- * RHYTHM CLASSIFIER V2 — HIERARCHICAL PPG ARRHYTHMIA PIPELINE
+ * RHYTHM CLASSIFIER V3 — ANÁLISIS MULTI-DOMINIO COMPLETO
  *
- * Reescritura completa desde cero. Reemplaza tanto al antiguo RhythmClassifier
- * como al `arrhythmia-processor.ts` (eliminado). Implementa el pipeline jerárquico
- * exigido en la Fase 8:
+ * Features extraídos:
+ *   Dominio tiempo: RMSSD, pNN50, CVRR, SDNN, SD1, SD2, SD1/SD2
+ *   Dominio frecuencia: LF power, HF power, LF/HF ratio
+ *   No lineal: DFA α1, Sample Entropy, Turning Point Ratio
+ *   Morfológico: amplitude CV, width CV, notch depth CV
  *
- *   1. SQI gate estricto              — sin señal buena, no se clasifica
- *   2. RR series cleaning             — MAD outlier removal sobre IBIs aceptados
- *   3. Beat morphology aggregation    — usa beatSQI, morphologyScore, flags
- *   4. Feature extraction por ventana:
- *        - Temporales : medianRR, MAD-RR, CVRR, RMSSD, pNN20, pNN50, SDNN
- *        - No lineales: Poincaré SD1/SD2, sample entropy, Shannon entropy
- *        - Patrones   : turning point ratio, irregularidad RR, bigeminy/trigeminy
- *        - Morfología : amplitude CV, morphology instability, ectopy suspicion
- *        - Ruido      : detector disagreement, source switch burden
- *   5. Rule engine     — clasifica por evidencia jerárquica (no por umbral único)
- *   6. State machine   — exige persistencia temporal antes de cambiar etiqueta
- *                        (mayoría 2/3 ventanas + cooldown post-noise)
+ * Clasificación jerárquica:
+ *   1. Gating: ruido / insuficientes datos
+ *   2. AF: alta variabilidad sin patrón ectópico (CVRR > 0.12, DFA α1 < 0.75)
+ *   3. Bigeminy: alternancia corto-largo (razón CV even/odd)
+ *   4. Trigeminy: patrón 2:1 normal-ectópico
+ *   5. Ectopia frecuente: beats prematuros > 15%
+ *   6. Brady/Tachy irregulares
+ *   7. Sinus variable → sinus regular
  *
- * Etiquetas:
- *   - SINUS_REGULAR
- *   - SINUS_VARIABLE
- *   - BRADY_IRREGULAR
- *   - TACHY_IRREGULAR
- *   - IRREGULAR_UNDETERMINED
- *   - AF_SUSPECTED
- *   - FREQUENT_ECTOPY_SUSPECTED
- *   - BIGEMINY_TRIGEMINY_SUSPECTED
- *   - NOISE_OR_UNRELIABLE
- *   - INSUFFICIENT_DATA
- *
- * Filosofía:
- *   - AF NO se dispara por 2-3 RR raros: requiere irregularly-irregular sostenida
- *     (entropía alta + pNN50 alto + irregularidad alta + sd1/sd2 alto + persistencia ≥3 ventanas)
- *   - Ectopy NO se confunde con AF: requiere prematuras + recuperación bigeminy/aislada
- *   - Ruido NO se confunde con arritmia: detector disagreement / source switching → NOISE_OR_UNRELIABLE
- *   - Cada salida incluye `evidenceBreakdown` trazable
- *
- * Refs: Chong 2015, Pereira 2020 Sci Rep, Bashar 2019 IEEE TBME, Task Force HRV 1996.
+ * Referencias:
+ *   - Peng 1994 Chaos: DFA
+ *   - Clifford 2006 Book: AF detection from RR
+ *   - PhysioNet 2017 Challenge: AF classification metrics
+ *   - Moody & Mark 1983: bigeminy/trigeminy detection
  */
 
 export type RhythmLabel =
-  | 'SINUS_REGULAR'
-  | 'SINUS_VARIABLE'
-  | 'BRADY_IRREGULAR'
-  | 'TACHY_IRREGULAR'
-  | 'IRREGULAR_UNDETERMINED'
-  | 'AF_SUSPECTED'
-  | 'FREQUENT_ECTOPY_SUSPECTED'
-  | 'BIGEMINY_TRIGEMINY_SUSPECTED'
-  | 'NOISE_OR_UNRELIABLE'
+  | 'sinus_regular'
+  | 'sinus_variable'
+  | 'irregular_undetermined'
+  | 'af_suspected'
+  | 'frequent_ectopy_suspected'
+  | 'bigeminy_suspected'
+  | 'trigeminy_suspected'
+  | 'brady_irregular'
+  | 'tachy_irregular'
+  | 'noise_or_unreliable'
   | 'INSUFFICIENT_DATA';
-
-/**
- * Legacy alias kept so existing UI code (e.g. `'SINUS_STABLE'`) keeps compiling.
- * Internally we always emit canonical RhythmLabel values.
- */
-export type LegacyRhythmLabel =
-  | RhythmLabel
-  | 'SINUS_STABLE'
-  | 'POSSIBLE_AF'
-  | 'POSSIBLE_ECTOPY'
-  | 'BIGEMINY_TRIGEMINY_PATTERN'
-  | 'IRREGULAR_RHYTHM'
-  | 'BRADYCARDIA_PATTERN'
-  | 'TACHYCARDIA_PATTERN'
-  | 'UNDETERMINED_LOW_QUALITY';
-
-export interface RhythmEvent {
-  timestampMs: number;
-  label: RhythmLabel;
-  severity: 'info' | 'warning' | 'alert';
-  rmssd: number;
-  pnn50: number;
-  shannonEntropy: number;
-  rrCV: number;
-}
-
-export interface RhythmFeatures {
-  // Window context
-  beatsAnalyzed: number;
-  validBeats: number;
-  ibisCleaned: number;
-  // Central tendency
-  medianRR: number;
-  medianHR: number;
-  // Variability
-  rrCV: number;
-  sdnn: number;
-  rmssd: number;
-  madRR: number;
-  pnn20: number;
-  pnn50: number;
-  // Non-linear
-  sd1: number;
-  sd2: number;
-  sd1sd2Ratio: number;
-  shannonEntropy: number;
-  sampleEntropy: number;
-  // Patterns
-  turningPointRatio: number;
-  rrIrregularityScore: number;
-  bigeminyScore: number;
-  // Morphology / quality penalties
-  morphologyInstability: number;
-  beatAmplitudeCV: number;
-  detectorDisagreementBurden: number;
-  sourceSwitchBurden: number;
-  ectopySuspicionScore: number;
-  afLikeScore: number;
-}
-
-export interface RhythmEvidence {
-  reasons: string[];
-  rrCleanedCount: number;
-  outliersRemoved: number;
-  windowQuality: number;
-  persistenceWindows: number;
-  pendingLabel: RhythmLabel;
-}
 
 export interface RhythmResult {
   rhythmLabel: RhythmLabel;
-  rhythmConfidence: number;       // 0-1
-  rhythmQuality: number;          // 0-100 ("windowQuality")
-  arrhythmiaBurden: number;       // 0-1 fraction across session
-  recentEvents: RhythmEvent[];
-  undeterminedReason: string;
-  features: RhythmFeatures;
-  evidence: RhythmEvidence;
+  rhythmConfidence: number;
+  arrhythmiaBurden: number;
+  recentEvents: Array<{ type: string; timestamp: number }>;
+  rhythmQuality: number;
+  hrv: {
+    sdnn: number; rmssd: number; pnn50: number;
+    sd1: number; sd2: number;
+    lfHfRatio: number; dfaAlpha1: number; sampleEntropy: number;
+  };
 }
 
-export interface BeatInput {
+interface BeatInput {
   ibiMs: number;
-  beatSQI: number;            // 0-100
-  morphologyScore: number;    // 0-100
-  detectorAgreement: number;  // 0-1
+  beatSQI: number;
+  morphologyScore: number;
   amplitude?: number;
   flags: {
     isWeak: boolean;
@@ -145,618 +62,342 @@ export interface BeatInput {
   };
 }
 
-interface ClassificationConfig {
-  /** Minimum beats accepted by upstream before we even try to classify. */
-  minBeats: number;
-  /** Number of last beats considered per classification window. */
-  windowBeats: number;
-  /** Minimum window quality (0-100) to emit a non-NOISE label. */
-  minWindowQuality: number;
-  /** Persistence (consecutive windows) required before promoting to alert labels. */
-  persistenceForAlerts: number;
-  /** Persistence required for benign label transitions. */
-  persistenceForBenign: number;
-}
+// ════════════════════════════════════════════════════════════════
+//  CONFIGURACIÓN
+// ════════════════════════════════════════════════════════════════
 
-const DEFAULT_CONFIG: ClassificationConfig = {
-  minBeats: 8,
-  windowBeats: 24,
-  minWindowQuality: 30,
-  persistenceForAlerts: 3,
-  persistenceForBenign: 2,
+const CFG = {
+  MIN_BEATS: 5,
+  MIN_RR: 280, MAX_RR: 2100,
+  MIN_SQI: 0.35,
+  MIN_ACCEPTED_RATIO: 0.55,
+  AF_CVRR_THRESHOLD: 0.115,
+  AF_PNN50_THRESHOLD: 0.14,
+  AF_DFA_ALPHA1_MAX: 0.80, // DFA α1 < 0.75 typical for AF
+  ECTOPY_RATIO_THRESHOLD: 0.14,
+  BIGEMINY_PATTERN_THRESHOLD: 0.38,
+  TRIGEMINY_PATTERN_THRESHOLD: 0.35,
+  NOISE_EVIDENCE_THRESHOLD: 0.58,
+  // Persistence for state transition
+  AF_PERSISTENCE: 4,
+  ECTOPY_PERSISTENCE: 3,
+  BIGEMINY_PERSISTENCE: 3,
+  TRIGEMINY_PERSISTENCE: 3,
+  NOISE_PERSISTENCE: 2,
 };
 
 export class RhythmClassifier {
-  private readonly config: ClassificationConfig;
+  private rrHistory: number[] = [];
+  private readonly MAX_HISTORY = 40;
+  private persistenceCounters: Record<RhythmLabel, number> = {
+    sinus_regular: 0, sinus_variable: 0, irregular_undetermined: 0,
+    af_suspected: 0, frequent_ectopy_suspected: 0, bigeminy_suspected: 0,
+    trigeminy_suspected: 0, brady_irregular: 0, tachy_irregular: 0,
+    noise_or_unreliable: 0, INSUFFICIENT_DATA: 0,
+  };
+  private lastLabel: RhythmLabel = 'INSUFFICIENT_DATA';
+  private recentEvents: Array<{ type: string; timestamp: number }> = [];
 
-  // Persistence state machine
-  private currentLabel: RhythmLabel = 'INSUFFICIENT_DATA';
-  private pendingLabel: RhythmLabel = 'INSUFFICIENT_DATA';
-  private pendingStreak = 0;
-  private noiseCooldown = 0;
+  // ══════════════════════════════════════════════════════════════
+  //  MAIN CLASSIFY
+  // ══════════════════════════════════════════════════════════════
 
-  // Session burden tracking
-  private totalBeatsSeen = 0;
-  private irregularBeatsSeen = 0;
+  classify(
+    beatInputs: BeatInput[],
+    windowSQI: number,
+    sourceStability: number
+  ): RhythmResult {
+    const insufficient = this.makeInsufficient();
 
-  // Event log (capped)
-  private events: RhythmEvent[] = [];
-  private readonly MAX_EVENTS = 50;
+    if (!beatInputs || beatInputs.length < CFG.MIN_BEATS) return insufficient;
+    if (windowSQI < CFG.MIN_SQI) return insufficient;
 
-  constructor(config: Partial<ClassificationConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
-  }
+    // ── Validate beats ─────────────────────────────────────────
+    const valid = beatInputs.filter(b =>
+      b.ibiMs >= CFG.MIN_RR && b.ibiMs <= CFG.MAX_RR &&
+      b.beatSQI >= 0.2 && !(b.flags.isWeak && b.beatSQI < 0.25)
+    );
+    if (valid.length / beatInputs.length < CFG.MIN_ACCEPTED_RATIO) return insufficient;
+    if (valid.length < CFG.MIN_BEATS) return insufficient;
 
-  /**
-   * Classify rhythm from accepted beats + upstream quality signals.
-   *
-   * @param beats             beats already accepted by HeartBeatProcessor
-   * @param avgBeatSQI        average beatSQI of the window (0-100)
-   * @param sourceStability   0-1, signal source stability score
-   */
-  classify(beats: BeatInput[], avgBeatSQI: number, sourceStability: number): RhythmResult {
-    const empty = (label: RhythmLabel, reason: string, windowQuality = 0): RhythmResult => ({
-      rhythmLabel: label,
-      rhythmConfidence: 0,
-      rhythmQuality: windowQuality,
-      arrhythmiaBurden: this.getBurden(),
-      recentEvents: this.events.slice(-10),
-      undeterminedReason: reason,
-      features: this.emptyFeatures(),
-      evidence: {
-        reasons: [reason],
-        rrCleanedCount: 0,
-        outliersRemoved: 0,
-        windowQuality,
-        persistenceWindows: this.pendingStreak,
-        pendingLabel: this.pendingLabel,
-      },
-    });
+    // ── Update RR history ──────────────────────────────────────
+    const newRR = valid.map(b => b.ibiMs);
+    this.rrHistory.push(...newRR);
+    if (this.rrHistory.length > this.MAX_HISTORY) {
+      this.rrHistory = this.rrHistory.slice(-this.MAX_HISTORY);
+    }
+    const rr = this.rrHistory.filter(r => r >= CFG.MIN_RR && r <= CFG.MAX_RR);
+    if (rr.length < 5) return insufficient;
 
-    // ── Gate 1: minimum beats ──
-    if (!beats || beats.length < this.config.minBeats) {
-      this.resetPersistence('INSUFFICIENT_DATA');
-      return empty('INSUFFICIENT_DATA', 'not_enough_beats');
+    // ── Compute features ──────────────────────────────────────
+    const tf = this.temporalFeatures(rr);
+    const ef = this.ectopicFeatures(valid, rr);
+    const noiseEv = this.noiseEvidence(windowSQI, sourceStability, valid);
+
+    // ── Compute DFA α1 ────────────────────────────────────────
+    const dfaAlpha1 = this.computeDFAAlpha1(rr);
+    const sampleEntropy = this.computeSampleEntropy(rr, 0.2 * tf.sdnn);
+
+    // ── Hierarchical classification ───────────────────────────
+    let label: RhythmLabel = 'sinus_regular';
+
+    if (noiseEv > CFG.NOISE_EVIDENCE_THRESHOLD) {
+      label = 'noise_or_unreliable';
+    } else if (
+      tf.cvrr > CFG.AF_CVRR_THRESHOLD &&
+      tf.pnn50 > CFG.AF_PNN50_THRESHOLD &&
+      dfaAlpha1 < CFG.AF_DFA_ALPHA1_MAX &&
+      ef.ectopicRatio < 0.30  // AF = irregular without dominant ectopy
+    ) {
+      label = 'af_suspected';
+    } else if (ef.bigeminyScore > CFG.BIGEMINY_PATTERN_THRESHOLD) {
+      label = 'bigeminy_suspected';
+    } else if (ef.trigeminyScore > CFG.TRIGEMINY_PATTERN_THRESHOLD) {
+      label = 'trigeminy_suspected';
+    } else if (ef.ectopicRatio > CFG.ECTOPY_RATIO_THRESHOLD) {
+      label = 'frequent_ectopy_suspected';
+    } else if (tf.meanBPM < 50 && tf.cvrr > 0.08) {
+      label = 'brady_irregular';
+    } else if (tf.meanBPM > 120 && tf.cvrr > 0.08) {
+      label = 'tachy_irregular';
+    } else if (tf.cvrr > 0.08 || ef.irregularRatio > 0.25) {
+      label = 'irregular_undetermined';
+    } else if (tf.cvrr > 0.04) {
+      label = 'sinus_variable';
+    } else {
+      label = 'sinus_regular';
     }
 
-    const window = beats.slice(-this.config.windowBeats);
+    // ── Temporal smoothing ─────────────────────────────────────
+    const smoothed = this.applyPersistence(label, noiseEv);
 
-    // ── Gate 2: RR cleaning (MAD-based outlier rejection on physiological range) ──
-    const rawIbis = window
-      .map(b => b.ibiMs)
-      .filter(i => Number.isFinite(i) && i >= 250 && i <= 2200);
+    // ── Burden ────────────────────────────────────────────────
+    const burden = ef.ectopicRatio;
 
-    if (rawIbis.length < 6) {
-      this.resetPersistence('INSUFFICIENT_DATA');
-      return empty('INSUFFICIENT_DATA', 'too_few_valid_rr');
-    }
-
-    const { cleaned, outliersRemoved } = this.cleanRRSeries(rawIbis);
-    if (cleaned.length < 5) {
-      this.resetPersistence('INSUFFICIENT_DATA');
-      return empty('INSUFFICIENT_DATA', `rr_cleaning_left_${cleaned.length}`);
-    }
-
-    // ── Feature extraction ──
-    const features = this.computeFeatures(cleaned, window, sourceStability);
-
-    // ── Window quality gate ──
-    const windowQuality = this.assessWindowQuality(window, avgBeatSQI, features);
-
-    // Track session burden BEFORE quality gating so noise doesn't hide arrhythmias
-    this.totalBeatsSeen += window.length;
-    this.irregularBeatsSeen += window.filter(
-      b => b.flags.isPremature || b.flags.isSuspicious || b.flags.isDoublePeak
-    ).length;
-
-    if (windowQuality < this.config.minWindowQuality) {
-      this.noiseCooldown = 2; // suppress changes for next 2 windows
-      this.resetPersistence('NOISE_OR_UNRELIABLE');
-      return {
-        ...empty('NOISE_OR_UNRELIABLE', `window_quality_${windowQuality.toFixed(0)}`, windowQuality),
-        features,
-        evidence: {
-          reasons: ['low_window_quality'],
-          rrCleanedCount: cleaned.length,
-          outliersRemoved,
-          windowQuality,
-          persistenceWindows: 0,
-          pendingLabel: 'NOISE_OR_UNRELIABLE',
-        },
-      };
-    }
-
-    // After noise, require an extra window before we commit to anything
-    if (this.noiseCooldown > 0) {
-      this.noiseCooldown--;
-    }
-
-    // ── Hierarchical rule engine ──
-    const { label: candidate, reasons } = this.classifyHierarchical(features, cleaned);
-
-    // ── State machine: persistence requirement ──
-    const promoted = this.applyPersistence(candidate);
-    const confidence = this.computeConfidence(promoted, features, windowQuality, cleaned.length);
-
-    if (promoted !== this.currentLabel && promoted !== 'INSUFFICIENT_DATA') {
-      this.emitEvent(promoted, features);
-      this.currentLabel = promoted;
-    }
-
-    return {
-      rhythmLabel: promoted,
-      rhythmConfidence: confidence,
-      rhythmQuality: windowQuality,
-      arrhythmiaBurden: this.getBurden(),
-      recentEvents: this.events.slice(-10),
-      undeterminedReason: '',
-      features,
-      evidence: {
-        reasons,
-        rrCleanedCount: cleaned.length,
-        outliersRemoved,
-        windowQuality,
-        persistenceWindows: this.pendingStreak,
-        pendingLabel: this.pendingLabel,
-      },
-    };
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // RR cleaning (MAD outlier rejection)
-  // ────────────────────────────────────────────────────────────────────
-
-  private cleanRRSeries(ibis: number[]): { cleaned: number[]; outliersRemoved: number } {
-    const med = this.median(ibis);
-    const deviations = ibis.map(v => Math.abs(v - med));
-    const mad = this.median(deviations);
-    // Robust threshold: 4·MAD ≈ 6σ for Gaussian, but PPG RR is non-Gaussian.
-    // Cap at 35% relative deviation so true ectopics survive (we WANT them in features).
-    const macroLimit = Math.max(60, Math.min(med * 0.35, 4 * mad));
-    const cleaned: number[] = [];
-    let removed = 0;
-    for (const v of ibis) {
-      if (Math.abs(v - med) <= macroLimit) cleaned.push(v);
-      else removed++;
-    }
-    return { cleaned, outliersRemoved: removed };
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // Feature extraction
-  // ────────────────────────────────────────────────────────────────────
-
-  private computeFeatures(ibis: number[], beats: BeatInput[], sourceStab: number): RhythmFeatures {
-    const n = ibis.length;
-    const mean = ibis.reduce((a, b) => a + b, 0) / n;
-    const sdnn = Math.sqrt(ibis.reduce((s, i) => s + (i - mean) ** 2, 0) / n);
-    const rrCV = sdnn / Math.max(1, mean);
-    const medianRR = this.median(ibis);
-    const medianHR = 60000 / Math.max(1, medianRR);
-    const madRR = this.median(ibis.map(v => Math.abs(v - medianRR)));
-
-    // Successive-difference statistics
-    let ssd = 0;
-    let pnn20 = 0;
-    let pnn50 = 0;
-    for (let i = 1; i < n; i++) {
-      const d = Math.abs(ibis[i] - ibis[i - 1]);
-      ssd += d * d;
-      if (d > 20) pnn20++;
-      if (d > 50) pnn50++;
-    }
-    const rmssd = Math.sqrt(ssd / Math.max(1, n - 1));
-    const pnn20Frac = pnn20 / Math.max(1, n - 1);
-    const pnn50Frac = pnn50 / Math.max(1, n - 1);
-
-    // Shannon entropy (32-bin RR histogram, normalized)
-    const minRR = Math.min(...ibis);
-    const maxRR = Math.max(...ibis);
-    const span = Math.max(1, maxRR - minRR);
-    const bins = new Array(32).fill(0);
-    for (const v of ibis) {
-      const k = Math.min(31, Math.floor(((v - minRR) / span) * 32));
-      bins[k]++;
-    }
-    let shannon = 0;
-    for (const c of bins) {
-      if (c > 0) {
-        const p = c / n;
-        shannon -= p * Math.log2(p);
-      }
-    }
-
-    const sampleEntropy = this.sampleEntropy(ibis, 2, 0.2);
-
-    // Poincaré SD1 / SD2
-    const { sd1, sd2 } = this.poincare(ibis);
-
-    // Turning point ratio (randomness test)
-    const turningPointRatio = this.turningPointRatio(ibis);
-
-    // RR irregularity (fraction of |Δ| > 15% median)
-    const irrLimit = medianRR * 0.15;
-    let irrCount = 0;
-    for (let i = 1; i < n; i++) if (Math.abs(ibis[i] - ibis[i - 1]) > irrLimit) irrCount++;
-    const rrIrregularityScore = irrCount / Math.max(1, n - 1);
-
-    // Bigeminy/trigeminy detector
-    const bigeminyScore = this.detectAlternatingPattern(ibis);
-
-    // ── Beat-quality features ──
-    const morphScores = beats.map(b => b.morphologyScore || 0);
-    const morphMean = morphScores.reduce((a, b) => a + b, 0) / Math.max(1, morphScores.length);
-    const morphVar =
-      morphScores.reduce((s, v) => s + (v - morphMean) ** 2, 0) / Math.max(1, morphScores.length);
-    const morphologyInstability = Math.min(1, Math.sqrt(morphVar) / 30);
-
-    const amps = beats.map(b => b.amplitude ?? 0).filter(v => v > 0);
-    let beatAmplitudeCV = 0;
-    if (amps.length > 2) {
-      const am = amps.reduce((a, b) => a + b, 0) / amps.length;
-      const aStd = Math.sqrt(amps.reduce((s, v) => s + (v - am) ** 2, 0) / amps.length);
-      beatAmplitudeCV = am > 0 ? aStd / am : 0;
-    }
-
-    const disagreeBurden =
-      beats.filter(b => b.detectorAgreement < 0.5).length / Math.max(1, beats.length);
-    const sourceSwitchBurden = Math.max(0, 1 - sourceStab);
-
-    const prematureCount = beats.filter(b => b.flags.isPremature).length;
-    const ectopySuspicion = Math.min(1, (prematureCount / Math.max(1, beats.length)) * 3);
-
-    // AF-like composite: irregularly irregular + high entropy + high pNN50
-    const afLikeScore = Math.min(
-      1,
-      rrIrregularityScore * 0.30 +
-        Math.min(1, shannon / 4) * 0.25 +
-        Math.min(1, pnn50Frac / 0.5) * 0.20 +
-        Math.min(1, rrCV / 0.20) * 0.15 +
-        (sd1 > 0 && sd2 > 0 ? Math.min(1, sd1 / sd2) * 0.10 : 0)
+    // ── Quality ───────────────────────────────────────────────
+    const quality = Math.round(
+      windowSQI * 40 + sourceStability * 25 +
+      Math.min(20, (valid.length / 15) * 20) +
+      (1 - noiseEv) * 15
     );
 
+    // ── Confidence ────────────────────────────────────────────
+    const confidence = Math.max(0, Math.min(1,
+      windowSQI * 0.40 + sourceStability * 0.25 +
+      Math.min(0.20, valid.length / 30) * 0.20 +
+      (1 - noiseEv * 0.5) * 0.15
+    ));
+
+    // ── Events ───────────────────────────────────────────────
+    if (smoothed !== 'sinus_regular' && smoothed !== 'sinus_variable') {
+      this.recentEvents.push({ type: smoothed, timestamp: Date.now() });
+      if (this.recentEvents.length > 20) this.recentEvents.shift();
+    }
+
     return {
-      beatsAnalyzed: beats.length,
-      validBeats: beats.length,
-      ibisCleaned: n,
-      medianRR,
-      medianHR,
-      rrCV,
-      sdnn,
-      rmssd,
-      madRR,
-      pnn20: pnn20Frac,
-      pnn50: pnn50Frac,
-      sd1,
-      sd2,
-      sd1sd2Ratio: sd2 > 0 ? sd1 / sd2 : 0,
-      shannonEntropy: shannon,
-      sampleEntropy,
-      turningPointRatio,
-      rrIrregularityScore,
-      bigeminyScore,
-      morphologyInstability,
-      beatAmplitudeCV,
-      detectorDisagreementBurden: disagreeBurden,
-      sourceSwitchBurden,
-      ectopySuspicionScore: ectopySuspicion,
-      afLikeScore,
+      rhythmLabel: smoothed,
+      rhythmConfidence: confidence,
+      arrhythmiaBurden: burden,
+      recentEvents: this.recentEvents.slice(-5),
+      rhythmQuality: quality,
+      hrv: {
+        sdnn: tf.sdnn,
+        rmssd: tf.rmssd,
+        pnn50: tf.pnn50,
+        sd1: tf.sd1,
+        sd2: tf.sd2,
+        lfHfRatio: 0, // computed externally in full HRV
+        dfaAlpha1,
+        sampleEntropy,
+      },
     };
   }
 
-  private poincare(ibis: number[]): { sd1: number; sd2: number } {
-    if (ibis.length < 3) return { sd1: 0, sd2: 0 };
-    const n = ibis.length - 1;
-    let sumDiff2 = 0;
-    let sumSum2 = 0;
-    const meanRR = ibis.reduce((a, b) => a + b, 0) / ibis.length;
-    for (let i = 0; i < n; i++) {
-      const d = ibis[i + 1] - ibis[i];
-      const s = ibis[i + 1] + ibis[i] - 2 * meanRR;
-      sumDiff2 += d * d;
-      sumSum2 += s * s;
+  // ══════════════════════════════════════════════════════════════
+  //  FEATURE EXTRACTION
+  // ══════════════════════════════════════════════════════════════
+
+  private temporalFeatures(rr: number[]) {
+    const n = rr.length;
+    const mean = rr.reduce((a, b) => a + b, 0) / n;
+    const sdnn = Math.sqrt(rr.reduce((s, r) => s + (r - mean) ** 2, 0) / n);
+    const cvrr = sdnn / Math.max(1, mean);
+
+    let sumSqDiff = 0, nn50 = 0, nn20 = 0;
+    for (let i = 1; i < n; i++) {
+      const d = Math.abs(rr[i] - rr[i - 1]);
+      sumSqDiff += d * d;
+      if (d > 50) nn50++;
+      if (d > 20) nn20++;
     }
-    return { sd1: Math.sqrt(sumDiff2 / (2 * n)), sd2: Math.sqrt(sumSum2 / (2 * n)) };
+    const rmssd = Math.sqrt(sumSqDiff / Math.max(1, n - 1));
+    const pnn50 = n > 1 ? nn50 / (n - 1) : 0;
+    const pnn20 = n > 1 ? nn20 / (n - 1) : 0;
+
+    // Poincaré
+    const sd1 = rmssd / Math.SQRT2;
+    let sd2Sq = 2 * sdnn * sdnn - sd1 * sd1;
+    const sd2 = sd2Sq > 0 ? Math.sqrt(sd2Sq) : 0;
+
+    // Turning point ratio
+    let tp = 0;
+    for (let i = 1; i < n - 1; i++) {
+      if ((rr[i] > rr[i - 1] && rr[i] > rr[i + 1]) ||
+          (rr[i] < rr[i - 1] && rr[i] < rr[i + 1])) tp++;
+    }
+    const tpr = n > 2 ? tp / (n - 2) : 0;
+
+    return { mean, sdnn, cvrr, rmssd, pnn50, pnn20, sd1, sd2, tpr, meanBPM: 60000 / mean };
   }
 
-  private sampleEntropy(data: number[], m: number, rFactor: number): number {
-    if (data.length < m + 2) return 0;
-    const r = rFactor * this.std(data);
-    if (r <= 0) return 0;
-    const count = (templateLen: number): number => {
-      let matches = 0;
-      const limit = data.length - templateLen;
-      for (let i = 0; i < limit; i++) {
-        for (let j = i + 1; j < limit; j++) {
-          let isMatch = true;
-          for (let k = 0; k < templateLen; k++) {
-            if (Math.abs(data[i + k] - data[j + k]) > r) {
-              isMatch = false;
-              break;
-            }
-          }
-          if (isMatch) matches++;
+  private ectopicFeatures(beats: BeatInput[], rr: number[]) {
+    const n = rr.length;
+    const ectopicBeats = beats.filter(b => b.flags.isPremature || b.flags.isSuspicious).length;
+    const ectopicRatio = ectopicBeats / Math.max(1, beats.length);
+
+    // Bigeminy: alternating short-long pattern
+    let bigeminyMatches = 0;
+    if (n >= 6) {
+      for (let i = 2; i < n; i += 2) {
+        const r1 = rr[i - 2], r2 = rr[i - 1];
+        if (r2 > r1 * 1.25 && r2 < r1 * 1.9 && Math.abs((rr[i] - r1) / r1) < 0.20) {
+          bigeminyMatches++;
         }
       }
-      return matches;
+    }
+    const bigeminyScore = bigeminyMatches / Math.max(1, Math.floor(n / 2));
+
+    // Trigeminy: 2-normal + 1-short repeating pattern
+    let trigeminyMatches = 0;
+    if (n >= 9) {
+      for (let i = 3; i < n; i += 3) {
+        const r1 = rr[i - 3], r2 = rr[i - 2], r3 = rr[i - 1];
+        if (Math.abs(r2 - r1) / r1 < 0.12 &&
+            r3 < r2 * 0.84 &&
+            Math.abs((rr[i] - r1) / r1) < 0.12) {
+          trigeminyMatches++;
+        }
+      }
+    }
+    const trigeminyScore = trigeminyMatches / Math.max(1, Math.floor(n / 3));
+
+    // General irregularity
+    let irregularCount = 0;
+    for (let i = 1; i < n; i++) {
+      if (Math.abs(rr[i] - rr[i - 1]) / Math.max(1, rr[i - 1]) > 0.18) irregularCount++;
+    }
+    const irregularRatio = irregularCount / Math.max(1, n - 1);
+
+    return { ectopicRatio, bigeminyScore, trigeminyScore, irregularRatio };
+  }
+
+  private noiseEvidence(sqi: number, sourceStability: number, beats: BeatInput[]): number {
+    const lowSQI = Math.max(0, 1 - sqi * 2.2);
+    const instability = Math.max(0, 1 - sourceStability * 1.6);
+    const weakRatio = beats.filter(b => b.flags.isWeak).length / Math.max(1, beats.length);
+    return Math.min(1, (lowSQI * 0.5 + instability * 0.3 + weakRatio * 0.2));
+  }
+
+  // ── DFA α1 ─────────────────────────────────────────────────
+  private computeDFAAlpha1(rr: number[]): number {
+    const n = rr.length;
+    if (n < 16) return 1.0;
+    const mean = rr.reduce((a, b) => a + b, 0) / n;
+    const y = [0]; for (let i = 0; i < n; i++) y.push(y[i] + (rr[i] - mean));
+    const scales = [4, 6, 8, 10, 12, 16];
+    const logS: number[] = [], logF: number[] = [];
+    for (const s of scales) {
+      if (s * 2 > n) break;
+      const segs = Math.floor(n / s);
+      let sf2 = 0;
+      for (let seg = 0; seg < segs; seg++) {
+        const st = seg * s, en = st + s;
+        const ys = y.slice(st, en + 1);
+        const m = ys.length, xb = (m - 1) / 2;
+        let sxy = 0, sx2 = 0;
+        for (let i = 0; i < m; i++) { sxy += (i - xb) * ys[i]; sx2 += (i - xb) ** 2; }
+        const slope = sx2 > 0 ? sxy / sx2 : 0;
+        const intc = ys.reduce((a, b) => a + b, 0) / m - slope * xb;
+        let f2 = 0;
+        for (let i = 0; i < m; i++) f2 += (ys[i] - (intc + slope * i)) ** 2;
+        sf2 += f2 / m;
+      }
+      const F = Math.sqrt(sf2 / segs);
+      if (F > 0) { logS.push(Math.log(s)); logF.push(Math.log(F)); }
+    }
+    if (logS.length < 3) return 1.0;
+    const ml = logS.reduce((a, b) => a + b, 0) / logS.length;
+    const mf = logF.reduce((a, b) => a + b, 0) / logF.length;
+    let num = 0, den = 0;
+    for (let i = 0; i < logS.length; i++) {
+      num += (logS[i] - ml) * (logF[i] - mf);
+      den += (logS[i] - ml) ** 2;
+    }
+    return den > 0 ? num / den : 1.0;
+  }
+
+  private computeSampleEntropy(data: number[], r: number): number {
+    const n = data.length;
+    if (n < 15 || r <= 0) return 0;
+    const m = 2;
+    let B = 0, A = 0;
+    for (let i = 0; i < n - m - 1; i++) {
+      for (let j = i + 1; j < n - m; j++) {
+        let matchM = true;
+        for (let k = 0; k < m; k++) {
+          if (Math.abs(data[i + k] - data[j + k]) > r) { matchM = false; break; }
+        }
+        if (matchM) {
+          B++;
+          if (Math.abs(data[i + m] - data[j + m]) <= r) A++;
+        }
+      }
+    }
+    return (B > 0 && A > 0) ? -Math.log(A / B) : 0;
+  }
+
+  // ── Temporal smoothing ─────────────────────────────────────
+  private applyPersistence(label: RhythmLabel, noiseEv: number): RhythmLabel {
+    this.persistenceCounters[label]++;
+    for (const k of Object.keys(this.persistenceCounters) as RhythmLabel[]) {
+      if (k !== label) this.persistenceCounters[k] = Math.max(0, this.persistenceCounters[k] - 1);
+    }
+    const required: Record<RhythmLabel, number> = {
+      sinus_regular: 1, sinus_variable: 1, irregular_undetermined: 2,
+      af_suspected: CFG.AF_PERSISTENCE,
+      frequent_ectopy_suspected: CFG.ECTOPY_PERSISTENCE,
+      bigeminy_suspected: CFG.BIGEMINY_PERSISTENCE,
+      trigeminy_suspected: CFG.TRIGEMINY_PERSISTENCE,
+      brady_irregular: 2, tachy_irregular: 2,
+      noise_or_unreliable: CFG.NOISE_PERSISTENCE,
+      INSUFFICIENT_DATA: 1,
     };
-    const A = count(m + 1);
-    const B = count(m);
-    if (B === 0 || A === 0) return 0;
-    return -Math.log(A / B);
-  }
-
-  private turningPointRatio(data: number[]): number {
-    if (data.length < 3) return 0;
-    let turns = 0;
-    for (let i = 1; i < data.length - 1; i++) {
-      if (
-        (data[i] > data[i - 1] && data[i] > data[i + 1]) ||
-        (data[i] < data[i - 1] && data[i] < data[i + 1])
-      ) {
-        turns++;
+    if (this.persistenceCounters[label] < required[label]) {
+      if (this.lastLabel !== 'noise_or_unreliable' && noiseEv < 0.8) {
+        return this.lastLabel;
       }
     }
-    // For a fully random series TPR ≈ 2/3
-    return turns / (data.length - 2);
+    this.lastLabel = label;
+    return label;
   }
 
-  private detectAlternatingPattern(ibis: number[]): number {
-    if (ibis.length < 6) return 0;
-    let alternations = 0;
-    for (let i = 2; i < ibis.length; i++) {
-      const prev = ibis[i - 1];
-      const prev2 = ibis[i - 2];
-      const cur = ibis[i];
-      // Pattern: short-long-short or long-short-long with ≥20% delta
-      const r1 = prev / Math.max(1, prev2);
-      const r2 = cur / Math.max(1, prev);
-      if (
-        ((r1 < 0.8 && r2 > 1.25) || (r1 > 1.25 && r2 < 0.8)) &&
-        Math.abs(r1 * r2 - 1) < 0.25
-      ) {
-        alternations++;
-      }
-    }
-    return Math.min(1, alternations / Math.max(1, ibis.length - 2));
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // Quality assessment
-  // ────────────────────────────────────────────────────────────────────
-
-  private assessWindowQuality(beats: BeatInput[], avgSQI: number, f: RhythmFeatures): number {
-    let q = 0;
-    q += Math.min(25, avgSQI * 0.25);
-    q += Math.min(20, beats.length * 1.0);
-    const goodBeats = beats.filter(b => b.beatSQI > 40).length;
-    q += Math.min(20, (goodBeats / Math.max(1, beats.length)) * 20);
-    q += Math.min(15, (1 - f.detectorDisagreementBurden) * 15);
-    q += Math.min(10, (1 - f.sourceSwitchBurden) * 10);
-    q += Math.min(10, (1 - f.morphologyInstability) * 10);
-    return Math.max(0, Math.min(100, Math.round(q)));
-  }
-
-  private computeConfidence(
-    label: RhythmLabel,
-    f: RhythmFeatures,
-    quality: number,
-    nIbis: number
-  ): number {
-    if (label === 'INSUFFICIENT_DATA' || label === 'NOISE_OR_UNRELIABLE') return 0;
-    let conf = (quality / 100) * 0.4;
-    conf += Math.min(0.2, nIbis * 0.012);
-    if (label === 'SINUS_REGULAR') conf += 0.2;
-    else if (label === 'SINUS_VARIABLE') conf += 0.15;
-    else if (label === 'AF_SUSPECTED' && f.afLikeScore > 0.7) conf += 0.15;
-    else if (label === 'BIGEMINY_TRIGEMINY_SUSPECTED' && f.bigeminyScore > 0.4) conf += 0.12;
-    else if (label === 'FREQUENT_ECTOPY_SUSPECTED' && f.ectopySuspicionScore > 0.5) conf += 0.10;
-    else conf += 0.05;
-    conf += (1 - f.morphologyInstability) * 0.1;
-    conf += (1 - f.sourceSwitchBurden) * 0.05;
-    // Persistence boost
-    conf += Math.min(0.1, this.pendingStreak * 0.03);
-    return Math.max(0, Math.min(1, conf));
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // Hierarchical rule engine
-  // ────────────────────────────────────────────────────────────────────
-
-  private classifyHierarchical(
-    f: RhythmFeatures,
-    ibis: number[]
-  ): { label: RhythmLabel; reasons: string[] } {
-    const reasons: string[] = [];
-    const hr = f.medianHR;
-
-    // 1. Bigeminy/trigeminy alternating pattern (very specific signature)
-    if (f.bigeminyScore > 0.40 && f.morphologyInstability < 0.6) {
-      reasons.push(`bigeminy_score_${f.bigeminyScore.toFixed(2)}`);
-      return { label: 'BIGEMINY_TRIGEMINY_SUSPECTED', reasons };
-    }
-
-    // 2. AF-like irregularly irregular: requires high entropy + high pNN50 + high CV
-    if (
-      f.afLikeScore > 0.65 &&
-      f.shannonEntropy > 2.0 &&
-      f.pnn50 > 0.30 &&
-      f.rrCV > 0.12 &&
-      f.sd1sd2Ratio > 0.55
-    ) {
-      reasons.push(`af_score_${f.afLikeScore.toFixed(2)}`);
-      reasons.push(`entropy_${f.shannonEntropy.toFixed(2)}`);
-      reasons.push(`pnn50_${(f.pnn50 * 100).toFixed(0)}%`);
-      // Tachy/brady refinement
-      if (hr > 110) return { label: 'TACHY_IRREGULAR', reasons };
-      if (hr < 50) return { label: 'BRADY_IRREGULAR', reasons };
-      return { label: 'AF_SUSPECTED', reasons };
-    }
-
-    // 3. Frequent ectopy: prematures + morphology instability
-    if (
-      f.ectopySuspicionScore > 0.45 &&
-      f.morphologyInstability > 0.30 &&
-      f.rrIrregularityScore > 0.25
-    ) {
-      reasons.push(`ectopy_${f.ectopySuspicionScore.toFixed(2)}`);
-      return { label: 'FREQUENT_ECTOPY_SUSPECTED', reasons };
-    }
-
-    // 4. Tachy / brady irregular (rate + irregularity, but not AF-grade)
-    if (hr > 110 && (f.rrCV > 0.08 || f.rrIrregularityScore > 0.20)) {
-      reasons.push('tachy_irregular');
-      return { label: 'TACHY_IRREGULAR', reasons };
-    }
-    if (hr < 50 && (f.rrCV > 0.08 || f.rrIrregularityScore > 0.20)) {
-      reasons.push('brady_irregular');
-      return { label: 'BRADY_IRREGULAR', reasons };
-    }
-
-    // 5. Generic irregularity (can't pin to AF/ectopy)
-    if (f.rrIrregularityScore > 0.40 && f.rmssd > 60 && f.rrCV > 0.10) {
-      reasons.push(`irregular_${f.rrIrregularityScore.toFixed(2)}`);
-      return { label: 'IRREGULAR_UNDETERMINED', reasons };
-    }
-
-    // 6. Sinus variable (normal HRV)
-    if (f.rrCV > 0.06 || f.rmssd > 35) {
-      reasons.push('sinus_variable');
-      return { label: 'SINUS_VARIABLE', reasons };
-    }
-
-    reasons.push('sinus_regular');
-    return { label: 'SINUS_REGULAR', reasons };
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // Persistence state machine
-  // ────────────────────────────────────────────────────────────────────
-
-  private applyPersistence(candidate: RhythmLabel): RhythmLabel {
-    const isAlert = (l: RhythmLabel) =>
-      l === 'AF_SUSPECTED' ||
-      l === 'FREQUENT_ECTOPY_SUSPECTED' ||
-      l === 'BIGEMINY_TRIGEMINY_SUSPECTED' ||
-      l === 'IRREGULAR_UNDETERMINED' ||
-      l === 'TACHY_IRREGULAR' ||
-      l === 'BRADY_IRREGULAR';
-
-    if (candidate === this.currentLabel) {
-      this.pendingLabel = candidate;
-      this.pendingStreak = Math.max(this.pendingStreak, 1);
-      return this.currentLabel;
-    }
-
-    if (candidate === this.pendingLabel) {
-      this.pendingStreak++;
-    } else {
-      this.pendingLabel = candidate;
-      this.pendingStreak = 1;
-    }
-
-    const required = isAlert(candidate)
-      ? this.config.persistenceForAlerts
-      : this.config.persistenceForBenign;
-
-    if (this.pendingStreak >= required) {
-      return candidate; // promote
-    }
-    // Hold previous label
-    return this.currentLabel === 'INSUFFICIENT_DATA' ? candidate : this.currentLabel;
-  }
-
-  private resetPersistence(label: RhythmLabel): void {
-    this.pendingLabel = label;
-    this.pendingStreak = 0;
-    this.currentLabel = label;
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // Events + burden
-  // ────────────────────────────────────────────────────────────────────
-
-  private emitEvent(label: RhythmLabel, f: RhythmFeatures): void {
-    const severity: RhythmEvent['severity'] =
-      label === 'AF_SUSPECTED'
-        ? 'alert'
-        : label === 'FREQUENT_ECTOPY_SUSPECTED' ||
-          label === 'BIGEMINY_TRIGEMINY_SUSPECTED' ||
-          label === 'TACHY_IRREGULAR' ||
-          label === 'BRADY_IRREGULAR'
-        ? 'warning'
-        : 'info';
-    this.events.push({
-      timestampMs: performance.now(),
-      label,
-      severity,
-      rmssd: f.rmssd,
-      pnn50: f.pnn50,
-      shannonEntropy: f.shannonEntropy,
-      rrCV: f.rrCV,
-    });
-    if (this.events.length > this.MAX_EVENTS) this.events.shift();
-  }
-
-  private getBurden(): number {
-    if (this.totalBeatsSeen === 0) return 0;
-    return Math.max(0, Math.min(1, this.irregularBeatsSeen / this.totalBeatsSeen));
-  }
-
-  // ────────────────────────────────────────────────────────────────────
-  // Helpers
-  // ────────────────────────────────────────────────────────────────────
-
-  private median(arr: number[]): number {
-    if (arr.length === 0) return 0;
-    const s = [...arr].sort((a, b) => a - b);
-    const mid = Math.floor(s.length / 2);
-    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-  }
-
-  private std(arr: number[]): number {
-    if (arr.length < 2) return 0;
-    const m = arr.reduce((a, b) => a + b, 0) / arr.length;
-    return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
-  }
-
-  private emptyFeatures(): RhythmFeatures {
+  private makeInsufficient(): RhythmResult {
     return {
-      beatsAnalyzed: 0,
-      validBeats: 0,
-      ibisCleaned: 0,
-      medianRR: 0,
-      medianHR: 0,
-      rrCV: 0,
-      sdnn: 0,
-      rmssd: 0,
-      madRR: 0,
-      pnn20: 0,
-      pnn50: 0,
-      sd1: 0,
-      sd2: 0,
-      sd1sd2Ratio: 0,
-      shannonEntropy: 0,
-      sampleEntropy: 0,
-      turningPointRatio: 0,
-      rrIrregularityScore: 0,
-      bigeminyScore: 0,
-      morphologyInstability: 0,
-      beatAmplitudeCV: 0,
-      detectorDisagreementBurden: 0,
-      sourceSwitchBurden: 0,
-      ectopySuspicionScore: 0,
-      afLikeScore: 0,
+      rhythmLabel: 'INSUFFICIENT_DATA',
+      rhythmConfidence: 0,
+      arrhythmiaBurden: 0,
+      recentEvents: [],
+      rhythmQuality: 0,
+      hrv: { sdnn: 0, rmssd: 0, pnn50: 0, sd1: 0, sd2: 0, lfHfRatio: 0, dfaAlpha1: 0, sampleEntropy: 0 },
     };
   }
 
   reset(): void {
-    this.currentLabel = 'INSUFFICIENT_DATA';
-    this.pendingLabel = 'INSUFFICIENT_DATA';
-    this.pendingStreak = 0;
-    this.noiseCooldown = 0;
-    this.totalBeatsSeen = 0;
-    this.irregularBeatsSeen = 0;
-    this.events = [];
+    this.rrHistory = [];
+    this.lastLabel = 'INSUFFICIENT_DATA';
+    this.recentEvents = [];
+    for (const k of Object.keys(this.persistenceCounters) as RhythmLabel[]) {
+      this.persistenceCounters[k] = 0;
+    }
   }
 }

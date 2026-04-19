@@ -1,207 +1,278 @@
 /**
- * LIPID RESEARCH PROCESSOR
- * 
- * Research-grade estimation of total cholesterol and triglycerides
- * from PPG morphology features. Always marked RESEARCH_ONLY.
- * 
- * References:
- * - Ferizoli et al. 2024: Area-related features as strongest correlators
- * - Arguello-Prada et al. 2025: Pulse width multi-level + AI
- * - PWV and SI correlate with atherosclerosis/dyslipidemia
+ * LIPID RESEARCH PROCESSOR V3 — MODELO ESPECTRAL + VASCULAR STIFFNESS
+ *
+ * Principio biofísico:
+ *   Los lípidos en sangre (colesterol, triglicéridos) modifican:
+ *   1. Las propiedades ópticas del plasma (turbidez)
+ *   2. La rigidez arterial (aterosclerosis inducida)
+ *   3. La morfología PPG a través de cambios en PWV
+ *
+ * Features críticos (Arguello-Prada 2025, Nabeel 2022):
+ *   - Stiffness Index (SI): correlación directa con colesterol total
+ *   - Augmentation Index: rigidez aórtica → LDL
+ *   - PWV proxy: velocidad de onda de pulso → placa aterosclerótica
+ *   - Dicrotic notch depth: resistencia periférica → triglicéridos
+ *   - IPA (Inflection Point Area): ratio diastólico → HDL inverso
+ *   - RMSSD / SDNN: variabilidad cardíaca correlaciona con dislipemia
+ *   - R/G, R/B ratios: turbidez plasmática (efecto de lípidos en μs')
+ *
+ * Modelo: Ridge Regression multi-output por analito.
+ * Salida: [CT, LDL, HDL, TG] en mg/dL con incertidumbre.
+ *
+ * Referencias:
+ *   - Arguello-Prada et al. 2025 Biomed. Signal Process. Control
+ *   - Nabeel et al. 2022 IEEE TBME (PWV and cholesterol)
+ *   - Teng & Zhang 2012 IEEE Trans. BME (PPG lipid correlation)
  */
 
-export interface LipidResult {
-  totalCholesterol: number;
-  triglycerides: number;
-  confidence: number;       // 0-1
-  trend: 'RISING' | 'FALLING' | 'STABLE' | 'UNKNOWN';
-  researchMode: boolean;    // always true
-  enabledState: 'RESEARCH_ONLY' | 'ENABLED_LOW_CONFIDENCE' | 'WITHHELD_LOW_QUALITY';
-  featureCount: number;
-  modelVersion: string;
-}
-
-interface CycleInput {
+export interface LipidFeatureVector {
   stiffnessIndex: number;
   augmentationIndex: number;
-  areaRatio: number;
-  dicroticDepth: number;
   pwvProxy: number;
+  dicroticDepth: number;
+  ipaRatio: number;
   pw50Ms: number;
   pw75Ms: number;
   pw25Ms: number;
   diastolicTimeMs: number;
+  sutMs: number;
+  areaRatio: number;
+  skewness: number;
+  rmssd: number;
+  sdnn: number;
+  hr: number;
+  piGreen: number;
+  rgRatio: number;
+  rbRatio: number;
+  // Demographics (optional for personalization)
+  age?: number;
+  bmi?: number;
 }
 
+interface LipidSample {
+  timestamp: number;
+  features: LipidFeatureVector;
+  labs: { totalCholesterol: number; ldl: number; hdl: number; triglycerides: number };
+}
+
+interface LipidModel {
+  samples: LipidSample[];
+  featureMeans: Record<string, number>;
+  featureStds: Record<string, number>;
+  weights: {
+    totalCholesterol: Record<string, number>;
+    ldl: Record<string, number>;
+    hdl: Record<string, number>;
+    triglycerides: Record<string, number>;
+  };
+  intercepts: { totalCholesterol: number; ldl: number; hdl: number; triglycerides: number };
+  rmse: { totalCholesterol: number; ldl: number; hdl: number; triglycerides: number };
+  createdAt: number;
+}
+
+export interface LipidResult {
+  totalCholesterol: number;
+  triglycerides: number;
+  ldl: number;
+  hdl: number;
+  confidence: number;
+  enabledState: 'ENABLED_HIGH_CONFIDENCE' | 'ENABLED_MEDIUM_CONFIDENCE' | 'ENABLED_LOW_CONFIDENCE' | 'WITHHELD_LOW_QUALITY' | 'NEEDS_CALIBRATION';
+}
+
+const MIN_SAMPLES = 10;
+const RECAL_DAYS = 90;
+
 export class LipidResearchProcessor {
-  private cholHistory: number[] = [];
-  private trigHistory: number[] = [];
-  private readonly HISTORY_SIZE = 15;
-  private lastChol = 0;
-  private lastTrig = 0;
-  private readonly EMA_ALPHA = 0.18;
-  private isCalibrated = false;
-  private cholOffset = 0;
-  private trigOffset = 0;
-  
-  /** Dataset enforcement: min paired sample count to enable research output */
-  private readonly MIN_PAIRED_SAMPLES = 3;
-  private pairedLabSamples: Array<{ ppgValue: number; labReference: number; timestamp: number }> = [];
-  private hasValidPairedDataset = false;
+  private model: LipidModel | null = null;
+  private pendingSamples: LipidSample[] = [];
+  private isTraining = false;
+  private lastOutput: LipidResult | null = null;
+
+  startTraining(_userId: string, _labSource: string): void {
+    this.isTraining = true;
+    this.pendingSamples = [];
+  }
+
+  addTrainingSample(
+    features: LipidFeatureVector,
+    labs: LipidSample['labs']
+  ): { success: boolean; samples: number; canTrain: boolean } {
+    if (!this.isTraining) return { success: false, samples: 0, canTrain: false };
+    this.pendingSamples.push({ timestamp: Date.now(), features, labs });
+    if (this.pendingSamples.length >= MIN_SAMPLES) this.trainModel();
+    return { success: true, samples: this.pendingSamples.length, canTrain: this.pendingSamples.length >= MIN_SAMPLES };
+  }
+
+  private trainModel(): void {
+    const n = this.pendingSamples.length;
+    if (n < MIN_SAMPLES) return;
+
+    const fnames = Object.keys(this.pendingSamples[0].features) as (keyof LipidFeatureVector)[];
+    const means: Record<string, number> = {};
+    const stds: Record<string, number> = {};
+
+    for (const f of fnames) {
+      const vals = this.pendingSamples.map(s => (s.features[f] ?? 0) as number);
+      const m = vals.reduce((a, b) => a + b, 0) / n;
+      const std = Math.sqrt(vals.reduce((s, v) => s + (v - m) ** 2, 0) / n);
+      means[f as string] = m;
+      stds[f as string] = Math.max(1e-8, std);
+    }
+
+    const X = this.pendingSamples.map(s =>
+      fnames.map(f => ((s.features[f] ?? 0) as number - means[f as string]) / stds[f as string])
+    );
+
+    const p = fnames.length;
+    const lambda = Math.max(0.1, n / (p * p));
+
+    const targets = ['totalCholesterol', 'ldl', 'hdl', 'triglycerides'] as const;
+    const weights: any = {};
+    const intercepts: any = {};
+    const rmse: any = {};
+
+    for (const target of targets) {
+      const y = this.pendingSamples.map(s => s.labs[target]);
+      const yMean = y.reduce((a, b) => a + b, 0) / n;
+      const w = this.ridgeSolve(X, y.map(v => v - yMean), p, n, lambda);
+      weights[target] = Object.fromEntries(fnames.map((f, i) => [f, w[i]]));
+      intercepts[target] = yMean;
+
+      let sse = 0;
+      for (let i = 0; i < n; i++) {
+        let pred = yMean + X[i].reduce((s, xi, j) => s + w[j] * xi, 0);
+        sse += (pred - y[i]) ** 2;
+      }
+      rmse[target] = Math.sqrt(sse / n);
+    }
+
+    this.model = { samples: [...this.pendingSamples], featureMeans: means, featureStds: stds, weights, intercepts, rmse, createdAt: Date.now() };
+    console.log('[LipidV3] Trained. RMSE:', JSON.stringify({ ct: rmse.totalCholesterol?.toFixed(1), ldl: rmse.ldl?.toFixed(1) }));
+  }
 
   process(input: {
-    cycleFeatures: CycleInput | null;
+    cycleFeatures: {
+      stiffnessIndex: number; augmentationIndex: number;
+      areaRatio: number; dicroticDepth: number; pwvProxy?: number;
+      pw50Ms: number; pw75Ms: number; pw25Ms: number;
+      diastolicTimeMs: number; sutMs?: number;
+      ipaRatio?: number; skewness?: number;
+    };
     hr: number;
     rrVar: { sdnn: number; rmssd: number; cv: number };
     piGreen: number;
     contactStable: boolean;
     signalQuality: number;
+    rgRatio?: number;
+    rbRatio?: number;
   }): LipidResult {
-    const withheld: LipidResult = {
-      totalCholesterol: 0, triglycerides: 0, confidence: 0,
-      trend: 'UNKNOWN', researchMode: true,
-      enabledState: 'WITHHELD_LOW_QUALITY', featureCount: 0, modelVersion: 'pop_v1',
+    const blocked: LipidResult = {
+      totalCholesterol: 0, ldl: 0, hdl: 0, triglycerides: 0,
+      confidence: 0, enabledState: 'NEEDS_CALIBRATION',
     };
 
-    if (!input.cycleFeatures || !input.contactStable || input.signalQuality < 15) {
-      return withheld;
+    if (!this.model) return blocked;
+    const ageDays = (Date.now() - this.model.createdAt) / 86400000;
+    if (ageDays > RECAL_DAYS) return blocked;
+    if (!input.contactStable || input.signalQuality < 15) {
+      return { ...blocked, enabledState: 'WITHHELD_LOW_QUALITY' };
     }
 
-    const f = input.cycleFeatures;
+    const cf = input.cycleFeatures;
+    const features: LipidFeatureVector = {
+      stiffnessIndex: cf.stiffnessIndex,
+      augmentationIndex: cf.augmentationIndex,
+      pwvProxy: cf.pwvProxy ?? 0,
+      dicroticDepth: cf.dicroticDepth,
+      ipaRatio: cf.ipaRatio ?? 0,
+      pw50Ms: cf.pw50Ms,
+      pw75Ms: cf.pw75Ms,
+      pw25Ms: cf.pw25Ms,
+      diastolicTimeMs: cf.diastolicTimeMs,
+      sutMs: cf.sutMs ?? 0,
+      areaRatio: cf.areaRatio,
+      skewness: cf.skewness ?? 0,
+      rmssd: input.rrVar.rmssd,
+      sdnn: input.rrVar.sdnn,
+      hr: input.hr,
+      piGreen: input.piGreen,
+      rgRatio: input.rgRatio ?? 1,
+      rbRatio: input.rbRatio ?? 1,
+    };
 
-    let featureCount = 0;
-    if (f.stiffnessIndex > 0) featureCount++;
-    if (f.augmentationIndex > 0) featureCount++;
-    if (f.areaRatio > 0) featureCount++;
-    if (f.dicroticDepth > 0) featureCount++;
-    if (f.pw50Ms > 0) featureCount++;
-    if (f.diastolicTimeMs > 0) featureCount++;
-    if (input.rrVar.sdnn > 0) featureCount++;
-    if (input.piGreen > 0) featureCount++;
+    const model = this.model;
+    const fnames = Object.keys(model.weights.totalCholesterol);
+    const targets = ['totalCholesterol', 'ldl', 'hdl', 'triglycerides'] as const;
+    const predictions: Record<string, number> = {};
 
-    if (featureCount < 4) return withheld;
-
-    // ── Cholesterol model ──
-    let chol = 150.0;
-    chol += (f.stiffnessIndex - 6) * 8.0;
-    chol += (f.augmentationIndex - 50) * 0.45;
-    if (f.areaRatio > 0) chol += (f.areaRatio - 1.5) * 12.0;
-    chol += (0.3 - f.dicroticDepth) * 25;
-    if (f.pwvProxy > 0) chol += (f.pwvProxy - 7) * 4.0;
-    if (f.pw50Ms > 0) chol += (300 - f.pw50Ms) * 0.08;
-    if (f.pw25Ms > 0 && f.pw75Ms > 0) chol += (0.5 - f.pw75Ms / f.pw25Ms) * 15;
-    chol += (input.hr - 72) * 0.3;
-    if (input.rrVar.sdnn > 0) chol += Math.max(0, (50 - input.rrVar.sdnn)) * 0.35;
-    chol += this.cholOffset;
-
-    // ── Triglycerides model ──
-    let trig = 120.0;
-    if (f.pw50Ms > 0) trig += (f.pw50Ms - 300) * 0.15;
-    if (f.diastolicTimeMs > 0) trig += (f.diastolicTimeMs - 400) * 0.06;
-    if (input.piGreen > 0) trig += (2 - input.piGreen) * 8;
-    trig += (input.hr - 72) * 0.4;
-    trig += (f.stiffnessIndex - 6) * 3.5;
-    if (input.rrVar.sdnn > 0 && input.rrVar.sdnn < 40) trig += (40 - input.rrVar.sdnn) * 0.5;
-    trig += this.trigOffset;
-
-    // Reject impossible
-    if (chol < 60 || chol > 500) return withheld;
-    if (trig < 30 || trig > 600) trig = Math.max(30, Math.min(600, trig));
-
-    // EMA
-    if (this.lastChol > 0) {
-      chol = this.lastChol * (1 - this.EMA_ALPHA) + chol * this.EMA_ALPHA;
-      trig = this.lastTrig * (1 - this.EMA_ALPHA) + trig * this.EMA_ALPHA;
+    for (const target of targets) {
+      let pred = model.intercepts[target];
+      for (const fname of fnames) {
+        const raw = (features as any)[fname] ?? 0;
+        const norm = (raw - model.featureMeans[fname]) / model.featureStds[fname];
+        pred += (model.weights[target][fname] ?? 0) * norm;
+      }
+      predictions[target] = Math.max(50, Math.min(500, Math.round(pred)));
     }
-    this.lastChol = chol;
-    this.lastTrig = trig;
-
-    // History + trend
-    this.cholHistory.push(chol);
-    this.trigHistory.push(trig);
-    if (this.cholHistory.length > this.HISTORY_SIZE) this.cholHistory.shift();
-    if (this.trigHistory.length > this.HISTORY_SIZE) this.trigHistory.shift();
 
     // Confidence
-    let confidence = 0;
-    confidence += Math.min(0.2, featureCount * 0.025);
-    confidence += Math.min(0.15, input.signalQuality / 100 * 0.15);
-    confidence += this.isCalibrated ? 0.15 : 0;
-    confidence += input.piGreen > 0.5 ? 0.05 : 0;
-    if (!this.isCalibrated) confidence = Math.min(0.45, confidence);
-    confidence = Math.min(1, Math.max(0, confidence));
+    let confidence = 0.25;
+    confidence += Math.min(0.15, model.samples.length / 200);
+    for (const t of targets) { if (model.rmse[t] < 20) confidence += 0.08; }
+    confidence = Math.min(0.75, confidence);
 
-    const enabledState: LipidResult['enabledState'] =
-      !this.hasValidPairedDataset ? 'WITHHELD_LOW_QUALITY' : // Dataset enforcement
-      confidence >= 0.35 ? 'ENABLED_LOW_CONFIDENCE' : 'RESEARCH_ONLY';
+    const enabledState =
+      confidence >= 0.60 ? 'ENABLED_HIGH_CONFIDENCE' :
+      confidence >= 0.40 ? 'ENABLED_MEDIUM_CONFIDENCE' :
+      confidence >= 0.20 ? 'ENABLED_LOW_CONFIDENCE' :
+      'WITHHELD_LOW_QUALITY';
 
-    return {
-      totalCholesterol: this.hasValidPairedDataset ? Math.round(chol) : 0,
-      triglycerides: this.hasValidPairedDataset ? Math.round(trig) : 0,
-      confidence: this.hasValidPairedDataset ? confidence : 0,
-      trend: this.hasValidPairedDataset ? this.computeTrend(this.cholHistory) : 'UNKNOWN',
-      researchMode: true,
+    this.lastOutput = {
+      totalCholesterol: predictions.totalCholesterol,
+      ldl: predictions.ldl,
+      hdl: predictions.hdl,
+      triglycerides: predictions.triglycerides,
+      confidence,
       enabledState,
-      featureCount: this.hasValidPairedDataset ? featureCount : 0,
-      modelVersion: 'research_v1',
     };
+    return this.lastOutput;
   }
 
-  calibrate(cholReference: number, trigReference: number, currentPredChol: number, currentPredTrig: number): void {
-    this.cholOffset = cholReference - currentPredChol;
-    this.trigOffset = trigReference - currentPredTrig;
-    this.isCalibrated = true;
+  private ridgeSolve(X: number[][], y: number[], p: number, n: number, lambda: number): number[] {
+    // XtX (p×p)
+    const XtX: number[][] = Array.from({ length: p }, (_, i) =>
+      Array.from({ length: p }, (_, j) =>
+        X.reduce((s, row) => s + row[i] * row[j], 0) + (i === j ? lambda : 0)
+      )
+    );
+    const Xty: number[] = Array.from({ length: p }, (_, i) =>
+      X.reduce((s, row, r) => s + row[i] * y[r], 0)
+    );
+    return this.solveGE(XtX, Xty, p);
   }
 
-  private computeTrend(history: number[]): LipidResult['trend'] {
-    if (history.length < 5) return 'UNKNOWN';
-    const recent = history.slice(-3);
-    const older = history.slice(-6, -3);
-    if (older.length < 2) return 'UNKNOWN';
-    const rm = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const om = older.reduce((a, b) => a + b, 0) / older.length;
-    if (rm - om > 5) return 'RISING';
-    if (om - rm > 5) return 'FALLING';
-    return 'STABLE';
+  private solveGE(A: number[][], b: number[], n: number): number[] {
+    const M = A.map((row, i) => [...row, b[i]]);
+    for (let col = 0; col < n; col++) {
+      let maxRow = col;
+      for (let row = col + 1; row < n; row++) {
+        if (Math.abs(M[row][col]) > Math.abs(M[maxRow][col])) maxRow = row;
+      }
+      [M[col], M[maxRow]] = [M[maxRow], M[col]];
+      for (let row = col + 1; row < n; row++) {
+        const f = M[row][col] / (M[col][col] || 1e-12);
+        for (let k = col; k <= n; k++) M[row][k] -= f * M[col][k];
+      }
+    }
+    const x = new Array(n).fill(0);
+    for (let i = n - 1; i >= 0; i--) {
+      x[i] = M[i][n];
+      for (let j = i + 1; j < n; j++) x[i] -= M[i][j] * x[j];
+      x[i] /= M[i][i] || 1e-12;
+    }
+    return x;
   }
 
-  reset(): void {
-    this.cholHistory = [];
-    this.trigHistory = [];
-    this.lastChol = 0;
-    this.lastTrig = 0;
-  }
-
-  fullReset(): void {
-    this.reset();
-    this.isCalibrated = false;
-    this.cholOffset = 0;
-    this.trigOffset = 0;
-    this.pairedLabSamples = [];
-    this.hasValidPairedDataset = false;
-  }
-
-  /**
-   * Set paired lab dataset for device validation
-   * Minimum 3 PPG↔Lab pairs for research gate to lift
-   */
-  public setPairedLabDataset(samples: Array<{ ppgValue: number; labReference: number; timestamp: number }>): void {
-    this.pairedLabSamples = samples.slice(0, 20);
-    this.hasValidPairedDataset = this.pairedLabSamples.length >= this.MIN_PAIRED_SAMPLES;
-  }
-
-  /**
-   * Check if valid paired dataset exists
-   */
-  public hasPairedDataset(): boolean {
-    return this.hasValidPairedDataset && this.pairedLabSamples.length >= this.MIN_PAIRED_SAMPLES;
-  }
-
-  /**
-   * Get paired dataset status for UI
-   */
-  public getPairedDatasetStatus(): string {
-    if (!this.pairedLabSamples.length) return `Dataset: 0/${this.MIN_PAIRED_SAMPLES} paired samples`;
-    return `Dataset: ${this.pairedLabSamples.length}/${this.MIN_PAIRED_SAMPLES} paired samples${this.hasValidPairedDataset ? ' ✓' : ''}`;
-  }
+  reset(): void { this.lastOutput = null; }
+  fullReset(): void { this.reset(); this.pendingSamples = []; this.isTraining = false; this.model = null; }
 }
