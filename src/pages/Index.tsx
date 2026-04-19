@@ -546,7 +546,9 @@ const Index = () => {
           redAC: rgbStats.redAC,
           redDC: rgbStats.redDC,
           greenAC: rgbStats.greenAC,
-          greenDC: rgbStats.greenDC
+          greenDC: rgbStats.greenDC,
+          blueAC: (rgbStats as any).blueAC ?? 0,
+          blueDC: (rgbStats as any).blueDC ?? 0,
         });
       }
 
