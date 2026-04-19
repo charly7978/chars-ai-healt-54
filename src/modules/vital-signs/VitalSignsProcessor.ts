@@ -1,6 +1,9 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessorV2, type BPFeatureVector } from './BloodPressureProcessorV2';
 import { BloodPressureProcessorV3, type BPV3Features } from './BloodPressureProcessorV3';
+// Phase 18 — Ultra-Optimize legacy V1 has the .estimate(buffer, RR, fs) API
+// that VitalSignsProcessor relies on for the primary SBP/DBP estimate.
+import { BloodPressureProcessor as BloodPressureProcessorV1, type BPEstimate } from './BloodPressureProcessor';
 import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
 import { RhythmClassifier, type RhythmResult as RhythmResultV3 } from './RhythmClassifier';
 import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
@@ -116,9 +119,13 @@ export interface RGBData {
 }
 
 export class VitalSignsProcessor {
-  private bloodPressureProcessor: BloodPressureProcessorV2;
+  /** Primary BP estimator: Ultra-Optimize V1 with the legacy .estimate(buffer, RR, fs) API
+   *  that VitalSignsProcessor.calculateVitalSigns has been calling since Phase 8. */
+  private bloodPressureProcessor: BloodPressureProcessorV1;
+  /** Kept for back-compat: V2 wizard API is still exposed via addBPCalibrationPoint. */
+  private bloodPressureProcessorV2: BloodPressureProcessorV2;
   private bloodPressureProcessorV3: BloodPressureProcessorV3;
-  /** Phase 8 opt-in: V3 ridge regressor with LOO-RMSE; V2 stays as fallback. */
+  /** Phase 8 opt-in: V3 ridge regressor with LOO-RMSE; V1/V2 stays as fallback. */
   private useBPV3 = true;
   private rhythmClassifier: RhythmClassifierV2;
   private rhythmClassifierV3: RhythmClassifier;
@@ -189,7 +196,10 @@ export class VitalSignsProcessor {
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
 
   constructor() {
-    this.bloodPressureProcessor = new BloodPressureProcessorV2();
+    // Phase 18 fix: V1 has .estimate(); V2 has only .process() with a different signature.
+    // calculateVitalSigns calls .estimate(...) so we MUST construct V1 here.
+    this.bloodPressureProcessor = new BloodPressureProcessorV1();
+    this.bloodPressureProcessorV2 = new BloodPressureProcessorV2();
     this.bloodPressureProcessorV3 = new BloodPressureProcessorV3();
     this.rhythmClassifier = new RhythmClassifierV2();
     this.rhythmClassifierV3 = new RhythmClassifier();
@@ -268,7 +278,7 @@ export class VitalSignsProcessor {
    * V3 (ridge LOO) requiere ≥5 puntos; V2 (legacy) acepta ≥3.
    */
   startBPCalibrationWizard(referenceDevice: string, userId: string): void {
-    this.bloodPressureProcessor.startCalibrationWizard(referenceDevice, userId);
+    this.bloodPressureProcessorV2.startCalibrationWizard(referenceDevice, userId);
     this.bloodPressureProcessorV3.startCalibrationWizard();
   }
 
@@ -282,7 +292,7 @@ export class VitalSignsProcessor {
     referenceDBP: number,
     v3Features?: BPV3Features
   ): { success: boolean; pointsCollected: number; pointsNeeded: number } {
-    const v2Res = this.bloodPressureProcessor.addCalibrationPoint(ppgFeatures, referenceSBP, referenceDBP);
+    const v2Res = this.bloodPressureProcessorV2.addCalibrationPoint(ppgFeatures, referenceSBP, referenceDBP);
     if (v3Features) {
       this.bloodPressureProcessorV3.addCalibrationPoint(v3Features, referenceSBP, referenceDBP);
     }
@@ -294,7 +304,7 @@ export class VitalSignsProcessor {
    * (V3 LOO-RMSE si está disponible, sino V2). Persiste la calibración V3.
    */
   finishBPCalibrationWizard(): { success: boolean; rmseSBP: number; rmseDBP: number } {
-    const v2 = this.bloodPressureProcessor.finishCalibrationWizard();
+    const v2 = this.bloodPressureProcessorV2.finishCalibrationWizard();
     const v3 = this.bloodPressureProcessorV3.finishCalibrationWizard();
     if (v3.success) {
       // fire-and-forget persistence
@@ -600,6 +610,13 @@ export class VitalSignsProcessor {
 
     const medianF = validCycleFeatures.length >= 1 ? this.medianCycleFeatures(validCycleFeatures) : null;
 
+    // Phase 18 fix — these were declared further below but referenced inside
+    // the BP V3 features block. Hoisting them prevents a TDZ ReferenceError
+    // (`Cannot access 'piGreen' before initialization`) that crashed the
+    // pipeline as soon as the user had ≥2 RR intervals.
+    const piGreen = this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0;
+    const rgACRatio = this.rgbData.greenAC > 0 ? this.rgbData.redAC / this.rgbData.greenAC : 0;
+
     if (validRR.length >= 2) {
       const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, sampleRate);
       this.lastBPConfidence = bpEstimate.confidence;
@@ -658,9 +675,6 @@ export class VitalSignsProcessor {
         }
       }
     }
-
-    const piGreen = this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0;
-    const rgACRatio = this.rgbData.greenAC > 0 ? this.rgbData.redAC / this.rgbData.greenAC : 0;
 
     if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 10) {
       const glucoseResult = this.glucoseProcessor.process({
@@ -971,6 +985,7 @@ export class VitalSignsProcessor {
     this.isCalibrating = false;
     this.calibrationSamples = 0;
     this.bloodPressureProcessor.fullReset();
+    this.bloodPressureProcessorV2.fullReset();
     this.bloodPressureProcessorV3.fullReset();
     this.spo2Processor.fullReset();
     this.spo2ProcessorV3.fullReset();
