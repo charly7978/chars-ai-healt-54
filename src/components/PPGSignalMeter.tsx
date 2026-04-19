@@ -21,6 +21,9 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
+  torchActive?: boolean;
+  realFps?: number;
+  cameraLabel?: string;
 }
 
 const CONFIG = {
@@ -61,7 +64,7 @@ const CONFIG = {
   }
 };
 
-const NON_ALERT_RHYTHMS = new Set(['SIN ARRITMIAS', 'SINUS_STABLE', 'SINUS_VARIABLE', 'CALIBRANDO...', 'UNDETERMINED_LOW_QUALITY']);
+const NON_ALERT_RHYTHMS = new Set(['SIN ARRITMIAS', 'sinus_regular', 'sinus_variable', 'CALIBRANDO...', 'insufficient_data', 'noise_or_unreliable', 'UNDETERMINED_LOW_QUALITY']);
 
 const parseRhythmStatus = (statusString?: string) => {
   const [label = 'SIN ARRITMIAS', countStr = '0'] = (statusString || 'SIN ARRITMIAS|0').split('|');
@@ -69,7 +72,7 @@ const parseRhythmStatus = (statusString?: string) => {
   const normalized = label.trim();
   const display = normalized.split('_').join(' ');
   const isAlert = !NON_ALERT_RHYTHMS.has(normalized);
-  const color = normalized === 'UNDETERMINED_LOW_QUALITY'
+  const color = normalized === 'UNDETERMINED_LOW_QUALITY' || normalized === 'insufficient_data'
     ? CONFIG.COLORS.TEXT_WARNING
     : isAlert
       ? CONFIG.COLORS.TEXT_DANGER
@@ -91,14 +94,17 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = []
+  rrIntervals = [],
+  torchActive = false,
+  realFps = 0,
+  cameraLabel,
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData });
+  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData, torchActive, realFps, cameraLabel });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   
@@ -110,7 +116,7 @@ const PPGSignalMeter = ({
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
 
   useEffect(() => {
-    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData };
+    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData, torchActive, realFps, cameraLabel };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
       ibiDisplayRef.current = Math.round(last);
@@ -121,7 +127,7 @@ const PPGSignalMeter = ({
       for (let i = 1; i < rrIntervals.length; i++) sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
       hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
     }
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData]);
+  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData, torchActive, realFps, cameraLabel]);
 
   useEffect(() => {
     if (isPeak && isFingerDetected) {
@@ -256,7 +262,7 @@ const PPGSignalMeter = ({
 
   const drawVitalInfo = useCallback((ctx: CanvasRenderingContext2D, now: number) => {
     const { CANVAS_WIDTH: W, COLORS } = CONFIG;
-    const { bpm, spo2, arrhythmiaStatus, quality, rrIntervals, rawArrhythmiaData } = propsRef.current;
+    const { bpm, spo2, arrhythmiaStatus, quality, rrIntervals, rawArrhythmiaData, torchActive, realFps, cameraLabel } = propsRef.current;
     const rhythm = parseRhythmStatus(arrhythmiaStatus);
     const panelH = 95;
     const panelW = 160;
@@ -294,6 +300,10 @@ const PPGSignalMeter = ({
       ctx.fillStyle = hrColor;
       ctx.fillText(hrLabel, 10, panelY + 86);
     }
+
+    ctx.font = fontSize.small;
+    ctx.fillStyle = torchActive ? COLORS.TEXT_PRIMARY : COLORS.TEXT_WARNING;
+    ctx.fillText(`TORCH ${torchActive ? 'ON' : 'OFF'}`, 10, panelY + 98);
     
     ctx.fillStyle = 'rgba(0, 15, 30, 0.9)';
     ctx.fillRect(W - panelW - 3, panelY, panelW, panelH);
@@ -322,6 +332,10 @@ const PPGSignalMeter = ({
       ctx.fillStyle = spColor;
       ctx.fillText(spLabel, W - panelW + 4, panelY + 86);
     }
+
+    ctx.font = fontSize.small;
+    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.fillText(`FPS ${realFps > 0 ? realFps.toFixed(1) : '--'}`, W - panelW + 4, panelY + 98);
     
     const centerX = W / 2;
     const centerW = 260;
@@ -361,6 +375,7 @@ const PPGSignalMeter = ({
     ctx.textAlign = 'right';
     ctx.fillText(`SDNN: ${hrv.sdnn > 0 ? hrv.sdnn + 'ms' : '--'}`, centerX + centerW / 2 - 8, panelY + 68);
     ctx.fillText(`RMSSD: ${hrv.rmssd > 0 ? hrv.rmssd + 'ms' : '--'}`, centerX + centerW / 2 - 8, panelY + 84);
+    ctx.fillText(cameraLabel ? cameraLabel.slice(0, 18) : 'rear-camera', centerX + centerW / 2 - 8, panelY + 98);
     
     if (rhythm.isAlert) {
       const pulse = (Math.sin(now / 100) + 1) / 2;

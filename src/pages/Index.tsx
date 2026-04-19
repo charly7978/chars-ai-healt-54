@@ -19,13 +19,12 @@ import { supabase } from "@/integrations/supabase/client";
 // during transition windows so we never raise false alarms.
 const NON_ALERT_RHYTHMS = new Set([
   'SIN ARRITMIAS',
-  'SINUS_REGULAR',
-  'SINUS_STABLE',           // legacy
-  'SINUS_VARIABLE',
+  'sinus_regular',
+  'sinus_variable',
   'CALIBRANDO...',
-  'INSUFFICIENT_DATA',
-  'NOISE_OR_UNRELIABLE',
-  'UNDETERMINED_LOW_QUALITY' // legacy
+  'insufficient_data',
+  'noise_or_unreliable',
+  'UNDETERMINED_LOW_QUALITY' // legacy compat
 ]);
 
 const Index = () => {
