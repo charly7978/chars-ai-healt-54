@@ -1,22 +1,9 @@
-import { PPGFeatureExtractor } from './PPGFeatureExtractor';
-import { BloodPressureProcessorV2, type BPFeatureVector } from './BloodPressureProcessorV2';
-import { BloodPressureProcessorV3, type BPV3Features } from './BloodPressureProcessorV3';
-// Phase 18 — Ultra-Optimize legacy V1 has the .estimate(buffer, RR, fs) API
-// that VitalSignsProcessor relies on for the primary SBP/DBP estimate.
-import { BloodPressureProcessor as BloodPressureProcessorV1, type BPEstimate } from './BloodPressureProcessor';
-import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
-import { RhythmClassifier, type RhythmResult as RhythmResultV3 } from './RhythmClassifier';
-import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
-import { SpO2ProcessorV3 } from './SpO2ProcessorV3';
-import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessorV2';
-import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
-import { GlucoseResearchProcessorV3, type GlucoseV3Features } from '../biomarkers/GlucoseResearchProcessorV3';
-import { LipidResearchProcessorV3, type LipidV3Features } from '../biomarkers/LipidResearchProcessorV3';
-// Phase 18 — Ultra-Optimize V1 has the rich .process({cycleFeatures, hr, rrVar, ...})
-// signature that VitalSignsProcessor uses. V2 below keeps the wizard API.
-import { GlucoseResearchProcessor as GlucoseResearchProcessorV1 } from '../biomarkers/GlucoseResearchProcessor';
-import { LipidResearchProcessor as LipidResearchProcessorV1 } from '../biomarkers/LipidResearchProcessor';
-import { SpO2Processor as SpO2ProcessorV1 } from './SpO2Processor';
+import { PPGFeatureExtractor, type CycleFeatures } from './PPGFeatureExtractor';
+import { BloodPressureProcessor, type BPEstimate, type BPConfidenceLevel } from './BloodPressureProcessor';
+import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
+import { SpO2Processor, type SpO2Result, type SpO2Calibration } from './SpO2Processor';
+import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
+import { LipidResearchProcessor, type LipidResult } from '../biomarkers/LipidResearchProcessor';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
@@ -59,11 +46,10 @@ export interface VitalSignsResult {
   signalQuality: number;
   measurementConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID';
   rhythm?: {
-    label: RhythmLabelV2;
+    label: RhythmLabel;
     confidence: number;
     burden: number;
     recentEvents: any[];
-    evidence?: RhythmEvidence;
   };
   spo2Detail?: {
     value: number | null;
@@ -137,34 +123,12 @@ export interface RGBData {
 }
 
 export class VitalSignsProcessor {
-  /** Primary BP estimator: Ultra-Optimize V1 with the legacy .estimate(buffer, RR, fs) API
-   *  that VitalSignsProcessor.calculateVitalSigns has been calling since Phase 8. */
-  private bloodPressureProcessor: BloodPressureProcessorV1;
-  /** Kept for back-compat: V2 wizard API is still exposed via addBPCalibrationPoint. */
-  private bloodPressureProcessorV2: BloodPressureProcessorV2;
-  private bloodPressureProcessorV3: BloodPressureProcessorV3;
-  /** Phase 8 opt-in: V3 ridge regressor with LOO-RMSE; V1/V2 stays as fallback. */
-  private useBPV3 = true;
-  private rhythmClassifier: RhythmClassifierV2;
-  private rhythmClassifierV3: RhythmClassifier;
-  /** Phase 18 — primary SpO2 emitter using the rich Ultra-Optimize V1 with
-   *  enabledState support. V2 kept for legacy device-calibration profile. */
-  private spo2Processor: SpO2ProcessorV1;
-  private spo2ProcessorV2: SpO2ProcessorV2;
-  private spo2ProcessorV3: SpO2ProcessorV3;
-  /** Phase 7 opt-in: when true, V3 runs in parallel and its result is published
-   *  if (and only if) it has a calibration loaded — otherwise V1 is used. */
-  private useSpO2V3 = true;
-  /** Phase 18 — primary glucose / lipids emitters use Ultra-Optimize V1 because
-   *  VitalSignsProcessor.calculateVitalSigns calls .process({cycleFeatures, hr,
-   *  rrVar, piGreen, ...}), a signature only V1 implements. V2 below keeps the
-   *  wizard / training-mode API for forward calibration capture. */
-  private glucoseProcessor: GlucoseResearchProcessorV1;
-  private glucoseProcessorV2: GlucoseResearchProcessorV2;
-  private glucoseProcessorV3: GlucoseResearchProcessorV3;
-  private lipidProcessor: LipidResearchProcessorV1;
-  private lipidProcessorV2: LipidResearchProcessorV2;
-  private lipidProcessorV3: LipidResearchProcessorV3;
+  /** Single authoritative processor instances - no V2/V3 duplicates */
+  private bloodPressureProcessor: BloodPressureProcessor;
+  private rhythmClassifier: RhythmClassifier;
+  private spo2Processor: SpO2Processor;
+  private glucoseProcessor: GlucoseResearchProcessor;
+  private lipidProcessor: LipidResearchProcessor;
   private hrvProcessor: HRVTimeFreqProcessor;
   private stressProcessor: StressProcessor;
   private respProcessor: RespiratoryRateProcessor;
@@ -225,40 +189,21 @@ export class VitalSignsProcessor {
   private readonly EMA_ALPHA_DYNAMIC = 0.30;
 
   constructor() {
-    // Phase 18 fix: V1 has .estimate(); V2 has only .process() with a different signature.
-    // calculateVitalSigns calls .estimate(...) so we MUST construct V1 here.
-    this.bloodPressureProcessor = new BloodPressureProcessorV1();
-    this.bloodPressureProcessorV2 = new BloodPressureProcessorV2();
-    this.bloodPressureProcessorV3 = new BloodPressureProcessorV3();
-    this.rhythmClassifier = new RhythmClassifierV2();
-    this.rhythmClassifierV3 = new RhythmClassifier();
-    this.spo2Processor = new SpO2ProcessorV1();
-    this.spo2ProcessorV2 = new SpO2ProcessorV2();
-    this.spo2ProcessorV3 = new SpO2ProcessorV3();
-    this.glucoseProcessor = new GlucoseResearchProcessorV1();
-    this.glucoseProcessorV2 = new GlucoseResearchProcessorV2();
-    this.glucoseProcessorV3 = new GlucoseResearchProcessorV3();
-    this.lipidProcessor = new LipidResearchProcessorV1();
-    this.lipidProcessorV2 = new LipidResearchProcessorV2();
-    this.lipidProcessorV3 = new LipidResearchProcessorV3();
+    // Single consolidated processors - no V2/V3 duplicates
+    this.bloodPressureProcessor = new BloodPressureProcessor();
+    this.rhythmClassifier = new RhythmClassifier();
+    this.spo2Processor = new SpO2Processor();
+    this.glucoseProcessor = new GlucoseResearchProcessor();
+    this.lipidProcessor = new LipidResearchProcessor();
     this.hrvProcessor = new HRVTimeFreqProcessor();
     this.stressProcessor = new StressProcessor();
     this.respProcessor = new RespiratoryRateProcessor();
     this.hemoglobinProcessor = new HemoglobinProcessor();
 
-    // Phase 12 — local-storage hydration (fast path, no network).
-    // Calibrations stored from previous sessions become immediately available.
+    // Load persisted calibrations
     try {
-      const spo2v3 = loadCalibrationLocal<any>('spo2_v3');
-      if (spo2v3) this.spo2ProcessorV3.loadSerializedCalibration(spo2v3);
-      const bpv3 = loadCalibrationLocal<any>('bp_v3');
-      if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
       const hbv1 = loadCalibrationLocal<any>('hemoglobin_v1');
       if (hbv1) this.hemoglobinProcessor.loadSerializedCalibration(hbv1);
-      const glucoseV3 = loadCalibrationLocal<any>('glucose_v3');
-      if (glucoseV3) this.glucoseProcessorV3.loadSerializedCalibration(glucoseV3);
-      const lipidsV3 = loadCalibrationLocal<any>('lipids_v3');
-      if (lipidsV3) this.lipidProcessorV3.loadSerializedCalibration(lipidsV3);
     } catch { /* private mode etc. */ }
   }
 
@@ -268,92 +213,58 @@ export class VitalSignsProcessor {
    */
   async autoLoadCalibrations(): Promise<void> {
     try {
-      const spo2v3 = await loadCalibration<any>('spo2_v3');
-      if (spo2v3) this.spo2ProcessorV3.loadSerializedCalibration(spo2v3);
-      const bpv3 = await loadCalibration<any>('bp_v3');
-      if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
       const hbv1 = await loadCalibration<any>('hemoglobin_v1');
       if (hbv1) this.hemoglobinProcessor.loadSerializedCalibration(hbv1);
-      const glucoseV3 = await loadCalibration<any>('glucose_v3');
-      if (glucoseV3) this.glucoseProcessorV3.loadSerializedCalibration(glucoseV3);
-      const lipidsV3 = await loadCalibration<any>('lipids_v3');
-      if (lipidsV3) this.lipidProcessorV3.loadSerializedCalibration(lipidsV3);
     } catch (e) {
       console.warn('[vitals] autoLoadCalibrations failed:', (e as any)?.message ?? e);
     }
   }
 
-  /** Phase 12 — persist all current V3 calibrations (best-effort). */
+  /** Persist hemoglobin calibration (only one with serialization support). */
   async persistCalibrations(): Promise<void> {
     try {
-      const spo2v3 = this.spo2ProcessorV3.serializeCalibration();
-      if (spo2v3.calibration) await saveCalibration('spo2_v3' as CalibrationModality, spo2v3);
-      const bpv3 = this.bloodPressureProcessorV3.serializeCalibration();
-      if (bpv3.model) await saveCalibration('bp_v3' as CalibrationModality, bpv3);
       const hbv1 = this.hemoglobinProcessor.serializeCalibration();
       if (hbv1.model) await saveCalibration('hemoglobin_v1' as CalibrationModality, hbv1);
-      const glucoseV3 = this.glucoseProcessorV3.serializeCalibration();
-      if (glucoseV3.model) await saveCalibration('glucose_v3' as CalibrationModality, glucoseV3);
-      const lipidsV3 = this.lipidProcessorV3.serializeCalibration();
-      if (lipidsV3.models) await saveCalibration('lipids_v3' as CalibrationModality, lipidsV3);
     } catch (e) {
       console.warn('[vitals] persistCalibrations failed:', (e as any)?.message ?? e);
     }
   }
 
   // ═══════════════════════════════════════════════════════════════════
-  //  CALIBRATION WIZARDS (V2)
+  //  CALIBRATION WIZARDS
   // ═══════════════════════════════════════════════════════════════════
 
   /**
-   * Iniciar wizard de calibración de presión arterial (V2 + V3 en paralelo).
-   * V3 (ridge LOO) requiere ≥5 puntos; V2 (legacy) acepta ≥3.
+   * Iniciar wizard de calibración de presión arterial.
    */
-  startBPCalibrationWizard(referenceDevice: string, userId: string): void {
-    this.bloodPressureProcessorV2.startCalibrationWizard(referenceDevice, userId);
-    this.bloodPressureProcessorV3.startCalibrationWizard();
+  startBPCalibrationWizard(_referenceDevice: string, _userId: string): void {
+    // BP calibration not supported in consolidated processor
   }
 
   /**
    * Agregar punto de calibración de BP con referencia real.
-   * `v3Features` opcional — si se omite, la calibración sólo entrena V2.
    */
   addBPCalibrationPoint(
-    ppgFeatures: BPFeatureVector,
-    referenceSBP: number,
-    referenceDBP: number,
-    v3Features?: BPV3Features
+    _ppgFeatures: unknown,
+    _referenceSBP: number,
+    _referenceDBP: number
   ): { success: boolean; pointsCollected: number; pointsNeeded: number } {
-    const v2Res = this.bloodPressureProcessorV2.addCalibrationPoint(ppgFeatures, referenceSBP, referenceDBP);
-    if (v3Features) {
-      this.bloodPressureProcessorV3.addCalibrationPoint(v3Features, referenceSBP, referenceDBP);
-    }
-    return v2Res;
+    return { success: false, pointsCollected: 0, pointsNeeded: 0 };
   }
 
   /**
-   * Finalizar wizard de calibración de BP. Devuelve métricas combinadas
-   * (V3 LOO-RMSE si está disponible, sino V2). Persiste la calibración V3.
+   * Finalizar wizard de calibración de BP.
    */
   finishBPCalibrationWizard(): { success: boolean; rmseSBP: number; rmseDBP: number } {
-    const v2 = this.bloodPressureProcessorV2.finishCalibrationWizard();
-    const v3 = this.bloodPressureProcessorV3.finishCalibrationWizard();
-    if (v3.success) {
-      // fire-and-forget persistence
-      this.persistCalibrations().catch(() => { /* */ });
-      return { success: true, rmseSBP: v3.rmseSBP, rmseDBP: v3.rmseDBP };
-    }
-    return v2;
+    return { success: false, rmseSBP: 0, rmseDBP: 0 };
   }
 
-  /** Estado V3 (puntos, RMSE, antigüedad) para el wizard UI. */
   getBPV3CalibrationStatus() {
-    return this.bloodPressureProcessorV3.getCalibrationStatus();
+    return { samplesCollected: 0, rmseSBP: 0, rmseDBP: 0, ageDays: 0, canPublish: false };
   }
 
-  /** Habilitar/deshabilitar BP V3 (default: true). */
-  setBPV3Enabled(enabled: boolean): void {
-    this.useBPV3 = enabled;
+  setBPV3Enabled(_enabled: boolean): void {
+    // No-op in consolidated version
   }
 
   // ─── Hemoglobina (Phase 10) ───
@@ -373,69 +284,65 @@ export class VitalSignsProcessor {
   }
   getHemoglobinCalibrationStatus() { return this.hemoglobinProcessor.getCalibrationStatus(); }
 
-  // ─── Glucose V3 (Phase 9) ───
-  startGlucoseV3Training(): void { this.glucoseProcessorV3.startTrainingMode(); }
-  addGlucoseV3TrainingSample(features: GlucoseV3Features, refMgDl: number) {
-    const r = this.glucoseProcessorV3.addTrainingSample(features, refMgDl);
-    this.persistCalibrations().catch(() => { /* */ });
-    return r;
+  // ─── Glucose Training ───
+  startGlucoseV3Training(): void { 
+    if (typeof (this.glucoseProcessor as any).startTrainingMode === 'function') {
+      (this.glucoseProcessor as any).startTrainingMode();
+    }
+  }
+  addGlucoseV3TrainingSample(_features: unknown, _refMgDl: number) {
+    return { success: false, samplesCollected: 0, coveragePercent: 0, canTrain: false };
   }
   finishGlucoseV3Training() {
-    const r = this.glucoseProcessorV3.finishTraining();
-    if (r.success) this.persistCalibrations().catch(() => { /* */ });
-    return r;
+    return { success: false, samplesCollected: 0, coveragePercent: 0, rmse: 0 };
   }
-  getGlucoseV3CalibrationStatus() { return this.glucoseProcessorV3.getCalibrationStatus(); }
+  getGlucoseV3CalibrationStatus() { 
+    return { samplesCollected: 0, coveragePercent: 0, canTrain: false, rmse: 0, ageDays: 0 };
+  }
 
-  // ─── Lipids V3 (Phase 9) ───
-  startLipidsV3Training(): void { this.lipidProcessorV3.startTraining(); }
-  addLipidsV3TrainingSample(features: LipidV3Features, refLabs: { totalCholesterol: number; ldl: number; hdl: number; triglycerides: number }) {
-    const r = this.lipidProcessorV3.addTrainingSample(features, refLabs);
-    this.persistCalibrations().catch(() => { /* */ });
-    return r;
+  // ─── Lipids Training ───
+  startLipidsV3Training(): void { 
+    if (typeof (this.lipidProcessor as any).startTraining === 'function') {
+      (this.lipidProcessor as any).startTraining();
+    }
+  }
+  addLipidsV3TrainingSample(_features: unknown, _refLabs: unknown) {
+    return { success: false, samplesCollected: 0, canTrain: false };
   }
   finishLipidsV3Training() {
-    const r = this.lipidProcessorV3.finishTraining();
-    if (r.success) this.persistCalibrations().catch(() => { /* */ });
-    return r;
+    return { success: false, samplesCollected: 0, rmseCT: 0, rmseTG: 0 };
   }
-  getLipidsV3CalibrationStatus() { return this.lipidProcessorV3.getCalibrationStatus(); }
+  getLipidsV3CalibrationStatus() { 
+    return { samplesCollected: 0, canTrain: false, rmseCT: 0, rmseTG: 0, ageDays: 0 };
+  }
 
   /**
-   * Cargar calibración de dispositivo SpO2 (aplicada a V2 y V3)
+   * Cargar calibración de dispositivo SpO2
    */
   loadSpO2DeviceCalibration(profile: SpO2Calibration): void {
-    this.spo2ProcessorV2.loadDeviceCalibration(profile);
-    this.spo2ProcessorV3.loadDeviceCalibration(profile);
+    if (typeof (this.spo2Processor as any).loadDeviceCalibration === 'function') {
+      (this.spo2Processor as any).loadDeviceCalibration(profile);
+    }
   }
 
   /**
    * Agregar punto de calibración SpO2 de usuario.
-   * `ratioRG` y `ratioRB` son opcionales; si se proveen, V3 puede ajustar α
-   * (blend R/G vs R/B) y mejorar exactitud en este device.
-   * Persiste tras cada punto cuando V3 ya tiene un modelo activo.
    */
-  addSpO2UserCalibrationPoint(referenceSpO2: number, measuredR: number, ratioRG = 0, ratioRB = 0): void {
-    this.spo2ProcessorV2.addUserCalibrationPoint(referenceSpO2, measuredR);
-    this.spo2ProcessorV3.addUserCalibrationPoint(referenceSpO2, measuredR, ratioRG, ratioRB);
-    // Try to persist after each point. The V3 fit only happens once we have
-    // ≥3 user points, so this only writes when there's a real model to save.
-    this.persistCalibrations().catch(() => { /* */ });
+  addSpO2UserCalibrationPoint(referenceSpO2: number, measuredR: number, _ratioRG = 0, _ratioRB = 0): void {
+    if (typeof (this.spo2Processor as any).addUserCalibrationPoint === 'function') {
+      (this.spo2Processor as any).addUserCalibrationPoint(referenceSpO2, measuredR);
+    }
   }
 
-  /** Habilitar/deshabilitar SpO2 V3 (default: true). */
-  setSpO2V3Enabled(enabled: boolean): void {
-    this.useSpO2V3 = enabled;
+  /** Habilitar/deshabilitar SpO2 (no-op en versión consolidada). */
+  setSpO2V3Enabled(_enabled: boolean): void {
+    // No-op in consolidated version
   }
 
   /**
    * Iniciar modo entrenamiento de glucosa
    */
   startGlucoseTraining(userId: string, referenceDevice: string): void {
-    // Wizard goes to V2 which exposes the canonical training-mode API
-    this.glucoseProcessorV2.startTrainingMode(userId, referenceDevice);
-    // V1 also has training mode (Ultra-Optimize), keep it in sync so the
-    // primary processor learns from the same calibration points.
     if (typeof (this.glucoseProcessor as any).startTrainingMode === 'function') {
       (this.glucoseProcessor as any).startTrainingMode(userId, referenceDevice);
     }
@@ -449,16 +356,15 @@ export class VitalSignsProcessor {
     referenceGlucose: number
   ): { success: boolean; samplesCollected: number; canTrain: boolean } {
     if (typeof (this.glucoseProcessor as any).addTrainingSample === 'function') {
-      (this.glucoseProcessor as any).addTrainingSample(ppgFeatures, referenceGlucose);
+      return (this.glucoseProcessor as any).addTrainingSample(ppgFeatures, referenceGlucose);
     }
-    return this.glucoseProcessorV2.addTrainingSample(ppgFeatures, referenceGlucose);
+    return { success: false, samplesCollected: 0, canTrain: false };
   }
 
   /**
    * Iniciar modo entrenamiento de lípidos
    */
   startLipidTraining(userId: string, labSource: string): void {
-    this.lipidProcessorV2.startTraining(userId, labSource);
     if (typeof (this.lipidProcessor as any).startTraining === 'function') {
       (this.lipidProcessor as any).startTraining(userId, labSource);
     }
@@ -477,9 +383,9 @@ export class VitalSignsProcessor {
     }
   ): { success: boolean; samples: number; canTrain: boolean } {
     if (typeof (this.lipidProcessor as any).addTrainingSample === 'function') {
-      (this.lipidProcessor as any).addTrainingSample(ppgFeatures, referenceLabs);
+      return (this.lipidProcessor as any).addTrainingSample(ppgFeatures, referenceLabs);
     }
-    return this.lipidProcessorV2.addTrainingSample(ppgFeatures, referenceLabs);
+    return { success: false, samples: 0, canTrain: false };
   }
 
   startCalibration(): void {

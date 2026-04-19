@@ -84,6 +84,7 @@ interface GluModel {
 export interface GlucoseResult {
   value: number;
   confidence: number;
+  status: string;
   enabledState: 'ENABLED_HIGH_CONFIDENCE' | 'ENABLED_MEDIUM_CONFIDENCE' | 'ENABLED_LOW_CONFIDENCE' | 'WITHHELD_LOW_QUALITY' | 'NEEDS_CALIBRATION';
   trend?: 'RISING' | 'FALLING' | 'STABLE' | 'UNKNOWN';
   uncertainty: number; // ±mg/dL
@@ -209,7 +210,7 @@ export class GlucoseResearchProcessor {
     blueAC?: number; blueDC?: number;
   }): GlucoseResult {
     const blocked: GlucoseResult = {
-      value: 0, confidence: 0,
+      value: 0, confidence: 0, status: 'NEEDS_CALIBRATION',
       enabledState: 'NEEDS_CALIBRATION',
       trend: 'UNKNOWN', uncertainty: 999,
     };
@@ -217,7 +218,7 @@ export class GlucoseResearchProcessor {
     // Regla estricta anti-invención:
     // sin modelo calibrado NO se publica valor numérico de glucosa.
     if (!input.contactStable || input.signalQuality < 12) {
-      return { ...blocked, enabledState: 'WITHHELD_LOW_QUALITY' };
+      return { ...blocked, enabledState: 'WITHHELD_LOW_QUALITY', status: 'LOW_QUALITY' };
     }
     const ageDays = this.model ? (Date.now() - this.model.createdAt) / 86400000 : Infinity;
     const haveCalib = !!this.model && ageDays <= RECAL_DAYS;
@@ -299,6 +300,7 @@ export class GlucoseResearchProcessor {
     return {
       value: Math.round(clamped),
       confidence,
+      status: enabledState === 'ENABLED_HIGH_CONFIDENCE' ? 'OK' : 'LOW_CONFIDENCE',
       enabledState,
       trend: trend as 'RISING' | 'FALLING' | 'STABLE' | 'UNKNOWN',
       uncertainty,

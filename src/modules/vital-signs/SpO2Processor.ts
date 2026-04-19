@@ -36,6 +36,7 @@ export interface SpO2Result {
   value: number;
   confidence: number;
   quality: number;
+  status: string;
   calibrationState: 'UNCALIBRATED' | 'SESSION_CALIBRATED' | 'DEVICE_CALIBRATED';
   enabledState: 'ENABLED_HIGH_CONFIDENCE' | 'ENABLED_MEDIUM_CONFIDENCE' | 'ENABLED_LOW_CONFIDENCE' | 'WITHHELD_LOW_QUALITY';
   rawR: number;
@@ -48,6 +49,14 @@ export interface SpO2Result {
   rRG: number;      // R/G ratio
   rRB: number;      // R/B ratio
   kalmanEstimate: number;
+}
+
+export interface SpO2Calibration {
+  A: number;
+  B: number;
+  C: number;
+  deviceId: string;
+  timestamp: number;
 }
 
 interface CalibrationProfile {
@@ -109,7 +118,7 @@ export class SpO2Processor {
     perfusionIndex?: number;
   }): SpO2Result {
     const withheld: SpO2Result = {
-      value: 0, confidence: 0, quality: 0,
+      value: 0, confidence: 0, quality: 0, status: 'WITHHELD_LOW_QUALITY',
       calibrationState: this.calibrationState,
       enabledState: 'WITHHELD_LOW_QUALITY',
       rawR: 0, medianR: 0, piRed: 0, piGreen: 0,
@@ -204,13 +213,13 @@ export class SpO2Processor {
     const spo2Raw = A + B * medianR + C * medianR * medianR;
 
     if (!isFinite(spo2Raw) || spo2Raw < 50 || spo2Raw > 105) {
-      return { ...withheld, rawR: rRG, medianR, piRed, piGreen, quality, rFused, rRG, rRB };
+      return { ...withheld, rawR: rRG, medianR, piRed, piGreen, quality, rFused, rRG, rRB, status: 'CALIBRATION_ERROR' };
     }
 
     // ── Contact + quality gate ──────────────────────────────────────
     if (!input.contactStable) {
       return {
-        value: 0, confidence: 0, quality,
+        value: 0, confidence: 0, quality, status: 'UNSTABLE_CONTACT',
         calibrationState: this.calibrationState,
         enabledState: 'WITHHELD_LOW_QUALITY',
         rawR: rRG, medianR, piRed, piGreen,
@@ -222,7 +231,7 @@ export class SpO2Processor {
     this.consecutiveValid++;
     if (this.consecutiveValid < this.MIN_VALID || quality < 25) {
       return {
-        value: 0, confidence: 0, quality,
+        value: 0, confidence: 0, quality, status: 'INSUFFICIENT_SAMPLES',
         calibrationState: this.calibrationState,
         enabledState: 'WITHHELD_LOW_QUALITY',
         rawR: rRG, medianR, piRed, piGreen,
@@ -271,6 +280,7 @@ export class SpO2Processor {
 
     return {
       value, confidence, quality,
+      status: enabledState === 'ENABLED_HIGH_CONFIDENCE' ? 'OK' : 'LOW_CONFIDENCE',
       calibrationState: this.calibrationState,
       enabledState,
       rawR: rRG, medianR, piRed, piGreen,

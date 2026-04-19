@@ -76,6 +76,7 @@ export interface LipidResult {
   ldl: number;
   hdl: number;
   confidence: number;
+  status: string;
   enabledState: 'ENABLED_HIGH_CONFIDENCE' | 'ENABLED_MEDIUM_CONFIDENCE' | 'ENABLED_LOW_CONFIDENCE' | 'WITHHELD_LOW_QUALITY' | 'NEEDS_CALIBRATION';
 }
 
@@ -168,12 +169,12 @@ export class LipidResearchProcessor {
   }): LipidResult {
     const blocked: LipidResult = {
       totalCholesterol: 0, ldl: 0, hdl: 0, triglycerides: 0,
-      confidence: 0, enabledState: 'NEEDS_CALIBRATION',
+      confidence: 0, status: 'NEEDS_CALIBRATION', enabledState: 'NEEDS_CALIBRATION',
     };
 
     // Gate estricto: sin señal usable no se publica.
     if (!input.contactStable || input.signalQuality < 12) {
-      return { ...blocked, enabledState: 'WITHHELD_LOW_QUALITY' };
+      return { ...blocked, enabledState: 'WITHHELD_LOW_QUALITY', status: 'LOW_QUALITY' };
     }
     const ageDays = this.model ? (Date.now() - this.model.createdAt) / 86400000 : Infinity;
     if (!this.model || ageDays > RECAL_DAYS) return blocked;
@@ -229,6 +230,7 @@ export class LipidResearchProcessor {
       hdl: predictions.hdl,
       triglycerides: predictions.triglycerides,
       confidence,
+      status: enabledState === 'ENABLED_HIGH_CONFIDENCE' ? 'OK' : 'LOW_CONFIDENCE',
       enabledState,
     };
     return this.lastOutput;
