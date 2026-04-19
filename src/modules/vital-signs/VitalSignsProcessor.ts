@@ -11,6 +11,12 @@ import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
 import { RespiratoryRateProcessor, type RespRateResult } from './RespiratoryRateProcessor';
+import {
+  saveCalibration,
+  loadCalibration,
+  loadCalibrationLocal,
+  type CalibrationModality,
+} from '@/services/calibrationStore';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -185,6 +191,42 @@ export class VitalSignsProcessor {
     this.hrvProcessor = new HRVTimeFreqProcessor();
     this.stressProcessor = new StressProcessor();
     this.respProcessor = new RespiratoryRateProcessor();
+
+    // Phase 12 — local-storage hydration (fast path, no network).
+    // Calibrations stored from previous sessions become immediately available.
+    try {
+      const spo2v3 = loadCalibrationLocal<any>('spo2_v3');
+      if (spo2v3) this.spo2ProcessorV3.loadSerializedCalibration(spo2v3);
+      const bpv3 = loadCalibrationLocal<any>('bp_v3');
+      if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
+    } catch { /* private mode etc. */ }
+  }
+
+  /**
+   * Phase 12 — async cross-tier hydration. Call once after Supabase auth
+   * has resolved to fetch the user's authoritative calibrations.
+   */
+  async autoLoadCalibrations(): Promise<void> {
+    try {
+      const spo2v3 = await loadCalibration<any>('spo2_v3');
+      if (spo2v3) this.spo2ProcessorV3.loadSerializedCalibration(spo2v3);
+      const bpv3 = await loadCalibration<any>('bp_v3');
+      if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
+    } catch (e) {
+      console.warn('[vitals] autoLoadCalibrations failed:', (e as any)?.message ?? e);
+    }
+  }
+
+  /** Phase 12 — persist all current V3 calibrations (best-effort). */
+  async persistCalibrations(): Promise<void> {
+    try {
+      const spo2v3 = this.spo2ProcessorV3.serializeCalibration();
+      if (spo2v3.calibration) await saveCalibration('spo2_v3' as CalibrationModality, spo2v3);
+      const bpv3 = this.bloodPressureProcessorV3.serializeCalibration();
+      if (bpv3.model) await saveCalibration('bp_v3' as CalibrationModality, bpv3);
+    } catch (e) {
+      console.warn('[vitals] persistCalibrations failed:', (e as any)?.message ?? e);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -219,12 +261,14 @@ export class VitalSignsProcessor {
 
   /**
    * Finalizar wizard de calibración de BP. Devuelve métricas combinadas
-   * (V3 LOO-RMSE si está disponible, sino V2).
+   * (V3 LOO-RMSE si está disponible, sino V2). Persiste la calibración V3.
    */
   finishBPCalibrationWizard(): { success: boolean; rmseSBP: number; rmseDBP: number } {
     const v2 = this.bloodPressureProcessor.finishCalibrationWizard();
     const v3 = this.bloodPressureProcessorV3.finishCalibrationWizard();
     if (v3.success) {
+      // fire-and-forget persistence
+      this.persistCalibrations().catch(() => { /* */ });
       return { success: true, rmseSBP: v3.rmseSBP, rmseDBP: v3.rmseDBP };
     }
     return v2;
@@ -252,10 +296,14 @@ export class VitalSignsProcessor {
    * Agregar punto de calibración SpO2 de usuario.
    * `ratioRG` y `ratioRB` son opcionales; si se proveen, V3 puede ajustar α
    * (blend R/G vs R/B) y mejorar exactitud en este device.
+   * Persiste tras cada punto cuando V3 ya tiene un modelo activo.
    */
   addSpO2UserCalibrationPoint(referenceSpO2: number, measuredR: number, ratioRG = 0, ratioRB = 0): void {
     this.spo2Processor.addUserCalibrationPoint(referenceSpO2, measuredR);
     this.spo2ProcessorV3.addUserCalibrationPoint(referenceSpO2, measuredR, ratioRG, ratioRB);
+    // Try to persist after each point. The V3 fit only happens once we have
+    // ≥3 user points, so this only writes when there's a real model to save.
+    this.persistCalibrations().catch(() => { /* */ });
   }
 
   /** Habilitar/deshabilitar SpO2 V3 (default: true). */

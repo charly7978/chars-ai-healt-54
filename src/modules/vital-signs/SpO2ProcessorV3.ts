@@ -297,6 +297,22 @@ export class SpO2ProcessorV3 {
     this.alphaRG = 0.65;
   }
 
+  // ─── persistence ───
+  serializeCalibration(): { calibration: SpO2Calibration | null; alphaRG: number; userPoints: typeof this.userCalibrationPoints } {
+    return {
+      calibration: this.calibration,
+      alphaRG: this.alphaRG,
+      userPoints: [...this.userCalibrationPoints],
+    };
+  }
+
+  loadSerializedCalibration(payload: { calibration: SpO2Calibration | null; alphaRG?: number; userPoints?: typeof this.userCalibrationPoints }): void {
+    if (!payload) return;
+    if (payload.calibration) this.calibration = { ...payload.calibration };
+    if (typeof payload.alphaRG === 'number') this.alphaRG = Math.max(0, Math.min(1, payload.alphaRG));
+    if (Array.isArray(payload.userPoints)) this.userCalibrationPoints = [...payload.userPoints];
+  }
+
   // ─── helpers ───
   private blocked(reason: OutputStatus | string, debug: Record<string, any> = {}): SpO2Output {
     const status = typeof reason === 'string' && reason === 'blocked'

@@ -282,4 +282,25 @@ export class BloodPressureProcessorV3 {
       ageDays: this.model ? (Date.now() - this.model.fitDate) / 86400000 : 0,
     };
   }
+
+  // ─── persistence ───
+  serializeCalibration(): { points: CalibrationPoint[]; model: ModelPair | null } {
+    return { points: [...this.points], model: this.model };
+  }
+
+  /**
+   * Restore previously-persisted calibration. Either loads the model directly
+   * (fast path) or, when only points are present, refits the ridge model.
+   */
+  loadSerializedCalibration(payload: { points?: CalibrationPoint[]; model?: ModelPair | null }): void {
+    if (!payload) return;
+    if (Array.isArray(payload.points)) {
+      this.points = payload.points.map(p => ({ ...p }));
+    }
+    if (payload.model) {
+      this.model = payload.model;
+    } else if (this.points.length >= CONFIG.MIN_CALIBRATION_POINTS) {
+      this.refit();
+    }
+  }
 }
