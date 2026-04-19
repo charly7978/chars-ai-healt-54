@@ -2,6 +2,7 @@ import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessorV2, type BPFeatureVector } from './BloodPressureProcessorV2';
 import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
 import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
+import { SpO2ProcessorV3 } from './SpO2ProcessorV3';
 import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessorV2';
 import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
@@ -97,12 +98,18 @@ export interface RGBData {
   redDC: number;
   greenAC: number;
   greenDC: number;
+  blueAC?: number;
+  blueDC?: number;
 }
 
 export class VitalSignsProcessor {
   private bloodPressureProcessor: BloodPressureProcessorV2;
   private rhythmClassifier: RhythmClassifierV2;
   private spo2Processor: SpO2ProcessorV2;
+  private spo2ProcessorV3: SpO2ProcessorV3;
+  /** Fasea opt-in: when true, V3 runs in parallel and its result is published
+   *  if (and only if) it has a calibration loaded — otherwise V2 is used. */
+  private useSpO2V3 = true;
   private glucoseProcessor: GlucoseResearchProcessorV2;
   private lipidProcessor: LipidResearchProcessorV2;
   private hrvProcessor: HRVTimeFreqProcessor;
@@ -164,6 +171,7 @@ export class VitalSignsProcessor {
     this.bloodPressureProcessor = new BloodPressureProcessorV2();
     this.rhythmClassifier = new RhythmClassifierV2();
     this.spo2Processor = new SpO2ProcessorV2();
+    this.spo2ProcessorV3 = new SpO2ProcessorV3();
     this.glucoseProcessor = new GlucoseResearchProcessorV2();
     this.lipidProcessor = new LipidResearchProcessorV2();
     this.hrvProcessor = new HRVTimeFreqProcessor();
@@ -201,17 +209,26 @@ export class VitalSignsProcessor {
   }
 
   /**
-   * Cargar calibración de dispositivo SpO2
+   * Cargar calibración de dispositivo SpO2 (aplicada a V2 y V3)
    */
   loadSpO2DeviceCalibration(profile: SpO2Calibration): void {
     this.spo2Processor.loadDeviceCalibration(profile);
+    this.spo2ProcessorV3.loadDeviceCalibration(profile);
   }
 
   /**
-   * Agregar punto de calibración SpO2 de usuario
+   * Agregar punto de calibración SpO2 de usuario.
+   * `ratioRG` y `ratioRB` son opcionales; si se proveen, V3 puede ajustar α
+   * (blend R/G vs R/B) y mejorar exactitud en este device.
    */
-  addSpO2UserCalibrationPoint(referenceSpO2: number, measuredR: number): void {
+  addSpO2UserCalibrationPoint(referenceSpO2: number, measuredR: number, ratioRG = 0, ratioRB = 0): void {
     this.spo2Processor.addUserCalibrationPoint(referenceSpO2, measuredR);
+    this.spo2ProcessorV3.addUserCalibrationPoint(referenceSpO2, measuredR, ratioRG, ratioRB);
+  }
+
+  /** Habilitar/deshabilitar SpO2 V3 (default: true). */
+  setSpO2V3Enabled(enabled: boolean): void {
+    this.useSpO2V3 = enabled;
   }
 
   /**
@@ -385,7 +402,8 @@ export class VitalSignsProcessor {
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
     const sampleRate = this.upstreamContext.sampleRate || 30;
 
-    const spo2Result = this.spo2Processor.process({
+    // ── SpO2 (V3 multi-channel preferred, V2 fallback) — Phase 7 ──
+    const v2Result = this.spo2Processor.process({
       redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
       greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
       contactStable: this.upstreamContext.contactStable,
@@ -395,8 +413,26 @@ export class VitalSignsProcessor {
       avgBeatSQI: this.upstreamContext.avgBeatSQI,
       sourceStability: this.upstreamContext.sourceStability,
     });
+    let spo2Result = v2Result;
+    if (this.useSpO2V3) {
+      const v3Result = this.spo2ProcessorV3.process({
+        redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
+        greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
+        blueAC: this.rgbData.blueAC, blueDC: this.rgbData.blueDC,
+        contactStable: this.upstreamContext.contactStable,
+        pressureOptimal: this.upstreamContext.pressureOptimal,
+        clipHighRatio: this.upstreamContext.clipHighRatio,
+        beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
+        avgBeatSQI: this.upstreamContext.avgBeatSQI,
+        sourceStability: this.upstreamContext.sourceStability,
+      });
+      // Use V3 only when it actually published a value with usable confidence
+      if (v3Result.value !== null && v3Result.confidence > Math.max(0.3, v2Result.confidence)) {
+        spo2Result = v3Result;
+      }
+    }
     this.lastSpo2 = spo2Result;
-    if (spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
+    if (typeof spo2Result.value === 'number' && spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
     }
 
@@ -620,6 +656,7 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.validPulseCount = 0;
     this.spo2Processor.reset();
+    this.spo2ProcessorV3.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
     this.rhythmClassifier.reset();
@@ -646,6 +683,7 @@ export class VitalSignsProcessor {
     this.calibrationSamples = 0;
     this.bloodPressureProcessor.fullReset();
     this.spo2Processor.fullReset();
+    this.spo2ProcessorV3.fullReset();
     this.glucoseProcessor.fullReset();
     this.lipidProcessor.fullReset();
     this.rhythmClassifier.reset();

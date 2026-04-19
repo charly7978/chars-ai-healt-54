@@ -794,9 +794,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return {
       redAC: this.redAC, redDC: this.redDC,
       greenAC: this.greenAC, greenDC: this.greenDC,
+      blueAC: this.blueAC, blueDC: this.blueDC,
       rgRatio: this.greenDC > 0 ? this.redDC / this.greenDC : 0,
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) : 0,
+      // Multi-channel ratios for SpO2 V3 (Phase 7):
+      // R_RG = (Rac/Rdc) / (Gac/Gdc),  R_RB = (Rac/Rdc) / (Bac/Bdc)
+      ratioRG: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
+        ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) : 0,
+      ratioRB: this.blueDC > 0 && this.blueAC > 0 && this.redDC > 0
+        ? (this.redAC / this.redDC) / (this.blueAC / this.blueDC) : 0,
     };
   }
 
