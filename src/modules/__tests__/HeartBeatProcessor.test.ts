@@ -60,6 +60,28 @@ describe('HeartBeatProcessor', () => {
     });
   });
 
+  it('expone amplitud y clasificación RR en beats aceptados recientes', () => {
+    const fs = 30;
+    const proc = new HeartBeatProcessor();
+    const filt = new BandpassFilter(fs);
+    const sig = generateSyntheticPPG({ durationSec: 14, sampleRate: fs, bpm: 78, amplitude: 7 });
+
+    let lastResult: ReturnType<typeof proc.processSignal> | null = null;
+    for (let i = 0; i < sig.length; i++) {
+      const filtered = filt.filter(sig[i]);
+      lastResult = proc.processSignal(filtered, (i / fs) * 1000, { contactState: 'STABLE_CONTACT', quality: 80 });
+    }
+
+    expect(lastResult?.debug.recentAcceptedBeats?.length ?? 0).toBeGreaterThan(0);
+    for (const beat of lastResult?.debug.recentAcceptedBeats ?? []) {
+      expect(typeof beat.amplitude).toBe('number');
+      expect(['clean', 'noisy', 'ectopic_candidate', 'missing', 'merged', 'split']).toContain(beat.rrClassification);
+    }
+    expect(lastResult?.rrData.classifications?.length).toBe(lastResult?.rrData.intervals.length);
+    const cleanCount = lastResult?.rrData.classifications?.filter((rr) => rr === 'clean').length ?? 0;
+    expect(cleanCount).toBe(lastResult?.rrData.cleanIntervals?.length ?? 0);
+  });
+
   it('reset clears state', () => {
     const proc = new HeartBeatProcessor();
     proc.processSignal(10, 0, { contactState: 'STABLE_CONTACT' });

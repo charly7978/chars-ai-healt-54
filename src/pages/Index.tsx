@@ -60,6 +60,21 @@ const Index = () => {
     arrhythmiaBeats: number;
     normalPercent: number;
   } | null>(null);
+  const [cameraDiagnosticsSnapshot, setCameraDiagnosticsSnapshot] = useState({
+    deviceLabel: '',
+    hasTorch: false,
+    torchActive: false,
+    realFrameRate: 0,
+    resolution: { width: 0, height: 0 },
+    exposureLocked: false,
+    wbLocked: false,
+    focusLocked: false,
+    isoValue: 0,
+    supportedConstraints: [] as string[],
+    exposureDriftScore: 0,
+    exposureDriftWarning: false,
+    driftSamples: 0,
+  });
 
   const measurementTimerRef = useRef<number | null>(null);
   const totalBeatsRef = useRef(0);
@@ -353,10 +368,18 @@ const Index = () => {
   const handleStreamReady = useCallback((stream: MediaStream) => {
     console.log('📹 Stream recibido');
     setCameraStream(stream);
+    const snapshotDiagnostics = () => {
+      const diagnostics = cameraRef.current?.getDiagnostics();
+      if (diagnostics) {
+        setCameraDiagnosticsSnapshot(diagnostics);
+      }
+    };
+    snapshotDiagnostics();
     setTimeout(() => {
       const video = cameraRef.current?.getVideoElement();
       if (video && video.readyState >= 2) {
         console.log('✅ Video listo:', video.videoWidth, 'x', video.videoHeight);
+        snapshotDiagnostics();
         startFrameLoop();
       } else {
         const checkReady = setInterval(() => {
@@ -364,6 +387,7 @@ const Index = () => {
           if (v && v.readyState >= 2 && v.videoWidth > 0) {
             clearInterval(checkReady);
             console.log('✅ Video listo (retry):', v.videoWidth, 'x', v.videoHeight);
+            snapshotDiagnostics();
             startFrameLoop();
           }
         }, 100);
@@ -371,6 +395,17 @@ const Index = () => {
       }
     }, 500);
   }, [startFrameLoop]);
+
+  useEffect(() => {
+    if (!isMonitoring) return;
+    const interval = window.setInterval(() => {
+      const diagnostics = cameraRef.current?.getDiagnostics();
+      if (diagnostics) {
+        setCameraDiagnosticsSnapshot(diagnostics);
+      }
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [isMonitoring]);
 
   const finalizeMeasurement = useCallback(async () => {
     if (!isMonitoring) return;
@@ -582,6 +617,7 @@ const Index = () => {
             morphologyScore: beat.morphologyScore,
             detectorAgreement: beat.detectorAgreement,
             amplitude: beat.amplitude,
+            rrClassification: beat.rrClassification,
             flags: {
               isWeak: beat.flags.isWeak,
               isPremature: beat.flags.isPremature,
@@ -708,9 +744,10 @@ const Index = () => {
         lastSignal={lastSignal}
         vitalSigns={vitalSigns}
         positionQuality={getPositionQuality()}
-        realFps={(lastSignal as any)?.telemetry?.realFps}
+        realFps={cameraDiagnosticsSnapshot.realFrameRate || (lastSignal as any)?.telemetry?.realFps}
         processingTimeMs={(lastSignal as any)?.telemetry?.processingTimeMs}
         cameraDriftScore={cameraDriftRef.current}
+        cameraDiagnostics={cameraDiagnosticsSnapshot}
       />
 
       {!isFullscreen && (

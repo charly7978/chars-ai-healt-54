@@ -32,6 +32,7 @@ export interface AcceptedBeat {
   timestamp: number;
   ibiMs: number;
   instantBpm: number;
+  amplitude?: number;
   beatSQI: number;
   morphologyScore: number;
   rhythmScore: number;
@@ -39,6 +40,7 @@ export interface AcceptedBeat {
   templateScore: number;
   sourceConsistencyScore: number;
   flags: BeatFlags;
+  rrClassification?: 'clean' | 'noisy' | 'ectopic_candidate' | 'missing' | 'merged' | 'split';
 }
 
 export interface BeatFlags {
@@ -71,6 +73,8 @@ export interface HeartBeatResult {
   rrData: {
     intervals: number[];
     lastPeakTime: number | null;
+    cleanIntervals?: number[];
+    classifications?: Array<'clean' | 'noisy' | 'ectopic_candidate' | 'missing' | 'merged' | 'split'>;
   };
   hypothesis: BPMHypothesis | null;
   detectorAgreement: number;
@@ -104,5 +108,6 @@ export interface HeartBeatDebug {
     detectorAgreement: number;
     amplitude?: number;
     flags: BeatFlags;
+    rrClassification?: 'clean' | 'noisy' | 'ectopic_candidate' | 'missing' | 'merged' | 'split';
   }>;
 }
