@@ -11,6 +11,7 @@ import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
 import { RespiratoryRateProcessor, type RespRateResult } from './RespiratoryRateProcessor';
+import { HemoglobinProcessor, type HemoglobinFeatures, type HemoglobinOutput } from './HemoglobinProcessor';
 import {
   saveCalibration,
   loadCalibration,
@@ -89,6 +90,8 @@ export interface VitalSignsResult {
   stress?: StressResult;
   // Respiratory rate (brpm) — Phase 6
   respiration?: RespRateResult;
+  // Hemoglobin (g/dL) — Phase 10 (research, calibratable)
+  hemoglobin?: HemoglobinOutput;
   // Debug telemetry
   debugMetrics?: {
     motionScore: number;
@@ -127,6 +130,8 @@ export class VitalSignsProcessor {
   private hrvProcessor: HRVTimeFreqProcessor;
   private stressProcessor: StressProcessor;
   private respProcessor: RespiratoryRateProcessor;
+  private hemoglobinProcessor: HemoglobinProcessor;
+  private lastHemoglobin: HemoglobinOutput | null = null;
   private piHistory: number[] = [];
   private readonly PI_HISTORY_SIZE = 30;
   private lastHRV: HRVResult | null = null;
@@ -191,6 +196,7 @@ export class VitalSignsProcessor {
     this.hrvProcessor = new HRVTimeFreqProcessor();
     this.stressProcessor = new StressProcessor();
     this.respProcessor = new RespiratoryRateProcessor();
+    this.hemoglobinProcessor = new HemoglobinProcessor();
 
     // Phase 12 — local-storage hydration (fast path, no network).
     // Calibrations stored from previous sessions become immediately available.
@@ -199,6 +205,8 @@ export class VitalSignsProcessor {
       if (spo2v3) this.spo2ProcessorV3.loadSerializedCalibration(spo2v3);
       const bpv3 = loadCalibrationLocal<any>('bp_v3');
       if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
+      const hbv1 = loadCalibrationLocal<any>('hemoglobin_v1');
+      if (hbv1) this.hemoglobinProcessor.loadSerializedCalibration(hbv1);
     } catch { /* private mode etc. */ }
   }
 
@@ -212,6 +220,8 @@ export class VitalSignsProcessor {
       if (spo2v3) this.spo2ProcessorV3.loadSerializedCalibration(spo2v3);
       const bpv3 = await loadCalibration<any>('bp_v3');
       if (bpv3) this.bloodPressureProcessorV3.loadSerializedCalibration(bpv3);
+      const hbv1 = await loadCalibration<any>('hemoglobin_v1');
+      if (hbv1) this.hemoglobinProcessor.loadSerializedCalibration(hbv1);
     } catch (e) {
       console.warn('[vitals] autoLoadCalibrations failed:', (e as any)?.message ?? e);
     }
@@ -224,6 +234,8 @@ export class VitalSignsProcessor {
       if (spo2v3.calibration) await saveCalibration('spo2_v3' as CalibrationModality, spo2v3);
       const bpv3 = this.bloodPressureProcessorV3.serializeCalibration();
       if (bpv3.model) await saveCalibration('bp_v3' as CalibrationModality, bpv3);
+      const hbv1 = this.hemoglobinProcessor.serializeCalibration();
+      if (hbv1.model) await saveCalibration('hemoglobin_v1' as CalibrationModality, hbv1);
     } catch (e) {
       console.warn('[vitals] persistCalibrations failed:', (e as any)?.message ?? e);
     }
@@ -283,6 +295,23 @@ export class VitalSignsProcessor {
   setBPV3Enabled(enabled: boolean): void {
     this.useBPV3 = enabled;
   }
+
+  // ─── Hemoglobina (Phase 10) ───
+  /** Iniciar wizard de calibración de hemoglobina (laboratorio: g/dL). */
+  startHemoglobinCalibrationWizard(): void { this.hemoglobinProcessor.startCalibrationWizard(); }
+  /** Agregar punto de calibración de Hb. Persiste tras cada punto. */
+  addHemoglobinCalibrationPoint(features: HemoglobinFeatures, refHbgDl: number) {
+    const r = this.hemoglobinProcessor.addCalibrationPoint(features, refHbgDl);
+    this.persistCalibrations().catch(() => { /* */ });
+    return r;
+  }
+  /** Finalizar wizard de Hb y persistir. */
+  finishHemoglobinCalibrationWizard() {
+    const r = this.hemoglobinProcessor.finishCalibrationWizard();
+    if (r.success) this.persistCalibrations().catch(() => { /* */ });
+    return r;
+  }
+  getHemoglobinCalibrationStatus() { return this.hemoglobinProcessor.getCalibrationStatus(); }
 
   /**
    * Cargar calibración de dispositivo SpO2 (aplicada a V2 y V3)
@@ -646,6 +675,25 @@ export class VitalSignsProcessor {
       });
     }
 
+    // ── Hemoglobin (research) — Phase 10 ──
+    if (medianF) {
+      const hbF: HemoglobinFeatures = {
+        meanRedLin: this.rgbData.redDC,
+        meanGreenLin: this.rgbData.greenDC,
+        meanBlueLin: this.rgbData.blueDC ?? 0,
+        odR: this.rgbData.redDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.redDC / 255)) : 0,
+        odG: this.rgbData.greenDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.greenDC / 255)) : 0,
+        odB: (this.rgbData.blueDC ?? 0) > 0 ? -Math.log(Math.max(1e-6, (this.rgbData.blueDC ?? 1) / 255)) : 0,
+        perfusionRed: this.rgbData.redDC > 0 ? this.rgbData.redAC / this.rgbData.redDC : 0,
+        perfusionGreen: this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0,
+        pulseAmplitude: medianF.systolicAmplitude,
+        dicroticDepth: medianF.dicroticDepth,
+        rgRatio: this.rgbData.greenDC > 0 ? this.rgbData.redDC / this.rgbData.greenDC : 0,
+        hr,
+      };
+      this.lastHemoglobin = this.hemoglobinProcessor.process(hbF);
+    }
+
     // ── Respiratory rate (AM+FM+BW + Welch) — Phase 6 ──
     this.respFrameCounter++;
     if (
@@ -743,6 +791,7 @@ export class VitalSignsProcessor {
       hrv: this.lastHRV ?? undefined,
       stress: this.lastStress ?? undefined,
       respiration: this.lastResp ?? undefined,
+      hemoglobin: this.lastHemoglobin ?? undefined,
     };
   }
 
@@ -799,6 +848,7 @@ export class VitalSignsProcessor {
     this.spo2Processor.reset();
     this.spo2ProcessorV3.reset();
     this.bloodPressureProcessorV3.reset();
+    this.hemoglobinProcessor.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
     this.rhythmClassifier.reset();
@@ -829,6 +879,7 @@ export class VitalSignsProcessor {
     this.bloodPressureProcessorV3.fullReset();
     this.spo2Processor.fullReset();
     this.spo2ProcessorV3.fullReset();
+    this.hemoglobinProcessor.fullReset();
     this.glucoseProcessor.fullReset();
     this.lipidProcessor.fullReset();
     this.rhythmClassifier.reset();
@@ -840,6 +891,7 @@ export class VitalSignsProcessor {
     this.lastHRV = null;
     this.lastStress = null;
     this.lastResp = null;
+    this.lastHemoglobin = null;
     this.piHistory = [];
     this.respFrameCounter = 0;
   }
