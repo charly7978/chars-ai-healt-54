@@ -11,6 +11,7 @@
  */
 
 import type { TileData } from './TileFusionEngine';
+import type { RadiometricProcessor } from './RadiometricProcessor';
 
 export interface TileMetrics {
   meanR: number;
@@ -25,13 +26,28 @@ export interface TileMetrics {
   centerBias: number;
   score: number;
   temporalScore: number;
+  // Linearized + OD (populated only when a RadiometricProcessor is wired in)
+  meanRLin?: number;
+  meanGLin?: number;
+  meanBLin?: number;
+  odR?: number;
+  odG?: number;
+  odB?: number;
 }
 
 export interface ROIMaskResult {
-  // Weighted RGB from valid tiles only
+  // Weighted RGB from valid tiles only (sRGB, kept for back-compat)
   rawRed: number;
   rawGreen: number;
   rawBlue: number;
+  // Linearized RGB (Beer-Lambert space, 0..255 mapped) — primary signal source
+  linRed: number;
+  linGreen: number;
+  linBlue: number;
+  // Optical density per channel (averaged across valid tiles)
+  odR: number;
+  odG: number;
+  odB: number;
   // Metrics
   coverageRatio: number;
   fingerScore: number;
@@ -56,6 +72,12 @@ export class AdaptiveROIMask {
   private tileConfidence: Float64Array = new Float64Array(TOTAL_TILES);
   private prevMaskValid: Uint8Array = new Uint8Array(TOTAL_TILES).fill(0);
   private frameCount = 0;
+  private radiometric: RadiometricProcessor | null = null;
+
+  /** Optional radiometric processor for end-to-end Beer-Lambert pipeline */
+  setRadiometricProcessor(rp: RadiometricProcessor | null): void {
+    this.radiometric = rp;
+  }
 
   // Reusable per-tile accumulator arrays to avoid per-frame allocation
   private tileR = new Float64Array(TOTAL_TILES);
@@ -160,6 +182,23 @@ export class AdaptiveROIMask {
       const clipHighPct = this.tileClipHigh[ti] / total;
       const clipLowPct = this.tileClipLow[ti] / total;
 
+      // Optional radiometric linearization (Beer-Lambert space)
+      let meanRLin: number | undefined;
+      let meanGLin: number | undefined;
+      let meanBLin: number | undefined;
+      let odR: number | undefined;
+      let odG: number | undefined;
+      let odB: number | undefined;
+      if (this.radiometric) {
+        const rad = this.radiometric.processTileRGB(meanR, meanG, meanB);
+        meanRLin = rad.linearR8;
+        meanGLin = rad.linearG8;
+        meanBLin = rad.linearB8;
+        odR = rad.odR;
+        odG = rad.odG;
+        odB = rad.odB;
+      }
+
       // Center bias
       const gx = ti % GRID;
       const gy = (ti / GRID) | 0;
@@ -185,7 +224,8 @@ export class AdaptiveROIMask {
         meanR, meanG, meanB, redDominance,
         rgRatio, intensity, clipHighPct, clipLowPct,
         validPixels: cnt, centerBias,
-        score: combinedScore, temporalScore: this.tileConfidence[ti]
+        score: combinedScore, temporalScore: this.tileConfidence[ti],
+        meanRLin, meanGLin, meanBLin, odR, odG, odB,
       };
       allScores.push(combinedScore);
     }
@@ -230,6 +270,9 @@ export class AdaptiveROIMask {
 
     // --- Weighted average over valid tiles (fine ROI) ---
     let wR = 0, wG = 0, wB = 0, wTotal = 0;
+    let wRlin = 0, wGlin = 0, wBlin = 0;
+    let wOdR = 0, wOdG = 0, wOdB = 0;
+    let wTotalLin = 0;
     let brightSum = 0, brightSqSum = 0;
     let totalValidPx = 0;
 
@@ -240,6 +283,15 @@ export class AdaptiveROIMask {
       wG += m.meanG * w;
       wB += m.meanB * w;
       wTotal += w;
+      if (m.meanRLin !== undefined) {
+        wRlin += m.meanRLin * w;
+        wGlin += (m.meanGLin ?? 0) * w;
+        wBlin += (m.meanBLin ?? 0) * w;
+        wOdR += (m.odR ?? 0) * w;
+        wOdG += (m.odG ?? 0) * w;
+        wOdB += (m.odB ?? 0) * w;
+        wTotalLin += w;
+      }
       brightSum += m.intensity;
       brightSqSum += m.intensity * m.intensity;
       totalValidPx += m.validPixels;
@@ -254,12 +306,27 @@ export class AdaptiveROIMask {
         wG += m.meanG;
         wB += m.meanB;
         wTotal += 1;
+        if (m.meanRLin !== undefined) {
+          wRlin += m.meanRLin;
+          wGlin += (m.meanGLin ?? 0);
+          wBlin += (m.meanBLin ?? 0);
+          wOdR += (m.odR ?? 0);
+          wOdG += (m.odG ?? 0);
+          wOdB += (m.odB ?? 0);
+          wTotalLin += 1;
+        }
       }
     }
 
     const rawRed = wTotal > 0 ? wR / wTotal : 0;
     const rawGreen = wTotal > 0 ? wG / wTotal : 0;
     const rawBlue = wTotal > 0 ? wB / wTotal : 0;
+    const linRed = wTotalLin > 0 ? wRlin / wTotalLin : rawRed;
+    const linGreen = wTotalLin > 0 ? wGlin / wTotalLin : rawGreen;
+    const linBlue = wTotalLin > 0 ? wBlin / wTotalLin : rawBlue;
+    const odRagg = wTotalLin > 0 ? wOdR / wTotalLin : 0;
+    const odGagg = wTotalLin > 0 ? wOdG / wTotalLin : 0;
+    const odBagg = wTotalLin > 0 ? wOdB / wTotalLin : 0;
 
     const coverageRatio = fingerTileCount / TOTAL_TILES;
     const avgFingerScore = validTileIndices.length > 0
@@ -304,6 +371,8 @@ export class AdaptiveROIMask {
 
     return {
       rawRed, rawGreen, rawBlue,
+      linRed, linGreen, linBlue,
+      odR: odRagg, odG: odGagg, odB: odBagg,
       coverageRatio,
       fingerScore: avgFingerScore,
       clipHighRatio: totalPixels > 0 ? totalClipHigh / totalPixels : 0,

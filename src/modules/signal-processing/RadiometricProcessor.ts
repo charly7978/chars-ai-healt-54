@@ -146,6 +146,23 @@ const DEVICE_PROFILES: Record<string, DeviceProfile> = {
 // RADIOMETRIC PROCESSOR
 // ═══════════════════════════════════════════════════════════════════
 
+export interface TileRadiometricResult {
+  /** sRGB → linear (gamma-corrected) channel value, normalized 0..1 */
+  linearR: number;
+  linearG: number;
+  linearB: number;
+  /** Linearized values mapped back to 0..255 for backwards compat */
+  linearR8: number;
+  linearG8: number;
+  linearB8: number;
+  /** Optical density (OD) per channel: −log(I/Iref) */
+  odR: number;
+  odG: number;
+  odB: number;
+}
+
+const PERSISTED_PROFILE_KEY = 'cppg.device_profile.v1';
+
 export class RadiometricProcessor {
   private profile: DeviceProfile;
   private referenceR: number = 100;
@@ -153,18 +170,41 @@ export class RadiometricProcessor {
   private referenceB: number = 100;
   private refUpdateCount = 0;
   private readonly REF_UPDATE_INTERVAL = 60; // Update reference every 60 frames
-  
-  // Reusable buffers to avoid allocations
+
+  // Tile-domain reference (works in linear 0..1 space)
+  private linRefR = 0.5;
+  private linRefG = 0.5;
+  private linRefB = 0.5;
+  private linRefInitialized = false;
+  private readonly LIN_REF_ALPHA = 0.02;
+
+  // Bootstrap state for dark frame and white point
+  private darkFrameSamples = 0;
+  private darkAccumR = 0;
+  private darkAccumG = 0;
+  private darkAccumB = 0;
+
+  private whitePointSamples = 0;
+  private whitePointMaxR = 0;
+  private whitePointMaxG = 0;
+  private whitePointMaxB = 0;
+
+  // Drift tracking for re-bootstrap decisions
+  private whitePointDriftEMA = 0;
+  private whitePointDriftCount = 0;
+
+  // Reusable buffers to avoid allocations (only used by per-pixel process())
   private linearRBuf: Float32Array;
   private linearGBuf: Float32Array;
   private linearBBuf: Float32Array;
   private odRBuf: Float32Array;
   private odGBuf: Float32Array;
   private odBBuf: Float32Array;
-  
+
   constructor(deviceModelId: string = 'generic', width: number = 1280, height: number = 720) {
     this.profile = DEVICE_PROFILES[deviceModelId] || PROFILE_GENERIC;
-    
+    this.tryLoadPersistedProfile();
+
     const pixelCount = width * height;
     this.linearRBuf = new Float32Array(pixelCount);
     this.linearGBuf = new Float32Array(pixelCount);
@@ -173,19 +213,232 @@ export class RadiometricProcessor {
     this.odGBuf = new Float32Array(pixelCount);
     this.odBBuf = new Float32Array(pixelCount);
   }
+
+  // ─────────────────────────────────────────────────────────────────
+  // PROFILE PERSISTENCE
+  // ─────────────────────────────────────────────────────────────────
+
+  private tryLoadPersistedProfile(): void {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const raw = localStorage.getItem(PERSISTED_PROFILE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<DeviceProfile>;
+      if (parsed && typeof parsed === 'object') {
+        this.profile = { ...this.profile, ...parsed };
+      }
+    } catch {
+      // best-effort persistence — silently ignore corrupt storage
+    }
+  }
+
+  private persistProfile(): void {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem(PERSISTED_PROFILE_KEY, JSON.stringify(this.profile));
+    } catch {
+      // ignore (private mode etc.)
+    }
+  }
   
   /**
    * Update device profile (e.g., from user calibration or bootstrap)
    */
   public setProfile(profile: Partial<DeviceProfile>): void {
     this.profile = { ...this.profile, ...profile };
+    this.persistProfile();
   }
-  
+
   /**
    * Get current profile
    */
   public getProfile(): DeviceProfile {
     return this.profile;
+  }
+
+  /**
+   * Reset all temporal state (references, drift, bootstrap counters).
+   * Profile is preserved (it represents the device, not the session).
+   */
+  public reset(): void {
+    this.referenceR = 100; this.referenceG = 100; this.referenceB = 100;
+    this.refUpdateCount = 0;
+    this.linRefR = 0.5; this.linRefG = 0.5; this.linRefB = 0.5;
+    this.linRefInitialized = false;
+    this.darkFrameSamples = 0;
+    this.darkAccumR = 0; this.darkAccumG = 0; this.darkAccumB = 0;
+    this.whitePointSamples = 0;
+    this.whitePointMaxR = 0; this.whitePointMaxG = 0; this.whitePointMaxB = 0;
+    this.whitePointDriftEMA = 0;
+    this.whitePointDriftCount = 0;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // FAST PATH: process per-tile aggregated RGB (no allocation, O(1))
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Linearize and compute OD for a single aggregated RGB triplet (e.g. mean
+   * of a tile). Designed to be called 49× per frame (or per pixel only when
+   * absolutely needed). Zero allocations.
+   *
+   * Pipeline:
+   *  1. Subtract dark offset (sRGB units)
+   *  2. sRGB → linear via gamma
+   *  3. Apply per-channel gain
+   *  4. Compute OD = −log(linear / linRef) using running tile-domain reference
+   *  5. Update reference EWMA in linear space
+   */
+  public processTileRGB(meanR: number, meanG: number, meanB: number): TileRadiometricResult {
+    const { gamma, gainR, gainG, gainB, darkOffsetR, darkOffsetG, darkOffsetB, whiteLevel } = this.profile;
+
+    // 1. Dark-offset subtraction (clip ≥0)
+    const r0 = Math.max(0, meanR - darkOffsetR) / whiteLevel;
+    const g0 = Math.max(0, meanG - darkOffsetG) / whiteLevel;
+    const b0 = Math.max(0, meanB - darkOffsetB) / whiteLevel;
+
+    // 2. sRGB → linear
+    const rLin0 = Math.pow(r0, gamma);
+    const gLin0 = Math.pow(g0, gamma);
+    const bLin0 = Math.pow(b0, gamma);
+
+    // 3. Per-channel gain (clamp 0..1)
+    const rLin = Math.min(1, rLin0 * gainR);
+    const gLin = Math.min(1, gLin0 * gainG);
+    const bLin = Math.min(1, bLin0 * gainB);
+
+    // 4. Update tile-domain linear reference (EWMA), gate to plausible midtones
+    if (!this.linRefInitialized) {
+      this.linRefR = Math.max(0.05, rLin);
+      this.linRefG = Math.max(0.05, gLin);
+      this.linRefB = Math.max(0.05, bLin);
+      this.linRefInitialized = true;
+    } else {
+      const alpha = this.LIN_REF_ALPHA;
+      this.linRefR = this.linRefR * (1 - alpha) + Math.max(0.05, rLin) * alpha;
+      this.linRefG = this.linRefG * (1 - alpha) + Math.max(0.05, gLin) * alpha;
+      this.linRefB = this.linRefB * (1 - alpha) + Math.max(0.05, bLin) * alpha;
+    }
+
+    // 5. Optical density
+    const eps = 1e-6;
+    const odR = -Math.log(Math.max(eps, rLin) / Math.max(eps, this.linRefR));
+    const odG = -Math.log(Math.max(eps, gLin) / Math.max(eps, this.linRefG));
+    const odB = -Math.log(Math.max(eps, bLin) / Math.max(eps, this.linRefB));
+
+    return {
+      linearR: rLin,
+      linearG: gLin,
+      linearB: bLin,
+      linearR8: rLin * 255,
+      linearG8: gLin * 255,
+      linearB8: bLin * 255,
+      odR, odG, odB,
+    };
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // BOOTSTRAP DARK FRAME — call N frames with torch OFF before lock
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Accumulate dark-frame statistics. Call this with the first frames captured
+   * BEFORE the torch is enabled. After ≥5 samples, the device profile dark
+   * offsets are updated and persisted.
+   */
+  public bootstrapDarkFrame(imageData: ImageData): void {
+    const { data } = imageData;
+    let sumR = 0, sumG = 0, sumB = 0;
+    let n = 0;
+    // Sample sparsely (every 16 pixels) — dark estimation is stable
+    for (let i = 0; i < data.length; i += 64) {
+      sumR += data[i];
+      sumG += data[i + 1];
+      sumB += data[i + 2];
+      n++;
+    }
+    if (n === 0) return;
+
+    this.darkAccumR += sumR / n;
+    this.darkAccumG += sumG / n;
+    this.darkAccumB += sumB / n;
+    this.darkFrameSamples++;
+
+    if (this.darkFrameSamples >= 5) {
+      const dR = this.darkAccumR / this.darkFrameSamples;
+      const dG = this.darkAccumG / this.darkFrameSamples;
+      const dB = this.darkAccumB / this.darkFrameSamples;
+      // Conservative cap: never claim a "dark offset" >50 (would be a bug)
+      this.profile = {
+        ...this.profile,
+        darkOffsetR: Math.min(50, dR),
+        darkOffsetG: Math.min(50, dG),
+        darkOffsetB: Math.min(50, dB),
+        timestampCreated: Date.now(),
+      };
+      this.persistProfile();
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // BOOTSTRAP WHITE POINT — call when finger is firmly placed + torch ON
+  // ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Accumulate white-point statistics during stable contact. After several
+   * samples, update profile.whiteLevel to the per-channel max, which improves
+   * AC/DC normalization across devices.
+   */
+  public bootstrapWhitePoint(imageData: ImageData, isFingerPresent: boolean): void {
+    if (!isFingerPresent) return;
+    const { data } = imageData;
+    let mR = 0, mG = 0, mB = 0;
+    for (let i = 0; i < data.length; i += 32) {
+      if (data[i] > mR) mR = data[i];
+      if (data[i + 1] > mG) mG = data[i + 1];
+      if (data[i + 2] > mB) mB = data[i + 2];
+    }
+    this.whitePointMaxR = Math.max(this.whitePointMaxR, mR);
+    this.whitePointMaxG = Math.max(this.whitePointMaxG, mG);
+    this.whitePointMaxB = Math.max(this.whitePointMaxB, mB);
+    this.whitePointSamples++;
+
+    if (this.whitePointSamples >= 30) {
+      const observedMax = Math.max(this.whitePointMaxR, this.whitePointMaxG, this.whitePointMaxB);
+      // White level should never go below 200 (would mean torch never reaches a midtone red),
+      // and should not exceed 255.
+      const newWhite = Math.max(200, Math.min(255, observedMax + 5));
+      this.profile = { ...this.profile, whiteLevel: newWhite };
+      this.persistProfile();
+      this.whitePointSamples = 0;
+      this.whitePointMaxR = 0; this.whitePointMaxG = 0; this.whitePointMaxB = 0;
+    }
+  }
+
+  /**
+   * Track white-point drift for an arbitrary frame. If drift > 0.15 over 60
+   * consecutive frames, rebootstrap is recommended. Call from the main pipeline.
+   */
+  public trackWhitePointDrift(imageData: ImageData): { drift: number; needsRebootstrap: boolean } {
+    const { data } = imageData;
+    let mG = 0;
+    for (let i = 1; i < data.length; i += 64) {
+      if (data[i] > mG) mG = data[i];
+    }
+    const target = this.profile.whiteLevel;
+    const drift = target > 0 ? Math.abs(mG - target) / target : 0;
+    this.whitePointDriftEMA = this.whitePointDriftEMA * 0.92 + drift * 0.08;
+
+    if (this.whitePointDriftEMA > 0.15) {
+      this.whitePointDriftCount++;
+    } else {
+      this.whitePointDriftCount = Math.max(0, this.whitePointDriftCount - 1);
+    }
+
+    return {
+      drift: this.whitePointDriftEMA,
+      needsRebootstrap: this.whitePointDriftCount >= 60,
+    };
   }
   
   /**

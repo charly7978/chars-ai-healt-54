@@ -43,6 +43,14 @@ export interface ProcessedSignal {
     realFps: number;
     // Coverage
     coverageRatio: number;
+    // Beer-Lambert (Fase 1) — populated when AdaptiveROIMask is wired with
+    // a RadiometricProcessor (default in PPGSignalProcessor V2+)
+    odR?: number;
+    odG?: number;
+    odB?: number;
+    linRed?: number;
+    linGreen?: number;
+    linBlue?: number;
   };
   diagnostics?: {
     message: string;
