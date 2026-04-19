@@ -10,6 +10,8 @@
  * 6. Separates coarse ROI (detection) from fine ROI (extraction)
  */
 
+import type { TileData } from './TileFusionEngine';
+
 export interface TileMetrics {
   meanR: number;
   meanG: number;
@@ -42,6 +44,7 @@ export interface ROIMaskResult {
   validPixelCount: number;
   totalPixelCount: number;
   tileScores: Float64Array;
+  tileData: TileData[];
 }
 
 const GRID = 7; // 7x7 tile grid
@@ -284,7 +287,20 @@ export class AdaptiveROIMask {
       ? (brightSqSum / validTileIndices.length) - brightness * brightness : 0;
 
     const tileScores = new Float64Array(TOTAL_TILES);
-    for (let ti = 0; ti < TOTAL_TILES; ti++) tileScores[ti] = tileMetrics[ti].score;
+    const tileData: TileData[] = new Array(TOTAL_TILES);
+    for (let ti = 0; ti < TOTAL_TILES; ti++) {
+      tileScores[ti] = tileMetrics[ti].score;
+      const m = tileMetrics[ti];
+      tileData[ti] = {
+        r: m.meanR,
+        g: m.meanG,
+        b: m.meanB,
+        quality: Math.max(0, Math.min(1, m.score)),
+        coverage: m.validPixels / Math.max(1, this.tileCount[ti]),
+        temporalConfidence: Math.max(0, Math.min(1, m.temporalScore)),
+        tileIndex: ti,
+      };
+    }
 
     return {
       rawRed, rawGreen, rawBlue,
@@ -299,6 +315,7 @@ export class AdaptiveROIMask {
       validPixelCount: totalValidPx,
       totalPixelCount: totalPixels,
       tileScores,
+      tileData,
     };
   }
 

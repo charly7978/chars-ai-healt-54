@@ -301,15 +301,86 @@ export class ArrhythmiaProcessor {
   }
   
   /**
-   * Morphological features (placeholder for now)
+   * Morphological features (derived from RR interval statistics)
+   * Since ArrhythmiaProcessor has no access to raw PPG beat shapes,
+   * we estimatemorphological features from RR distribution:
+   * - Beat amplitude stability ← RR variability (regular RR = regular pulses)
+   * - Beat width stability ← RR regularity
+   * - Asymmetry score ← distribution skewness
+   * - Notch presence ← spectral harmonics (no PPG access → estimate from RR periodicity)
    */
   private extractMorphologicalFeatures(): MorphologicalFeatures {
+    // If we have limited data, return default estimates
+    if (this.acceptedBeats.length < 5) {
+      return {
+        beatAmplitudeStability: 0.5,
+        beatWidthStability: 0.5,
+        asymmetryScore: 0.5,
+        notchPresence: 0.2,
+      };
+    }
+
+    // ── BEAT AMPLITUDE STABILITY (derived from RR regularity) ──
+    // Lower CVRR = more stable amplitudes (physiologically correlated)
+    const rmssd = this.extractTemporalFeatures(this.acceptedBeats).rmssd;
+    const medRR = median(this.acceptedBeats);
+   const cvRR = medRR > 0 ? rmssd / medRR : 0;
+    const ampStability = Math.max(0, Math.min(1, 1 - cvRR / 0.3)); // 30% CV → 0 stability
+
+    // ── BEAT WIDTH STABILITY (from RR histogram spread) ──
+    const sorted = [...this.acceptedBeats].sort((a, b) => a - b);
+    const p25 = sorted[Math.floor(sorted.length * 0.25)];
+    const p75 = sorted[Math.floor(sorted.length * 0.75)];
+    const iqr = p75 - p25;
+    const iqr_to_med_ratio = medRR > 0 ? iqr / medRR : 0;
+    const widthStability = Math.max(0, Math.min(1, 1 - iqr_to_med_ratio / 0.4)); // 40% IQR/med → 0 stability
+
+    // ── ASYMMETRY SCORE (from RR distribution skewness) ──
+    const mean = this.acceptedBeats.reduce((a, b) => a + b, 0) / this.acceptedBeats.length;
+    const skewness = this.acceptedBeats.reduce((sum, rr) => sum + Math.pow(rr - mean, 3), 0) / 
+                    (this.acceptedBeats.length * Math.pow(rmssd, 3));
+    const asymmetryScore = Math.abs(skewness) / 2; // Normalize to 0-1 range
+
+    // ── NOTCH PRESENCE (from spectral characteristics of RR) ──
+    // Can't detect without PPG; estimate from RR periodicity quality
+    // Low entropy RR = good beat coherence = "clean" beats (no notches expected)
+    const entropy = this.computeEntropy(this.acceptedBeats);
+    const notchPresence = entropy > 2.5 ? 0.3 : entropy > 1.8 ? 0.15 : 0.05; // Higher entropy = likely morphological issues
+
     return {
-      beatAmplitudeStability: 0.8,
-      beatWidthStability: 0.8,
-      asymmetryScore: 0.5,
-      notchPresence: 0.1,
+      beatAmplitudeStability: ampStability,
+      beatWidthStability: widthStability,
+      asymmetryScore: Math.min(1, asymmetryScore),
+      notchPresence,
     };
+  }
+
+  /** Compute Shannon entropy of RR intervals (normalized) */
+  private computeEntropy(values: number[]): number {
+    if (values.length < 5) return 0;
+    
+    // Bin RR values into 10 bins
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min + 1;
+    const nbins = 10;
+    const bins = Array(nbins).fill(0);
+    
+    for (const v of values) {
+      const binIdx = Math.floor((nbins * (v - min)) / range);
+      bins[Math.min(binIdx, nbins - 1)]++;
+    }
+    
+    const N = values.length;
+    let entropy = 0;
+    for (const count of bins) {
+      if (count > 0) {
+        const p = count / N;
+        entropy -= p * Math.log2(p);
+      }
+    }
+    
+    return entropy; // 0 = very regular, ~3.3 = maximally chaotic (10 bins)
   }
   
   /**

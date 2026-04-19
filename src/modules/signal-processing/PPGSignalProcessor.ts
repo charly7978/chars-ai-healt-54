@@ -5,6 +5,9 @@ import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { SignalSourceRanker } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
+import { RadiometricProcessor } from './RadiometricProcessor';
+import { TileFusionEngine, type TileData, type FusionResult } from './TileFusionEngine';
+import { FingerContactClassifier, type ContactClassResult } from './FingerContactClassifier';
 
 // Extended contact states
 type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
@@ -28,6 +31,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private roiMask = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
   private sourceRanker = new SignalSourceRanker();
+  private radiometricProcessor: RadiometricProcessor;
+  private tileFusionEngine = new TileFusionEngine();
+  private contactClassifier = new FingerContactClassifier();
+  private lastContactClassification?: ContactClassResult;
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -120,6 +127,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onError?: (error: ProcessingError) => void
   ) {
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
+    this.radiometricProcessor = new RadiometricProcessor('generic', 1280, 720);
   }
 
   async initialize(): Promise<void> { this.reset(); }
@@ -147,6 +155,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const timestamp = frameTimestamp ?? performance.now();
     this.updateSampleRate(timestamp);
 
+    // --- RADIOMETRIC LINEARIZATION ---
+    const linearizedFrame = this.radiometricProcessor.process(imageData);
+
     // --- ADAPTIVE ROI ---
     const roi = this.roiMask.process(imageData);
     this.lastROIResult = roi;
@@ -154,6 +165,36 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.clipLowRatio = roi.clipLowRatio;
     this.spatialUniformity = roi.spatialUniformity;
     this.centerCoverage = roi.centerCoverage;
+
+    // --- TILE FUSION ---
+    const fusion = this.tileFusionEngine.fuse(roi.tileData ?? []);
+    const fusedRed = fusion.fusedR;
+    const fusedGreen = fusion.fusedG;
+    const fusedBlue = fusion.fusedB;
+    const fusedQuality = fusion.fusedQuality;
+
+    // --- CONTACT CLASSIFICATION ---
+    const contactResult = this.contactClassifier.classify({
+      colorStatsRaw: {
+        meanR: fusedRed,
+        meanG: fusedGreen,
+        meanB: fusedBlue,
+        stdR: 0,
+        stdG: 0,
+        stdB: 0,
+      },
+      saturationStats: {
+        clipHighRatio: roi.clipHighRatio,
+        clipLowRatio: roi.clipLowRatio,
+      },
+      roiCoverage: roi.coverageRatio,
+      imageWidth: imageData.width,
+      imageHeight: imageData.height,
+      data: imageData.data,
+      acSignal: this.redAC,
+      dcSignal: this.redDC,
+    });
+    this.lastContactClassification = contactResult;
 
     // --- PRESSURE ESTIMATION ---
     const pressure = this.pressureEstimator.estimate({
@@ -170,7 +211,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.pressurePenalty = pressure.penalty;
 
     // --- CONTACT STATE ---
-    this.updateContactState(roi, pressure);
+    this.updateContactState(roi, pressure, contactResult);
     const motionArtifact = this.motionScore > this.MOTION_THRESH;
 
     if (this.exportedContactState === 'NO_CONTACT') {

@@ -43,6 +43,11 @@ export class LipidResearchProcessor {
   private isCalibrated = false;
   private cholOffset = 0;
   private trigOffset = 0;
+  
+  /** Dataset enforcement: min paired sample count to enable research output */
+  private readonly MIN_PAIRED_SAMPLES = 3;
+  private pairedLabSamples: Array<{ ppgValue: number; labReference: number; timestamp: number }> = [];
+  private hasValidPairedDataset = false;
 
   process(input: {
     cycleFeatures: CycleInput | null;
@@ -127,17 +132,18 @@ export class LipidResearchProcessor {
     confidence = Math.min(1, Math.max(0, confidence));
 
     const enabledState: LipidResult['enabledState'] =
+      !this.hasValidPairedDataset ? 'WITHHELD_LOW_QUALITY' : // Dataset enforcement
       confidence >= 0.35 ? 'ENABLED_LOW_CONFIDENCE' : 'RESEARCH_ONLY';
 
     return {
-      totalCholesterol: Math.round(chol),
-      triglycerides: Math.round(trig),
-      confidence,
-      trend: this.computeTrend(this.cholHistory),
+      totalCholesterol: this.hasValidPairedDataset ? Math.round(chol) : 0,
+      triglycerides: this.hasValidPairedDataset ? Math.round(trig) : 0,
+      confidence: this.hasValidPairedDataset ? confidence : 0,
+      trend: this.hasValidPairedDataset ? this.computeTrend(this.cholHistory) : 'UNKNOWN',
       researchMode: true,
       enabledState,
-      featureCount,
-      modelVersion: this.isCalibrated ? 'subj_v1' : 'pop_v1',
+      featureCount: this.hasValidPairedDataset ? featureCount : 0,
+      modelVersion: 'research_v1',
     };
   }
 
@@ -171,5 +177,31 @@ export class LipidResearchProcessor {
     this.isCalibrated = false;
     this.cholOffset = 0;
     this.trigOffset = 0;
+    this.pairedLabSamples = [];
+    this.hasValidPairedDataset = false;
+  }
+
+  /**
+   * Set paired lab dataset for device validation
+   * Minimum 3 PPG↔Lab pairs for research gate to lift
+   */
+  public setPairedLabDataset(samples: Array<{ ppgValue: number; labReference: number; timestamp: number }>): void {
+    this.pairedLabSamples = samples.slice(0, 20);
+    this.hasValidPairedDataset = this.pairedLabSamples.length >= this.MIN_PAIRED_SAMPLES;
+  }
+
+  /**
+   * Check if valid paired dataset exists
+   */
+  public hasPairedDataset(): boolean {
+    return this.hasValidPairedDataset && this.pairedLabSamples.length >= this.MIN_PAIRED_SAMPLES;
+  }
+
+  /**
+   * Get paired dataset status for UI
+   */
+  public getPairedDatasetStatus(): string {
+    if (!this.pairedLabSamples.length) return `Dataset: 0/${this.MIN_PAIRED_SAMPLES} paired samples`;
+    return `Dataset: ${this.pairedLabSamples.length}/${this.MIN_PAIRED_SAMPLES} paired samples${this.hasValidPairedDataset ? ' ✓' : ''}`;
   }
 }
