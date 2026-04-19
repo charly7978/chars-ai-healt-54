@@ -110,12 +110,21 @@ export class RhythmClassifierV2 {
   private consecutiveNoiseFrames = 0;
   
   /**
-   * Clasificar ritmo cardíaco desde beats detectados
+   * Clasificar ritmo cardíaco desde beats detectados.
+   * `cycleAmplitudes` y `cycleWidthsMs` son opcionales — cuando se proveen,
+   * el clasificador calcula features morfológicas reales (Phase 14):
+   *   • amplitude stability (CV de amplitudes)
+   *   • width stability    (CV de pw50)
+   *   • dicrotic depth std (variabilidad de la muesca dícrota)
+   * y las suma al evidenceScore de AF y ectopia.
    */
   classify(
     beatInputs: BeatInput[],
     windowSQI: number,
-    sourceStability: number
+    sourceStability: number,
+    cycleAmplitudes?: number[],
+    cycleWidthsMs?: number[],
+    cycleDicroticDepths?: number[]
   ): BPMOutput & { evidence: RhythmEvidence; rhythmLabel: RhythmLabelV2 } {
     
     // ═══════════════════════════════════════════════════════════════
@@ -200,7 +209,13 @@ export class RhythmClassifierV2 {
     const temporalFeatures = this.extractTemporalFeatures(cleanRR);
     const ectopicFeatures = this.detectEctopicPatterns(validBeats, rrIntervals);
     const noiseEvidence = this.estimateNoiseEvidence(windowSQI, sourceStability, validBeats);
-    
+
+    // ═══════════════════════════════════════════════════════════════
+    //  Phase 14: morphology + Poincaré 3D (real, not placeholder)
+    // ═══════════════════════════════════════════════════════════════
+    const morpho = this.computeMorphology(cycleAmplitudes, cycleWidthsMs, cycleDicroticDepths);
+    const poincare3D = this.poincare3DDispersion(cleanRR);
+
     // ═══════════════════════════════════════════════════════════════
     //  CLASIFICACIÓN JERÁRQUICA
     // ═══════════════════════════════════════════════════════════════
@@ -208,7 +223,9 @@ export class RhythmClassifierV2 {
       temporalFeatures,
       ectopicFeatures,
       noiseEvidence,
-      cleanRR
+      cleanRR,
+      morpho,
+      poincare3D,
     );
     
     // ═══════════════════════════════════════════════════════════════
@@ -419,17 +436,39 @@ export class RhythmClassifierV2 {
     temporal: ReturnType<typeof this.extractTemporalFeatures>,
     ectopic: ReturnType<typeof this.detectEctopicPatterns>,
     noiseEvidence: number,
-    rr: number[]
+    rr: number[],
+    morpho?: { ampCV: number; widthCV: number; dicroticStd: number; nCycles: number },
+    poincare3D?: { dispersion3D: number; n: number },
   ) {
     // Evidence scores
-    const afEvidence = Math.min(1, 
+    let afEvidence = Math.min(1,
       (temporal.cv > CONFIG.AF_CV_THRESHOLD ? 0.4 : 0) +
       (temporal.pnn50 > CONFIG.AF_PNN50_THRESHOLD ? 0.3 : 0) +
       (temporal.tpr > 0.5 ? 0.2 : 0) +
       (temporal.sampEn > 0.5 ? 0.1 : 0)
     );
-    
-    const ectopyEvidence = Math.min(1, ectopic.ectopicRatio * 2);
+
+    // Phase 14: morphology + Poincaré 3D add evidence to AF (chaotic
+    // morphology + high RR-triplet dispersion both characterize fibrillation).
+    if (morpho && morpho.nCycles >= 4) {
+      const morphoBonus = Math.min(0.20,
+        (morpho.ampCV > 0.20 ? 0.10 : 0) +
+        (morpho.widthCV > 0.15 ? 0.05 : 0) +
+        (morpho.dicroticStd > 0.15 ? 0.05 : 0)
+      );
+      afEvidence = Math.min(1, afEvidence + morphoBonus);
+    }
+    if (poincare3D && poincare3D.n >= 6) {
+      // Normalize: dispersion3D ≈ 30..200 ms typical → bonus up to +0.15
+      const norm = Math.max(0, Math.min(1, (poincare3D.dispersion3D - 30) / 100));
+      afEvidence = Math.min(1, afEvidence + norm * 0.15);
+    }
+
+    let ectopyEvidence = Math.min(1, ectopic.ectopicRatio * 2);
+    if (morpho && morpho.nCycles >= 4 && morpho.ampCV > 0.30) {
+      // Strong amplitude variability → premature/ectopic morphology
+      ectopyEvidence = Math.min(1, ectopyEvidence + 0.10);
+    }
     const bigeminyEvidence = ectopic.bigeminyRatio;
     const trigeminyEvidence = ectopic.trigeminyRatio;
     const irregularityEvidence = Math.min(1, ectopic.irregularRatio * 1.5 + temporal.cv);
@@ -570,6 +609,49 @@ export class RhythmClassifierV2 {
     const sorted = [...arr].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  /**
+   * Phase 14 — coefficient-of-variation of beat amplitude / width and the
+   * standard deviation of dicrotic depth across recent cycles. Returns
+   * sensible zeros when too few cycles are provided.
+   */
+  private computeMorphology(amps?: number[], widths?: number[], notches?: number[]) {
+    const out = { ampCV: 0, widthCV: 0, dicroticStd: 0, nCycles: 0 };
+    if (amps && amps.length >= 3) {
+      const m = this.mean(amps);
+      out.ampCV = m > 0 ? this.std(amps) / m : 0;
+      out.nCycles = Math.max(out.nCycles, amps.length);
+    }
+    if (widths && widths.length >= 3) {
+      const m = this.mean(widths);
+      out.widthCV = m > 0 ? this.std(widths) / m : 0;
+      out.nCycles = Math.max(out.nCycles, widths.length);
+    }
+    if (notches && notches.length >= 3) {
+      out.dicroticStd = this.std(notches);
+      out.nCycles = Math.max(out.nCycles, notches.length);
+    }
+    return out;
+  }
+
+  /**
+   * Phase 14 — Poincaré 3D dispersion: standard deviation of the Euclidean
+   * distance from the cube diagonal (RR_n = RR_{n+1} = RR_{n+2}).
+   * Larger values indicate chaotic RR triplets (a hallmark of AF).
+   */
+  private poincare3DDispersion(rr: number[]): { dispersion3D: number; n: number } {
+    if (rr.length < 6) return { dispersion3D: 0, n: 0 };
+    const dists: number[] = [];
+    for (let i = 0; i + 2 < rr.length; i++) {
+      const a = rr[i], b = rr[i + 1], c = rr[i + 2];
+      const m = (a + b + c) / 3;
+      // Distance from the diagonal point (m, m, m)
+      const d = Math.sqrt((a - m) ** 2 + (b - m) ** 2 + (c - m) ** 2);
+      dists.push(d);
+    }
+    const dispersion3D = dists.length ? this.std(dists) : 0;
+    return { dispersion3D, n: dists.length };
   }
   
   private estimateSampleEntropy(rr: number[]): number {
