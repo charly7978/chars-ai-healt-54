@@ -135,17 +135,19 @@ const VitalSign = ({
       )}
       onClick={handleClick}
     >
-      <div className="text-[11px] font-medium uppercase tracking-wider text-black/70 mb-1">
+      {/* Phase 19 — gold uppercase title for high contrast on the black monitor bg */}
+      <div className="text-[11px] font-bold uppercase tracking-wider mb-1"
+           style={{ color: '#FFD700', textShadow: '0 0 4px rgba(255, 215, 0, 0.35)' }}>
         {label}
       </div>
-      
+
       <div className="font-bold text-xl sm:text-2xl transition-all duration-300">
-        <span className="text-gradient-soft animate-value-glow">
+        <span className="animate-value-glow" style={{ color: '#FFFFFF' }}>
           {isArrhytmia && typeof value === 'string'
             ? getArrhythmiaText(parseArrhythmiaStatus(value))
             : value}
         </span>
-        {unit && <span className="text-xs text-white/70 ml-1">{unit}</span>}
+        {unit && <span className="text-xs ml-1" style={{ color: '#E6C25A' }}>{unit}</span>}
       </div>
 
       {confidenceLevel && confidenceLevel !== 'INSUFFICIENT' && label === 'PRESIÓN ARTERIAL' && (

@@ -162,37 +162,34 @@ const Index = () => {
 
   useEffect(() => {
     if (!canvasRef.current) {
-      // Phase 2 — use OffscreenCanvas when available for zero DOM commit cost,
-      // falling back to a regular HTMLCanvasElement when not supported.
+      // Phase 19 — bump capture canvas to 480×360 (50% more pixels per axis,
+      // 2.25× pixel count) so the 7×7 ROI tiles get ~28×26 samples each
+      // instead of ~17×16, materially improving SNR on dim phones.
+      const CAP_W = 480;
+      const CAP_H = 360;
       const useOffscreen = typeof OffscreenCanvas !== 'undefined';
       if (useOffscreen) {
-        // We still hold an HTMLCanvasElement reference so the rest of the code
-        // (which expects canvas.width/height) keeps working; getContext from
-        // an offscreen canvas exposes the same drawing API.
         try {
-          const oc = new OffscreenCanvas(320, 240);
-          // OffscreenCanvas does NOT extend HTMLCanvasElement; we keep the
-          // type as `any` here intentionally. The 2D context API is identical
-          // for our purposes (drawImage + getImageData).
+          const oc = new OffscreenCanvas(CAP_W, CAP_H);
           canvasRef.current = oc as any;
           ctxRef.current = (oc.getContext('2d', {
             willReadFrequently: true,
             alpha: false,
           }) as any);
-          console.log('🚀 Capture canvas: OffscreenCanvas');
+          console.log(`🚀 Capture canvas: OffscreenCanvas ${CAP_W}×${CAP_H}`);
         } catch {
           // fall through to HTMLCanvas
         }
       }
       if (!canvasRef.current) {
         canvasRef.current = document.createElement('canvas');
-        canvasRef.current.width = 320;
-        canvasRef.current.height = 240;
+        canvasRef.current.width = CAP_W;
+        canvasRef.current.height = CAP_H;
         ctxRef.current = canvasRef.current.getContext('2d', {
           willReadFrequently: true,
           alpha: false,
         });
-        console.log('🚀 Capture canvas: HTMLCanvasElement');
+        console.log(`🚀 Capture canvas: HTMLCanvasElement ${CAP_W}×${CAP_H}`);
       }
     }
   }, []);
@@ -745,7 +742,7 @@ const Index = () => {
 
         <div className="relative z-10 h-full">
           <div className="flex-1 h-full">
-            <PPGSignalMeter 
+            <PPGSignalMeter
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
               isFingerDetected={lastSignal?.fingerDetected || false}
@@ -760,6 +757,25 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
+              // Phase 19 — EEG-style telemetry feed
+              systolic={vitalSigns.pressure?.systolic}
+              diastolic={vitalSigns.pressure?.diastolic}
+              perfusionIndex={lastSignal?.perfusionIndex}
+              respirationBrpm={vitalSigns.respiration?.brpm}
+              hrvLF={vitalSigns.hrv?.freq?.lfPower}
+              hrvHF={vitalSigns.hrv?.freq?.hfPower}
+              hrvLFHF={vitalSigns.hrv?.freq?.lfHfRatio}
+              dfaAlpha1={vitalSigns.hrv?.nonlinear?.dfaAlpha1}
+              sampleEntropy={vitalSigns.hrv?.nonlinear?.sampEn}
+              stressIndex={vitalSigns.stress?.index}
+              stressLabel={vitalSigns.stress?.label}
+              hemoglobinGdl={typeof vitalSigns.hemoglobin?.value === 'number' ? vitalSigns.hemoglobin.value : 0}
+              glucoseMgDl={vitalSigns.glucose}
+              contactState={(lastSignal as any)?.contactState}
+              pressureState={(lastSignal as any)?.telemetry?.pressureState}
+              motionScore={(lastSignal as any)?.telemetry?.motionScore}
+              realFps={(lastSignal as any)?.telemetry?.realFps}
+              activeSource={(lastSignal as any)?.telemetry?.activeSourceLabel}
             />
           </div>
 

@@ -21,44 +21,74 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
+  // Phase 19 — EEG-style telemetry overlay (optional)
+  systolic?: number;
+  diastolic?: number;
+  perfusionIndex?: number;
+  respirationBrpm?: number;
+  hrvLF?: number;
+  hrvHF?: number;
+  hrvLFHF?: number;
+  dfaAlpha1?: number;
+  sampleEntropy?: number;
+  stressIndex?: number;
+  stressLabel?: string;
+  hemoglobinGdl?: number;
+  glucoseMgDl?: number;
+  contactState?: string;
+  pressureState?: string;
+  motionScore?: number;
+  realFps?: number;
+  activeSource?: string;
 }
 
 const CONFIG = {
-  CANVAS_WIDTH: 1400,
-  CANVAS_HEIGHT: 2800,
+  // Higher-resolution canvas (≈1.5×) so thin EKG-style traces stay crisp
+  // on dense smartphone displays (DPR ≥ 3). Aspect ratio kept identical to
+  // the original (1:2) so the CSS-scaled viewport mapping doesn't change.
+  CANVAS_WIDTH: 2100,
+  CANVAS_HEIGHT: 4200,
   WINDOW_MS: 2800,
   TARGET_FPS: 30,
   BUFFER_SIZE: 400,
   PLOT_AREA: {
-    LEFT: 80,
-    RIGHT: 80,
-    TOP: 100,
-    BOTTOM: 60
+    LEFT: 90,
+    RIGHT: 90,
+    TOP: 130,
+    BOTTOM: 90,
   },
   COLORS: {
-    BG: '#0a0f1a',
-    GRID_MAJOR: 'rgba(34, 197, 94, 0.25)',
-    GRID_MINOR: 'rgba(34, 197, 94, 0.1)',
-    BASELINE: 'rgba(34, 197, 94, 0.4)',
-    SIGNAL_NORMAL: '#22c55e',
-    SIGNAL_GLOW: 'rgba(34, 197, 94, 0.5)',
-    SIGNAL_ARRHYTHMIA: '#ef4444',
-    ARRHYTHMIA_GLOW: 'rgba(239, 68, 68, 0.5)',
-    PEAK_NORMAL: '#3b82f6',
-    PEAK_ARRHYTHMIA: '#ef4444',
-    VALLEY_COLOR: '#64748b',
-    TEXT_PRIMARY: '#22c55e',
-    TEXT_SECONDARY: '#94a3b8',
-    TEXT_WARNING: '#f59e0b',
-    TEXT_DANGER: '#ef4444',
-    SCALE_TEXT: '#6b7280',
-    SIGNAL_FILL_NORMAL: 'rgba(34, 197, 94, 0.08)',
-    SIGNAL_FILL_ARR: 'rgba(239, 68, 68, 0.08)',
+    // Pitch-black background ('monitor cardiaco' look)
+    BG: '#000000',
+    PLOT_BG: 'rgba(0, 8, 4, 0.55)',
+    // Subtle EKG mint-green grid
+    GRID_MAJOR: 'rgba(38, 200, 130, 0.32)',
+    GRID_MINOR: 'rgba(38, 200, 130, 0.10)',
+    BASELINE: 'rgba(212, 175, 55, 0.55)',
+    // Trace and peaks
+    SIGNAL_NORMAL: '#22ff8d',
+    SIGNAL_GLOW: 'rgba(34, 255, 141, 0.55)',
+    SIGNAL_ARRHYTHMIA: '#ff4d4d',
+    ARRHYTHMIA_GLOW: 'rgba(255, 77, 77, 0.55)',
+    PEAK_NORMAL: '#60a5fa',
+    PEAK_ARRHYTHMIA: '#ff4d4d',
+    VALLEY_COLOR: '#94a3b8',
+    // Headings and labels — gold + clinical white
+    TEXT_TITLE: '#FFD700',           // gold for panel titles
+    TEXT_TITLE_SOFT: '#E6C25A',      // muted gold for sub-titles
+    TEXT_PRIMARY: '#FFFFFF',         // white for vital values
+    TEXT_SECONDARY: '#CBD5E1',
+    TEXT_WARNING: '#FBBF24',
+    TEXT_DANGER: '#ff4d4d',
+    SCALE_TEXT: '#9CA3AF',
+    SIGNAL_FILL_NORMAL: 'rgba(34, 255, 141, 0.08)',
+    SIGNAL_FILL_ARR: 'rgba(255, 77, 77, 0.08)',
     SYSTOLIC_MARKER: '#60a5fa',
     DIASTOLIC_MARKER: '#818cf8',
-    DICHROTIC_NOTCH: '#a78bfa',
-    IBI_TEXT: '#67e8f9',
-  }
+    DICHROTIC_NOTCH: '#c084fc',
+    IBI_TEXT: '#FFD700',
+    EEG_TEXT: '#A7F3D0',
+  },
 };
 
 const NON_ALERT_RHYTHMS = new Set(['SIN ARRITMIAS', 'SINUS_STABLE', 'SINUS_VARIABLE', 'CALIBRANDO...', 'UNDETERMINED_LOW_QUALITY']);
@@ -77,9 +107,9 @@ const parseRhythmStatus = (statusString?: string) => {
   return { label: normalized, count, display, isAlert, color };
 };
 
-const PPGSignalMeter = ({ 
-  value, 
-  quality, 
+const PPGSignalMeter = ({
+  value,
+  quality,
   isFingerDetected,
   onStartMeasurement,
   onReset,
@@ -91,14 +121,47 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = []
+  rrIntervals = [],
+  systolic = 0,
+  diastolic = 0,
+  perfusionIndex = 0,
+  respirationBrpm = 0,
+  hrvLF = 0,
+  hrvHF = 0,
+  hrvLFHF = 0,
+  dfaAlpha1 = 0,
+  sampleEntropy = 0,
+  stressIndex = 0,
+  stressLabel = '',
+  hemoglobinGdl = 0,
+  glucoseMgDl = 0,
+  contactState = '',
+  pressureState = '',
+  motionScore = 0,
+  realFps = 0,
+  activeSource = '',
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData });
+  const propsRef = useRef({
+    value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData,
+    systolic, diastolic, perfusionIndex, respirationBrpm, hrvLF, hrvHF, hrvLFHF,
+    dfaAlpha1, sampleEntropy, stressIndex, stressLabel,
+    hemoglobinGdl, glucoseMgDl, contactState, pressureState, motionScore, realFps, activeSource,
+  });
+  // Phase 19 — Snapshot used by the EEG overlay (HTML), refreshed at ~5 Hz
+  // to keep the canvas hot loop unblocked but the overlay alive.
+  const [eegSnapshot, setEegSnapshot] = useState({
+    systolic: 0, diastolic: 0, perfusionIndex: 0, respirationBrpm: 0,
+    hrvLFHF: 0, dfaAlpha1: 0, sampleEntropy: 0,
+    stressIndex: 0, stressLabel: '',
+    hemoglobinGdl: 0, glucoseMgDl: 0,
+    contactState: '', pressureState: '', motionScore: 0, realFps: 0, activeSource: '',
+    ibi: 0, sdnn: 0, rmssd: 0,
+  });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   
@@ -110,7 +173,12 @@ const PPGSignalMeter = ({
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
 
   useEffect(() => {
-    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData };
+    propsRef.current = {
+      value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData,
+      systolic, diastolic, perfusionIndex, respirationBrpm, hrvLF, hrvHF, hrvLFHF,
+      dfaAlpha1, sampleEntropy, stressIndex, stressLabel,
+      hemoglobinGdl, glucoseMgDl, contactState, pressureState, motionScore, realFps, activeSource,
+    };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
       ibiDisplayRef.current = Math.round(last);
@@ -121,7 +189,10 @@ const PPGSignalMeter = ({
       for (let i = 1; i < rrIntervals.length; i++) sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
       hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
     }
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData]);
+  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData,
+      systolic, diastolic, perfusionIndex, respirationBrpm, hrvLF, hrvHF, hrvLFHF,
+      dfaAlpha1, sampleEntropy, stressIndex, stressLabel,
+      hemoglobinGdl, glucoseMgDl, contactState, pressureState, motionScore, realFps, activeSource]);
 
   useEffect(() => {
     if (isPeak && isFingerDetected) {
@@ -140,6 +211,36 @@ const PPGSignalMeter = ({
       isRunningRef.current = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
+  }, []);
+
+  // Phase 19 — refresh the EEG overlay snapshot at 5 Hz from the live ref.
+  // This keeps overlay paints cheap without re-rendering the canvas hot path.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const p = propsRef.current;
+      setEegSnapshot({
+        systolic: p.systolic ?? 0,
+        diastolic: p.diastolic ?? 0,
+        perfusionIndex: p.perfusionIndex ?? 0,
+        respirationBrpm: p.respirationBrpm ?? 0,
+        hrvLFHF: p.hrvLFHF ?? 0,
+        dfaAlpha1: p.dfaAlpha1 ?? 0,
+        sampleEntropy: p.sampleEntropy ?? 0,
+        stressIndex: p.stressIndex ?? 0,
+        stressLabel: p.stressLabel ?? '',
+        hemoglobinGdl: p.hemoglobinGdl ?? 0,
+        glucoseMgDl: p.glucoseMgDl ?? 0,
+        contactState: p.contactState ?? '',
+        pressureState: p.pressureState ?? '',
+        motionScore: p.motionScore ?? 0,
+        realFps: p.realFps ?? 0,
+        activeSource: p.activeSource ?? '',
+        ibi: ibiDisplayRef.current,
+        sdnn: hrvDisplayRef.current.sdnn,
+        rmssd: hrvDisplayRef.current.rmssd,
+      });
+    }, 200);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -164,7 +265,7 @@ const PPGSignalMeter = ({
     const plot = getPlotArea();
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(0, 20, 10, 0.3)';
+    ctx.fillStyle = COLORS.PLOT_BG;
     ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
     ctx.strokeStyle = COLORS.GRID_MINOR;
     ctx.lineWidth = 0.5;
@@ -269,20 +370,22 @@ const PPGSignalMeter = ({
       small: '10px "SF Mono", Consolas, monospace',
     };
     
-    ctx.fillStyle = 'rgba(0, 30, 15, 0.9)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
     ctx.fillRect(3, panelY, panelW, panelH);
-    ctx.strokeStyle = COLORS.TEXT_PRIMARY;
+    ctx.strokeStyle = COLORS.TEXT_TITLE;
     ctx.lineWidth = 1.5;
     ctx.strokeRect(3, panelY, panelW, panelH);
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    // Title in GOLD (Phase 19)
+    ctx.fillStyle = COLORS.TEXT_TITLE;
     ctx.textAlign = 'left';
     ctx.fillText('♥ FRECUENCIA', 10, panelY + 18);
     ctx.font = fontSize.value;
+    // Value in WHITE
     ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
     ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 66);
     ctx.font = fontSize.unit;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.fillStyle = COLORS.TEXT_TITLE_SOFT;
     ctx.fillText('BPM', panelW - 40, panelY + 66);
     if (bpm > 0) {
       ctx.font = fontSize.class;
@@ -295,22 +398,24 @@ const PPGSignalMeter = ({
       ctx.fillText(hrLabel, 10, panelY + 86);
     }
     
-    ctx.fillStyle = 'rgba(0, 15, 30, 0.9)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
     ctx.fillRect(W - panelW - 3, panelY, panelW, panelH);
-    const spo2Border = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
+    const spo2Border = spo2 >= 95 ? COLORS.TEXT_TITLE : spo2 >= 90 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
     ctx.strokeStyle = spo2Border;
     ctx.lineWidth = 1.5;
     ctx.strokeRect(W - panelW - 3, panelY, panelW, panelH);
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    // Title in GOLD (Phase 19)
+    ctx.fillStyle = COLORS.TEXT_TITLE;
     ctx.textAlign = 'left';
     ctx.fillText('O₂ SATURACIÓN', W - panelW + 4, panelY + 18);
     ctx.font = fontSize.value;
+    // Value in WHITE if normal, hi-vis warning otherwise
     const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
     ctx.fillStyle = spo2Color;
     ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 66);
     ctx.font = fontSize.unit;
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    ctx.fillStyle = COLORS.TEXT_TITLE_SOFT;
     ctx.fillText('%', W - 20, panelY + 66);
     if (spo2 > 0) {
       ctx.font = fontSize.class;
@@ -325,14 +430,15 @@ const PPGSignalMeter = ({
     
     const centerX = W / 2;
     const centerW = 260;
-    ctx.fillStyle = 'rgba(20, 20, 30, 0.9)';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
     ctx.fillRect(centerX - centerW / 2, panelY, centerW, panelH);
-    ctx.strokeStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
+    ctx.strokeStyle = quality > 60 ? COLORS.TEXT_TITLE : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
     ctx.lineWidth = 1.5;
     ctx.strokeRect(centerX - centerW / 2, panelY, centerW, panelH);
     ctx.font = '12px "SF Mono", Consolas, monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
+    // Title in GOLD (Phase 19)
+    ctx.fillStyle = COLORS.TEXT_TITLE;
     ctx.fillText('CALIDAD SEÑAL', centerX, panelY + 18);
     const barWidth = 220;
     const barHeight = 10;
@@ -380,6 +486,7 @@ const PPGSignalMeter = ({
         ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms`, W - panelW / 2 - 3, panelY + panelH + 42);
       }
     }
+
   }, []);
 
   useEffect(() => {
@@ -747,15 +854,78 @@ const PPGSignalMeter = ({
     onReset();
   }, [onReset]);
 
+  // Phase 19 — EEG-style telemetry strip (3 compact rows over the canvas)
+  const eegProps = eegSnapshot;
+  const stressColorClass =
+    eegProps.stressIndex >= 75 ? 'text-red-400' :
+    eegProps.stressIndex >= 50 ? 'text-amber-400' :
+    'text-white';
+  const contactColorClass =
+    eegProps.contactState === 'STABLE_CONTACT' ? 'text-emerald-300' :
+    eegProps.contactState === 'UNSTABLE_CONTACT' ? 'text-amber-300' :
+    'text-red-300';
+  const Cell = ({ label, value, color = 'text-white' }: { label: string; value: string; color?: string }) => (
+    <div className="flex flex-col items-start min-w-0 flex-1 px-1">
+      <span className="text-[8px] uppercase tracking-wider truncate" style={{ color: '#E6C25A' }}>{label}</span>
+      <span className={`text-[10px] font-mono font-bold truncate ${color}`}>{value}</span>
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 bg-slate-950">
+    <div className="fixed inset-0 bg-black">
       <canvas ref={canvasRef} width={CONFIG.CANVAS_WIDTH} height={CONFIG.CANVAS_HEIGHT} className="w-full h-full absolute inset-0" />
+
+      {/* Header strip: gold brand */}
       <div className="absolute top-0 left-0 p-2 z-10 flex items-center gap-2" style={{ top: '6px', left: '140px' }}>
-        <div className={`p-1.5 rounded-full transition-all duration-100 ${showPulse ? 'bg-red-500/30 scale-110' : 'bg-emerald-500/20'}`}>
-          <Heart className={`w-4 h-4 transition-all duration-100 ${showPulse ? 'text-red-400 scale-110' : 'text-emerald-400'}`} fill={showPulse ? 'currentColor' : 'none'} />
+        <div className={`p-1.5 rounded-full transition-all duration-100 ${showPulse ? 'bg-red-500/30 scale-110' : 'bg-amber-500/20'}`}>
+          <Heart className={`w-4 h-4 transition-all duration-100 ${showPulse ? 'text-red-400 scale-110' : 'text-amber-400'}`} fill={showPulse ? 'currentColor' : 'none'} />
         </div>
-        <Activity className="w-3.5 h-3.5 text-emerald-400" />
-        <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
+        <Activity className="w-3.5 h-3.5 text-amber-400" />
+        <span className="text-[10px] font-mono" style={{ color: '#FFD700' }}>cPPG MONITOR v1.0.3</span>
+      </div>
+
+      {/* Phase 19 — EEG-style telemetry overlay (3 rows, compact, always visible) */}
+      <div className="absolute left-0 right-0 z-10 px-1.5 space-y-0.5"
+           style={{ top: '14%' }}>
+        <div className="flex items-stretch border bg-black/85 backdrop-blur-sm rounded-sm"
+             style={{ borderColor: 'rgba(212, 175, 55, 0.4)' }}>
+          <div className="flex items-center px-2 text-[9px] font-bold tracking-wider"
+               style={{ color: '#FFD700', minWidth: 56 }}>⌬ HEMO</div>
+          <div className="flex flex-1 divide-x" style={{ borderColor: 'rgba(212, 175, 55, 0.2)' }}>
+            <Cell label="BP" value={eegProps.systolic > 0 ? `${Math.round(eegProps.systolic)}/${Math.round(eegProps.diastolic)}` : '—'} />
+            <Cell label="PI" value={eegProps.perfusionIndex > 0 ? eegProps.perfusionIndex.toFixed(2) + '%' : '—'} color="text-emerald-200" />
+            <Cell label="IBI" value={eegProps.ibi > 0 ? eegProps.ibi + 'ms' : '—'} color="text-amber-200" />
+            <Cell label="SDNN" value={eegProps.sdnn > 0 ? eegProps.sdnn + 'ms' : '—'} color="text-emerald-200" />
+            <Cell label="RMSSD" value={eegProps.rmssd > 0 ? eegProps.rmssd + 'ms' : '—'} color="text-emerald-200" />
+            <Cell label="LF/HF" value={eegProps.hrvLFHF > 0 ? eegProps.hrvLFHF.toFixed(2) : '—'} color="text-emerald-200" />
+          </div>
+        </div>
+        <div className="flex items-stretch border bg-black/85 backdrop-blur-sm rounded-sm"
+             style={{ borderColor: 'rgba(212, 175, 55, 0.4)' }}>
+          <div className="flex items-center px-2 text-[9px] font-bold tracking-wider"
+               style={{ color: '#FFD700', minWidth: 56 }}>⚡ NEURO</div>
+          <div className="flex flex-1 divide-x" style={{ borderColor: 'rgba(212, 175, 55, 0.2)' }}>
+            <Cell label="DFAα1" value={eegProps.dfaAlpha1 !== 0 ? eegProps.dfaAlpha1.toFixed(2) : '—'} color="text-emerald-200" />
+            <Cell label="SampEn" value={eegProps.sampleEntropy > 0 ? eegProps.sampleEntropy.toFixed(2) : '—'} color="text-emerald-200" />
+            <Cell label="STRESS" value={eegProps.stressIndex > 0 ? `${Math.round(eegProps.stressIndex)}` : '—'} color={stressColorClass} />
+            <Cell label="RESP" value={eegProps.respirationBrpm > 0 ? `${eegProps.respirationBrpm.toFixed(0)}rpm` : '—'} color="text-emerald-200" />
+            <Cell label="Hb" value={eegProps.hemoglobinGdl > 0 ? eegProps.hemoglobinGdl.toFixed(1) + 'g/dL' : '—'} />
+            <Cell label="GLU" value={eegProps.glucoseMgDl > 0 ? `${eegProps.glucoseMgDl}mg/dL` : '—'} />
+          </div>
+        </div>
+        <div className="flex items-stretch border bg-black/85 backdrop-blur-sm rounded-sm"
+             style={{ borderColor: 'rgba(212, 175, 55, 0.4)' }}>
+          <div className="flex items-center px-2 text-[9px] font-bold tracking-wider"
+               style={{ color: '#FFD700', minWidth: 56 }}>⚙ HW</div>
+          <div className="flex flex-1 divide-x" style={{ borderColor: 'rgba(212, 175, 55, 0.2)' }}>
+            <Cell label="CONT" value={eegProps.contactState ? eegProps.contactState.split('_').join(' ').substring(0, 7) : '—'} color={contactColorClass} />
+            <Cell label="PRES" value={eegProps.pressureState ? eegProps.pressureState.split('_').join(' ').substring(0, 7) : '—'} color="text-emerald-200" />
+            <Cell label="SRC" value={eegProps.activeSource || '—'} color="text-emerald-200" />
+            <Cell label="FPS" value={eegProps.realFps > 0 ? `${Math.round(eegProps.realFps)}` : '—'} color={eegProps.realFps >= 24 ? 'text-white' : 'text-amber-300'} />
+            <Cell label="MOT" value={eegProps.motionScore.toFixed(2)} color={eegProps.motionScore > 0.6 ? 'text-red-300' : 'text-white'} />
+            <Cell label="STRESS" value={eegProps.stressLabel ? eegProps.stressLabel.split('_').join(' ') : '—'} color={stressColorClass} />
+          </div>
+        </div>
       </div>
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button onClick={onStartMeasurement} className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${isMonitoring ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r' : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'}`}>

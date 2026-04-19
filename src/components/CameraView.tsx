@@ -158,18 +158,20 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         // PHASE 1
         const cameraId = await findMainBackCamera();
 
-        // PHASE 2: Open stream with stable base
+        // PHASE 2 + 19: Open stream at higher resolution for crisper ROI sampling.
+        // 1280×720 ideal (HD) with 1920×1080 max so modern phones use their
+        // best cardiac-friendly pipeline; falls back automatically.
         const baseConstraints: MediaTrackConstraints = cameraId
           ? {
               deviceId: { exact: cameraId },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
               frameRate: { ideal: 30, min: 24, max: 30 }
             }
           : {
               facingMode: { ideal: 'environment' },
-              width: { ideal: 640, max: 960 },
-              height: { ideal: 480, max: 720 },
+              width: { ideal: 1280, max: 1920 },
+              height: { ideal: 720, max: 1080 },
               frameRate: { ideal: 30, min: 24, max: 30 }
             };
 
@@ -180,7 +182,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           console.warn('Fallback to simple constraints');
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }
+            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
           });
         }
 
