@@ -1,9 +1,9 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
-import { BloodPressureProcessor, type BPEstimate } from './BloodPressureProcessor';
-import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
-import { SpO2Processor, type SpO2Result } from './SpO2Processor';
-import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
-import { LipidResearchProcessor, type LipidResult } from '../biomarkers/LipidResearchProcessor';
+import { BloodPressureProcessorV2, type BPFeatureVector } from './BloodPressureProcessorV2';
+import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
+import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
+import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessorV2';
+import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 
 export interface VitalSignsResult {
