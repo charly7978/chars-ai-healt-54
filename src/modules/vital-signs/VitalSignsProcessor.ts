@@ -7,6 +7,7 @@ import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
+import { RespiratoryRateProcessor, type RespRateResult } from './RespiratoryRateProcessor';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -77,6 +78,8 @@ export interface VitalSignsResult {
   hrv?: HRVResult;
   // Stress index 0..100 + label — Phase 5
   stress?: StressResult;
+  // Respiratory rate (brpm) — Phase 6
+  respiration?: RespRateResult;
   // Debug telemetry
   debugMetrics?: {
     motionScore: number;
@@ -104,10 +107,14 @@ export class VitalSignsProcessor {
   private lipidProcessor: LipidResearchProcessorV2;
   private hrvProcessor: HRVTimeFreqProcessor;
   private stressProcessor: StressProcessor;
+  private respProcessor: RespiratoryRateProcessor;
   private piHistory: number[] = [];
   private readonly PI_HISTORY_SIZE = 30;
   private lastHRV: HRVResult | null = null;
   private lastStress: StressResult | null = null;
+  private lastResp: RespRateResult | null = null;
+  private respFrameCounter = 0;
+  private readonly RESP_REFRESH_EVERY = 30; // recompute resp every ~30 vital frames
 
   private lastBPConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT' = 'INSUFFICIENT';
   private lastBPFeatureQuality = 0;
@@ -125,7 +132,11 @@ export class VitalSignsProcessor {
   };
 
   private signalHistory: number[] = [];
-  private readonly HISTORY_SIZE = 90;
+  // Need ≥25 s of PPG at the upstream sampleRate for the respiratory PSD.
+  // signalHistory holds the filtered scalar at the rate this processor is
+  // called from Index.tsx (≈ 10 Hz after VITALS_PROCESS_EVERY_N_FRAMES=3 @30fps);
+  // 600 samples covers ~60 s — plenty for resp + cycle features.
+  private readonly HISTORY_SIZE = 600;
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   private validPulseCount = 0;
 
@@ -157,6 +168,7 @@ export class VitalSignsProcessor {
     this.lipidProcessor = new LipidResearchProcessorV2();
     this.hrvProcessor = new HRVTimeFreqProcessor();
     this.stressProcessor = new StressProcessor();
+    this.respProcessor = new RespiratoryRateProcessor();
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -469,6 +481,20 @@ export class VitalSignsProcessor {
       });
     }
 
+    // ── Respiratory rate (AM+FM+BW + Welch) — Phase 6 ──
+    this.respFrameCounter++;
+    if (
+      this.respFrameCounter >= this.RESP_REFRESH_EVERY &&
+      this.signalHistory.length >= Math.round(sampleRate * 25)
+    ) {
+      this.respFrameCounter = 0;
+      this.lastResp = this.respProcessor.process({
+        ppg: this.signalHistory,
+        sampleRate,
+        rrIntervalsMs: validRR,
+      });
+    }
+
     // ── Hierarchical rhythm classification (single source of truth) ──
     if (beatInputs && beatInputs.length >= 4) {
       const rhythmResult = this.rhythmClassifier.classify(
@@ -539,6 +565,7 @@ export class VitalSignsProcessor {
       },
       hrv: this.lastHRV ?? undefined,
       stress: this.lastStress ?? undefined,
+      respiration: this.lastResp ?? undefined,
     };
   }
 
@@ -628,6 +655,8 @@ export class VitalSignsProcessor {
     this.lastLipids = null;
     this.lastHRV = null;
     this.lastStress = null;
+    this.lastResp = null;
     this.piHistory = [];
+    this.respFrameCounter = 0;
   }
 }
