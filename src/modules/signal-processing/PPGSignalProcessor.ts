@@ -8,6 +8,8 @@ import { computeGlobalSQI } from './SignalQualityEstimator';
 import { RadiometricProcessor } from './RadiometricProcessor';
 import { TileFusionEngine, type TileData, type FusionResult } from './TileFusionEngine';
 import { FingerContactClassifier, type ContactClassResult } from './FingerContactClassifier';
+import { POSExtractor } from './POSExtractor';
+import { CHROMExtractor } from './CHROMExtractor';
 
 // Extended contact states
 type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
@@ -34,6 +36,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private radiometricProcessor: RadiometricProcessor;
   private tileFusionEngine = new TileFusionEngine();
   private contactClassifier = new FingerContactClassifier();
+  // Phase 3 — anti-flicker chrominance extractors
+  private posExtractor = new POSExtractor({ sampleRate: 30 });
+  private chromExtractor = new CHROMExtractor({ sampleRate: 30 });
   private lastContactClassification?: ContactClassResult;
 
   // --- Ring buffers (zero-alloc) ---
@@ -266,11 +271,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const redPI = this.redDC > 0 ? this.redAC / this.redDC : 0;
     const greenPI = this.greenDC > 0 ? this.greenAC / this.greenDC : 0;
 
+    // Phase 3 — push linearized RGB to the chrominance extractors and
+    // forward their output to the SourceRanker as additional candidates.
+    this.posExtractor.setSampleRate(this.estimatedSampleRate);
+    this.chromExtractor.setSampleRate(this.estimatedSampleRate);
+    const posSample = this.posExtractor.push(lR, lG, lB);
+    const chromSample = this.chromExtractor.push(lR, lG, lB);
+
     const source = this.sourceRanker.update(
       lR, lG, lB,
       this.redBaseline, this.greenBaseline, this.blueBaseline,
       redPI, greenPI,
-      roi.clipHighRatio, motionArtifact
+      roi.clipHighRatio, motionArtifact,
+      posSample, chromSample
     );
     this.activeSourceLabel = source.label;
     this.allSourceSQI = source.allSQI;
@@ -729,6 +742,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.clipHighRatio = 0; this.clipLowRatio = 0;
     this.resetBaselines();
     this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
+    // Phase 3
+    this.posExtractor.reset();
+    this.chromExtractor.reset();
     // Position lock
     this.positionLocked = false;
     this.lockedRedBase = 0; this.lockedGreenBase = 0; this.lockedCoverage = 0;

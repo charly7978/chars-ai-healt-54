@@ -34,7 +34,7 @@ export class SignalSourceRanker {
   private frameCount = 0;
 
   constructor() {
-    const labels = ['R', 'G', 'RG', 'absR', 'absG', 'diffRG'];
+    const labels = ['R', 'G', 'RG', 'absR', 'absG', 'diffRG', 'POS', 'CHROM'];
     for (const l of labels) {
       this.sources.set(l, {
         buffer: new RingBuffer(this.BUFFER_SIZE),
@@ -44,12 +44,17 @@ export class SignalSourceRanker {
     }
   }
 
-  /** Generate all candidate signals from raw RGB + baselines */
+  /**
+   * Generate all candidate signals from raw RGB + baselines.
+   * `posSample` and `chromSample` are pre-computed by the upstream
+   * POS / CHROM extractors when available (Phase 3); pass 0 to skip.
+   */
   update(
     rawR: number, rawG: number, rawB: number,
     baseR: number, baseG: number, baseB: number,
     redPI: number, greenPI: number,
-    clipHigh: number, motionArtifact: boolean
+    clipHigh: number, motionArtifact: boolean,
+    posSample = 0, chromSample = 0
   ): { value: number; label: string; allSQI: Record<string, number> } {
     this.frameCount++;
     const eps = 0.01;
@@ -79,6 +84,9 @@ export class SignalSourceRanker {
       absR: baseR > 10 ? -Math.log((rawR + eps) / baseR) * 2000 : 0,
       absG: baseG > 10 ? -Math.log((rawG + eps) / baseG) * 2000 : 0,
       diffRG: (rPulse - gPulse) * 2400,
+      // Phase 3 — anti-flicker chrominance sources (already centered & unit-less)
+      POS: posSample * 1200,
+      CHROM: chromSample * 1200,
     };
 
     // Push values to buffers
@@ -96,7 +104,11 @@ export class SignalSourceRanker {
 
       for (const [label, src] of this.sources) {
         if (src.buffer.length < 60) continue;
-        const sqi = this.computeSQI(src, clipHigh, motionArtifact);
+        let sqi = this.computeSQI(src, clipHigh, motionArtifact);
+        // Phase 3 — POS/CHROM get a robustness bonus under motion or LED flicker
+        if ((label === 'POS' || label === 'CHROM') && motionArtifact) {
+          sqi *= 1.25;
+        }
         src.sqi = sqi;
         allSQI[label] = sqi;
         if (sqi > bestSQI) {
