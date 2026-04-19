@@ -17,7 +17,8 @@ export type OutputState =
   | 'ENABLED_MEDIUM_CONFIDENCE'
   | 'ENABLED_LOW_CONFIDENCE'
   | 'RESEARCH_ONLY'
-  | 'WITHHELD_LOW_QUALITY';
+  | 'WITHHELD_LOW_QUALITY'
+  | 'NEEDS_CALIBRATION';
 
 export interface GatedOutput<T> {
   value: T;

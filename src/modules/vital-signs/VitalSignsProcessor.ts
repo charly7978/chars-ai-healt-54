@@ -2,8 +2,8 @@ import { PPGFeatureExtractor, type CycleFeatures } from './PPGFeatureExtractor';
 import { BloodPressureProcessor, type BPEstimate, type BPConfidenceLevel } from './BloodPressureProcessor';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
 import { SpO2Processor, type SpO2Result, type SpO2Calibration } from './SpO2Processor';
-import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
-import { LipidResearchProcessor, type LipidResult } from '../biomarkers/LipidResearchProcessor';
+import { GlucoseResearchProcessor, type GlucoseResult, type GlucoseFeatureVector } from '../biomarkers/GlucoseResearchProcessor';
+import { LipidResearchProcessor, type LipidResult, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessor';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
@@ -520,10 +520,11 @@ export class VitalSignsProcessor {
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
     const sampleRate = this.upstreamContext.sampleRate || 30;
 
-    // ── SpO2 (V3 multi-channel preferred, V2 fallback) — Phase 7 ──
-    const v2Result = this.spo2Processor.process({
+    // ── SpO2 — Phase 7 ──
+    const spo2Result = this.spo2Processor.process({
       redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
       greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
+      blueAC: this.rgbData.blueAC, blueDC: this.rgbData.blueDC,
       contactStable: this.upstreamContext.contactStable,
       pressureOptimal: this.upstreamContext.pressureOptimal,
       clipHighRatio: this.upstreamContext.clipHighRatio,
@@ -531,24 +532,6 @@ export class VitalSignsProcessor {
       avgBeatSQI: this.upstreamContext.avgBeatSQI,
       sourceStability: this.upstreamContext.sourceStability,
     });
-    let spo2Result = v2Result;
-    if (this.useSpO2V3) {
-      const v3Result = this.spo2ProcessorV3.process({
-        redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
-        greenAC: this.rgbData.greenAC, greenDC: this.rgbData.greenDC,
-        blueAC: this.rgbData.blueAC, blueDC: this.rgbData.blueDC,
-        contactStable: this.upstreamContext.contactStable,
-        pressureOptimal: this.upstreamContext.pressureOptimal,
-        clipHighRatio: this.upstreamContext.clipHighRatio,
-        beatCount: Math.max(this.upstreamContext.beatCount, beatInputs?.length || 0),
-        avgBeatSQI: this.upstreamContext.avgBeatSQI,
-        sourceStability: this.upstreamContext.sourceStability,
-      });
-      // Use V3 only when it actually published a value with usable confidence
-      if (v3Result.value !== null && v3Result.confidence > Math.max(0.3, v2Result.confidence)) {
-        spo2Result = v3Result;
-      }
-    }
     this.lastSpo2 = spo2Result;
     if (typeof spo2Result.value === 'number' && spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
       this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
@@ -579,54 +562,7 @@ export class VitalSignsProcessor {
         this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
       }
 
-      // ── V3 ridge predictor (Phase 8). Runs only when a calibrated model
-      // exists AND we have median cycle features to feed the regressor. ──
-      if (this.useBPV3 && medianF) {
-        const v3Features: BPV3Features = {
-          stiffnessIndex: medianF.stiffnessIndex,
-          augmentationIndex: medianF.augmentationIndex,
-          sutMs: medianF.sutMs,
-          pw50Ms: medianF.pw50Ms,
-          pw75Ms: medianF.pw75Ms,
-          pw25Ms: medianF.pw25Ms,
-          crestTimeMs: medianF.sutMs, // crest ≈ SUT for monomodal pulses
-          dicroticDepth: medianF.dicroticDepth,
-          areaRatio: medianF.areaRatio,
-          pwvProxy: medianF.pwvProxy,
-          hr,
-          rrSDNN: rrVar.sdnn,
-          rrRMSSD: rrVar.rmssd,
-          apgBDivA: medianF.apgBDivA,
-          apgDDivA: medianF.apgDDivA,
-          apgAGI: medianF.apgAgi,
-          perfusionIndex: piGreen,
-          contactQuality: this.upstreamContext.contactStable ? 0.9 : 0.4,
-        };
-        const v3Out = this.bloodPressureProcessorV3.process(
-          v3Features,
-          Math.max(0, this.measurements.signalQuality / 100),
-          this.upstreamContext.beatCount,
-          this.signalHistory.length / Math.max(1, sampleRate) * 1000
-        );
-        // Use V3 only when calibrated and confident; V2 stays the default.
-        if (
-          v3Out.value &&
-          typeof v3Out.value === 'object' &&
-          v3Out.confidence > 0.5
-        ) {
-          const sys = (v3Out.value as any).systolic;
-          const dia = (v3Out.value as any).diastolic;
-          if (sys > 0 && dia > 0) {
-            this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, sys, 'stable');
-            this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, dia, 'stable');
-            // Map V3's confidence into the legacy enum so the gate keeps working.
-            this.lastBPConfidence = v3Out.confidence > 0.75 ? 'HIGH'
-              : v3Out.confidence > 0.55 ? 'MEDIUM'
-              : 'LOW';
-            this.lastBPFeatureQuality = Math.max(this.lastBPFeatureQuality, Math.round(v3Out.confidence * 100));
-          }
-        }
-      }
+      // BP processing complete - single processor pipeline
     }
 
     if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 10) {
@@ -669,43 +605,7 @@ export class VitalSignsProcessor {
         this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipidResult.triglycerides, 'dynamic');
       }
 
-      // Phase 9 — V3 ridge regressors run in parallel; values overwrite V2
-      // when the V3 model is calibrated AND publishes (researchMode flag stays).
-      const odR = this.rgbData.redDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.redDC / 255)) : 0;
-      const odG = this.rgbData.greenDC > 0 ? -Math.log(Math.max(1e-6, this.rgbData.greenDC / 255)) : 0;
-      const odB = (this.rgbData.blueDC ?? 0) > 0 ? -Math.log(Math.max(1e-6, (this.rgbData.blueDC ?? 1) / 255)) : 0;
-
-      const gV3Features: GlucoseV3Features = {
-        sutMs: medianF.sutMs, pw50Ms: medianF.pw50Ms, pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
-        augmentationIndex: medianF.augmentationIndex, stiffnessIndex: medianF.stiffnessIndex,
-        dicroticDepth: medianF.dicroticDepth, areaRatio: medianF.areaRatio,
-        hr, rrSDNN: rrVar.sdnn,
-        perfusionGreen: this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0,
-        rgRatio: this.rgbData.greenDC > 0 ? this.rgbData.redDC / this.rgbData.greenDC : 0,
-        odR, odG, odB,
-      };
-      const glucoseV3Result = this.glucoseProcessorV3.process(gV3Features, Math.max(0, this.measurements.signalQuality / 100));
-      if (glucoseV3Result.value !== null && glucoseV3Result.confidence > 0.3) {
-        this.lastGlucose = glucoseV3Result as any;
-        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseV3Result.value as number, 'dynamic');
-      }
-
-      const lV3Features: LipidV3Features = {
-        stiffnessIndex: medianF.stiffnessIndex, augmentationIndex: medianF.augmentationIndex,
-        pwvProxy: medianF.pwvProxy, pulseAmplitude: medianF.systolicAmplitude,
-        pw50Ms: medianF.pw50Ms, pw75Ms: medianF.pw75Ms, pw25Ms: medianF.pw25Ms,
-        diastolicTimeMs: medianF.diastolicTimeMs, areaRatio: medianF.areaRatio,
-        dicroticDepth: medianF.dicroticDepth,
-        hr, rrSDNN: rrVar.sdnn,
-        perfusionGreen: this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0,
-      };
-      const lipidsV3Result = this.lipidProcessorV3.process(lV3Features, Math.max(0, this.measurements.signalQuality / 100));
-      if (lipidsV3Result.value && typeof lipidsV3Result.value === 'object' && lipidsV3Result.confidence > 0.25) {
-        this.lastLipids = lipidsV3Result as any;
-        const v = lipidsV3Result.value as any;
-        if (v.totalCholesterol > 0) this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, v.totalCholesterol, 'dynamic');
-        if (v.triglycerides > 0) this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, v.triglycerides, 'dynamic');
-      }
+      // Glucose/Lipid processing complete - single processor pipeline
     }
 
     // ── HRV (time + frequency + non-linear) and Stress index — Phase 5 ──
@@ -767,38 +667,21 @@ export class VitalSignsProcessor {
       const sourceQuality = Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement);
       const winSQI = this.upstreamContext.avgBeatSQI / 100;
 
-      // V3 classifier has DFA α1, SampEn, bigeminy/trigeminy patterns
-      const rhythmV3 = this.rhythmClassifierV3.classify(beatInputs, winSQI, sourceQuality);
-      // Phase 14 — derive real morphology arrays from cycleFeatures so
-      // the classifier can score amplitude/width stability + dicrotic depth.
-      const cycleAmps = validCycleFeatures.map(c => c.systolicAmplitude).filter(v => v > 0);
-      const cycleWidths = validCycleFeatures.map(c => c.pw50Ms).filter(v => v > 0);
-      const cycleNotches = validCycleFeatures.map(c => c.dicroticDepth);
-
       const rhythmResult = this.rhythmClassifier.classify(
         beatInputs,
         Math.max(this.upstreamContext.avgBeatSQI, 20),
         sourceQuality,
-        cycleAmps,
-        cycleWidths,
-        cycleNotches,
       );
       this.lastRhythm = rhythmResult;
 
-      // Use V3 label when it has higher confidence
-      const bestLabel = rhythmV3.rhythmConfidence >= 0.25
-        ? rhythmV3.rhythmLabel
-        : rhythmResult.rhythmLabel ?? 'INSUFFICIENT_DATA';
-      const bestConfidence = Math.max(rhythmV3.rhythmConfidence, rhythmResult.rhythmConfidence ?? 0);
-
-      if (bestConfidence >= 0.20 && bestLabel !== 'INSUFFICIENT_DATA') {
-        const rhythmCount = rhythmV3.recentEvents?.length ?? 0;
-        this.measurements.arrhythmiaStatus = `${bestLabel}|${rhythmCount}`;
+      if (rhythmResult.rhythmConfidence >= 0.20 && rhythmResult.rhythmLabel !== 'INSUFFICIENT_DATA') {
+        const rhythmCount = rhythmResult.recentEvents?.length ?? 0;
+        this.measurements.arrhythmiaStatus = `${rhythmResult.rhythmLabel}|${rhythmCount}`;
         this.measurements.arrhythmiaCount = rhythmCount;
-        this.measurements.lastArrhythmiaData = rhythmV3.hrv.rmssd > 0 ? {
+        this.measurements.lastArrhythmiaData = rhythmResult.hrv?.rmssd > 0 ? {
           timestamp: Date.now(),
-          rmssd: rhythmV3.hrv.rmssd,
-          rrVariation: rhythmV3.hrv.sdnn / Math.max(1, (validRR.reduce((a, b) => a + b, 0) / validRR.length || 1)),
+          rmssd: rhythmResult.hrv.rmssd,
+          rrVariation: rhythmResult.hrv.sdnn / Math.max(1, (validRR.reduce((a, b) => a + b, 0) / validRR.length || 1)),
         } : null;
       }
     }
@@ -946,19 +829,11 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.validPulseCount = 0;
     this.spo2Processor.reset();
-    this.spo2ProcessorV2.reset();
-    this.spo2ProcessorV3.reset();
-    this.bloodPressureProcessorV3.reset();
+    this.bloodPressureProcessor.reset();
     this.hemoglobinProcessor.reset();
     this.glucoseProcessor.reset();
-    this.glucoseProcessorV2.reset();
-    this.glucoseProcessorV3.reset();
     this.lipidProcessor.reset();
-    this.lipidProcessorV2.reset();
-    this.lipidProcessorV3.reset();
     this.rhythmClassifier.reset();
-    this.rhythmClassifierV3.reset();
-    this.spo2ProcessorV3.reset();
     this.measurements.arrhythmiaCount = 0;
     this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
     this.measurements.lastArrhythmiaData = null;
@@ -981,21 +856,11 @@ export class VitalSignsProcessor {
     this.isCalibrating = false;
     this.calibrationSamples = 0;
     this.bloodPressureProcessor.fullReset();
-    this.bloodPressureProcessorV2.fullReset();
-    this.bloodPressureProcessorV3.fullReset();
     this.spo2Processor.fullReset();
-    this.spo2ProcessorV2.fullReset();
-    this.spo2ProcessorV3.fullReset();
     this.hemoglobinProcessor.fullReset();
     this.glucoseProcessor.fullReset();
-    this.glucoseProcessorV2.fullReset();
-    this.glucoseProcessorV3.fullReset();
-    this.lipidProcessor.fullReset();
-    this.lipidProcessorV2.fullReset();
-    this.lipidProcessorV3.fullReset();
     this.lipidProcessor.fullReset();
     this.rhythmClassifier.reset();
-    this.rhythmClassifierV3.reset();
     this.lastRhythm = null;
     this.lastSpo2 = null;
     this.lastGlucose = null;
