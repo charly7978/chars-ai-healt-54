@@ -284,8 +284,17 @@ export class GlucoseResearchProcessor {
    * Set paired lab dataset for device validation
    * Minimum 3 PPG↔Lab pairs for research gate to lift
    */
-  public setPairedLabDataset(samples: Array<{ ppgValue: number; labReference: number; timestamp: number }>): void {
-    this.pairedLabSamples = samples.slice(0, this.MAX_CALIBRATIONS);
+  public setPairedLabDataset(
+    samples: Array<{ glucoseReference: number; features: FeatureVector; timestamp: number }>
+  ): void {
+    const mapped: CalibrationPoint[] = samples
+      .slice(0, this.MAX_CALIBRATIONS)
+      .map(s => ({
+        timestamp: s.timestamp,
+        glucoseReference: s.glucoseReference,
+        features: s.features,
+      }));
+    this.pairedLabSamples = mapped;
     this.hasValidPairedDataset = this.pairedLabSamples.length >= this.MIN_PAIRED_SAMPLES;
   }
 

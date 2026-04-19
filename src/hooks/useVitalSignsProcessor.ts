@@ -43,6 +43,9 @@ export const useVitalSignsProcessor = () => {
     sourceStability?: number;
     avgBeatSQI?: number;
     beatCount?: number;
+    sampleRate?: number;
+    detectorAgreement?: number;
+    rrStability?: number;
   }) => {
     processorRef.current?.setUpstreamContext(ctx);
   }, []);

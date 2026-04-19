@@ -1,13 +1,13 @@
 import { PPGFeatureExtractor, CycleFeatures } from './PPGFeatureExtractor';
-import type { BloodPressureOutput } from '../../types/measurement';
-import { OutputStatus } from '../../types/measurement';
 
-export interface BPEstimate extends BloodPressureOutput {
+export type BPConfidenceLevel = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
+
+export interface BPEstimate {
   systolic: number;
   diastolic: number;
   map: number;
   pulsePressure: number;
-  confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
+  confidence: BPConfidenceLevel;
   cyclesUsed: number;
   featureQuality: number;
 }
@@ -234,19 +234,20 @@ export class BloodPressureProcessor {
   }
 
   /** Process signal and estimate blood pressure */
-  public process(signalBuffer: Float64Array, rrIntervals: number[], sampleRate: number): BPEstimate {
+  public process(signalBuffer: Float64Array | number[], rrIntervals: number[], sampleRate: number): BPEstimate {
     const insufficient: BPEstimate = {
       systolic: 0, diastolic: 0, map: 0, pulsePressure: 0,
       confidence: 'INSUFFICIENT', cyclesUsed: 0, featureQuality: 0
     };
 
     if (signalBuffer.length < 30 || rrIntervals.length < 2) return insufficient;
-    const cycles = PPGFeatureExtractor.detectCardiacCycles(signalBuffer, sampleRate);
+    const buf: number[] = ArrayBuffer.isView(signalBuffer) ? Array.from(signalBuffer as Float64Array) : (signalBuffer as number[]);
+    const cycles = PPGFeatureExtractor.detectCardiacCycles(buf, sampleRate);
     if (cycles.length < this.MIN_CYCLES) return insufficient;
 
     const validCycles: CycleFeatures[] = [];
     for (const cycle of cycles) {
-      const features = PPGFeatureExtractor.extractCycleFeatures(signalBuffer, cycle, sampleRate);
+      const features = PPGFeatureExtractor.extractCycleFeatures(buf, cycle, sampleRate);
       if (features && features.quality > 0.15) validCycles.push(features);
     }
     if (validCycles.length < this.MIN_CYCLES) return insufficient;

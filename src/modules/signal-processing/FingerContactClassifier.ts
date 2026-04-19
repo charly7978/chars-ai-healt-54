@@ -16,7 +16,7 @@
  * - Wang et al. 2019: PPG pulsatility for finger detection
  */
 
-import type { ContactState } from '../../types/measurement';
+import { ContactState } from '../../types/measurement';
 
 export interface FingerContactEvidence {
   chromaticScore: number; // 0-1: red relative to green
@@ -70,7 +70,7 @@ const DEFAULT_THRESHOLDS: AdaptiveThresholds = {
 
 export class FingerContactClassifier {
   private thresholds: AdaptiveThresholds = { ...DEFAULT_THRESHOLDS };
-  private lastContactState: ContactState = 'NO_CONTACT';
+  private lastContactState: ContactState = ContactState.NO_CONTACT;
   private lastScore = 0;
   private stateCount = 0; // Frames at current state
   private readonly STATE_HYSTERESIS = 5; // Require 5+ frames to transition
@@ -334,15 +334,15 @@ export class FingerContactClassifier {
    */
   private determineState(evidence: FingerContactEvidence): ContactState {
     const score = evidence.overallScore;
-    
-    if (score < 0.20) return 'NO_CONTACT';
-    if (score < 0.40) return 'ACQUIRING'; // Weak, still acquiring
-    if (score >= 0.40 && score < 0.65) return 'UNSTABLE'; // Some contact but shaky
-    if (score >= 0.65 && score < 0.90) return 'STABLE'; // Good contact
-    
+
+    if (score < 0.20) return ContactState.NO_CONTACT;
+    if (score < 0.40) return ContactState.ACQUIRING;
+    if (score >= 0.40 && score < 0.65) return ContactState.UNSTABLE;
+    if (score >= 0.65 && score < 0.90) return ContactState.STABLE;
+
     // score >= 0.90
-    if (evidence.pressureScore > 0.85) return 'EXCESSIVE_PRESSURE';
-    return 'STABLE';
+    if (evidence.pressureScore > 0.85) return ContactState.EXCESSIVE_PRESSURE;
+    return ContactState.STABLE;
   }
   
   /**
@@ -376,20 +376,20 @@ export class FingerContactClassifier {
    */
   private generateGuidance(state: ContactState, evidence: FingerContactEvidence): string {
     switch (state) {
-      case 'NO_CONTACT':
+      case ContactState.NO_CONTACT:
         return 'Coloca tu dedo sobre la cámara (flash) con presión firme';
-      case 'ACQUIRING':
+      case ContactState.ACQUIRING:
         if (evidence.chromaticScore < 0.3) return 'Asegúrate de que la cámara y flash estén limpios';
         if (evidence.spatialScore < 0.5) return 'Cubre más de la cámara con tu dedo';
         return 'Presiona un poco más con tu dedo';
-      case 'UNSTABLE':
+      case ContactState.UNSTABLE:
         if (evidence.stabilityScore < 0.4) return 'Mantén el dedo completamente quieto';
         return 'Ajusta la presión del dedo para mejor contacto';
-      case 'SATURATED':
+      case ContactState.SATURATED:
         return 'Dedo muy presionado; presiona ligeramente menos';
-      case 'EXCESSIVE_PRESSURE':
+      case ContactState.EXCESSIVE_PRESSURE:
         return 'Reduce la presión del dedo';
-      case 'STABLE':
+      case ContactState.STABLE:
       default:
         return 'Contacto perfecto. Medición en progreso...';
     }

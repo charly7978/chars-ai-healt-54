@@ -211,7 +211,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.pressurePenalty = pressure.penalty;
 
     // --- CONTACT STATE ---
-    this.updateContactState(roi, pressure, contactResult);
+    this.updateContactState(roi, pressure);
     const motionArtifact = this.motionScore > this.MOTION_THRESH;
 
     if (this.exportedContactState === 'NO_CONTACT') {
