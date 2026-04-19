@@ -2,7 +2,7 @@ import { useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { VitalSignsResult } from '@/modules/vital-signs/VitalSignsProcessor';
 import { toast } from '@/hooks/use-toast';
-import { OutputStatus } from '@/types/measurement';
+import { isOperationalOutputStatus, isResearchOnlyOutputStatus } from '@/utils/outputStateGuards';
 
 interface MeasurementData {
   heartRate: number;
@@ -26,9 +26,7 @@ export const useSaveMeasurement = () => {
         return false;
       }
       
-      const spo2Operational =
-        data.vitalSigns.spo2Detail?.status === OutputStatus.OK ||
-        data.vitalSigns.spo2Detail?.status === OutputStatus.LOW_QUALITY;
+      const spo2Operational = isOperationalOutputStatus(data.vitalSigns.spo2Detail?.status);
       const bpOperational =
         data.vitalSigns.pressure.status === 'ok' ||
         data.vitalSigns.pressure.status === 'low_quality';
@@ -53,6 +51,8 @@ export const useSaveMeasurement = () => {
         quality: Math.round(data.signalQuality) || 0,
         measurement_confidence: data.vitalSigns.measurementConfidence,
         signal_quality_index: Math.round(data.vitalSigns.signalQuality) || 0,
+        measurement_window_seconds: data.vitalSigns.lastArrhythmiaData ? 60 : null,
+        algorithm_version: 'cppg-v3-runtime',
         sdnn: data.vitalSigns.hrv ? Math.round(data.vitalSigns.hrv.time.sdnn) : null,
         rmssd: data.vitalSigns.hrv ? Math.round(data.vitalSigns.hrv.time.rmssd) : null,
         pnn50: data.vitalSigns.hrv ? data.vitalSigns.hrv.time.pnn50 : null,
@@ -60,16 +60,16 @@ export const useSaveMeasurement = () => {
         hf_power: data.vitalSigns.hrv ? data.vitalSigns.hrv.freq.hfPower : null,
         lf_hf_ratio: data.vitalSigns.hrv ? data.vitalSigns.hrv.freq.lfHfRatio : null,
         glucose:
-          data.vitalSigns.glucoseDetail?.status === OutputStatus.RESEARCH_ONLY && data.vitalSigns.glucose > 0
+          isResearchOnlyOutputStatus(data.vitalSigns.glucoseDetail?.status) && data.vitalSigns.glucose > 0
             ? Math.round(data.vitalSigns.glucose)
             : null,
         total_cholesterol:
-          data.vitalSigns.lipidsDetail?.status === OutputStatus.RESEARCH_ONLY &&
+          isResearchOnlyOutputStatus(data.vitalSigns.lipidsDetail?.status) &&
           (data.vitalSigns.lipids.totalCholesterol ?? 0) > 0
             ? Math.round(data.vitalSigns.lipids.totalCholesterol)
             : null,
         triglycerides:
-          data.vitalSigns.lipidsDetail?.status === OutputStatus.RESEARCH_ONLY &&
+          isResearchOnlyOutputStatus(data.vitalSigns.lipidsDetail?.status) &&
           (data.vitalSigns.lipids.triglycerides ?? 0) > 0
             ? Math.round(data.vitalSigns.lipids.triglycerides)
             : null,

@@ -2,6 +2,7 @@ import React from 'react';
 import { X } from 'lucide-react';
 import type { VitalSignsResult } from '@/modules/vital-signs/VitalSignsProcessor';
 import type { ProcessedSignal } from '@/types/signal';
+import type { CameraDiagnostics } from './CameraView';
 
 interface DebugPanelProps {
   open: boolean;
@@ -12,6 +13,7 @@ interface DebugPanelProps {
   realFps?: number;
   processingTimeMs?: number;
   cameraDriftScore?: number;
+  cameraDiagnostics?: CameraDiagnostics | null;
 }
 
 const Row: React.FC<{ k: string; v: string | number; tone?: 'ok' | 'warn' | 'bad' | 'info' }> = ({ k, v, tone = 'info' }) => {
@@ -43,6 +45,7 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
   realFps,
   processingTimeMs,
   cameraDriftScore,
+  cameraDiagnostics,
 }) => {
   if (!open) return null;
 
@@ -71,8 +74,16 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
         <div className="overflow-y-auto px-2 py-2">
           {/* Camera */}
           <div className="text-slate-500 text-[10px] uppercase tracking-wide px-2 mt-2">Camera</div>
+          <Row k="Device" v={cameraDiagnostics?.deviceLabel || '—'} />
+          <Row k="Resolution" v={cameraDiagnostics ? `${cameraDiagnostics.resolution.width}×${cameraDiagnostics.resolution.height}` : '—'} />
           <Row k="Real FPS" v={realFps !== undefined ? realFps.toFixed(1) : '—'} tone={realFps && realFps >= 24 ? 'ok' : 'warn'} />
           <Row k="Processing (ms/frame)" v={processingTimeMs !== undefined ? processingTimeMs.toFixed(2) : '—'} tone={processingTimeMs !== undefined && processingTimeMs < 8 ? 'ok' : 'warn'} />
+          <Row k="Torch" v={cameraDiagnostics ? (cameraDiagnostics.hasTorch ? (cameraDiagnostics.torchActive ? 'ON' : 'OFF') : 'UNAVAILABLE') : '—'}
+               tone={cameraDiagnostics?.hasTorch ? (cameraDiagnostics?.torchActive ? 'ok' : 'warn') : 'bad'} />
+          <Row k="Exposure lock" v={cameraDiagnostics?.exposureLocked ? 'YES' : 'NO'} tone={cameraDiagnostics?.exposureLocked ? 'ok' : 'warn'} />
+          <Row k="WB lock" v={cameraDiagnostics?.wbLocked ? 'YES' : 'NO'} tone={cameraDiagnostics?.wbLocked ? 'ok' : 'warn'} />
+          <Row k="Focus lock" v={cameraDiagnostics?.focusLocked ? 'YES' : 'NO'} tone={cameraDiagnostics?.focusLocked ? 'ok' : 'warn'} />
+          <Row k="ISO" v={cameraDiagnostics?.isoValue ?? '—'} />
           <Row k="Exposure drift" v={cameraDriftScore !== undefined ? cameraDriftScore.toFixed(2) : '—'} tone={cameraDriftScore !== undefined && cameraDriftScore > 0.2 ? 'bad' : 'ok'} />
 
           {/* Contact + position */}
@@ -151,6 +162,18 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
           <Row k="Resp confidence" v={resp ? resp.confidence.toFixed(2) : '—'} />
           <Row k="Hb (g/dL)" v={hb && typeof hb.value === 'number' ? (hb.value as number).toFixed(1) : '—'} />
           <Row k="Hb mode" v={hb ? (hb.researchMode ? 'RESEARCH' : 'CALIBRATED') : '—'} />
+          <Row
+            k="RR clean series"
+            v={Array.isArray((vitalSigns as any).rrCleanSeries) && (vitalSigns as any).rrCleanSeries.length > 0
+              ? (vitalSigns as any).rrCleanSeries.slice(-5).join(', ')
+              : '—'}
+          />
+          <Row
+            k="RR flags"
+            v={Array.isArray((vitalSigns as any).rrClassifications) && (vitalSigns as any).rrClassifications.length > 0
+              ? (vitalSigns as any).rrClassifications.slice(-5).join(', ')
+              : '—'}
+          />
 
           {/* Output gates */}
           {vitalSigns.outputStates && (

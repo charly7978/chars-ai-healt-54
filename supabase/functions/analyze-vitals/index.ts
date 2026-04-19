@@ -18,6 +18,12 @@ interface VitalSignsInput {
   triglycerides?: number;
   quality: number;
   confidence?: string;
+  outputStates?: {
+    spo2?: string;
+    bp?: string;
+    glucose?: string;
+    lipids?: string;
+  };
 }
 
 function validateInput(data: unknown): { valid: boolean; error?: string; parsed?: VitalSignsInput } {
@@ -59,6 +65,14 @@ function validateInput(data: unknown): { valid: boolean; error?: string; parsed?
       triglycerides: d.triglycerides ? Number(d.triglycerides) : undefined,
       quality: Number(d.quality) || 0,
       confidence: typeof d.confidence === "string" ? d.confidence : undefined,
+      outputStates: typeof d.outputStates === "object" && d.outputStates
+        ? {
+            spo2: typeof (d.outputStates as Record<string, unknown>).spo2 === "string" ? (d.outputStates as Record<string, string>).spo2 : undefined,
+            bp: typeof (d.outputStates as Record<string, unknown>).bp === "string" ? (d.outputStates as Record<string, string>).bp : undefined,
+            glucose: typeof (d.outputStates as Record<string, unknown>).glucose === "string" ? (d.outputStates as Record<string, string>).glucose : undefined,
+            lipids: typeof (d.outputStates as Record<string, unknown>).lipids === "string" ? (d.outputStates as Record<string, string>).lipids : undefined,
+          }
+        : undefined,
     },
   };
 }
@@ -141,6 +155,15 @@ serve(async (req) => {
     if (!validation.valid || !validation.parsed) {
       return new Response(
         JSON.stringify({ error: validation.error }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const operationalSpo2 = validation.parsed.outputStates?.spo2 === 'ENABLED_HIGH_CONFIDENCE' || validation.parsed.outputStates?.spo2 === 'ENABLED_MEDIUM_CONFIDENCE';
+    const operationalBP = validation.parsed.outputStates?.bp === 'ENABLED_HIGH_CONFIDENCE' || validation.parsed.outputStates?.bp === 'ENABLED_MEDIUM_CONFIDENCE';
+    if (!operationalSpo2 || !operationalBP) {
+      return new Response(
+        JSON.stringify({ error: "SpO2 y presión arterial deben estar habilitadas por calidad/calibración para analizar." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }

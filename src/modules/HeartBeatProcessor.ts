@@ -191,6 +191,7 @@ export class HeartBeatProcessor {
           timestamp: now,
           ibiMs: timeSinceLastPeak,
           instantBpm: timeSinceLastPeak > 0 ? 60000 / timeSinceLastPeak : 0,
+          amplitude: candidate.amplitude,
           beatSQI: currentBeatSQI,
           morphologyScore: candidate.morphologyScore,
           rhythmScore: candidate.rhythmScore,
@@ -198,6 +199,7 @@ export class HeartBeatProcessor {
           templateScore: candidate.templateCorrelation,
           sourceConsistencyScore: this.sourceSwitchRecent ? 0.3 : 1.0,
           flags: currentFlags,
+          rrClassification: this.classifyRRInterval(timeSinceLastPeak, expectedRR, currentFlags),
         };
 
         this.acceptedBeats.push(accepted);
@@ -249,8 +251,9 @@ export class HeartBeatProcessor {
         beatSQI: beat.beatSQI,
         morphologyScore: beat.morphologyScore,
         detectorAgreement: beat.detectorAgreementScore,
-        amplitude: undefined,
+        amplitude: beat.amplitude,
         flags: beat.flags,
+        rrClassification: beat.rrClassification,
       })),
     };
 
@@ -265,6 +268,13 @@ export class HeartBeatProcessor {
       rrData: {
         intervals: this.rrIntervals.slice(-10),
         lastPeakTime: this.lastPeakTime || null,
+        cleanIntervals: this.acceptedBeats
+          .slice(-10)
+          .filter((beat) => beat.rrClassification === 'clean')
+          .map((beat) => beat.ibiMs),
+        classifications: this.acceptedBeats
+          .slice(-10)
+          .map((beat) => beat.rrClassification ?? 'noisy'),
       },
       hypothesis,
       detectorAgreement: candidate?.detectorAgreement ?? 0,
@@ -671,6 +681,19 @@ export class HeartBeatProcessor {
       isPremature,
       isSuspicious: isPremature || isWeak || c.totalScore < 35,
     };
+  }
+
+  private classifyRRInterval(
+    ibiMs: number,
+    expectedRR: number,
+    flags: BeatFlags,
+  ): 'clean' | 'noisy' | 'ectopic_candidate' | 'missing' | 'merged' | 'split' {
+    if (flags.isMissedBeatInserted) return 'missing';
+    if (flags.isDoublePeak) return 'split';
+    if (flags.isPremature) return 'ectopic_candidate';
+    if (flags.isWeak || flags.isSuspicious) return 'noisy';
+    if (expectedRR > 0 && ibiMs > expectedRR * 1.8) return 'merged';
+    return 'clean';
   }
 
   private computeBPMConfidence(h: BPMHypothesis): number {

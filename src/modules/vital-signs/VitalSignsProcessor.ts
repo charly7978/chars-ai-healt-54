@@ -3,7 +3,6 @@ import { BloodPressureProcessor as BloodPressureProcessorV1 } from './BloodPress
 import { BloodPressureProcessorV2, type BPFeatureVector } from './BloodPressureProcessorV2';
 import { BloodPressureProcessorV3, type BPV3Features } from './BloodPressureProcessorV3';
 import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
-import { RhythmClassifier, type RhythmResult as RhythmResultV3 } from './RhythmClassifier';
 import { SpO2Processor as SpO2ProcessorV1 } from './SpO2Processor';
 import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
 import { SpO2ProcessorV3 } from './SpO2ProcessorV3';
@@ -35,6 +34,7 @@ import {
   toLegacyOutputState,
   type MetricOperationalMode,
 } from '@/types/contracts';
+import type { RhythmLabel } from './RhythmClassifier';
 
 type LegacyBPConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
 
@@ -81,6 +81,20 @@ interface RhythmSummary {
   stabilityTimeline: Array<{ label: RhythmLabelV2; confidence: number }>;
   requiredNextDataWindow: number;
 }
+
+const RHYTHM_LABEL_MAP: Record<RhythmLabel, RhythmLabelV2> = {
+  sinus_regular: 'sinus_regular',
+  sinus_variable: 'sinus_variable',
+  irregular_undetermined: 'irregular_undetermined',
+  af_suspected: 'af_suspected',
+  frequent_ectopy_suspected: 'frequent_ectopy_suspected',
+  bigeminy_suspected: 'bigeminy_suspected',
+  trigeminy_suspected: 'trigeminy_suspected',
+  brady_irregular: 'brady_irregular',
+  tachy_irregular: 'tachy_irregular',
+  noise_or_unreliable: 'noise_or_unreliable',
+  INSUFFICIENT_DATA: 'insufficient_data',
+};
 
 export interface VitalSignsResult {
   spo2: number;
@@ -183,22 +197,16 @@ export class VitalSignsProcessor {
   /** Kept for back-compat: V2 wizard API is still exposed via addBPCalibrationPoint. */
   private bloodPressureProcessorV2: BloodPressureProcessorV2;
   private bloodPressureProcessorV3: BloodPressureProcessorV3;
-  /** Phase 8 opt-in: V3 ridge regressor with LOO-RMSE; V1/V2 stays as fallback. */
+  /** Phase 8 opt-in: V3 ridge regressor with LOO-RMSE en ruta principal. */
   private useBPV3 = true;
   private rhythmClassifier: RhythmClassifierV2;
-  private rhythmClassifierV3: RhythmClassifier;
-  /** Phase 18 — primary SpO2 emitter using the rich Ultra-Optimize V1 with
-   *  enabledState support. V2 kept for legacy device-calibration profile. */
+  /** Compat legacy: ya no domina la ruta activa de publicación. */
   private spo2Processor: SpO2ProcessorV1;
   private spo2ProcessorV2: SpO2ProcessorV2;
   private spo2ProcessorV3: SpO2ProcessorV3;
-  /** Phase 7 opt-in: when true, V3 runs in parallel and its result is published
-   *  if (and only if) it has a calibration loaded — otherwise V1 is used. */
+  /** Phase 7 opt-in: V3 gobierna la ruta activa cuando está disponible. */
   private useSpO2V3 = true;
-  /** Phase 18 — primary glucose / lipids emitters use Ultra-Optimize V1 because
-   *  VitalSignsProcessor.calculateVitalSigns calls .process({cycleFeatures, hr,
-   *  rrVar, piGreen, ...}), a signature only V1 implements. V2 below keeps the
-   *  wizard / training-mode API for forward calibration capture. */
+  /** Compat legacy: glucosa/lípidos V1/V2 se conservan sólo para training/reset. */
   private glucoseProcessor: GlucoseResearchProcessorV1;
   private glucoseProcessorV2: GlucoseResearchProcessorV2;
   private glucoseProcessorV3: GlucoseResearchProcessorV3;
@@ -269,7 +277,6 @@ export class VitalSignsProcessor {
     this.bloodPressureProcessorV2 = new BloodPressureProcessorV2();
     this.bloodPressureProcessorV3 = new BloodPressureProcessorV3();
     this.rhythmClassifier = new RhythmClassifierV2();
-    this.rhythmClassifierV3 = new RhythmClassifier();
     this.spo2Processor = new SpO2ProcessorV1();
     this.spo2ProcessorV2 = new SpO2ProcessorV2();
     this.spo2ProcessorV3 = new SpO2ProcessorV3();
@@ -832,13 +839,9 @@ export class VitalSignsProcessor {
       });
     }
 
-    // ── Hierarchical rhythm classification — V3 + V2 fallback ────────
+    // ── Hierarchical rhythm classification — single runtime path (V2) ────────
     if (beatInputs && beatInputs.length >= 4) {
       const sourceQuality = Math.max(this.upstreamContext.sourceStability, this.upstreamContext.detectorAgreement);
-      const winSQI = Math.max(this.upstreamContext.avgBeatSQI, 20) / 100;
-
-      // V3 classifier has DFA α1, SampEn, bigeminy/trigeminy patterns
-      const rhythmV3 = this.rhythmClassifierV3.classify(beatInputs, winSQI, sourceQuality);
       // Phase 14 — derive real morphology arrays from cycleFeatures so
       // the classifier can score amplitude/width stability + dicrotic depth.
       const cycleAmps = validCycleFeatures.map(c => c.systolicAmplitude).filter(v => v > 0);
@@ -853,22 +856,16 @@ export class VitalSignsProcessor {
         cycleWidths,
         cycleNotches,
       );
-      this.lastRhythm = rhythmResult;
+      this.lastRhythm = this.normalizeRhythmResult(rhythmResult);
 
-      // Use V3 label when it has higher confidence
-      const bestLabel = rhythmV3.rhythmConfidence >= 0.25
-        ? rhythmV3.rhythmLabel
-        : rhythmResult.rhythmLabel ?? 'INSUFFICIENT_DATA';
-      const bestConfidence = Math.max(rhythmV3.rhythmConfidence, rhythmResult.rhythmConfidence ?? 0);
-
-      if (bestConfidence >= 0.20 && bestLabel !== 'INSUFFICIENT_DATA') {
-        const rhythmCount = rhythmV3.recentEvents?.length ?? 0;
-        this.measurements.arrhythmiaStatus = `${bestLabel}|${rhythmCount}`;
+      if (this.lastRhythm.confidence >= 0.20 && this.lastRhythm.label !== 'insufficient_data') {
+        const rhythmCount = this.lastRhythm.recentEvents?.length ?? 0;
+        this.measurements.arrhythmiaStatus = `${this.lastRhythm.label}|${rhythmCount}`;
         this.measurements.arrhythmiaCount = rhythmCount;
-        this.measurements.lastArrhythmiaData = rhythmV3.hrv.rmssd > 0 ? {
+        this.measurements.lastArrhythmiaData = validRR.length >= 2 ? {
           timestamp: Date.now(),
-          rmssd: rhythmV3.hrv.rmssd,
-          rrVariation: rhythmV3.hrv.sdnn / Math.max(1, (validRR.reduce((a, b) => a + b, 0) / validRR.length || 1)),
+          rmssd: rrVar.rmssd,
+          rrVariation: rrVar.cv,
         } : null;
       }
     }
@@ -1005,7 +1002,6 @@ export class VitalSignsProcessor {
     this.lipidProcessorV2.reset();
     this.lipidProcessorV3.reset();
     this.rhythmClassifier.reset();
-    this.rhythmClassifierV3.reset();
     this.spo2ProcessorV3.reset();
     this.measurements.arrhythmiaCount = 0;
     this.measurements.arrhythmiaStatus = "SIN ARRITMIAS|0";
@@ -1043,7 +1039,6 @@ export class VitalSignsProcessor {
     this.lipidProcessorV3.fullReset();
     this.lipidProcessor.fullReset();
     this.rhythmClassifier.reset();
-    this.rhythmClassifierV3.reset();
     this.lastRhythm = null;
     this.lastSpo2 = null;
     this.lastGlucose = null;
@@ -1113,6 +1108,27 @@ export class VitalSignsProcessor {
       status: normalizedStatus,
       mode,
       rejectionReasons: output.qualityFlags?.map((flag) => flag.flag) ?? [],
+    };
+  }
+
+  private normalizeRhythmResult(
+    rhythm: BPMOutput & { evidence: RhythmEvidence; rhythmLabel: RhythmLabelV2 },
+  ): RhythmSummary {
+    const blockedReasons = rhythm.qualityFlags?.map((flag) => flag.flag) ?? [];
+    const burden = rhythm.evidence?.burden ?? 0;
+    const confidence = rhythm.confidence ?? 0;
+    return {
+      label: rhythm.rhythmLabel,
+      confidence,
+      burden,
+      recentEvents: confidence > 0.2 && burden > 0
+        ? [{ type: rhythm.rhythmLabel, timestamp: Date.now() }]
+        : [],
+      blockedReasons,
+      stabilityTimeline: [{ label: rhythm.rhythmLabel, confidence }],
+      requiredNextDataWindow: rhythm.status === OutputStatus.BLOCKED ? 1 : 0,
+      status: rhythm.status,
+      rhythmQuality: typeof rhythm.evidence?.sqi === 'number' ? rhythm.evidence.sqi : Math.round(confidence * 100),
     };
   }
 }

@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { VitalSignsResult } from '@/modules/vital-signs/VitalSignsProcessor';
 import { toast } from '@/hooks/use-toast';
+import { isOperationalOutputState } from '@/utils/outputStateGuards';
 
 interface AnalysisInput {
   heartRate: number;
@@ -25,8 +26,8 @@ export const useHealthAnalysis = () => {
       Number.isFinite(vitalSigns.pressure?.diastolic) &&
       (vitalSigns.pressure?.systolic ?? 0) > 0 &&
       (vitalSigns.pressure?.diastolic ?? 0) > 0;
-    const spo2Operational = outputStates?.spo2 === 'ENABLED_HIGH_CONFIDENCE' || outputStates?.spo2 === 'ENABLED_MEDIUM_CONFIDENCE';
-    const bpOperational = outputStates?.bp === 'ENABLED_HIGH_CONFIDENCE' || outputStates?.bp === 'ENABLED_MEDIUM_CONFIDENCE';
+    const spo2Operational = isOperationalOutputState(outputStates?.spo2, 'medium');
+    const bpOperational = isOperationalOutputState(outputStates?.bp, 'medium');
 
     // Regla anti-simulación: no enviar valores por defecto inventados al backend.
     // Si falta alguna señal núcleo (HR/SpO2/BP) se bloquea el análisis AI.
@@ -57,6 +58,7 @@ export const useHealthAnalysis = () => {
           triglycerides: vitalSigns.lipids?.triglycerides || undefined,
           quality,
           confidence: vitalSigns.measurementConfidence,
+          outputStates: vitalSigns.outputStates,
         }
       });
 
