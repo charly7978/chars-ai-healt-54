@@ -1,5 +1,6 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessorV2, type BPFeatureVector } from './BloodPressureProcessorV2';
+import { BloodPressureProcessorV3, type BPV3Features } from './BloodPressureProcessorV3';
 import { RhythmClassifierV2, type RhythmLabelV2, type RhythmEvidence } from './RhythmClassifierV2';
 import { RhythmClassifier, type RhythmResult as RhythmResultV3 } from './RhythmClassifier';
 import { SpO2ProcessorV2, type SpO2Calibration } from './SpO2ProcessorV2';
@@ -109,6 +110,9 @@ export interface RGBData {
 
 export class VitalSignsProcessor {
   private bloodPressureProcessor: BloodPressureProcessorV2;
+  private bloodPressureProcessorV3: BloodPressureProcessorV3;
+  /** Phase 8 opt-in: V3 ridge regressor with LOO-RMSE; V2 stays as fallback. */
+  private useBPV3 = true;
   private rhythmClassifier: RhythmClassifierV2;
   private rhythmClassifierV3: RhythmClassifier;
   private spo2Processor: SpO2ProcessorV2;
@@ -179,6 +183,7 @@ export class VitalSignsProcessor {
 
   constructor() {
     this.bloodPressureProcessor = new BloodPressureProcessorV2();
+    this.bloodPressureProcessorV3 = new BloodPressureProcessorV3();
     this.rhythmClassifier = new RhythmClassifierV2();
     this.rhythmClassifierV3 = new RhythmClassifier();
     this.spo2Processor = new SpO2ProcessorV2();
@@ -199,28 +204,52 @@ export class VitalSignsProcessor {
   // ═══════════════════════════════════════════════════════════════════
 
   /**
-   * Iniciar wizard de calibración de presión arterial
+   * Iniciar wizard de calibración de presión arterial (V2 + V3 en paralelo).
+   * V3 (ridge LOO) requiere ≥5 puntos; V2 (legacy) acepta ≥3.
    */
   startBPCalibrationWizard(referenceDevice: string, userId: string): void {
     this.bloodPressureProcessor.startCalibrationWizard(referenceDevice, userId);
+    this.bloodPressureProcessorV3.startCalibrationWizard();
   }
 
   /**
-   * Agregar punto de calibración de BP con referencia real
+   * Agregar punto de calibración de BP con referencia real.
+   * `v3Features` opcional — si se omite, la calibración sólo entrena V2.
    */
   addBPCalibrationPoint(
     ppgFeatures: BPFeatureVector,
     referenceSBP: number,
-    referenceDBP: number
+    referenceDBP: number,
+    v3Features?: BPV3Features
   ): { success: boolean; pointsCollected: number; pointsNeeded: number } {
-    return this.bloodPressureProcessor.addCalibrationPoint(ppgFeatures, referenceSBP, referenceDBP);
+    const v2Res = this.bloodPressureProcessor.addCalibrationPoint(ppgFeatures, referenceSBP, referenceDBP);
+    if (v3Features) {
+      this.bloodPressureProcessorV3.addCalibrationPoint(v3Features, referenceSBP, referenceDBP);
+    }
+    return v2Res;
   }
 
   /**
-   * Finalizar wizard de calibración de BP
+   * Finalizar wizard de calibración de BP. Devuelve métricas combinadas
+   * (V3 LOO-RMSE si está disponible, sino V2).
    */
   finishBPCalibrationWizard(): { success: boolean; rmseSBP: number; rmseDBP: number } {
-    return this.bloodPressureProcessor.finishCalibrationWizard();
+    const v2 = this.bloodPressureProcessor.finishCalibrationWizard();
+    const v3 = this.bloodPressureProcessorV3.finishCalibrationWizard();
+    if (v3.success) {
+      return { success: true, rmseSBP: v3.rmseSBP, rmseDBP: v3.rmseDBP };
+    }
+    return v2;
+  }
+
+  /** Estado V3 (puntos, RMSE, antigüedad) para el wizard UI. */
+  getBPV3CalibrationStatus() {
+    return this.bloodPressureProcessorV3.getCalibrationStatus();
+  }
+
+  /** Habilitar/deshabilitar BP V3 (default: true). */
+  setBPV3Enabled(enabled: boolean): void {
+    this.useBPV3 = enabled;
   }
 
   /**
@@ -495,6 +524,55 @@ export class VitalSignsProcessor {
         this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
         this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
       }
+
+      // ── V3 ridge predictor (Phase 8). Runs only when a calibrated model
+      // exists AND we have median cycle features to feed the regressor. ──
+      if (this.useBPV3 && medianF) {
+        const v3Features: BPV3Features = {
+          stiffnessIndex: medianF.stiffnessIndex,
+          augmentationIndex: medianF.augmentationIndex,
+          sutMs: medianF.sutMs,
+          pw50Ms: medianF.pw50Ms,
+          pw75Ms: medianF.pw75Ms,
+          pw25Ms: medianF.pw25Ms,
+          crestTimeMs: medianF.sutMs, // crest ≈ SUT for monomodal pulses
+          dicroticDepth: medianF.dicroticDepth,
+          areaRatio: medianF.areaRatio,
+          pwvProxy: medianF.pwvProxy,
+          hr,
+          rrSDNN: rrVar.sdnn,
+          rrRMSSD: rrVar.rmssd,
+          apgBDivA: medianF.apgBDivA,
+          apgDDivA: medianF.apgDDivA,
+          apgAGI: medianF.apgAgi,
+          perfusionIndex: piGreen,
+          contactQuality: this.upstreamContext.contactStable ? 0.9 : 0.4,
+        };
+        const v3Out = this.bloodPressureProcessorV3.process(
+          v3Features,
+          Math.max(0, this.measurements.signalQuality / 100),
+          this.upstreamContext.beatCount,
+          this.signalHistory.length / Math.max(1, sampleRate) * 1000
+        );
+        // Use V3 only when calibrated and confident; V2 stays the default.
+        if (
+          v3Out.value &&
+          typeof v3Out.value === 'object' &&
+          v3Out.confidence > 0.5
+        ) {
+          const sys = (v3Out.value as any).systolic;
+          const dia = (v3Out.value as any).diastolic;
+          if (sys > 0 && dia > 0) {
+            this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, sys, 'stable');
+            this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, dia, 'stable');
+            // Map V3's confidence into the legacy enum so the gate keeps working.
+            this.lastBPConfidence = v3Out.confidence > 0.75 ? 'HIGH'
+              : v3Out.confidence > 0.55 ? 'MEDIUM'
+              : 'LOW';
+            this.lastBPFeatureQuality = Math.max(this.lastBPFeatureQuality, Math.round(v3Out.confidence * 100));
+          }
+        }
+      }
     }
 
     const piGreen = this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0;
@@ -715,6 +793,7 @@ export class VitalSignsProcessor {
     this.validPulseCount = 0;
     this.spo2Processor.reset();
     this.spo2ProcessorV3.reset();
+    this.bloodPressureProcessorV3.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
     this.rhythmClassifier.reset();
@@ -742,6 +821,7 @@ export class VitalSignsProcessor {
     this.isCalibrating = false;
     this.calibrationSamples = 0;
     this.bloodPressureProcessor.fullReset();
+    this.bloodPressureProcessorV3.fullReset();
     this.spo2Processor.fullReset();
     this.spo2ProcessorV3.fullReset();
     this.glucoseProcessor.fullReset();
