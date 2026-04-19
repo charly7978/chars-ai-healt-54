@@ -162,13 +162,38 @@ const Index = () => {
 
   useEffect(() => {
     if (!canvasRef.current) {
-      canvasRef.current = document.createElement('canvas');
-      canvasRef.current.width = 320;
-      canvasRef.current.height = 240;
-      ctxRef.current = canvasRef.current.getContext('2d', { 
-        willReadFrequently: true,
-        alpha: false 
-      });
+      // Phase 2 — use OffscreenCanvas when available for zero DOM commit cost,
+      // falling back to a regular HTMLCanvasElement when not supported.
+      const useOffscreen = typeof OffscreenCanvas !== 'undefined';
+      if (useOffscreen) {
+        // We still hold an HTMLCanvasElement reference so the rest of the code
+        // (which expects canvas.width/height) keeps working; getContext from
+        // an offscreen canvas exposes the same drawing API.
+        try {
+          const oc = new OffscreenCanvas(320, 240);
+          // OffscreenCanvas does NOT extend HTMLCanvasElement; we keep the
+          // type as `any` here intentionally. The 2D context API is identical
+          // for our purposes (drawImage + getImageData).
+          canvasRef.current = oc as any;
+          ctxRef.current = (oc.getContext('2d', {
+            willReadFrequently: true,
+            alpha: false,
+          }) as any);
+          console.log('🚀 Capture canvas: OffscreenCanvas');
+        } catch {
+          // fall through to HTMLCanvas
+        }
+      }
+      if (!canvasRef.current) {
+        canvasRef.current = document.createElement('canvas');
+        canvasRef.current.width = 320;
+        canvasRef.current.height = 240;
+        ctxRef.current = canvasRef.current.getContext('2d', {
+          willReadFrequently: true,
+          alpha: false,
+        });
+        console.log('🚀 Capture canvas: HTMLCanvasElement');
+      }
     }
   }, []);
 
