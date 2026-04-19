@@ -32,10 +32,35 @@ export interface FingerContactEvidence {
 export interface ContactClassResult {
   state: ContactState;
   confidence: number; // 0-1
+  contactConfidence: number; // alias explícito para contratos de debug
   evidence: FingerContactEvidence;
   pressureProxy: number; // DC level estimate
+  pressureIndex: number; // 0-1 proxy normalizado de presión/contacto
   pressureExcessive: boolean;
+  signalUsabilityScore: number; // 0-1 score utilizable downstream
+  rejectionReasons: string[];
   guidance: string;
+}
+
+export interface FingerContactInput {
+  colorStatsRaw: {
+    meanR: number;
+    meanG: number;
+    meanB: number;
+    stdR: number;
+    stdG: number;
+    stdB: number;
+  };
+  saturationStats: {
+    clipHighRatio: number;
+    clipLowRatio: number;
+  };
+  roiCoverage: number;
+  imageWidth: number;
+  imageHeight: number;
+  data: Uint8ClampedArray;
+  acSignal?: number;
+  dcSignal?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -72,50 +97,49 @@ export class FingerContactClassifier {
   private thresholds: AdaptiveThresholds = { ...DEFAULT_THRESHOLDS };
   private lastContactState: ContactState = ContactState.NO_CONTACT;
   private lastScore = 0;
-  private stateCount = 0; // Frames at current state
   private readonly STATE_HYSTERESIS = 5; // Require 5+ frames to transition
   
   // Temporal tracking
-  private lastChromatic = 0;
-  private lastSaturation = 0;
-  private lastCoverage = 0;
+  private lastChromatic = NaN;
+  private lastSaturation = NaN;
+  private lastCoverage = NaN;
+  private lastPulsatility = NaN;
+  private pendingState: ContactState | null = null;
+  private pendingCount = 0;
   
   /**
    * Classify finger contact from a frame's radiometric data
    */
-  public classify(input: {
-    colorStatsRaw: {
-      meanR: number;
-      meanG: number;
-      meanB: number;
-      stdR: number;
-      stdG: number;
-      stdB: number;
-    };
-    saturationStats: {
-      clipHighRatio: number;
-      clipLowRatio: number;
-    };
-    roiCoverage: number;
-    imageWidth: number;
-    imageHeight: number;
-    data: Uint8ClampedArray;
-    acSignal?: number;
-    dcSignal?: number;
-  }): ContactClassResult {
+  public classify(input: FingerContactInput): ContactClassResult {
     const evidence = this.computeEvidence(input);
-    const state = this.determineState(evidence);
+    const state = this.determineState(evidence, input);
     const pressure = this.estimatePressure(input, evidence);
+    const rejectionReasons = this.buildRejectionReasons(evidence, input, pressure.excessive);
     
     // Apply hysteresis
     const finalState = this.applyHysteresis(state, evidence.overallScore);
+    const signalUsabilityScore = Math.max(0, Math.min(1,
+      evidence.overallScore * 0.55 +
+      evidence.pulsatilityScore * 0.20 +
+      evidence.saturationScore * 0.10 +
+      evidence.spatialScore * 0.15
+    ));
     
     return {
       state: finalState,
       confidence: evidence.overallScore,
+      contactConfidence: evidence.overallScore,
       evidence,
       pressureProxy: pressure.dcEstimate,
+      pressureIndex: pressure.dcEstimate > 0
+        ? Math.max(0, Math.min(1,
+            (pressure.dcEstimate - this.thresholds.pressure_dc_min) /
+            Math.max(1, (this.thresholds.pressure_dc_max - this.thresholds.pressure_dc_min))
+          ))
+        : 0,
       pressureExcessive: pressure.excessive,
+      signalUsabilityScore,
+      rejectionReasons,
       guidance: this.generateGuidance(finalState, evidence),
     };
   }
@@ -123,21 +147,17 @@ export class FingerContactClassifier {
   /**
    * Compute all evidence components
    */
-  private computeEvidence(input: {
-    colorStatsRaw: any;
-    saturationStats: any;
-    roiCoverage: number;
-    imageWidth: number;
-    imageHeight: number;
-    data: Uint8ClampedArray;
-    acSignal?: number;
-    dcSignal?: number;
-  }): FingerContactEvidence {
+  private computeEvidence(input: FingerContactInput): FingerContactEvidence {
     const chromaticScore = this.chromaticScore(input.colorStatsRaw);
     const spatialScore = this.spatialScore(input);
     const saturationScore = this.saturationScore(input.saturationStats);
-    const stabilityScore = this.stabilityScore();
     const pulsatilityScore = this.pulsatilityScore(input.acSignal, input.dcSignal);
+    const stabilityScore = this.stabilityScore({
+      chromatic: chromaticScore,
+      saturation: saturationScore,
+      spatial: spatialScore,
+      pulsatility: pulsatilityScore,
+    });
     const histogramScore = this.histogramScore(input.data);
     const pressureScore = this.pressureScore(input.colorStatsRaw);
     
@@ -165,6 +185,7 @@ export class FingerContactClassifier {
     this.lastChromatic = chromaticScore;
     this.lastSaturation = saturationScore;
     this.lastCoverage = spatialScore;
+    this.lastPulsatility = pulsatilityScore;
     
     return {
       chromaticScore: Math.max(0, Math.min(1, chromaticScore)),
@@ -181,7 +202,7 @@ export class FingerContactClassifier {
   /**
    * Chromatic evidence: Red elevated relative to green with flash
    */
-  private chromaticScore(stats: any): number {
+  private chromaticScore(stats: FingerContactInput['colorStatsRaw']): number {
     const { meanR, meanG, meanB } = stats;
     
     // No signal at all
@@ -204,7 +225,7 @@ export class FingerContactClassifier {
   /**
    * Spatial score: Central core coverage is high
    */
-  private spatialScore(input: any): number {
+  private spatialScore(input: Pick<FingerContactInput, 'roiCoverage'>): number {
     const { roiCoverage } = input;
     
     // Need at least 30% central coverage
@@ -220,7 +241,7 @@ export class FingerContactClassifier {
   /**
    * Saturation score: Avoid extremes (too dark or too bright)
    */
-  private saturationScore(stats: any): number {
+  private saturationScore(stats: FingerContactInput['saturationStats']): number {
     const { clipHighRatio, clipLowRatio } = stats;
     
     // Total clipping
@@ -242,15 +263,27 @@ export class FingerContactClassifier {
   /**
    * Stability score: Frame-to-frame coherence
    */
-  private stabilityScore(): number {
-    const drift = Math.abs(this.lastChromatic - this.lastChromatic) +
-                  Math.abs(this.lastSaturation - this.lastSaturation) +
-                  Math.abs(this.lastCoverage - this.lastCoverage);
-    
-    if (drift > this.thresholds.stability_threshold * 3) return 0.3; // Moving too much
+  private stabilityScore(current: { chromatic: number; saturation: number; spatial: number; pulsatility: number }): number {
+    // Primer frame con contexto: ni castigar ni premiar en exceso.
+    if (
+      !Number.isFinite(this.lastChromatic) ||
+      !Number.isFinite(this.lastSaturation) ||
+      !Number.isFinite(this.lastCoverage) ||
+      !Number.isFinite(this.lastPulsatility)
+    ) {
+      return 0.7;
+    }
+
+    const drift =
+      Math.abs(current.chromatic - this.lastChromatic) * 0.35 +
+      Math.abs(current.saturation - this.lastSaturation) * 0.25 +
+      Math.abs(current.spatial - this.lastCoverage) * 0.25 +
+      Math.abs(current.pulsatility - this.lastPulsatility) * 0.15;
+
+    if (drift > this.thresholds.stability_threshold * 3) return 0.25; // Moving too much
     if (drift < this.thresholds.stability_threshold) return 0.95; // Very stable
-    
-    return 0.95 - (drift / (this.thresholds.stability_threshold * 3)) * 0.65;
+
+    return 0.95 - (drift / (this.thresholds.stability_threshold * 3)) * 0.70;
   }
   
   /**
@@ -300,7 +333,7 @@ export class FingerContactClassifier {
   /**
    * Pressure score: DC level in valid range
    */
-  private pressureScore(stats: any): number {
+  private pressureScore(stats: FingerContactInput['colorStatsRaw']): number {
     const { meanR, meanG, meanB } = stats;
     const dc = (meanR + meanG + meanB) / 3;
     
@@ -316,7 +349,7 @@ export class FingerContactClassifier {
   /**
    * Estimate pressure from DC level
    */
-  private estimatePressure(input: any, evidence: FingerContactEvidence): {
+  private estimatePressure(input: Pick<FingerContactInput, 'colorStatsRaw'>, evidence: FingerContactEvidence): {
     dcEstimate: number;
     excessive: boolean;
   } {
@@ -332,16 +365,27 @@ export class FingerContactClassifier {
   /**
    * Determine state from evidence scores
    */
-  private determineState(evidence: FingerContactEvidence): ContactState {
+  private determineState(evidence: FingerContactEvidence, input: FingerContactInput): ContactState {
     const score = evidence.overallScore;
+    const totalClip = input.saturationStats.clipHighRatio + input.saturationStats.clipLowRatio;
+
+    // Falla dura de contacto: color + cobertura incompatibles con dedo presente.
+    if (evidence.chromaticScore < 0.35 && evidence.spatialScore < 0.35) {
+      return ContactState.NO_CONTACT;
+    }
+    if (input.roiCoverage < 0.12 && evidence.pulsatilityScore < 0.35) {
+      return ContactState.NO_CONTACT;
+    }
 
     if (score < 0.20) return ContactState.NO_CONTACT;
     if (score < 0.40) return ContactState.ACQUIRING;
-    if (score >= 0.40 && score < 0.65) return ContactState.UNSTABLE;
-    if (score >= 0.65 && score < 0.90) return ContactState.STABLE;
+    if (totalClip > 0.45 || input.saturationStats.clipHighRatio > 0.35) return ContactState.SATURATED;
+    if (evidence.pressureScore < 0.25 && score >= 0.45) return ContactState.EXCESSIVE_PRESSURE;
+    if (score < 0.65) return ContactState.UNSTABLE;
+    if (score < 0.90) return ContactState.STABLE;
 
     // score >= 0.90
-    if (evidence.pressureScore > 0.85) return ContactState.EXCESSIVE_PRESSURE;
+    if (evidence.pressureScore < 0.30) return ContactState.EXCESSIVE_PRESSURE;
     return ContactState.STABLE;
   }
   
@@ -349,26 +393,46 @@ export class FingerContactClassifier {
    * Apply hysteresis to prevent state fluttering
    */
   private applyHysteresis(proposedState: ContactState, score: number): ContactState {
-    const isSameState = proposedState === this.lastContactState;
-    
-    if (isSameState) {
-      this.stateCount++;
+    if (proposedState === this.lastContactState) {
+      this.pendingState = null;
+      this.pendingCount = 0;
       return this.lastContactState;
     }
-    
-    // Proposed different state
-    this.stateCount++;
-    
-    if (this.stateCount >= this.STATE_HYSTERESIS) {
-      // Enough frames of different state, transition
+
+    if (this.pendingState !== proposedState) {
+      this.pendingState = proposedState;
+      this.pendingCount = 1;
+      return this.lastContactState;
+    }
+
+    this.pendingCount++;
+    if (this.pendingCount >= this.STATE_HYSTERESIS) {
       this.lastContactState = proposedState;
       this.lastScore = score;
-      this.stateCount = 0;
+      this.pendingState = null;
+      this.pendingCount = 0;
       return proposedState;
     }
-    
-    // Not enough frames yet, stay with previous
+
     return this.lastContactState;
+  }
+
+  private buildRejectionReasons(
+    evidence: FingerContactEvidence,
+    input: FingerContactInput,
+    pressureExcessive: boolean
+  ): string[] {
+    const reasons: string[] = [];
+    if (evidence.chromaticScore < 0.35) reasons.push('chromatic_mismatch');
+    if (evidence.spatialScore < 0.35) reasons.push('low_roi_coverage');
+    if (evidence.saturationScore < 0.30) reasons.push('clipping_or_darkness');
+    if (evidence.stabilityScore < 0.35) reasons.push('temporal_instability');
+    if (evidence.pulsatilityScore < 0.30) reasons.push('low_pulsatility');
+    if (evidence.histogramScore < 0.30) reasons.push('scene_not_contact_like');
+    if (pressureExcessive) reasons.push('excessive_pressure');
+    if (input.saturationStats.clipHighRatio > 0.20) reasons.push('high_clip_ratio');
+    if (input.saturationStats.clipLowRatio > 0.20) reasons.push('low_clip_ratio');
+    return reasons;
   }
   
   /**
