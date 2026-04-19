@@ -90,6 +90,26 @@ const DebugPanel: React.FC<DebugPanelProps> = ({
           <Row k="Clip high" v={tel.clipHighRatio !== undefined ? `${(tel.clipHighRatio * 100).toFixed(1)}%` : '—'}
                tone={(tel.clipHighRatio ?? 0) > 0.1 ? 'bad' : 'ok'} />
 
+          {/* Finger contact engine — multicriteria classifier evidence */}
+          <div className="text-slate-500 text-[10px] uppercase tracking-wide px-2 mt-3">Finger contact engine</div>
+          <Row k="Contact confidence" v={tel.contactConfidence !== undefined ? tel.contactConfidence.toFixed(2) : '—'}
+               tone={(tel.contactConfidence ?? 0) >= 0.6 ? 'ok' : (tel.contactConfidence ?? 0) >= 0.4 ? 'warn' : 'bad'} />
+          <Row k="Signal usability" v={tel.signalUsabilityScore !== undefined ? tel.signalUsabilityScore.toFixed(2) : '—'}
+               tone={(tel.signalUsabilityScore ?? 0) >= 0.6 ? 'ok' : (tel.signalUsabilityScore ?? 0) >= 0.4 ? 'warn' : 'bad'} />
+          <Row k="Pressure index" v={tel.pressureIndex !== undefined ? tel.pressureIndex.toFixed(2) : '—'}
+               tone={tel.pressureExcessive ? 'bad' : 'ok'} />
+          <Row k="Pressure excessive" v={tel.pressureExcessive ? 'YES' : 'NO'}
+               tone={tel.pressureExcessive ? 'bad' : 'ok'} />
+          {Array.isArray(tel.rejectionReasons) && tel.rejectionReasons.length > 0 && (
+            <div className="px-2 py-1 text-[10px] text-amber-300 font-mono break-words">
+              <span className="text-slate-400">rejection: </span>
+              {tel.rejectionReasons.join(', ')}
+            </div>
+          )}
+          {tel.contactGuidance && (
+            <div className="px-2 py-1 text-[10px] text-slate-300 italic">{tel.contactGuidance}</div>
+          )}
+
           {/* Sources */}
           <div className="text-slate-500 text-[10px] uppercase tracking-wide px-2 mt-3">Source ranker</div>
           <Row k="Active source" v={tel.activeSourceLabel ?? '—'} tone="info" />

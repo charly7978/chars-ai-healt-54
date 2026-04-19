@@ -51,6 +51,16 @@ export interface ProcessedSignal {
     linRed?: number;
     linGreen?: number;
     linBlue?: number;
+    // Finger contact engine evidence — populated by FingerContactClassifier
+    // Audit fix: previously the classifier ran every frame but its output
+    // was discarded.  Surfacing it here lets every downstream consumer
+    // (gates, debug panel, tests) see *why* a frame was accepted/rejected.
+    contactConfidence?: number;       // 0..1
+    signalUsabilityScore?: number;    // 0..1
+    pressureIndex?: number;           // 0..1
+    pressureExcessive?: boolean;
+    rejectionReasons?: string[];
+    contactGuidance?: string;
   };
   diagnostics?: {
     message: string;

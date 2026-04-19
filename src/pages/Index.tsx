@@ -65,6 +65,7 @@ const Index = () => {
   const totalBeatsRef = useRef(0);
   const arrhythmiaBeatsRef = useRef(0);
   const lastArrhythmiaCountForBeatsRef = useRef(0);
+  const arrhythmiaCountRef = useRef(0);
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const cameraRef = useRef<CameraViewHandle>(null);
@@ -74,16 +75,26 @@ const Index = () => {
   const isProcessingRef = useRef(false);
   const frameTimestampHistoryRef = useRef<number[]>([]);
 
-  const EMA_ALPHA = 0.3;
-  const emaRef = useRef({
-    bpm: 0, spo2: 0, systolic: 0, diastolic: 0,
-    glucose: 0, cholesterol: 0, triglycerides: 0,
-  });
+  // NOTE (audit fix): the previous double-EMA in the UI layer was masking
+  // real signal volatility because VitalSignsProcessor.smoothValue already
+  // applies an adaptive EMA per metric. We keep an EMA only for BPM here
+  // (HeartBeatProcessor returns instantaneous beats) and forward every
+  // other vital exactly as the processor produced it — never rounded twice,
+  // never re-smoothed, never invented when the processor returned 0.
+  const BPM_EMA_ALPHA = 0.25;
+  const bpmEmaRef = useRef(0);
 
-  const applyEMA = useCallback((prev: number, next: number): number => {
-    if (next === 0) return 0;
-    if (prev === 0) return next;
-    return Math.round(prev * (1 - EMA_ALPHA) + next * EMA_ALPHA);
+  const applyBPMSmoothing = useCallback((next: number): number => {
+    if (next <= 0) {
+      bpmEmaRef.current = 0;
+      return 0;
+    }
+    if (bpmEmaRef.current <= 0) {
+      bpmEmaRef.current = next;
+      return Math.round(next);
+    }
+    bpmEmaRef.current = bpmEmaRef.current * (1 - BPM_EMA_ALPHA) + next * BPM_EMA_ALPHA;
+    return Math.round(bpmEmaRef.current);
   }, []);
 
   const estimateSampleRateFromFrames = useCallback((timestamp?: number): number => {
@@ -414,7 +425,8 @@ const Index = () => {
     stopProcessing();
     fullResetVitalSigns();
     resetHeartBeat();
-    emaRef.current = { bpm: 0, spo2: 0, systolic: 0, diastolic: 0, glucose: 0, cholesterol: 0, triglycerides: 0 };
+    bpmEmaRef.current = 0;
+    arrhythmiaCountRef.current = 0;
     frameTimestampHistoryRef.current = [];
     setIsCameraOn(false);
     if (cameraStream) {
@@ -461,14 +473,20 @@ const Index = () => {
   
   useEffect(() => {
     if (!lastSignal || !isMonitoring) return;
-    
+
     const signalValue = lastSignal.filteredValue;
-    const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
+    // Audit fix: contactState is a typed field of ProcessedSignal — no any-cast.
+    const contactState = lastSignal.contactState ?? (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
     const positionQuality = getPositionQuality();
+    // Real, traceable usable-signal gate: require stable contact, a usable
+    // SQI, real perfusion AND the multicriteria classifier's usability
+    // score (ignored before this fix).
+    const usability = lastSignal.telemetry?.signalUsabilityScore ?? 0;
     const stableHumanSignal =
       contactState === 'STABLE_CONTACT' &&
       (lastSignal.quality || 0) >= 12 &&
-      (lastSignal.perfusionIndex || 0) >= 0.005;
+      (lastSignal.perfusionIndex || 0) >= 0.005 &&
+      usability >= 0.40;
 
     const pressureOptimal = positionQuality.locked && !positionQuality.drifting && positionQuality.qualityScore >= 0.55;
     const sourceStability = Math.max(0, Math.min(1, positionQuality.qualityScore || 0));
@@ -525,15 +543,21 @@ const Index = () => {
     }
 
     unstableFrameCounter.current = 0;
-    const smoothedBPM = applyEMA(emaRef.current.bpm, heartBeatResult.bpm);
-    emaRef.current.bpm = smoothedBPM;
+    // Audit fix: only publish BPM when the beat detector has real
+    // confidence in it. Otherwise keep the last valid value or 0; never
+    // smooth a degraded estimate to make it look healthy.
+    const bpmConfident = heartBeatResult.bpm > 0 && (heartBeatResult.bpmConfidence ?? 0) >= 0.25;
+    const smoothedBPM = bpmConfident ? applyBPMSmoothing(heartBeatResult.bpm) : applyBPMSmoothing(0);
     setHeartRate(smoothedBPM);
 
     if (heartBeatResult.isPeak) {
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 300);
       totalBeatsRef.current++;
-      const currentArrCount = vitalSigns.arrhythmiaCount || 0;
+      // Audit fix: read the current arrhythmia count from a ref instead of
+      // closing over `vitalSigns.arrhythmiaCount` (which would force this
+      // effect to re-run on every count change → re-renders during beats).
+      const currentArrCount = arrhythmiaCountRef.current;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
         arrhythmiaBeatsRef.current++;
         lastArrhythmiaCountForBeatsRef.current = currentArrCount;
@@ -596,29 +620,13 @@ const Index = () => {
 
       const vitals = processVitalSigns(lastSignal.filteredValue, usableRRData, beatInputs);
 
-      const e = emaRef.current;
-      const smoothed: typeof vitals = {
-        ...vitals,
-        spo2: applyEMA(e.spo2, vitals.spo2),
-        glucose: applyEMA(e.glucose, vitals.glucose),
-        pressure: {
-          ...vitals.pressure,
-          systolic: applyEMA(e.systolic, vitals.pressure.systolic),
-          diastolic: applyEMA(e.diastolic, vitals.pressure.diastolic),
-        },
-        lipids: {
-          totalCholesterol: applyEMA(e.cholesterol, vitals.lipids.totalCholesterol),
-          triglycerides: applyEMA(e.triglycerides, vitals.lipids.triglycerides),
-        },
-      };
-      e.spo2 = smoothed.spo2;
-      e.glucose = smoothed.glucose;
-      e.systolic = smoothed.pressure.systolic;
-      e.diastolic = smoothed.pressure.diastolic;
-      e.cholesterol = smoothed.lipids.totalCholesterol;
-      e.triglycerides = smoothed.lipids.triglycerides;
-
-      setVitalSigns(smoothed);
+      // Audit fix: NO double EMA in the UI layer. VitalSignsProcessor
+      // already does adaptive smoothValue() per-metric and returns
+      // value = 0 (or status = WITHHELD/NEEDS_CALIBRATION) when the
+      // signal is insufficient. We forward the result verbatim so the UI
+      // never displays a value the engine refused to publish.
+      setVitalSigns(vitals);
+      arrhythmiaCountRef.current = vitals.arrhythmiaCount ?? 0;
 
       if (usableRRData && vitals.measurementConfidence !== 'INVALID') {
         const arrhythmiaStatus = vitals.arrhythmiaStatus;
@@ -647,7 +655,7 @@ const Index = () => {
         }
       }
     }
-  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, setUpstreamContext, getRGBStats, getPositionQuality, estimateSampleRateFromFrames, computeRRStability, applyEMA, vitalSigns.arrhythmiaCount]);
+  }, [lastSignal, isMonitoring, processHeartBeat, processVitalSigns, setArrhythmiaState, setRGBData, setUpstreamContext, getRGBStats, getPositionQuality, estimateSampleRateFromFrames, computeRRStability, applyBPMSmoothing]);
 
   useEffect(() => {
     if (isMonitoring && elapsedTime >= 60) {
