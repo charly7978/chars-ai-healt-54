@@ -98,7 +98,11 @@ export class FingerContactClassifier {
   private lastContactState: ContactState = ContactState.NO_CONTACT;
   private lastScore = 0;
   private readonly STATE_HYSTERESIS = 5; // Require 5+ frames to transition
-  
+
+  // Pre-allocated buffers to avoid GC pressure in hot path (Phase 3)
+  private histBuf = new Uint16Array(256);
+  private histBuf8 = new Uint8Array(256);
+
   // Temporal tracking
   private lastChromatic = NaN;
   private lastSaturation = NaN;
@@ -302,31 +306,38 @@ export class FingerContactClassifier {
   
   /**
    * Histogram score: Shape indicates contact
+   * OPTIMIZED: Uses pre-allocated buffer to avoid GC pressure
    */
   private histogramScore(data: Uint8ClampedArray): number {
-    // Sample histogram bins
-    const hist = new Array(256).fill(0);
-    
-    // Subsample to avoid O(n) on full image
-    for (let i = 0; i < data.length; i += 16) {
-      const val = data[i];
-      hist[val]++;
+    // Zero-fill pre-allocated buffer (faster than new Array().fill())
+    const hist = this.histBuf;
+    hist.fill(0);
+
+    // Subsample to avoid O(n) on full image - every 16th pixel
+    // This is ~1.2% of pixels for 1080p, enough for histogram statistics
+    const len = data.length;
+    for (let i = 0; i < len; i += 16) {
+      hist[data[i]]++;
     }
-    
-    // Find peaks
+
+    // Find peaks - optimized: skip empty bins
     let peaks = 0;
+    let lastWasPeak = false;
     for (let i = 1; i < 255; i++) {
-      if (hist[i] > hist[i - 1] && hist[i] > hist[i + 1]) {
+      const curr = hist[i];
+      if (curr > 0 && curr > hist[i - 1] && curr > hist[i + 1]) {
         peaks++;
+        lastWasPeak = true;
+      } else {
+        lastWasPeak = false;
       }
     }
-    
+
     // Contact with finger: 1-2 peaks (dark fingertip + sensor light)
     // No contact: flat/multiple scattered peaks
     if (peaks <= 2) return 0.85;
     if (peaks <= 4) return 0.60;
     if (peaks <= 6) return 0.40;
-    
     return 0.20;
   }
   

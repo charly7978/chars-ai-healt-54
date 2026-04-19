@@ -130,6 +130,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastAccel = { x: 0, y: 0, z: 0 };
   private readonly MOTION_THRESH = 0.6;
 
+  // --- Quality-of-Contact Score (QCS) tracking — Phase 4 ---
+  private qualityOfContactScore = 0;        // 0-100 composite score
+  private contactQualityHistory: number[] = []; // Circular buffer for trend
+  private readonly QCS_HISTORY_SIZE = 30;     // 1 second at 30fps
+  private readonly QCS_DECAY_RATE = 2;        // Points lost per frame when degrading
+  private readonly QCS_RECOVERY_RATE = 5;   // Points gained per good frame
+  private readonly QCS_THRESHOLD_LOW = 30;  // Below this: withhold measurements
+  private readonly QCS_THRESHOLD_HIGH = 70; // Above this: high confidence
+  private consecutiveLowQualityFrames = 0;
+
   // --- Debug / telemetry ---
   private debugEnabled = false;
   private lastROIResult: ROIMaskResult | null = null;

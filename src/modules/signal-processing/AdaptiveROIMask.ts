@@ -74,12 +74,7 @@ export class AdaptiveROIMask {
   private frameCount = 0;
   private radiometric: RadiometricProcessor | null = null;
 
-  /** Optional radiometric processor for end-to-end Beer-Lambert pipeline */
-  setRadiometricProcessor(rp: RadiometricProcessor | null): void {
-    this.radiometric = rp;
-  }
-
-  // Reusable per-tile accumulator arrays to avoid per-frame allocation
+  // Reusable per-tile accumulator arrays to avoid per-frame allocation (Phase 3)
   private tileR = new Float64Array(TOTAL_TILES);
   private tileG = new Float64Array(TOTAL_TILES);
   private tileB = new Float64Array(TOTAL_TILES);
@@ -87,6 +82,15 @@ export class AdaptiveROIMask {
   private tileClipHigh = new Int32Array(TOTAL_TILES);
   private tileClipLow = new Int32Array(TOTAL_TILES);
   private tileValid = new Int32Array(TOTAL_TILES);
+
+  // Pre-allocated result buffers to avoid GC pressure (Phase 3)
+  private tileMetricsBuf: TileMetrics[] = new Array(TOTAL_TILES);
+  private allScoresBuf: number[] = [];
+
+  /** Optional radiometric processor for end-to-end Beer-Lambert pipeline */
+  setRadiometricProcessor(rp: RadiometricProcessor | null): void {
+    this.radiometric = rp;
+  }
 
   process(imageData: ImageData): ROIMaskResult {
     this.frameCount++;
@@ -158,8 +162,10 @@ export class AdaptiveROIMask {
 
     // --- Compute per-tile metrics ---
     // First pass: collect all tile scores for percentile-based thresholding
-    const tileMetrics: TileMetrics[] = new Array(TOTAL_TILES);
-    const allScores: number[] = [];
+    // OPTIMIZED: Reuse pre-allocated buffers (Phase 3)
+    const tileMetrics = this.tileMetricsBuf;
+    const allScores = this.allScoresBuf;
+    allScores.length = 0; // Reset without re-allocation
 
     for (let ti = 0; ti < TOTAL_TILES; ti++) {
       const cnt = this.tileValid[ti];
