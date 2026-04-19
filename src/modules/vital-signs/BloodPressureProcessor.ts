@@ -160,7 +160,31 @@ export class BloodPressureProcessor {
     }
     rmse = Math.sqrt(rmse / (2 * pts.length));
     this.userCalibration.calibrationConfidence = Math.max(0.3, Math.min(0.95, 1.0 - rmse / 30));
-    this.userCalibration.isCalibrated = true;
+
+    // Audit fix (Bug 1, line 1 of defence): refuse to mark the calibration
+    // as "active" when the regression coefficients themselves are unsafe.
+    // Without this, downstream code would happily apply slope = -3.5 or
+    // offset = +120 and seed the Kalman filter with values that can never
+    // be recovered (process noise Q ∈ [0.3, 0.5] mmHg² is far too small to
+    // forget a corrupted seed within a session).
+    const sScale = this.userCalibration.userScale;
+    const sOff = this.userCalibration.userOffset;
+    const coeffsAreSafe =
+      isFinite(sScale.sbp) && isFinite(sScale.dbp) &&
+      isFinite(sOff.sbp) && isFinite(sOff.dbp) &&
+      // Slopes must stay in a physiologically defensible band. A slope
+      // outside [0.5, 2.0] means the regression is dominated by noise
+      // or by paired points that don't share a monotone relationship.
+      sScale.sbp >= 0.5 && sScale.sbp <= 2.0 &&
+      sScale.dbp >= 0.5 && sScale.dbp <= 2.0 &&
+      // Offsets are bounded by what is plausible from inter-device bias.
+      Math.abs(sOff.sbp) <= 40 && Math.abs(sOff.dbp) <= 30;
+    this.userCalibration.isCalibrated = coeffsAreSafe;
+    if (!coeffsAreSafe) {
+      // Keep the points so the user can keep collecting; just refuse to
+      // apply the current fit. Confidence is reset to the floor.
+      this.userCalibration.calibrationConfidence = 0.3;
+    }
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -216,11 +240,26 @@ export class BloodPressureProcessor {
     const pp = sbp - dbp;
     if (pp < 15 || pp > 100) return insufficient;
 
-    // User calibration
+    // User calibration. The result MUST be re-validated before it is
+    // allowed anywhere near the Kalman filter — see Bug 1 below.
     if (this.userCalibration.isCalibrated) {
       sbp = sbp * this.userCalibration.userScale.sbp + this.userCalibration.userOffset.sbp;
       dbp = dbp * this.userCalibration.userScale.dbp + this.userCalibration.userOffset.dbp;
     }
+
+    // Audit fix (Bug 1): re-validate the post-calibration pair BEFORE the
+    // Kalman smoother. Previously the calibration could push (sbp, dbp)
+    // outside the physiological envelope, the Kalman would seed itself
+    // with that corrupted pair (kfInitialized = true), the post-Kalman
+    // clamp would return INSUFFICIENT for the current frame *but the
+    // filter state would stay corrupted forever*, biasing every later
+    // emission of the session. We now reject the corrupted pair without
+    // touching kfSBP/kfDBP, so the next clean frame can seed the filter.
+    if (!isFinite(sbp) || !isFinite(dbp)) return insufficient;
+    if (dbp >= sbp) return insufficient;
+    const ppCal = sbp - dbp;
+    if (ppCal < 15 || ppCal > 100) return insufficient;
+    if (sbp < 70 || sbp > 220 || dbp < 40 || dbp > 140) return insufficient;
 
     // Kalman smoother
     const kfNoiseSBP = 15.0 / (useCycles.length + 1);
@@ -244,11 +283,17 @@ export class BloodPressureProcessor {
     dbp = this.kfDBP;
 
     // Clamp to physiological range. If the post-Kalman pair still
-    // collapses below the minimum pulse pressure, withhold instead of
-    // synthesising a "safe-looking" diastolic.
+    // collapses below the minimum pulse pressure, withhold AND reset the
+    // filter so the corrupted state cannot keep biasing future frames.
+    // (Audit fix, Bug 1, line 3 of defence.)
     sbp = Math.max(85, Math.min(190, sbp));
     dbp = Math.max(50, Math.min(120, dbp));
-    if (sbp - dbp < 15) return insufficient;
+    if (sbp - dbp < 15) {
+      this.kfInitialized = false;
+      this.kfSBP = 120; this.kfDBP = 80;
+      this.kfPSBP = 100; this.kfPDBP = 50;
+      return insufficient;
+    }
     const map = dbp + (sbp - dbp) / 3;
 
     this.lastSBP = sbp; this.lastDBP = dbp;
@@ -353,10 +398,27 @@ export class BloodPressureProcessor {
     return 'INSUFFICIENT';
   }
 
-  public setUserCalibration(data: UserCalibration): void { this.userCalibration = data; }
+  public setUserCalibration(data: UserCalibration): void {
+    // Audit fix (Bug 1): externally injected calibrations (e.g. hydrated
+    // from Supabase / localStorage) MUST be re-validated. Otherwise a
+    // stale or malformed payload could silently corrupt the per-frame
+    // pipeline and the Kalman seed for the whole session.
+    this.userCalibration = data;
+    if (data?.isCalibrated) {
+      this.recomputeCalibration();
+    }
+  }
   public getUserCalibration(): UserCalibration { return this.userCalibration; }
 
-  reset(): void { this.lastSBP = 0; this.lastDBP = 0; this.kfInitialized = false; }
+  reset(): void {
+    this.lastSBP = 0; this.lastDBP = 0;
+    // Audit fix: a "soft reset" (between measurements) must also wipe
+    // the Kalman covariance, otherwise a residual kfP from a corrupted
+    // session would still bias the next session's first frames.
+    this.kfInitialized = false;
+    this.kfSBP = 120; this.kfDBP = 80;
+    this.kfPSBP = 100; this.kfPDBP = 50;
+  }
   fullReset(): void { this.reset(); }
 }
 
