@@ -203,11 +203,14 @@ export class BloodPressureProcessor {
       sbp = this.lastSBP * (1 - this.EMA_ALPHA) + sbp * this.EMA_ALPHA;
       dbp = this.lastDBP * (1 - this.EMA_ALPHA) + dbp * this.EMA_ALPHA;
     }
+
+    const bounded = this.clampAndValidateOutputPair(sbp, dbp);
+    if (!bounded) return insufficient;
+    sbp = bounded.sbp;
+    dbp = bounded.dbp;
     this.lastSBP = sbp;
     this.lastDBP = dbp;
 
-    sbp = Math.max(85, Math.min(180, sbp));
-    dbp = Math.max(50, Math.min(110, dbp));
     const map = dbp + (sbp - dbp) / 3;
     const featureQuality = this.assessFeatureQuality(mf, useCycles.length);
     const confStr = this.assessConfidence(featureQuality, useCycles.length);
@@ -272,11 +275,14 @@ export class BloodPressureProcessor {
       sbp = this.lastSBP * (1 - this.EMA_ALPHA) + sbp * this.EMA_ALPHA;
       dbp = this.lastDBP * (1 - this.EMA_ALPHA) + dbp * this.EMA_ALPHA;
     }
+
+    const bounded = this.clampAndValidateOutputPair(sbp, dbp);
+    if (!bounded) return insufficient;
+    sbp = bounded.sbp;
+    dbp = bounded.dbp;
     this.lastSBP = sbp;
     this.lastDBP = dbp;
 
-    sbp = Math.max(85, Math.min(180, sbp));
-    dbp = Math.max(50, Math.min(110, dbp));
     const map = dbp + (sbp - dbp) / 3;
     const featureQuality = this.assessFeatureQuality(mf, useCycles.length);
     const confidence = this.assessConfidence(featureQuality, useCycles.length);
@@ -362,6 +368,16 @@ export class BloodPressureProcessor {
     if (featureQuality >= 42 && cycleCount >= 3) return 'MEDIUM';
     if (featureQuality >= 18 && cycleCount >= 1) return 'LOW';
     return 'INSUFFICIENT';
+  }
+
+  private clampAndValidateOutputPair(sbp: number, dbp: number): { sbp: number; dbp: number } | null {
+    const clampedSBP = Math.max(85, Math.min(180, sbp));
+    const clampedDBP = Math.max(50, Math.min(110, dbp));
+    const pulsePressure = clampedSBP - clampedDBP;
+    if (pulsePressure < 15 || pulsePressure > 100) {
+      return null;
+    }
+    return { sbp: clampedSBP, dbp: clampedDBP };
   }
 
   reset(): void {
