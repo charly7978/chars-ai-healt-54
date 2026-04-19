@@ -21,76 +21,44 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
-  // Phase 19 — EEG-style telemetry overlay (optional)
-  systolic?: number;
-  diastolic?: number;
-  perfusionIndex?: number;
-  respirationBrpm?: number;
-  hrvLF?: number;
-  hrvHF?: number;
-  hrvLFHF?: number;
-  dfaAlpha1?: number;
-  sampleEntropy?: number;
-  stressIndex?: number;
-  stressLabel?: string;
-  hemoglobinGdl?: number;
-  glucoseMgDl?: number;
-  contactState?: string;
-  pressureState?: string;
-  motionScore?: number;
-  realFps?: number;
-  activeSource?: string;
 }
 
 const CONFIG = {
-  // Higher-resolution canvas (≈1.5×) so thin EKG-style traces stay crisp
-  // on dense smartphone displays (DPR ≥ 3). Aspect ratio kept identical to
-  // the original (1:2) so the CSS-scaled viewport mapping doesn't change.
-  CANVAS_WIDTH: 2100,
-  CANVAS_HEIGHT: 4200,
+  CANVAS_WIDTH: 1400,
+  CANVAS_HEIGHT: 2800,
   WINDOW_MS: 2800,
   TARGET_FPS: 30,
   BUFFER_SIZE: 400,
   PLOT_AREA: {
-    LEFT: 90,
-    RIGHT: 90,
-    TOP: 130,
-    BOTTOM: 90,
+    LEFT: 80,
+    RIGHT: 80,
+    TOP: 100,
+    BOTTOM: 60
   },
   COLORS: {
-    // Phase 20 — clinical pitch-black monitor with classic green ECG trace
-    BG: '#000000',
-    PLOT_BG: 'rgba(0, 6, 3, 0.65)',
-    // Subtle ECG mint grid (Spacelabs / Philips style)
-    GRID_MAJOR: 'rgba(34, 197, 94, 0.28)',
-    GRID_MINOR: 'rgba(34, 197, 94, 0.10)',
-    BASELINE: 'rgba(255, 255, 255, 0.30)',
-    // Classic green ECG trace
-    SIGNAL_NORMAL: '#22ff8d',
-    SIGNAL_GLOW: 'rgba(34, 255, 141, 0.45)',
-    SIGNAL_ARRHYTHMIA: '#ff4d4d',
-    ARRHYTHMIA_GLOW: 'rgba(255, 77, 77, 0.45)',
-    PEAK_NORMAL: '#60a5fa',
-    PEAK_ARRHYTHMIA: '#ff4d4d',
-    VALLEY_COLOR: '#94a3b8',
-    // All text white (per Phase 20 user request)
-    TEXT_TITLE: '#FFFFFF',
-    TEXT_TITLE_SOFT: 'rgba(255, 255, 255, 0.70)',
-    TEXT_PRIMARY: '#FFFFFF',
-    TEXT_SECONDARY: 'rgba(255, 255, 255, 0.70)',
-    TEXT_WARNING: '#FBBF24',
-    TEXT_DANGER: '#ff5757',
-    SCALE_TEXT: 'rgba(255, 255, 255, 0.50)',
-    SIGNAL_FILL_NORMAL: 'rgba(34, 255, 141, 0.06)',
-    SIGNAL_FILL_ARR: 'rgba(255, 77, 77, 0.08)',
+    BG: '#0a0f1a',
+    GRID_MAJOR: 'rgba(34, 197, 94, 0.25)',
+    GRID_MINOR: 'rgba(34, 197, 94, 0.1)',
+    BASELINE: 'rgba(34, 197, 94, 0.4)',
+    SIGNAL_NORMAL: '#22c55e',
+    SIGNAL_GLOW: 'rgba(34, 197, 94, 0.5)',
+    SIGNAL_ARRHYTHMIA: '#ef4444',
+    ARRHYTHMIA_GLOW: 'rgba(239, 68, 68, 0.5)',
+    PEAK_NORMAL: '#3b82f6',
+    PEAK_ARRHYTHMIA: '#ef4444',
+    VALLEY_COLOR: '#64748b',
+    TEXT_PRIMARY: '#22c55e',
+    TEXT_SECONDARY: '#94a3b8',
+    TEXT_WARNING: '#f59e0b',
+    TEXT_DANGER: '#ef4444',
+    SCALE_TEXT: '#6b7280',
+    SIGNAL_FILL_NORMAL: 'rgba(34, 197, 94, 0.08)',
+    SIGNAL_FILL_ARR: 'rgba(239, 68, 68, 0.08)',
     SYSTOLIC_MARKER: '#60a5fa',
     DIASTOLIC_MARKER: '#818cf8',
-    DICHROTIC_NOTCH: '#c084fc',
+    DICHROTIC_NOTCH: '#a78bfa',
     IBI_TEXT: '#67e8f9',
-    EEG_TEXT: '#A7F3D0',
-    // Frame / chrome accents
-    FRAME: 'rgba(255, 255, 255, 0.22)',
-  },
+  }
 };
 
 const NON_ALERT_RHYTHMS = new Set(['SIN ARRITMIAS', 'SINUS_STABLE', 'SINUS_VARIABLE', 'CALIBRANDO...', 'UNDETERMINED_LOW_QUALITY']);
@@ -109,9 +77,9 @@ const parseRhythmStatus = (statusString?: string) => {
   return { label: normalized, count, display, isAlert, color };
 };
 
-const PPGSignalMeter = ({
-  value,
-  quality,
+const PPGSignalMeter = ({ 
+  value, 
+  quality, 
   isFingerDetected,
   onStartMeasurement,
   onReset,
@@ -123,66 +91,26 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = [],
-  systolic = 0,
-  diastolic = 0,
-  perfusionIndex = 0,
-  respirationBrpm = 0,
-  hrvLF = 0,
-  hrvHF = 0,
-  hrvLFHF = 0,
-  dfaAlpha1 = 0,
-  sampleEntropy = 0,
-  stressIndex = 0,
-  stressLabel = '',
-  hemoglobinGdl = 0,
-  glucoseMgDl = 0,
-  contactState = '',
-  pressureState = '',
-  motionScore = 0,
-  realFps = 0,
-  activeSource = '',
+  rrIntervals = []
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({
-    value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData,
-    systolic, diastolic, perfusionIndex, respirationBrpm, hrvLF, hrvHF, hrvLFHF,
-    dfaAlpha1, sampleEntropy, stressIndex, stressLabel,
-    hemoglobinGdl, glucoseMgDl, contactState, pressureState, motionScore, realFps, activeSource,
-  });
-  // Phase 19 — Snapshot used by the EEG overlay (HTML), refreshed at ~5 Hz
-  // to keep the canvas hot loop unblocked but the overlay alive.
-  const [eegSnapshot, setEegSnapshot] = useState({
-    systolic: 0, diastolic: 0, perfusionIndex: 0, respirationBrpm: 0,
-    hrvLFHF: 0, dfaAlpha1: 0, sampleEntropy: 0,
-    stressIndex: 0, stressLabel: '',
-    hemoglobinGdl: 0, glucoseMgDl: 0,
-    contactState: '', pressureState: '', motionScore: 0, realFps: 0, activeSource: '',
-    ibi: 0, sdnn: 0, rmssd: 0,
-  });
+  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   
   const beatArrhythmiaRef = useRef(false);
   const lastArrhythmiaCountRef = useRef(0);
   const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
-  // Phase 21 — narrower initial range so a small signal still occupies a
-  // meaningful fraction of the plot before the autoscaler kicks in.
-  const amplitudeStatsRef = useRef({ min: -8, max: 8, range: 16 });
+  const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
 
   useEffect(() => {
-    propsRef.current = {
-      value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData,
-      systolic, diastolic, perfusionIndex, respirationBrpm, hrvLF, hrvHF, hrvLFHF,
-      dfaAlpha1, sampleEntropy, stressIndex, stressLabel,
-      hemoglobinGdl, glucoseMgDl, contactState, pressureState, motionScore, realFps, activeSource,
-    };
+    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
       ibiDisplayRef.current = Math.round(last);
@@ -193,10 +121,7 @@ const PPGSignalMeter = ({
       for (let i = 1; i < rrIntervals.length; i++) sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
       hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
     }
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData,
-      systolic, diastolic, perfusionIndex, respirationBrpm, hrvLF, hrvHF, hrvLFHF,
-      dfaAlpha1, sampleEntropy, stressIndex, stressLabel,
-      hemoglobinGdl, glucoseMgDl, contactState, pressureState, motionScore, realFps, activeSource]);
+  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData]);
 
   useEffect(() => {
     if (isPeak && isFingerDetected) {
@@ -215,36 +140,6 @@ const PPGSignalMeter = ({
       isRunningRef.current = false;
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
     };
-  }, []);
-
-  // Phase 19 — refresh the EEG overlay snapshot at 5 Hz from the live ref.
-  // This keeps overlay paints cheap without re-rendering the canvas hot path.
-  useEffect(() => {
-    const id = setInterval(() => {
-      const p = propsRef.current;
-      setEegSnapshot({
-        systolic: p.systolic ?? 0,
-        diastolic: p.diastolic ?? 0,
-        perfusionIndex: p.perfusionIndex ?? 0,
-        respirationBrpm: p.respirationBrpm ?? 0,
-        hrvLFHF: p.hrvLFHF ?? 0,
-        dfaAlpha1: p.dfaAlpha1 ?? 0,
-        sampleEntropy: p.sampleEntropy ?? 0,
-        stressIndex: p.stressIndex ?? 0,
-        stressLabel: p.stressLabel ?? '',
-        hemoglobinGdl: p.hemoglobinGdl ?? 0,
-        glucoseMgDl: p.glucoseMgDl ?? 0,
-        contactState: p.contactState ?? '',
-        pressureState: p.pressureState ?? '',
-        motionScore: p.motionScore ?? 0,
-        realFps: p.realFps ?? 0,
-        activeSource: p.activeSource ?? '',
-        ibi: ibiDisplayRef.current,
-        sdnn: hrvDisplayRef.current.sdnn,
-        rmssd: hrvDisplayRef.current.rmssd,
-      });
-    }, 200);
-    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -267,53 +162,44 @@ const PPGSignalMeter = ({
   const drawGrid = useCallback((ctx: CanvasRenderingContext2D) => {
     const { CANVAS_WIDTH: W, CANVAS_HEIGHT: H, COLORS } = CONFIG;
     const plot = getPlotArea();
-    // Pure black plot — clinical monitor look
     ctx.fillStyle = COLORS.BG;
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = COLORS.PLOT_BG;
+    ctx.fillStyle = 'rgba(0, 20, 10, 0.3)';
     ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
-
-    // Phase 21 — proper ECG-grade grid with 5 mm minor + 25 mm major.
-    // Canvas is 2100×4200; we use 35-px minor cells (5 mm at 25 mm/s @ 30 fps)
-    // and 5 minor cells per major (175 px), matching standard ECG paper.
-    const MINOR = 35;
-    const MAJOR = MINOR * 5;
-
-    // Minor grid (very faint mint)
     ctx.strokeStyle = COLORS.GRID_MINOR;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (let x = plot.x; x <= plot.x + plot.width; x += 20) {
+      ctx.moveTo(x, plot.y);
+      ctx.lineTo(x, plot.y + plot.height);
+    }
+    for (let y = plot.y; y <= plot.y + plot.height; y += 20) {
+      ctx.moveTo(plot.x, y);
+      ctx.lineTo(plot.x + plot.width, y);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = COLORS.GRID_MAJOR;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let x = plot.x; x <= plot.x + plot.width + 0.5; x += MINOR) {
-      ctx.moveTo(x, plot.y); ctx.lineTo(x, plot.y + plot.height);
+    for (let x = plot.x; x <= plot.x + plot.width; x += 100) {
+      ctx.moveTo(x, plot.y);
+      ctx.lineTo(x, plot.y + plot.height);
     }
-    for (let y = plot.y; y <= plot.y + plot.height + 0.5; y += MINOR) {
-      ctx.moveTo(plot.x, y); ctx.lineTo(plot.x + plot.width, y);
-    }
-    ctx.stroke();
-
-    // Major grid (more visible mint)
-    ctx.strokeStyle = COLORS.GRID_MAJOR;
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    for (let x = plot.x; x <= plot.x + plot.width + 0.5; x += MAJOR) {
-      ctx.moveTo(x, plot.y); ctx.lineTo(x, plot.y + plot.height);
-    }
-    for (let y = plot.y; y <= plot.y + plot.height + 0.5; y += MAJOR) {
-      ctx.moveTo(plot.x, y); ctx.lineTo(plot.x + plot.width, y);
+    for (let y = plot.y; y <= plot.y + plot.height; y += 100) {
+      ctx.moveTo(plot.x, y);
+      ctx.lineTo(plot.x + plot.width, y);
     }
     ctx.stroke();
-
-    // Center baseline — solid white, soft alpha (no dashing → looks more medical)
     ctx.strokeStyle = COLORS.BASELINE;
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 4]);
     ctx.beginPath();
     ctx.moveTo(plot.x, plot.centerY);
     ctx.lineTo(plot.x + plot.width, plot.centerY);
     ctx.stroke();
-
-    // Plot frame
-    ctx.strokeStyle = COLORS.FRAME;
-    ctx.lineWidth = 1.4;
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
+    ctx.lineWidth = 1;
     ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
   }, [getPlotArea]);
 
@@ -383,22 +269,18 @@ const PPGSignalMeter = ({
       small: '10px "SF Mono", Consolas, monospace',
     };
     
-    // Phase 20 — clinical white-on-black panels (Spacelabs / Philips look)
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.fillStyle = 'rgba(0, 30, 15, 0.9)';
     ctx.fillRect(3, panelY, panelW, panelH);
-    ctx.strokeStyle = COLORS.FRAME;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = COLORS.TEXT_PRIMARY;
+    ctx.lineWidth = 1.5;
     ctx.strokeRect(3, panelY, panelW, panelH);
-    // Subtle accent bar on the left edge (vital category cue)
-    ctx.fillStyle = COLORS.SIGNAL_NORMAL;
-    ctx.fillRect(3, panelY, 3, panelH);
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_TITLE;
+    ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.textAlign = 'left';
-    ctx.fillText('♥ FRECUENCIA', 14, panelY + 18);
+    ctx.fillText('♥ FRECUENCIA', 10, panelY + 18);
     ctx.font = fontSize.value;
     ctx.fillStyle = bpm > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
-    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 14, panelY + 66);
+    ctx.fillText(bpm > 0 ? bpm.toString() : '--', 10, panelY + 66);
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.fillText('BPM', panelW - 40, panelY + 66);
@@ -413,23 +295,20 @@ const PPGSignalMeter = ({
       ctx.fillText(hrLabel, 10, panelY + 86);
     }
     
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.fillStyle = 'rgba(0, 15, 30, 0.9)';
     ctx.fillRect(W - panelW - 3, panelY, panelW, panelH);
-    ctx.strokeStyle = COLORS.FRAME;
-    ctx.lineWidth = 1;
+    const spo2Border = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
+    ctx.strokeStyle = spo2Border;
+    ctx.lineWidth = 1.5;
     ctx.strokeRect(W - panelW - 3, panelY, panelW, panelH);
-    // Accent bar — color-coded by SpO2 risk
-    const spo2Accent = spo2 >= 95 ? '#22d3ee' : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
-    ctx.fillStyle = spo2Accent;
-    ctx.fillRect(W - panelW - 3, panelY, 3, panelH);
     ctx.font = fontSize.label;
-    ctx.fillStyle = COLORS.TEXT_TITLE;
+    ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.textAlign = 'left';
-    ctx.fillText('O₂ SATURACIÓN', W - panelW + 6, panelY + 18);
+    ctx.fillText('O₂ SATURACIÓN', W - panelW + 4, panelY + 18);
     ctx.font = fontSize.value;
     const spo2Color = spo2 >= 95 ? COLORS.TEXT_PRIMARY : spo2 >= 90 ? COLORS.TEXT_WARNING : spo2 > 0 ? COLORS.TEXT_DANGER : COLORS.TEXT_SECONDARY;
     ctx.fillStyle = spo2Color;
-    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 6, panelY + 66);
+    ctx.fillText(spo2 > 0 ? spo2.toFixed(0) : '--', W - panelW + 4, panelY + 66);
     ctx.font = fontSize.unit;
     ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.fillText('%', W - 20, panelY + 66);
@@ -446,18 +325,14 @@ const PPGSignalMeter = ({
     
     const centerX = W / 2;
     const centerW = 260;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.fillStyle = 'rgba(20, 20, 30, 0.9)';
     ctx.fillRect(centerX - centerW / 2, panelY, centerW, panelH);
-    ctx.strokeStyle = COLORS.FRAME;
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
+    ctx.lineWidth = 1.5;
     ctx.strokeRect(centerX - centerW / 2, panelY, centerW, panelH);
-    // Accent bar — top edge, color-coded by quality
-    const qAccent = quality > 60 ? COLORS.SIGNAL_NORMAL : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
-    ctx.fillStyle = qAccent;
-    ctx.fillRect(centerX - centerW / 2, panelY, centerW, 3);
     ctx.font = '12px "SF Mono", Consolas, monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.TEXT_TITLE;
+    ctx.fillStyle = COLORS.TEXT_SECONDARY;
     ctx.fillText('CALIDAD SEÑAL', centerX, panelY + 18);
     const barWidth = 220;
     const barHeight = 10;
@@ -505,7 +380,6 @@ const PPGSignalMeter = ({
         ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms`, W - panelW / 2 - 3, panelY + panelH + 42);
       }
     }
-
   }, []);
 
   useEffect(() => {
@@ -548,10 +422,7 @@ const PPGSignalMeter = ({
         animationRef.current = requestAnimationFrame(render);
         return;
       }
-      // Phase 21 — much higher gain so the QRS-like complex actually fills
-      // the plot. Combined with the auto-EMA scaler below this gives us a
-      // peak excursion of ~60% of the plot height instead of ~10%.
-      const scaledValue = signalValue * 8;
+      const scaledValue = signalValue * 2;
       
       if (peak) {
         const currentCount = rhythm.count;
@@ -578,9 +449,7 @@ const PPGSignalMeter = ({
         const values = recentPoints.map(p => p.value);
         const min = Math.min(...values);
         const max = Math.max(...values);
-        // Phase 21 — lower autoscaler floor so weak signals still spread
-        // across most of the plot height (was 40 → made the trace tiny).
-        const range = Math.max(8, max - min);
+        const range = Math.max(40, max - min);
         const stats = amplitudeStatsRef.current;
         stats.min = stats.min * 0.95 + (min - range * 0.1) * 0.05;
         stats.max = stats.max * 0.95 + (max + range * 0.1) * 0.05;
@@ -651,13 +520,13 @@ const PPGSignalMeter = ({
           if (curr.isArr) {
             ctx.strokeStyle = COLORS.SIGNAL_ARRHYTHMIA;
             ctx.shadowColor = COLORS.ARRHYTHMIA_GLOW;
-            ctx.shadowBlur = 22;
-            ctx.lineWidth = 8;            // Phase 21 — much thicker for visibility
+            ctx.shadowBlur = 18;
+            ctx.lineWidth = 4;
           } else {
             ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
             ctx.shadowColor = COLORS.SIGNAL_GLOW;
-            ctx.shadowBlur = 14;
-            ctx.lineWidth = 6;            // Phase 21 — much thicker for visibility
+            ctx.shadowBlur = 12;
+            ctx.lineWidth = 2.5;
           }
           ctx.stroke();
           ctx.shadowBlur = 0;
@@ -870,7 +739,7 @@ const PPGSignalMeter = ({
 
   const handleReset = useCallback(() => {
     dataBufferRef.current?.clear();
-    amplitudeStatsRef.current = { min: -8, max: 8, range: 16 };
+    amplitudeStatsRef.current = { min: -50, max: 50, range: 100 };
     beatHistoryRef.current = [];
     lastArrhythmiaCountRef.current = 0;
     ibiDisplayRef.current = 0;
@@ -878,129 +747,22 @@ const PPGSignalMeter = ({
     onReset();
   }, [onReset]);
 
-  // Phase 20 — clinical EEG-style telemetry strip (white-on-black, no gold)
-  const eegProps = eegSnapshot;
-  const stressColorClass =
-    eegProps.stressIndex >= 75 ? 'text-red-400' :
-    eegProps.stressIndex >= 50 ? 'text-amber-300' :
-    'text-emerald-300';
-  const contactColorClass =
-    eegProps.contactState === 'STABLE_CONTACT' ? 'text-emerald-300' :
-    eegProps.contactState === 'UNSTABLE_CONTACT' ? 'text-amber-300' :
-    'text-red-300';
-  const Cell = ({ label, value, color = 'text-white' }: { label: string; value: string; color?: string }) => (
-    <div className="flex flex-col items-start min-w-0 flex-1 px-1.5">
-      <span className="text-[8px] font-medium uppercase tracking-[0.10em] truncate"
-            style={{ color: 'rgba(255,255,255,0.55)' }}>
-        {label}
-      </span>
-      <span className={`text-[11px] font-mono font-semibold tabular-nums truncate ${color}`}>
-        {value}
-      </span>
-    </div>
-  );
-
   return (
-    <div className="fixed inset-0 bg-black">
+    <div className="fixed inset-0 bg-slate-950">
       <canvas ref={canvasRef} width={CONFIG.CANVAS_WIDTH} height={CONFIG.CANVAS_HEIGHT} className="w-full h-full absolute inset-0" />
-
-      {/* Phase 20 — clean clinical header */}
-      <div className="absolute z-10 flex items-center gap-2 px-3 py-1 rounded-md"
-           style={{
-             top: '6px', left: '140px',
-             background: 'rgba(0,0,0,0.6)',
-             border: '1px solid rgba(255,255,255,0.18)',
-           }}>
-        <div className={`p-1 rounded-full transition-all duration-100 ${showPulse ? 'bg-emerald-500/40 scale-110' : 'bg-emerald-500/20'}`}>
-          <Heart className={`w-3.5 h-3.5 transition-all duration-100 ${showPulse ? 'text-emerald-300 scale-110' : 'text-emerald-400'}`} fill={showPulse ? 'currentColor' : 'none'} />
+      <div className="absolute top-0 left-0 p-2 z-10 flex items-center gap-2" style={{ top: '6px', left: '140px' }}>
+        <div className={`p-1.5 rounded-full transition-all duration-100 ${showPulse ? 'bg-red-500/30 scale-110' : 'bg-emerald-500/20'}`}>
+          <Heart className={`w-4 h-4 transition-all duration-100 ${showPulse ? 'text-red-400 scale-110' : 'text-emerald-400'}`} fill={showPulse ? 'currentColor' : 'none'} />
         </div>
-        <Activity className="w-3 h-3 text-emerald-400" />
-        <span className="text-[10px] font-mono font-medium tracking-wide text-white">
-          cPPG MONITOR <span className="text-white/60">v1</span>
-        </span>
+        <Activity className="w-3.5 h-3.5 text-emerald-400" />
+        <span className="text-[10px] font-mono text-emerald-400/80">PPG MONITOR v3</span>
       </div>
-
-      {/* Phase 20 — clinical EEG-style telemetry overlay (3 rows, white-on-black) */}
-      <div className="absolute left-0 right-0 z-10 px-1.5 space-y-0.5"
-           style={{ top: '14%' }}>
-        {/* Row 1: HEMO (cardiovascular) */}
-        <div className="flex items-stretch border bg-black/80 backdrop-blur-sm rounded"
-             style={{ borderColor: 'rgba(255, 255, 255, 0.18)' }}>
-          <div className="flex items-center justify-center px-2 text-[9px] font-bold tracking-wider"
-               style={{
-                 color: '#FFFFFF',
-                 minWidth: 60,
-                 background: 'linear-gradient(180deg, rgba(34,197,94,0.18), rgba(34,197,94,0.05))',
-                 borderRight: '1px solid rgba(255,255,255,0.18)',
-               }}>
-            HEMO
-          </div>
-          <div className="flex flex-1 divide-x" style={{ borderColor: 'rgba(255, 255, 255, 0.10)' }}>
-            <Cell label="BP" value={eegProps.systolic > 0 ? `${Math.round(eegProps.systolic)}/${Math.round(eegProps.diastolic)}` : '—'} />
-            <Cell label="PI" value={eegProps.perfusionIndex > 0 ? eegProps.perfusionIndex.toFixed(2) + '%' : '—'} color="text-cyan-200" />
-            <Cell label="IBI" value={eegProps.ibi > 0 ? eegProps.ibi + 'ms' : '—'} color="text-cyan-200" />
-            <Cell label="SDNN" value={eegProps.sdnn > 0 ? eegProps.sdnn + 'ms' : '—'} color="text-cyan-200" />
-            <Cell label="RMSSD" value={eegProps.rmssd > 0 ? eegProps.rmssd + 'ms' : '—'} color="text-cyan-200" />
-            <Cell label="LF/HF" value={eegProps.hrvLFHF > 0 ? eegProps.hrvLFHF.toFixed(2) : '—'} color="text-cyan-200" />
-          </div>
-        </div>
-        {/* Row 2: NEURO / METABOLIC */}
-        <div className="flex items-stretch border bg-black/80 backdrop-blur-sm rounded"
-             style={{ borderColor: 'rgba(255, 255, 255, 0.18)' }}>
-          <div className="flex items-center justify-center px-2 text-[9px] font-bold tracking-wider"
-               style={{
-                 color: '#FFFFFF',
-                 minWidth: 60,
-                 background: 'linear-gradient(180deg, rgba(168,85,247,0.18), rgba(168,85,247,0.05))',
-                 borderRight: '1px solid rgba(255,255,255,0.18)',
-               }}>
-            NEURO
-          </div>
-          <div className="flex flex-1 divide-x" style={{ borderColor: 'rgba(255, 255, 255, 0.10)' }}>
-            <Cell label="DFAα1" value={eegProps.dfaAlpha1 !== 0 ? eegProps.dfaAlpha1.toFixed(2) : '—'} color="text-purple-200" />
-            <Cell label="SampEn" value={eegProps.sampleEntropy > 0 ? eegProps.sampleEntropy.toFixed(2) : '—'} color="text-purple-200" />
-            <Cell label="STRESS" value={eegProps.stressIndex > 0 ? `${Math.round(eegProps.stressIndex)}` : '—'} color={stressColorClass} />
-            <Cell label="RESP" value={eegProps.respirationBrpm > 0 ? `${eegProps.respirationBrpm.toFixed(0)}rpm` : '—'} color="text-purple-200" />
-            <Cell label="Hb" value={eegProps.hemoglobinGdl > 0 ? eegProps.hemoglobinGdl.toFixed(1) + 'g/dL' : '—'} />
-            <Cell label="GLU" value={eegProps.glucoseMgDl > 0 ? `${eegProps.glucoseMgDl}mg/dL` : '—'} />
-          </div>
-        </div>
-        {/* Row 3: HARDWARE / CONTACT */}
-        <div className="flex items-stretch border bg-black/80 backdrop-blur-sm rounded"
-             style={{ borderColor: 'rgba(255, 255, 255, 0.18)' }}>
-          <div className="flex items-center justify-center px-2 text-[9px] font-bold tracking-wider"
-               style={{
-                 color: '#FFFFFF',
-                 minWidth: 60,
-                 background: 'linear-gradient(180deg, rgba(148,163,184,0.20), rgba(148,163,184,0.04))',
-                 borderRight: '1px solid rgba(255,255,255,0.18)',
-               }}>
-            HW
-          </div>
-          <div className="flex flex-1 divide-x" style={{ borderColor: 'rgba(255, 255, 255, 0.10)' }}>
-            <Cell label="CONT" value={eegProps.contactState ? eegProps.contactState.split('_').join(' ').substring(0, 7) : '—'} color={contactColorClass} />
-            <Cell label="PRES" value={eegProps.pressureState ? eegProps.pressureState.split('_').join(' ').substring(0, 7) : '—'} color="text-emerald-200" />
-            <Cell label="SRC" value={eegProps.activeSource || '—'} color="text-white" />
-            <Cell label="FPS" value={eegProps.realFps > 0 ? `${Math.round(eegProps.realFps)}` : '—'} color={eegProps.realFps >= 24 ? 'text-white' : 'text-amber-300'} />
-            <Cell label="MOT" value={eegProps.motionScore.toFixed(2)} color={eegProps.motionScore > 0.6 ? 'text-red-300' : 'text-white'} />
-            <Cell label="STAT" value={eegProps.stressLabel ? eegProps.stressLabel.split('_').join(' ') : '—'} color={stressColorClass} />
-          </div>
-        </div>
-      </div>
-      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10"
-           style={{ borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-        <button onClick={onStartMeasurement}
-                className={`font-semibold text-xs uppercase tracking-[0.18em] transition-all ${
-                  isMonitoring
-                    ? 'bg-red-600/25 hover:bg-red-600/35 active:bg-red-600/45 text-red-200'
-                    : 'bg-emerald-600/25 hover:bg-emerald-600/35 active:bg-emerald-600/45 text-emerald-200'
-                }`}
-                style={{ borderRight: '1px solid rgba(255,255,255,0.15)' }}>
-          {isMonitoring ? '■ DETENER' : '▶ INICIAR'}
+      <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
+        <button onClick={onStartMeasurement} className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${isMonitoring ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r' : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'}`}>
+          {isMonitoring ? 'DETENER' : 'INICIAR'}
         </button>
-        <button onClick={handleReset}
-                className="bg-white/5 hover:bg-white/10 active:bg-white/15 text-white/80 font-semibold text-xs uppercase tracking-[0.18em] transition-all">
-          ⟲ RESET
+        <button onClick={handleReset} className="bg-slate-700/20 hover:bg-slate-700/30 active:bg-slate-700/40 text-slate-300 font-semibold text-sm transition-colors border-t border-slate-700/50">
+          RESET
         </button>
       </div>
     </div>

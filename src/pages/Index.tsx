@@ -162,34 +162,37 @@ const Index = () => {
 
   useEffect(() => {
     if (!canvasRef.current) {
-      // Phase 19 — bump capture canvas to 480×360 (50% more pixels per axis,
-      // 2.25× pixel count) so the 7×7 ROI tiles get ~28×26 samples each
-      // instead of ~17×16, materially improving SNR on dim phones.
-      const CAP_W = 480;
-      const CAP_H = 360;
+      // Phase 2 — use OffscreenCanvas when available for zero DOM commit cost,
+      // falling back to a regular HTMLCanvasElement when not supported.
       const useOffscreen = typeof OffscreenCanvas !== 'undefined';
       if (useOffscreen) {
+        // We still hold an HTMLCanvasElement reference so the rest of the code
+        // (which expects canvas.width/height) keeps working; getContext from
+        // an offscreen canvas exposes the same drawing API.
         try {
-          const oc = new OffscreenCanvas(CAP_W, CAP_H);
+          const oc = new OffscreenCanvas(320, 240);
+          // OffscreenCanvas does NOT extend HTMLCanvasElement; we keep the
+          // type as `any` here intentionally. The 2D context API is identical
+          // for our purposes (drawImage + getImageData).
           canvasRef.current = oc as any;
           ctxRef.current = (oc.getContext('2d', {
             willReadFrequently: true,
             alpha: false,
           }) as any);
-          console.log(`🚀 Capture canvas: OffscreenCanvas ${CAP_W}×${CAP_H}`);
+          console.log('🚀 Capture canvas: OffscreenCanvas');
         } catch {
           // fall through to HTMLCanvas
         }
       }
       if (!canvasRef.current) {
         canvasRef.current = document.createElement('canvas');
-        canvasRef.current.width = CAP_W;
-        canvasRef.current.height = CAP_H;
+        canvasRef.current.width = 320;
+        canvasRef.current.height = 240;
         ctxRef.current = canvasRef.current.getContext('2d', {
           willReadFrequently: true,
           alpha: false,
         });
-        console.log(`🚀 Capture canvas: HTMLCanvasElement ${CAP_W}×${CAP_H}`);
+        console.log('🚀 Capture canvas: HTMLCanvasElement');
       }
     }
   }, []);
@@ -742,7 +745,7 @@ const Index = () => {
 
         <div className="relative z-10 h-full">
           <div className="flex-1 h-full">
-            <PPGSignalMeter
+            <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
               isFingerDetected={lastSignal?.fingerDetected || false}
@@ -757,32 +760,11 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
-              // Phase 19 — EEG-style telemetry feed
-              systolic={vitalSigns.pressure?.systolic}
-              diastolic={vitalSigns.pressure?.diastolic}
-              perfusionIndex={lastSignal?.perfusionIndex}
-              respirationBrpm={vitalSigns.respiration?.brpm}
-              hrvLF={vitalSigns.hrv?.freq?.lfPower}
-              hrvHF={vitalSigns.hrv?.freq?.hfPower}
-              hrvLFHF={vitalSigns.hrv?.freq?.lfHfRatio}
-              dfaAlpha1={vitalSigns.hrv?.nonlinear?.dfaAlpha1}
-              sampleEntropy={vitalSigns.hrv?.nonlinear?.sampEn}
-              stressIndex={vitalSigns.stress?.index}
-              stressLabel={vitalSigns.stress?.label}
-              hemoglobinGdl={typeof vitalSigns.hemoglobin?.value === 'number' ? vitalSigns.hemoglobin.value : 0}
-              glucoseMgDl={vitalSigns.glucose}
-              contactState={(lastSignal as any)?.contactState}
-              pressureState={(lastSignal as any)?.telemetry?.pressureState}
-              motionScore={(lastSignal as any)?.telemetry?.motionScore}
-              realFps={(lastSignal as any)?.telemetry?.realFps}
-              activeSource={(lastSignal as any)?.telemetry?.activeSourceLabel}
             />
           </div>
 
-          {/* Phase 21 — clinical vital-sign grid (Philips IntelliVue style)
-              6 cols × 2 rows, fixed-height compact cards, no scroll */}
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black px-1.5 py-1.5">
-            <div className="grid grid-cols-6 grid-rows-2 gap-1.5 w-full h-full">
+          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-3 overflow-y-auto">
+            <div className="grid grid-cols-3 gap-3 place-items-center">
               <VitalSign label="FRECUENCIA CARDÍACA" value={heartRate > 0 ? Math.round(heartRate) : "--"} unit="BPM" highlighted={showResults} />
               <VitalSign label="SPO2" value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"} unit="%" highlighted={showResults} />
               <VitalSign
@@ -793,39 +775,55 @@ const Index = () => {
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
-              <VitalSign label="RESPIRACIÓN"
-                value={vitalSigns.respiration && vitalSigns.respiration.brpm > 0 ? Math.round(vitalSigns.respiration.brpm) : "--"}
-                unit="rpm" highlighted={showResults} />
+              <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
+              <VitalSign
+                label="COLEST./TRIGL. (EST.)"
+                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
+                unit="mg/dL"
+                highlighted={showResults}
+              />
               <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
-              <VitalSign label="HRV (RMSSD)"
-                value={vitalSigns.hrv && vitalSigns.hrv.time.rmssd > 0 ? Math.round(vitalSigns.hrv.time.rmssd) : "--"}
-                unit="ms" highlighted={showResults} />
 
-              <VitalSign label="GLUCOSA (EST.)"
-                value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
-              <VitalSign label="COLEST./TRIGL. (EST.)"
-                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
-                  ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}`
-                  : "--/--"}
-                unit="mg/dL" highlighted={showResults} />
-              <VitalSign label="HEMOGLOBINA (EST.)"
-                value={vitalSigns.hemoglobin && typeof vitalSigns.hemoglobin.value === 'number' ? vitalSigns.hemoglobin.value : "--"}
-                unit="g/dL" highlighted={showResults} />
-              <VitalSign label="ESTRÉS"
+              {/* Phase 5/6/10 — new vital signs */}
+              <VitalSign
+                label="RESPIRACIÓN"
+                value={vitalSigns.respiration && vitalSigns.respiration.brpm > 0 ? Math.round(vitalSigns.respiration.brpm) : "--"}
+                unit="rpm"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="HRV (RMSSD)"
+                value={vitalSigns.hrv && vitalSigns.hrv.time.rmssd > 0 ? Math.round(vitalSigns.hrv.time.rmssd) : "--"}
+                unit="ms"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="ESTRÉS"
                 value={vitalSigns.stress && vitalSigns.stress.confidence > 0
-                  ? `${vitalSigns.stress.index}`
+                  ? `${vitalSigns.stress.index} ${vitalSigns.stress.label.split('_').join(' ')}`
                   : "--"}
-                highlighted={showResults} />
-              <VitalSign label="LF/HF"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="LF/HF"
                 value={vitalSigns.hrv && vitalSigns.hrv.freq.lfHfRatio > 0
                   ? vitalSigns.hrv.freq.lfHfRatio.toFixed(2)
                   : "--"}
-                highlighted={showResults} />
-              <VitalSign label="DFA α1"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="HEMOGLOBINA (EST.)"
+                value={vitalSigns.hemoglobin && typeof vitalSigns.hemoglobin.value === 'number' ? vitalSigns.hemoglobin.value : "--"}
+                unit="g/dL"
+                highlighted={showResults}
+              />
+              <VitalSign
+                label="DFA α1"
                 value={vitalSigns.hrv && vitalSigns.hrv.nonlinear.dfaAlpha1 !== 0
                   ? vitalSigns.hrv.nonlinear.dfaAlpha1.toFixed(2)
                   : "--"}
-                highlighted={showResults} />
+                highlighted={showResults}
+              />
             </div>
           </div>
 
