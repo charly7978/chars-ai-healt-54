@@ -12,6 +12,11 @@ import { GlucoseResearchProcessorV2, type GlucoseFeatureVector } from '../biomar
 import { LipidResearchProcessorV2, type LipidFeatureVector } from '../biomarkers/LipidResearchProcessorV2';
 import { GlucoseResearchProcessorV3, type GlucoseV3Features } from '../biomarkers/GlucoseResearchProcessorV3';
 import { LipidResearchProcessorV3, type LipidV3Features } from '../biomarkers/LipidResearchProcessorV3';
+// Phase 18 — Ultra-Optimize V1 has the rich .process({cycleFeatures, hr, rrVar, ...})
+// signature that VitalSignsProcessor uses. V2 below keeps the wizard API.
+import { GlucoseResearchProcessor as GlucoseResearchProcessorV1 } from '../biomarkers/GlucoseResearchProcessor';
+import { LipidResearchProcessor as LipidResearchProcessorV1 } from '../biomarkers/LipidResearchProcessor';
+import { SpO2Processor as SpO2ProcessorV1 } from './SpO2Processor';
 import { MeasurementGate, type OutputState } from '../core/MeasurementGate';
 import { HRVTimeFreqProcessor, type HRVResult } from './HRVTimeFreqProcessor';
 import { StressProcessor, type StressResult } from './StressProcessor';
@@ -129,14 +134,23 @@ export class VitalSignsProcessor {
   private useBPV3 = true;
   private rhythmClassifier: RhythmClassifierV2;
   private rhythmClassifierV3: RhythmClassifier;
-  private spo2Processor: SpO2ProcessorV2;
+  /** Phase 18 — primary SpO2 emitter using the rich Ultra-Optimize V1 with
+   *  enabledState support. V2 kept for legacy device-calibration profile. */
+  private spo2Processor: SpO2ProcessorV1;
+  private spo2ProcessorV2: SpO2ProcessorV2;
   private spo2ProcessorV3: SpO2ProcessorV3;
   /** Phase 7 opt-in: when true, V3 runs in parallel and its result is published
-   *  if (and only if) it has a calibration loaded — otherwise V2 is used. */
+   *  if (and only if) it has a calibration loaded — otherwise V1 is used. */
   private useSpO2V3 = true;
-  private glucoseProcessor: GlucoseResearchProcessorV2;
+  /** Phase 18 — primary glucose / lipids emitters use Ultra-Optimize V1 because
+   *  VitalSignsProcessor.calculateVitalSigns calls .process({cycleFeatures, hr,
+   *  rrVar, piGreen, ...}), a signature only V1 implements. V2 below keeps the
+   *  wizard / training-mode API for forward calibration capture. */
+  private glucoseProcessor: GlucoseResearchProcessorV1;
+  private glucoseProcessorV2: GlucoseResearchProcessorV2;
   private glucoseProcessorV3: GlucoseResearchProcessorV3;
-  private lipidProcessor: LipidResearchProcessorV2;
+  private lipidProcessor: LipidResearchProcessorV1;
+  private lipidProcessorV2: LipidResearchProcessorV2;
   private lipidProcessorV3: LipidResearchProcessorV3;
   private hrvProcessor: HRVTimeFreqProcessor;
   private stressProcessor: StressProcessor;
@@ -203,11 +217,14 @@ export class VitalSignsProcessor {
     this.bloodPressureProcessorV3 = new BloodPressureProcessorV3();
     this.rhythmClassifier = new RhythmClassifierV2();
     this.rhythmClassifierV3 = new RhythmClassifier();
-    this.spo2Processor = new SpO2ProcessorV2();
+    this.spo2Processor = new SpO2ProcessorV1();
+    this.spo2ProcessorV2 = new SpO2ProcessorV2();
     this.spo2ProcessorV3 = new SpO2ProcessorV3();
-    this.glucoseProcessor = new GlucoseResearchProcessorV2();
+    this.glucoseProcessor = new GlucoseResearchProcessorV1();
+    this.glucoseProcessorV2 = new GlucoseResearchProcessorV2();
     this.glucoseProcessorV3 = new GlucoseResearchProcessorV3();
-    this.lipidProcessor = new LipidResearchProcessorV2();
+    this.lipidProcessor = new LipidResearchProcessorV1();
+    this.lipidProcessorV2 = new LipidResearchProcessorV2();
     this.lipidProcessorV3 = new LipidResearchProcessorV3();
     this.hrvProcessor = new HRVTimeFreqProcessor();
     this.stressProcessor = new StressProcessor();
@@ -373,7 +390,7 @@ export class VitalSignsProcessor {
    * Cargar calibración de dispositivo SpO2 (aplicada a V2 y V3)
    */
   loadSpO2DeviceCalibration(profile: SpO2Calibration): void {
-    this.spo2Processor.loadDeviceCalibration(profile);
+    this.spo2ProcessorV2.loadDeviceCalibration(profile);
     this.spo2ProcessorV3.loadDeviceCalibration(profile);
   }
 
@@ -384,7 +401,7 @@ export class VitalSignsProcessor {
    * Persiste tras cada punto cuando V3 ya tiene un modelo activo.
    */
   addSpO2UserCalibrationPoint(referenceSpO2: number, measuredR: number, ratioRG = 0, ratioRB = 0): void {
-    this.spo2Processor.addUserCalibrationPoint(referenceSpO2, measuredR);
+    this.spo2ProcessorV2.addUserCalibrationPoint(referenceSpO2, measuredR);
     this.spo2ProcessorV3.addUserCalibrationPoint(referenceSpO2, measuredR, ratioRG, ratioRB);
     // Try to persist after each point. The V3 fit only happens once we have
     // ≥3 user points, so this only writes when there's a real model to save.
@@ -400,7 +417,13 @@ export class VitalSignsProcessor {
    * Iniciar modo entrenamiento de glucosa
    */
   startGlucoseTraining(userId: string, referenceDevice: string): void {
-    this.glucoseProcessor.startTrainingMode(userId, referenceDevice);
+    // Wizard goes to V2 which exposes the canonical training-mode API
+    this.glucoseProcessorV2.startTrainingMode(userId, referenceDevice);
+    // V1 also has training mode (Ultra-Optimize), keep it in sync so the
+    // primary processor learns from the same calibration points.
+    if (typeof (this.glucoseProcessor as any).startTrainingMode === 'function') {
+      (this.glucoseProcessor as any).startTrainingMode(userId, referenceDevice);
+    }
   }
 
   /**
@@ -410,14 +433,20 @@ export class VitalSignsProcessor {
     ppgFeatures: GlucoseFeatureVector,
     referenceGlucose: number
   ): { success: boolean; samplesCollected: number; canTrain: boolean } {
-    return this.glucoseProcessor.addTrainingSample(ppgFeatures, referenceGlucose);
+    if (typeof (this.glucoseProcessor as any).addTrainingSample === 'function') {
+      (this.glucoseProcessor as any).addTrainingSample(ppgFeatures, referenceGlucose);
+    }
+    return this.glucoseProcessorV2.addTrainingSample(ppgFeatures, referenceGlucose);
   }
 
   /**
    * Iniciar modo entrenamiento de lípidos
    */
   startLipidTraining(userId: string, labSource: string): void {
-    this.lipidProcessor.startTraining(userId, labSource);
+    this.lipidProcessorV2.startTraining(userId, labSource);
+    if (typeof (this.lipidProcessor as any).startTraining === 'function') {
+      (this.lipidProcessor as any).startTraining(userId, labSource);
+    }
   }
 
   /**
@@ -432,7 +461,10 @@ export class VitalSignsProcessor {
       triglycerides: number;
     }
   ): { success: boolean; samples: number; canTrain: boolean } {
-    return this.lipidProcessor.addTrainingSample(ppgFeatures, referenceLabs);
+    if (typeof (this.lipidProcessor as any).addTrainingSample === 'function') {
+      (this.lipidProcessor as any).addTrainingSample(ppgFeatures, referenceLabs);
+    }
+    return this.lipidProcessorV2.addTrainingSample(ppgFeatures, referenceLabs);
   }
 
   startCalibration(): void {
@@ -953,12 +985,15 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
     this.validPulseCount = 0;
     this.spo2Processor.reset();
+    this.spo2ProcessorV2.reset();
     this.spo2ProcessorV3.reset();
     this.bloodPressureProcessorV3.reset();
     this.hemoglobinProcessor.reset();
     this.glucoseProcessor.reset();
+    this.glucoseProcessorV2.reset();
     this.glucoseProcessorV3.reset();
     this.lipidProcessor.reset();
+    this.lipidProcessorV2.reset();
     this.lipidProcessorV3.reset();
     this.rhythmClassifier.reset();
     this.rhythmClassifierV3.reset();
@@ -988,10 +1023,14 @@ export class VitalSignsProcessor {
     this.bloodPressureProcessorV2.fullReset();
     this.bloodPressureProcessorV3.fullReset();
     this.spo2Processor.fullReset();
+    this.spo2ProcessorV2.fullReset();
     this.spo2ProcessorV3.fullReset();
     this.hemoglobinProcessor.fullReset();
     this.glucoseProcessor.fullReset();
+    this.glucoseProcessorV2.fullReset();
     this.glucoseProcessorV3.fullReset();
+    this.lipidProcessor.fullReset();
+    this.lipidProcessorV2.fullReset();
     this.lipidProcessorV3.fullReset();
     this.lipidProcessor.fullReset();
     this.rhythmClassifier.reset();
