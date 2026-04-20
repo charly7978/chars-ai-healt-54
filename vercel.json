@@ -7,7 +7,8 @@
   "devCommand": "npm run dev",
   "git": {
     "deploymentEnabled": {
-      "main": true
+      "main": true,
+      "codex/unify-branches": true
     }
   },
   "headers": [
