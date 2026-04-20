@@ -80,28 +80,32 @@ export class PPGWorkerManager {
     console.log(`✅ PPG Worker Pool initialized with ${this.config.poolSize} workers`);
   }
 
-  private handleMessage(e: MessageEvent, workerIndex: number) {
-    const { type, id, data, error } = e.data;
-
-    if (type === 'ERROR') {
-      const task = this.activeTasks.get(id);
-      if (task) {
-        this.activeTasks.delete(id);
-        this.workerIdle.set(workerIndex, true);
-        task.reject(new Error(error || 'Worker error'));
-        this.processQueue();
-      }
+  private handleWorkerMessage = (event: MessageEvent, workerIndex: number) => {
+    const message = event.data as WorkerResponse;
+    
+    const task = this.activeTasks.get(message.id);
+    if (!task) {
+      // Task already completed or timed out
       return;
     }
 
-    const task = this.activeTasks.get(id);
-    if (task) {
-      this.activeTasks.delete(id);
-      this.workerIdle.set(workerIndex, true);
-      task.resolve(data);
-      this.processQueue();
+    // Clear timeout to prevent race condition
+    if (task.timeoutId) {
+      clearTimeout(task.timeoutId);
     }
-  }
+
+    // Remove from active tasks before resolving/rejecting
+    this.activeTasks.delete(message.id);
+    this.workerIdle.set(workerIndex, true);
+
+    if (message.type === 'ERROR') {
+      task.reject(new Error(message.error));
+    } else {
+      task.resolve(message.data);
+    }
+
+    this.processQueue();
+  };
 
   private handleError(error: ErrorEvent, workerIndex: number) {
     console.error(`Worker ${workerIndex} error:`, error);
@@ -139,24 +143,30 @@ export class PPGWorkerManager {
       if (workerIndex === -1) break;
 
       const task = this.taskQueue.shift()!;
-      this.activeTasks.set(task.id, task);
-      this.workerIdle.set(workerIndex, false);
+      this.activeTasks.set(task.id, { resolve: task.resolve, reject: task.reject, timeoutId: null, workerIndex });
 
-      // Set timeout
-      setTimeout(() => {
-        if (this.activeTasks.has(task.id)) {
+      // Send task to worker
+      this.workers[workerIndex].postMessage({ type: task.type, data: task.data, id: task.id });
+      
+      // Set up timeout with proper race condition handling
+      const timeoutId = setTimeout(() => {
+        const activeTask = this.activeTasks.get(task.id);
+        if (activeTask) {
+          // Only proceed if task is still active
           this.activeTasks.delete(task.id);
           this.workerIdle.set(workerIndex, true);
+          
+          // Clear the timeout reference to prevent double cleanup
+          if (activeTask.timeoutId) {
+            clearTimeout(activeTask.timeoutId);
+          }
+          
           task.reject(new Error('Task timeout'));
           this.processQueue();
         }
       }, this.config.taskTimeout);
-
-      this.workers[workerIndex].postMessage({
-        type: task.type,
-        data: task.data,
-        id: task.id
-      });
+      
+      this.activeTasks.set(task.id, { resolve: task.resolve, reject: task.reject, timeoutId, workerIndex });
     }
   }
 
@@ -228,23 +238,35 @@ export class PPGWorkerManager {
     };
   }
 
-  getStats() {
-    return {
-      poolSize: this.config.poolSize,
-      queueLength: this.taskQueue.length,
-      activeTasks: this.activeTasks.size,
-      idleWorkers: Array.from(this.workerIdle.values()).filter(v => v).length
-    };
-  }
-
   terminate() {
-    this.workers.forEach(w => w.terminate());
-    this.workers = [];
-    this.taskQueue = [];
+    // Clear all pending tasks with timeout cleanup
+    for (const [id, task] of this.activeTasks.entries()) {
+      if (task.timeoutId) {
+        clearTimeout(task.timeoutId);
+      }
+      task.reject(new Error('Worker pool terminated'));
+    }
     this.activeTasks.clear();
-    this.workerIdle.clear();
+    
+    // Reject all queued tasks
+    this.taskQueue.forEach(task => {
+      task.reject(new Error('Worker pool terminated'));
+    });
+    this.taskQueue = [];
+    
+    // Terminate all workers
+    this.workers.forEach(worker => {
+      try {
+        worker.terminate();
+      } catch (error) {
+        console.warn('Error terminating worker:', error);
+      }
+    });
+    this.workers = [];
+    this.workerIdle = [];
     this.initialized = false;
   }
+
 }
 
 // Singleton instance

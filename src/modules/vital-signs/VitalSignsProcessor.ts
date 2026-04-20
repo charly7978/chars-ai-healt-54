@@ -712,31 +712,58 @@ export class VitalSignsProcessor {
       this.lastBPConfidence, this.lastBPFeatureQuality, 0
     );
 
+    // Safe access to measurements with fallbacks
+    const safeMeasurements = {
+      spo2: isFinite(this.measurements.spo2) ? this.measurements.spo2 : 0,
+      glucose: isFinite(this.measurements.glucose) ? this.measurements.glucose : 0,
+      systolicPressure: isFinite(this.measurements.systolicPressure) ? this.measurements.systolicPressure : 0,
+      diastolicPressure: isFinite(this.measurements.diastolicPressure) ? this.measurements.diastolicPressure : 0,
+      arrhythmiaCount: isFinite(this.measurements.arrhythmiaCount) ? this.measurements.arrhythmiaCount : 0,
+      arrhythmiaStatus: this.measurements.arrhythmiaStatus ?? 'UNKNOWN',
+      totalCholesterol: isFinite(this.measurements.totalCholesterol) ? this.measurements.totalCholesterol : 0,
+      triglycerides: isFinite(this.measurements.triglycerides) ? this.measurements.triglycerides : 0,
+      signalQuality: isFinite(this.measurements.signalQuality) ? this.measurements.signalQuality : 0,
+    };
+
+    // Safe access to upstream context
+    const safeUpstreamContext = {
+      sourceStability: isFinite(this.upstreamContext.sourceStability) ? this.upstreamContext.sourceStability : 0,
+      clipHighRatio: isFinite(this.upstreamContext.clipHighRatio) ? this.upstreamContext.clipHighRatio : 0,
+      contactStable: this.upstreamContext.contactStable ?? false,
+      beatCount: isFinite(this.upstreamContext.beatCount) ? this.upstreamContext.beatCount : 0,
+    };
+
+    // Safe access to RGB data
+    const safeRgbData = {
+      greenDC: isFinite(this.rgbData.greenDC) ? this.rgbData.greenDC : 0,
+      greenAC: isFinite(this.rgbData.greenAC) ? this.rgbData.greenAC : 0,
+    };
+
     return {
-      spo2: Math.round(this.measurements.spo2),
-      glucose: Math.round(this.measurements.glucose),
+      spo2: Math.round(safeMeasurements.spo2),
+      glucose: Math.round(safeMeasurements.glucose),
       pressure: {
-        systolic: Math.round(this.measurements.systolicPressure),
-        diastolic: Math.round(this.measurements.diastolicPressure),
-        confidence: this.lastBPConfidence,
-        featureQuality: this.lastBPFeatureQuality,
+        systolic: Math.round(safeMeasurements.systolicPressure),
+        diastolic: Math.round(safeMeasurements.diastolicPressure),
+        confidence: this.lastBPConfidence ?? 'LOW',
+        featureQuality: this.lastBPFeatureQuality ?? 0,
       },
-      arrhythmiaCount: this.measurements.arrhythmiaCount,
-      arrhythmiaStatus: this.measurements.arrhythmiaStatus,
+      arrhythmiaCount: safeMeasurements.arrhythmiaCount,
+      arrhythmiaStatus: safeMeasurements.arrhythmiaStatus,
       lipids: {
-        totalCholesterol: Math.round(this.measurements.totalCholesterol),
-        triglycerides: Math.round(this.measurements.triglycerides),
+        totalCholesterol: Math.round(safeMeasurements.totalCholesterol),
+        triglycerides: Math.round(safeMeasurements.triglycerides),
       },
       isCalibrating: this.isCalibrating,
       calibrationProgress: Math.min(100, Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100)),
       lastArrhythmiaData: this.measurements.lastArrhythmiaData ?? undefined,
-      signalQuality: Math.round(this.measurements.signalQuality),
+      signalQuality: Math.round(safeMeasurements.signalQuality),
       measurementConfidence: this.getMeasurementConfidence(),
       rhythm: this.lastRhythm ? {
-        label: this.lastRhythm.rhythmLabel,
-        confidence: this.lastRhythm.rhythmConfidence,
-        burden: this.lastRhythm.arrhythmiaBurden,
-        recentEvents: this.lastRhythm.recentEvents,
+        label: this.lastRhythm.rhythmLabel ?? 'UNKNOWN',
+        confidence: this.lastRhythm.rhythmConfidence ?? 0,
+        burden: this.lastRhythm.arrhythmiaBurden ?? 0,
+        recentEvents: this.lastRhythm.recentEvents ?? [],
       } : undefined,
       spo2Detail: this.lastSpo2 ?? undefined,
       glucoseDetail: this.lastGlucose ?? undefined,
@@ -754,13 +781,13 @@ export class VitalSignsProcessor {
       respiration: this.lastResp ?? undefined,
       hemoglobin: this.lastHemoglobin ?? undefined,
       debugMetrics: {
-        motionScore: 1 - Math.max(0, Math.min(1, this.upstreamContext.sourceStability)),
-        clipHighRatio: this.upstreamContext.clipHighRatio,
+        motionScore: 1 - Math.max(0, Math.min(1, safeUpstreamContext.sourceStability)),
+        clipHighRatio: safeUpstreamContext.clipHighRatio,
         clipLowRatio: 0,
-        sourceStability: this.upstreamContext.sourceStability,
-        contactState: this.upstreamContext.contactStable ? 'STABLE_CONTACT' : 'UNSTABLE_CONTACT',
-        perfusionIndex: this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0,
-        beatCount: this.upstreamContext.beatCount,
+        sourceStability: safeUpstreamContext.sourceStability,
+        contactState: safeUpstreamContext.contactStable ? 'STABLE_CONTACT' : 'UNSTABLE_CONTACT',
+        perfusionIndex: safeRgbData.greenDC > 0 ? (safeRgbData.greenAC / safeRgbData.greenDC) * 100 : 0,
+        beatCount: safeUpstreamContext.beatCount,
         rhythmGatePassed: this.lastRhythmGatePassed,
         rhythmBlockedReasons: this.lastRhythmBlockedReasons,
       },

@@ -936,22 +936,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private startMotionListener(): void {
     if (this.motionListenerActive) return;
+    
     try {
       if (typeof DeviceMotionEvent !== 'undefined') {
         if (typeof (DeviceMotionEvent as any).requestPermission === 'function') {
           (DeviceMotionEvent as any).requestPermission()
             .then((state: string) => {
-              if (state === 'granted') {
+              if (state === 'granted' && !this.motionListenerActive) {
+                // Double-check to prevent race conditions
                 window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
                 this.motionListenerActive = true;
               }
             }).catch(() => {});
         } else {
+          // For non-iOS devices, add listener directly
           window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
           this.motionListenerActive = true;
         }
       }
-    } catch {}
+    } catch (error) {
+      console.warn('Failed to start motion listener:', error);
+      this.motionListenerActive = false;
+    }
   }
 
   private stopMotionListener(): void {

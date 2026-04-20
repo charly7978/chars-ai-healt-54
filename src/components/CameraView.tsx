@@ -82,19 +82,34 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         clearInterval(torchKeepAliveRef.current);
         torchKeepAliveRef.current = null;
       }
+      
+      // Proper stream cleanup with error handling
       if (streamRef.current) {
-        for (const track of streamRef.current.getVideoTracks()) {
+        const tracks = streamRef.current.getVideoTracks();
+        await Promise.allSettled(tracks.map(async (track) => {
           try {
+            // Turn off torch before stopping track
             const caps = track.getCapabilities?.() as any;
             if (caps?.torch) {
               await track.applyConstraints({ advanced: [{ torch: false } as any] });
             }
-          } catch {}
-          track.stop();
-        }
+          } catch {
+            // Ignore torch errors, still stop the track
+          }
+          try {
+            track.stop();
+          } catch {
+            // Track might already be stopped
+          }
+        }));
         streamRef.current = null;
       }
-      if (videoRef.current) videoRef.current.srcObject = null;
+      
+      // Clear video source
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+        videoRef.current.load(); // Force cleanup
+      }
       isStartingRef.current = false;
     };
 
@@ -281,16 +296,32 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           // 'advanced: [{ torch: true }]' constraint is idempotent and
           // imperceptible. This single change fixes the
           // "el flash prende y se apaga" symptom on Pixel/Samsung.
-          if (torchKeepAliveRef.current !== null) clearInterval(torchKeepAliveRef.current);
+          if (torchKeepAliveRef.current !== null) {
+            clearInterval(torchKeepAliveRef.current);
+          }
+          
+          // Store track reference to avoid accessing potentially null track
+          const trackRef = track;
           torchKeepAliveRef.current = window.setInterval(async () => {
+            // Check if track is still active and valid
+            if (!trackRef || trackRef.readyState !== 'live') {
+              if (torchKeepAliveRef.current !== null) {
+                clearInterval(torchKeepAliveRef.current);
+                torchKeepAliveRef.current = null;
+              }
+              return;
+            }
+            
             try {
-              const settings = track.getSettings?.() as any;
+              const settings = trackRef.getSettings?.() as any;
               const torchActuallyOn = (settings && (settings as any).torch !== false);
               if (!torchActuallyOn) {
-                await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                await trackRef.applyConstraints({ advanced: [{ torch: true } as any] });
                 diagnosticsRef.current.torchActive = true;
               }
-            } catch { /* ignore — next tick will retry */ }
+            } catch { 
+              /* ignore — next tick will retry */ 
+            }
           }, 1500);
         }
 

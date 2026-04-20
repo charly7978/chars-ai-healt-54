@@ -80,49 +80,123 @@ export class GPUImageProcessor {
     };
   }
 
-  async initialize(): Promise<boolean> {
-    if (this.initialized) return true;
-
+  async initializeWebGL(): Promise<boolean> {
     try {
-      // Create offscreen canvas
       this.canvas = document.createElement('canvas');
-      this.canvas.width = this.config.width;
-      this.canvas.height = this.config.height;
-      
-      const gl = this.canvas.getContext('webgl2', {
+      this.gl = this.canvas.getContext('webgl2', {
         premultipliedAlpha: false,
-        preserveDrawingBuffer: true,
+        preserveDrawingBuffer: false,
         antialias: false,
-        alpha: false
+        depth: false,
+        stencil: false,
       });
 
-      if (!gl) {
-        console.warn('WebGL2 not available, falling back to CPU');
+      if (!this.gl) {
+        console.warn('WebGL2 not available, falling back to CPU processing');
         this.useGPU = false;
         return false;
       }
 
-      this.gl = gl;
-      
-      // Enable extensions
-      const ext = gl.getExtension('EXT_color_buffer_float');
-      if (!ext) {
-        console.warn('Float textures not supported, using half-float');
+      // Check required extensions
+      const requiredExtensions = ['OES_texture_float', 'WEBGL_color_buffer_float'];
+      for (const ext of requiredExtensions) {
+        if (!this.gl.getExtension(ext)) {
+          console.warn(`Required WebGL extension ${ext} not available`);
+          this.cleanupPartialInitialization();
+          this.useGPU = false;
+          return false;
+        }
       }
 
-      // Initialize shaders
-      this.initializeShaders();
-      this.initializeBuffers();
-      this.initializeTextures();
+      try {
+        this.initializeBuffers();
+      } catch (error) {
+        console.error('Failed to initialize WebGL buffers:', error);
+        this.cleanupPartialInitialization();
+        this.useGPU = false;
+        return false;
+      }
+
+      try {
+        this.initializeShaders();
+      } catch (error) {
+        console.error('Failed to initialize WebGL shaders:', error);
+        this.cleanupPartialInitialization();
+        this.useGPU = false;
+        return false;
+      }
+
+      try {
+        this.initializeTextures();
+      } catch (error) {
+        console.error('Failed to initialize WebGL textures:', error);
+        this.cleanupPartialInitialization();
+        this.useGPU = false;
+        return false;
+      }
 
       this.initialized = true;
-      console.log('✅ GPU Image Processor initialized');
+      console.log('✅ GPU Image Processor initialized successfully');
       return true;
-    } catch (err) {
-      console.error('GPU initialization failed:', err);
+
+    } catch (error) {
+      console.error('Failed to initialize GPU processor:', error);
+      this.cleanupPartialInitialization();
       this.useGPU = false;
       return false;
     }
+  }
+
+  private cleanupPartialInitialization(): void {
+    // Clean up any partially initialized resources
+    if (this.gl) {
+      try {
+        if (this.inputTexture) {
+          this.gl.deleteTexture(this.inputTexture);
+          this.inputTexture = null;
+        }
+        if (this.outputTexture) {
+          this.gl.deleteTexture(this.outputTexture);
+          this.outputTexture = null;
+        }
+        if (this.positionBuffer) {
+          this.gl.deleteBuffer(this.positionBuffer);
+          this.positionBuffer = null;
+        }
+        if (this.frameBuffer) {
+          this.gl.deleteFramebuffer(this.frameBuffer);
+          this.frameBuffer = null;
+        }
+        if (this.preprocessProgram) {
+          this.gl.deleteProgram(this.preprocessProgram);
+          this.preprocessProgram = null;
+        }
+        if (this.tileExtractProgram) {
+          this.gl.deleteProgram(this.tileExtractProgram);
+          this.tileExtractProgram = null;
+        }
+      } catch (error) {
+        console.warn('Error during partial cleanup:', error);
+      }
+      
+      // Lose context to ensure complete cleanup
+      const loseContext = this.gl.getExtension('WEBGL_lose_context');
+      if (loseContext) {
+        try {
+          loseContext.loseContext();
+        } catch (error) {
+          console.warn('Error losing WebGL context:', error);
+        }
+      }
+      
+      this.gl = null;
+    }
+    
+    if (this.canvas) {
+      this.canvas = null;
+    }
+    
+    this.initialized = false;
   }
 
   private initializeShaders() {
@@ -195,7 +269,7 @@ export class GPUImageProcessor {
     const vertexShader = this.compileShader(vertexShaderSource, this.gl.VERTEX_SHADER);
     const preprocessFragment = this.compileShader(preprocessFragmentSource, this.gl.FRAGMENT_SHADER);
 
-    // Link program
+    // Link preprocess program
     this.preprocessProgram = this.linkProgram(vertexShader, preprocessFragment);
     
     // Get uniform locations
@@ -585,15 +659,48 @@ export class GPUImageProcessor {
   dispose() {
     if (!this.gl) return;
     
-    if (this.inputTexture) this.gl.deleteTexture(this.inputTexture);
-    if (this.outputTexture) this.gl.deleteTexture(this.outputTexture);
-    if (this.positionBuffer) this.gl.deleteBuffer(this.positionBuffer);
-    if (this.frameBuffer) this.gl.deleteFramebuffer(this.frameBuffer);
-    if (this.preprocessProgram) this.gl.deleteProgram(this.preprocessProgram);
+    // Clean up textures
+    if (this.inputTexture) {
+      this.gl.deleteTexture(this.inputTexture);
+      this.inputTexture = null;
+    }
+    if (this.outputTexture) {
+      this.gl.deleteTexture(this.outputTexture);
+      this.outputTexture = null;
+    }
+    
+    // Clean up buffers
+    if (this.positionBuffer) {
+      this.gl.deleteBuffer(this.positionBuffer);
+      this.positionBuffer = null;
+    }
+    
+    // Clean up framebuffers
+    if (this.frameBuffer) {
+      this.gl.deleteFramebuffer(this.frameBuffer);
+      this.frameBuffer = null;
+    }
+    
+    // Clean up shader programs
+    if (this.preprocessProgram) {
+      this.gl.deleteProgram(this.preprocessProgram);
+      this.preprocessProgram = null;
+    }
+    if (this.tileExtractProgram) {
+      this.gl.deleteProgram(this.tileExtractProgram);
+      this.tileExtractProgram = null;
+    }
+    
+    // Lose context to ensure complete cleanup
+    const loseContext = this.gl.getExtension('WEBGL_lose_context');
+    if (loseContext) {
+      loseContext.loseContext();
+    }
     
     this.gl = null;
     this.canvas = null;
     this.initialized = false;
+    this.useGPU = false;
   }
 }
 
