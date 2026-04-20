@@ -11,7 +11,7 @@ import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import DebugPanel from "@/components/DebugPanel";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
-import { toast } from "@/components/ui/use-toast";
+import { toast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
 // Rhythms that should NOT trigger an alert toast/vibration.
