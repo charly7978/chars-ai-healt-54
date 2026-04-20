@@ -1,0 +1,5 @@
+# Ignore dependencies and cache to force rebuild
+node_modules
+dist
+.next
+.cache
