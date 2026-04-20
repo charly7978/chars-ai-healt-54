@@ -16,6 +16,11 @@
       "NODE_VERSION": "18"
     }
   },
+  "functions": {
+    "src/api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
   "headers": [
     {
       "source": "/index.html",
