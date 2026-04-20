@@ -148,7 +148,6 @@ export class LipidResearchProcessor {
     }
 
     this.model = { samples: [...this.pendingSamples], featureMeans: means, featureStds: stds, weights, intercepts, rmse, createdAt: Date.now() };
-    console.log('[LipidV3] Trained. RMSE:', JSON.stringify({ ct: rmse.totalCholesterol?.toFixed(1), ldl: rmse.ldl?.toFixed(1) }));
   }
 
   process(input: {

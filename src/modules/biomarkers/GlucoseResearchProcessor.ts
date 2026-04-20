@@ -189,7 +189,6 @@ export class GlucoseResearchProcessor {
       coverage: Math.min(1, coverage),
       createdAt: Date.now(),
     };
-    console.log(`[GluV3] Ridge trained: n=${n} RMSE=${rmse.toFixed(1)} λ=${lambda.toFixed(3)}`);
   }
 
   // ── Process ───────────────────────────────────────────────

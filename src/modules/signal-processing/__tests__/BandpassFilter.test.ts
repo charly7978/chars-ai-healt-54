@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { BandpassFilter } from '../BandpassFilter';
-
-function rms(arr: number[]): number {
-  if (arr.length === 0) return 0;
-  return Math.sqrt(arr.reduce((s, v) => s + v * v, 0) / arr.length);
-}
+import { rms } from '../../../utils/mathUtils';
 
 describe('BandpassFilter', () => {
   it('passes a 1 Hz sinusoid (in band) with significant energy', () => {

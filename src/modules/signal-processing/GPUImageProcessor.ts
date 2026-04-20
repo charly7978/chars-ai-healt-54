@@ -136,7 +136,6 @@ export class GPUImageProcessor {
       }
 
       this.initialized = true;
-      console.log('✅ GPU Image Processor initialized successfully');
       return true;
 
     } catch (error) {

@@ -46,13 +46,7 @@ export interface RidgeModel {
   looRMSE: number;
 }
 
-function mean(a: number[]): number { return a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0; }
-function std(a: number[], m?: number): number {
-  if (a.length < 2) return 1;
-  const mu = m !== undefined ? m : mean(a);
-  const v = a.reduce((s, x) => s + (x - mu) * (x - mu), 0) / a.length;
-  return Math.sqrt(v) || 1; // guard against zero-variance features
-}
+import { mean, std } from '../../utils/mathUtils';
 
 /**
  * Cholesky decomposition of an n×n SPD matrix A: A = L Lᵀ.

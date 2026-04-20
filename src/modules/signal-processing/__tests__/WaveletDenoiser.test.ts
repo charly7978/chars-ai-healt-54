@@ -1,10 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { waveletDenoise } from '../WaveletDenoiser';
-
-function rms(arr: number[]): number {
-  if (arr.length === 0) return 0;
-  return Math.sqrt(arr.reduce((s, v) => s + v * v, 0) / arr.length);
-}
+import { rms } from '../../../utils/mathUtils';
 
 describe('waveletDenoise (db4)', () => {
   it('returns an array of the same length', () => {

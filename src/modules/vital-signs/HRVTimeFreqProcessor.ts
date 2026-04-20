@@ -20,6 +20,8 @@
  *  - Richman & Moorman (2000): Sample entropy
  */
 
+import { median, mean, std } from '../../utils/mathUtils';
+
 export interface HRVTimeDomain {
   meanRR: number;        // ms
   sdnn: number;          // ms
@@ -79,19 +81,6 @@ function cleanRR(rrIntervals: number[]): number[] {
   const sorted = [...inRange].sort((a, b) => a - b);
   const med = sorted[Math.floor(sorted.length / 2)];
   return inRange.filter(rr => Math.abs(rr - med) / med <= 0.5);
-}
-
-function mean(a: number[]): number { return a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0; }
-function std(a: number[], m?: number): number {
-  if (a.length < 2) return 0;
-  const mu = m !== undefined ? m : mean(a);
-  return Math.sqrt(a.reduce((s, v) => s + (v - mu) * (v - mu), 0) / a.length);
-}
-function median(a: number[]): number {
-  if (a.length === 0) return 0;
-  const s = [...a].sort((x, y) => x - y);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

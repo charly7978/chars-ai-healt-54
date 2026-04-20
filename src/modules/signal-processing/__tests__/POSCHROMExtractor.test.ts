@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { POSExtractor } from '../POSExtractor';
 import { CHROMExtractor } from '../CHROMExtractor';
+import { rms } from '../../../utils/mathUtils';
 
 /**
  * Helper: synthesize a simple RGB stream with cardiac AC + LED-flicker DC drift.
@@ -21,12 +22,7 @@ function syntheticRGB(N: number, fs: number, hr = 1.2, flickerHz = 0): Array<{ r
   return out;
 }
 
-function rms(arr: number[]): number {
-  if (arr.length === 0) return 0;
-  return Math.sqrt(arr.reduce((s, v) => s + v * v, 0) / arr.length);
-}
-
-describe('POSExtractor', () => {
+describe('POS/CHROM extractors', () => {
   it('returns 0 until window is full', () => {
     const pos = new POSExtractor({ sampleRate: 30, windowSec: 1.6 });
     expect(pos.push(180, 100, 80)).toBe(0);

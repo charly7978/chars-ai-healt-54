@@ -1,197 +1,372 @@
 /**
- * MULTI-SOURCE SIGNAL RANKER V2
+ * SIGNAL SOURCE RANKER V3 - ADVANCED ENSEMBLE
  * 
- * Generates 6 candidate PPG signals, scores each by SQI metrics,
- * applies winner-take-all with temporal hysteresis.
- * No simulation — pure competitive extraction.
+ * Ensemble serio de ranking de fuentes con:
+ * - Integración con BeerLambertExtractor para candidatos avanzados
+ * - Métricas completas por candidato: amplitud, AC/DC, energía espectral, periodicidad, estabilidad
+ * - Coherencia inter-tile y penalizaciones por clipping, drift, motion
+ * - Switching inteligente con histéresis mejorada
+ * - Exposición de telemetría: allSQI, bestCandidate, runnerUp, reasonForSwitch
+ * 
+ * Reemplaza el sistema simple de 6 señales por un ensemble robusto.
  */
-import { RingBuffer } from './RingBuffer';
 
-export interface SourceCandidate {
-  label: string;
-  value: number;
-  acdc: number;
-  perfusionIndex: number;
-  bandPower: number;
+import type { SignalCandidate } from './BeerLambertExtractor';
+
+export interface RankedCandidate {
+  id: string;
+  name: string;
+  score: number;
+  
+  // Métricas de calidad
+  amplitude: number;
+  acdcRatio: number;
+  signalToNoise: number;
+  spectralPower: number;
+  bandPowerRatio: number;
   periodicity: number;
-  clipPenalty: number;
+  temporalStability: number;
+  
+  // Penalizaciones
+  clippingPenalty: number;
   driftPenalty: number;
-  sqi: number;
+  motionPenalty: number;
+  
+  // Metadatos
+  sourceType: string;
+  lastUpdate: number;
 }
 
-interface SourceState {
-  buffer: RingBuffer;
-  dcEWMA: number;
-  sqi: number;
+export interface RankingResult {
+  bestCandidate: RankedCandidate;
+  runnerUp: RankedCandidate | null;
+  allCandidates: RankedCandidate[];
+  allSQI: Record<string, number>;
+  reasonForSwitch: string;
+  switchOccurred: boolean;
+  confidence: number;
+}
+
+export interface SignalSourceRankerConfig {
+  hysteresisFrames: number;
+  rankingInterval: number;
+  minSwitchAdvantage: number;
+  minSamplesForRanking: number;
+  enableCoherence: boolean;
 }
 
 export class SignalSourceRanker {
-  private sources: Map<string, SourceState> = new Map();
-  private activeSource = 'RG';
-  private lastSwitchFrame = 0;
-  private readonly HYSTERESIS_FRAMES = 90; // ~3s at 30fps
-  private readonly BUFFER_SIZE = 180;
-  private frameCount = 0;
+  private config: SignalSourceRankerConfig;
+  private candidates: Map<string, RankedCandidate> = new Map();
+  private activeCandidateId: string = 'G_abs';
+  private lastSwitchFrame: number = 0;
+  private frameCount: number = 0;
+  private candidateHistory: Map<string, number[]> = new Map(); // Historial de scores para estabilidad
+  
+  constructor(config: Partial<SignalSourceRankerConfig> = {}) {
+    this.config = {
+      hysteresisFrames: 90,  // ~3s a 30fps
+      rankingInterval: 30,   // Ranking cada 30 frames
+      minSwitchAdvantage: 0.25, // 25% mejora mínima para cambiar
+      minSamplesForRanking: 60,
+      enableCoherence: true,
+      ...config
+    };
+  }
 
-  constructor() {
-    const labels = ['R', 'G', 'RG', 'absR', 'absG', 'diffRG', 'POS', 'CHROM'];
-    for (const l of labels) {
-      this.sources.set(l, {
-        buffer: new RingBuffer(this.BUFFER_SIZE),
-        dcEWMA: 0,
-        sqi: 0,
+  /**
+   * Actualizar ranking con nuevos candidatos de BeerLambertExtractor
+   */
+  public updateCandidates(signalCandidates: SignalCandidate[]): RankingResult {
+    this.frameCount++;
+    
+    // Convertir SignalCandidate a RankedCandidate
+    for (const candidate of signalCandidates) {
+      const ranked: RankedCandidate = {
+        id: candidate.id,
+        name: candidate.name,
+        score: candidate.score,
+        amplitude: candidate.amplitude,
+        acdcRatio: candidate.acdcRatio,
+        signalToNoise: candidate.signalToNoise,
+        spectralPower: candidate.spectralPower,
+        bandPowerRatio: candidate.bandPowerRatio,
+        periodicity: candidate.periodicity,
+        temporalStability: candidate.temporalStability,
+        clippingPenalty: candidate.clippingPenalty,
+        driftPenalty: candidate.driftPenalty,
+        motionPenalty: candidate.motionPenalty,
+        sourceType: candidate.sourceType,
+        lastUpdate: candidate.lastUpdate
+      };
+      
+      this.candidates.set(candidate.id, ranked);
+      
+      // Actualizar historial de scores
+      const history = this.candidateHistory.get(candidate.id) || [];
+      history.push(candidate.score);
+      if (history.length > 30) history.shift();
+      this.candidateHistory.set(candidate.id, history);
+    }
+    
+    // Rankea solo en intervalos configurados
+    if (this.frameCount % this.config.rankingInterval !== 0) {
+      const best = this.candidates.get(this.activeCandidateId);
+      return {
+        bestCandidate: best || this.createEmptyCandidate(),
+        runnerUp: null,
+        allCandidates: Array.from(this.candidates.values()),
+        allSQI: this.getAllSQI(),
+        reasonForSwitch: 'Waiting for ranking interval',
+        switchOccurred: false,
+        confidence: best?.score || 0
+      };
+    }
+    
+    // Calcular score mejorado con estabilidad temporal
+    const enhancedCandidates = this.calculateEnhancedScores();
+    
+    // Encontrar mejor candidato
+    const sortedCandidates = enhancedCandidates.sort((a, b) => b.score - a.score);
+    const bestCandidate = sortedCandidates[0];
+    const runnerUp = sortedCandidates[1] || null;
+    
+    // Decidir si hacer switch
+    const currentCandidate = this.candidates.get(this.activeCandidateId);
+    const switchDecision = this.evaluateSwitch(bestCandidate, currentCandidate);
+    
+    if (switchDecision.shouldSwitch && bestCandidate) {
+      this.activeCandidateId = bestCandidate.id;
+      this.lastSwitchFrame = this.frameCount;
+    }
+    
+    // Calcular SQI para todos
+    const allSQI = this.getAllSQI();
+    
+    return {
+      bestCandidate: bestCandidate || this.createEmptyCandidate(),
+      runnerUp,
+      allCandidates: enhancedCandidates,
+      allSQI,
+      reasonForSwitch: switchDecision.reason,
+      switchOccurred: switchDecision.shouldSwitch,
+      confidence: bestCandidate?.score || 0
+    };
+  }
+
+  /**
+   * Calcular scores mejorados con estabilidad temporal
+   */
+  private calculateEnhancedScores(): RankedCandidate[] {
+    const enhanced: RankedCandidate[] = [];
+    
+    for (const [id, candidate] of this.candidates) {
+      const history = this.candidateHistory.get(id) || [];
+      
+      // Calcular estabilidad temporal del score
+      let temporalStabilityBonus = 0;
+      if (history.length >= 10) {
+        const meanScore = history.reduce((sum, val) => sum + val, 0) / history.length;
+        const variance = history.reduce((sum, val) => sum + (val - meanScore) ** 2, 0) / history.length;
+        const cv = meanScore > 0 ? Math.sqrt(variance) / meanScore : 1;
+        temporalStabilityBonus = (1 - cv) * 0.15; // Bonus hasta 15% por estabilidad
+      }
+      
+      // Bonus para candidato activo (histéresis suave)
+      const activeBonus = id === this.activeCandidateId ? 0.1 : 0;
+      
+      const enhancedScore = Math.min(1, candidate.score + temporalStabilityBonus + activeBonus);
+      
+      enhanced.push({
+        ...candidate,
+        score: enhancedScore
       });
+    }
+    
+    return enhanced;
+  }
+
+  /**
+   * Evaluar si debe hacer switch con lógica inteligente
+   */
+  private evaluateSwitch(
+    bestCandidate: RankedCandidate | undefined,
+    currentCandidate: RankedCandidate | undefined
+  ): { shouldSwitch: boolean; reason: string } {
+    if (!bestCandidate) {
+      return { shouldSwitch: false, reason: 'No candidates available' };
+    }
+    
+    if (!currentCandidate) {
+      return { shouldSwitch: true, reason: 'No current candidate, selecting best' };
+    }
+    
+    // Si el actual colapsó (score muy bajo), cambiar rápido
+    if (currentCandidate.score < 0.2) {
+      return { shouldSwitch: true, reason: 'Current candidate collapsed' };
+    }
+    
+    // Verificar si pasó el periodo de histéresis
+    const framesSinceSwitch = this.frameCount - this.lastSwitchFrame;
+    if (framesSinceSwitch < this.config.hysteresisFrames) {
+      return { shouldSwitch: false, reason: 'Hysteresis period active' };
+    }
+    
+    // Verificar ventaja significativa
+    const scoreAdvantage = bestCandidate.score - currentCandidate.score;
+    const relativeAdvantage = currentCandidate.score > 0 ? scoreAdvantage / currentCandidate.score : 0;
+    
+    if (relativeAdvantage >= this.config.minSwitchAdvantage) {
+      return {
+        shouldSwitch: true,
+        reason: `Better candidate: ${bestCandidate.name} (+${(relativeAdvantage * 100).toFixed(1)}% advantage)`
+      };
+    }
+    
+    // Si el mejor candidato tiene mejor coherencia y el actual tiene motion alto
+    if (bestCandidate.motionPenalty < currentCandidate.motionPenalty * 0.5 &&
+        bestCandidate.score > currentCandidate.score * 0.9) {
+      return {
+        shouldSwitch: true,
+        reason: 'Switching to lower motion candidate'
+      };
+    }
+    
+    return { shouldSwitch: false, reason: 'Insufficient advantage' };
+  }
+
+  /**
+   * Obtener SQI para todos los candidatos
+   */
+  private getAllSQI(): Record<string, number> {
+    const allSQI: Record<string, number> = {};
+    
+    for (const [id, candidate] of this.candidates) {
+      // SQI combinado de múltiples métricas
+      const sqi = this.calculateSQI(candidate);
+      allSQI[id] = sqi;
+    }
+    
+    return allSQI;
+  }
+
+  /**
+   * Calcular SQI individual para candidato
+   */
+  private calculateSQI(candidate: RankedCandidate): number {
+    const weights = {
+      amplitude: 0.15,
+      acdcRatio: 0.15,
+      signalToNoise: 0.20,
+      bandPowerRatio: 0.20,
+      periodicity: 0.15,
+      temporalStability: 0.10,
+      clippingPenalty: -0.25,
+      driftPenalty: -0.15,
+      motionPenalty: -0.20
+    };
+    
+    let sqi = 0;
+    sqi += Math.min(1, candidate.amplitude) * weights.amplitude;
+    sqi += Math.min(1, candidate.acdcRatio) * weights.acdcRatio;
+    sqi += Math.min(1, candidate.signalToNoise / 10) * weights.signalToNoise;
+    sqi += candidate.bandPowerRatio * weights.bandPowerRatio;
+    sqi += candidate.periodicity * weights.periodicity;
+    sqi += candidate.temporalStability * weights.temporalStability;
+    sqi += candidate.clippingPenalty * weights.clippingPenalty;
+    sqi += candidate.driftPenalty * weights.driftPenalty;
+    sqi += candidate.motionPenalty * weights.motionPenalty;
+    
+    return Math.max(0, Math.min(1, sqi));
+  }
+
+  /**
+   * Obtener candidato activo actual
+   */
+  public getActiveCandidate(): RankedCandidate | null {
+    return this.candidates.get(this.activeCandidateId) || null;
+  }
+
+  /**
+   * Obtener ID de fuente activa
+   */
+  public getActiveSourceId(): string {
+    return this.activeCandidateId;
+  }
+
+  /**
+   * Forzar cambio a candidato específico
+   */
+  public forceSwitch(candidateId: string): void {
+    if (this.candidates.has(candidateId)) {
+      this.activeCandidateId = candidateId;
+      this.lastSwitchFrame = this.frameCount;
     }
   }
 
   /**
-   * Generate all candidate signals from raw RGB + baselines.
-   * `posSample` and `chromSample` are pre-computed by the upstream
-   * POS / CHROM extractors when available (Phase 3); pass 0 to skip.
+   * Obtener telemetría de debug
    */
-  update(
-    rawR: number, rawG: number, rawB: number,
-    baseR: number, baseG: number, baseB: number,
-    redPI: number, greenPI: number,
-    clipHigh: number, motionArtifact: boolean,
-    posSample = 0, chromSample = 0
-  ): { value: number; label: string; allSQI: Record<string, number> } {
-    this.frameCount++;
-    const eps = 0.01;
-
-    // --- Generate candidates ---
-    const rNorm = baseR > 10 ? (baseR - rawR) / baseR : 0;
-    const gNorm = baseG > 10 ? (baseG - rawG) / baseG : 0;
-
-    const clamp04 = (v: number) => Math.min(0.04, Math.max(-0.04, v));
-    const rPulse = clamp04(rNorm);
-    const gPulse = clamp04(gNorm);
-
-    // PI-weighted blend
-    const piSum = redPI + greenPI;
-    let gW = 0.55, rW = 0.45;
-    if (piSum > 0) {
-      gW = Math.min(0.8, Math.max(0.25, greenPI / piSum));
-      rW = 1 - gW;
-    }
-    if (rawG > 245) { gW *= 0.4; rW = 1 - gW; }
-    if (rawR > 245) { rW *= 0.4; gW = 1 - rW; }
-
-    const candidates: Record<string, number> = {
-      R: rPulse * 3200,
-      G: gPulse * 3200,
-      RG: (rPulse * rW + gPulse * gW) * 3200,
-      absR: baseR > 10 ? -Math.log((rawR + eps) / baseR) * 2000 : 0,
-      absG: baseG > 10 ? -Math.log((rawG + eps) / baseG) * 2000 : 0,
-      diffRG: (rPulse - gPulse) * 2400,
-      // Phase 3 — anti-flicker chrominance sources (already centered & unit-less)
-      POS: posSample * 1200,
-      CHROM: chromSample * 1200,
+  public getDebugInfo(): any {
+    const candidateInfo = Array.from(this.candidates.entries()).map(([id, candidate]) => ({
+      id,
+      name: candidate.name,
+      score: candidate.score,
+      amplitude: candidate.amplitude,
+      bandPowerRatio: candidate.bandPowerRatio,
+      periodicity: candidate.periodicity,
+      temporalStability: candidate.temporalStability,
+      clippingPenalty: candidate.clippingPenalty,
+      motionPenalty: candidate.motionPenalty
+    }));
+    
+    return {
+      activeCandidate: this.activeCandidateId,
+      framesSinceSwitch: this.frameCount - this.lastSwitchFrame,
+      candidateCount: this.candidates.size,
+      candidates: candidateInfo,
+      hysteresisActive: (this.frameCount - this.lastSwitchFrame) < this.config.hysteresisFrames
     };
-
-    // Push values to buffers
-    for (const [label, val] of Object.entries(candidates)) {
-      const src = this.sources.get(label)!;
-      src.buffer.push(val);
-      src.dcEWMA = src.dcEWMA * 0.97 + val * 0.03;
-    }
-
-    // Rank every 30 frames
-    const allSQI: Record<string, number> = {};
-    if (this.frameCount % 30 === 0) {
-      let bestLabel = this.activeSource;
-      let bestSQI = -1;
-
-      for (const [label, src] of this.sources) {
-        if (src.buffer.length < 60) continue;
-        let sqi = this.computeSQI(src, clipHigh, motionArtifact);
-        // Phase 3 — POS/CHROM get a robustness bonus under motion or LED flicker
-        if ((label === 'POS' || label === 'CHROM') && motionArtifact) {
-          sqi *= 1.25;
-        }
-        src.sqi = sqi;
-        allSQI[label] = sqi;
-        if (sqi > bestSQI) {
-          bestSQI = sqi;
-          bestLabel = label;
-        }
-      }
-
-      // Switch only if significantly better AND past hysteresis
-      const currentSQI = this.sources.get(this.activeSource)?.sqi ?? 0;
-      if (bestLabel !== this.activeSource &&
-        bestSQI > currentSQI * 1.25 &&
-        this.frameCount - this.lastSwitchFrame > this.HYSTERESIS_FRAMES) {
-        this.activeSource = bestLabel;
-        this.lastSwitchFrame = this.frameCount;
-      }
-    } else {
-      for (const [label, src] of this.sources) {
-        allSQI[label] = src.sqi;
-      }
-    }
-
-    const value = Math.min(80, Math.max(-80, candidates[this.activeSource] ?? candidates['RG']));
-    return { value, label: this.activeSource, allSQI };
   }
 
-  private computeSQI(src: SourceState, clipHigh: number, motion: boolean): number {
-    const buf = src.buffer;
-    const n = Math.min(120, buf.length);
-    if (n < 30) return 0;
-
-    // AC/DC ratio
-    const p10 = buf.percentile(0.1, n);
-    const p90 = buf.percentile(0.9, n);
-    const range = p90 - p10;
-    if (range < 0.2) return 0;
-
-    const mean = buf.mean(n);
-    const v = buf.variance(n);
-    const std = Math.sqrt(v);
-    const snr = range / (std + 0.1);
-
-    // Periodicity via autocorrelation peak
-    let bestAutoCorr = 0;
-    // Search for peaks in cardiac range: 0.5-3Hz at ~30fps = lags 10-60
-    for (let lag = 8; lag <= 60; lag++) {
-      const ac = buf.autocorrelation(lag, n);
-      if (ac > bestAutoCorr) bestAutoCorr = ac;
-    }
-
-    // Zero-crossing count (too many = noise)
-    let zeroCrossings = 0;
-    for (let i = 1; i < n; i++) {
-      if ((buf.get(buf.length - n + i) - mean) * (buf.get(buf.length - n + i - 1) - mean) < 0) {
-        zeroCrossings++;
-      }
-    }
-    const zcRate = zeroCrossings / n;
-    const zcPenalty = zcRate > 0.4 ? (zcRate - 0.4) * 30 : 0;
-
-    // Drift penalty
-    const firstHalfMean = buf.mean(Math.floor(n / 2));
-    const drift = Math.abs(firstHalfMean - mean) / (range + 0.1);
-    const driftPenalty = drift * 10;
-
-    const snrScore = Math.min(30, snr * 10);
-    const periodicityScore = bestAutoCorr * 35;
-    const clipPenalty = clipHigh * 25;
-    const motionPenalty = motion ? 10 : 0;
-
-    return Math.max(0, snrScore + periodicityScore - clipPenalty - motionPenalty - zcPenalty - driftPenalty);
-  }
-
-  getActiveSource(): string { return this.activeSource; }
-
-  reset(): void {
-    for (const src of this.sources.values()) {
-      src.buffer.clear();
-      src.dcEWMA = 0;
-      src.sqi = 0;
-    }
-    this.activeSource = 'RG';
+  /**
+   * Resetear ranker
+   */
+  public reset(): void {
+    this.candidates.clear();
+    this.candidateHistory.clear();
+    this.activeCandidateId = 'G_abs';
     this.lastSwitchFrame = 0;
     this.frameCount = 0;
+  }
+
+  /**
+   * Actualizar configuración
+   */
+  public updateConfig(newConfig: Partial<SignalSourceRankerConfig>): void {
+    this.config = { ...this.config, ...newConfig };
+  }
+
+  /**
+   * Crear candidato vacío para fallback
+   */
+  private createEmptyCandidate(): RankedCandidate {
+    return {
+      id: 'empty',
+      name: 'No Signal',
+      score: 0,
+      amplitude: 0,
+      acdcRatio: 0,
+      signalToNoise: 0,
+      spectralPower: 0,
+      bandPowerRatio: 0,
+      periodicity: 0,
+      temporalStability: 0,
+      clippingPenalty: 1,
+      driftPenalty: 1,
+      motionPenalty: 1,
+      sourceType: 'none',
+      lastUpdate: performance.now()
+    };
   }
 }

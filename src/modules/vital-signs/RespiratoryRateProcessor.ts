@@ -50,7 +50,7 @@ const RESP_BAND_HI_HZ = 0.50;   // 30 brpm
 const FUSION_FS_HZ = 4;         // unified resampling rate
 const MIN_PPG_SECONDS = 25;     // need ≥25 s of PPG for stable Welch
 
-function mean(a: number[]): number { return a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0; }
+import { mean } from '../../utils/mathUtils';
 
 /**
  * Linear interpolation of an irregularly-sampled (timesSec, values) series

@@ -18,6 +18,8 @@
  * system for determination of the stress level"; Task Force ESC/NASPE (1996).
  */
 
+import { median, mean, std } from '../../utils/mathUtils';
+
 export type StressLabel = 'REPOSO' | 'NORMAL' | 'ALERTA' | 'ESTRES_ALTO';
 
 export interface StressInput {
@@ -52,23 +54,6 @@ const STRESS_DEFAULTS = {
   HIGH_LFHF_FOR_STRESS: 4.0,      // LF/HF ratio where contribution saturates
   RMSSD_HIGH_VAGAL: 60,           // ms where parasympathetic dominance saturates
 };
-
-function median(a: number[]): number {
-  if (a.length === 0) return 0;
-  const s = [...a].sort((x, y) => x - y);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-}
-
-function mean(a: number[]): number {
-  return a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
-}
-
-function stddev(a: number[], m?: number): number {
-  if (a.length < 2) return 0;
-  const mu = m !== undefined ? m : mean(a);
-  return Math.sqrt(a.reduce((s, v) => s + (v - mu) * (v - mu), 0) / a.length);
-}
 
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
@@ -141,7 +126,7 @@ export class StressProcessor {
     const pih = input.perfusionIndexHistory ?? [];
     if (pih.length >= 8) {
       const m = mean(pih);
-      const cv = m > 0 ? stddev(pih, m) / m : 0;
+      const cv = m > 0 ? std(pih, m) / m : 0;
       piVarNorm = clamp01(cv / 0.5); // CV>0.5 saturates
     }
 

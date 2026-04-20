@@ -1,4 +1,17 @@
 /**
+ * TILE FUSION ENGINE — Robust multi-tile signal fusion
+ *
+ * Fuses multiple tiles into a single consolidated PPG signal using:
+ * - Huber-weighted mean (robust to outliers)
+ * - Trimmed mean (remove extremes)
+ * - Spatial uniformity check
+ * - Quality-weighted fusion
+ * - Temporal smoothing
+ */
+
+import { median } from '../../utils/mathUtils';
+
+/**
  * TILE FUSION ENGINE — ROBUST SPATIAL FUSION
  * 
  * Takes per-tile scores (from AdaptiveROIMask) and fuses them into:
@@ -115,7 +128,7 @@ export class TileFusionEngine {
    * Huber-weighted mean: robust to outliers
    * Uses influence function that downweights extreme values
    */
-  private huberWeightedMean(values: number[], tiles: any[]): number {
+  private huberWeightedMean(values: number[], tiles: TileData[]): number {
     if (values.length === 0) return 128;
     
     // Compute MAD (median absolute deviation)
@@ -156,7 +169,7 @@ export class TileFusionEngine {
   /**
    * Trimmed mean: remove lowest and highest tiles
    */
-  private trimmedMean(values: number[], tiles: any[]): number {
+  private trimmedMean(values: number[], tiles: TileData[]): number {
     if (values.length === 0) return 128;
     
     // Sort by quality
@@ -176,7 +189,7 @@ export class TileFusionEngine {
   /**
    * Compute overall quality of fusion
    */
-  private computeFusionQuality(tiles: any[]): number {
+  private computeFusionQuality(tiles: TileData[]): number {
     if (tiles.length === 0) return 0;
     
     // Average quality weighted by coverage
@@ -196,7 +209,7 @@ export class TileFusionEngine {
   /**
    * Compute spatial uniformity: how similar tiles are
    */
-  private computeUniformity(tiles: any[]): number {
+  private computeUniformity(tiles: TileData[]): number {
     if (tiles.length <= 1) return 1;
     
     // Collect valid tile intensities
@@ -219,7 +232,7 @@ export class TileFusionEngine {
   /**
    * Select top-K tiles by quality
    */
-  private selectTopTiles(tiles: any[], k: number): any[] {
+  private selectTopTiles(tiles: TileData[], k: number): TileData[] {
     const sorted = [...tiles].sort((a, b) => b.quality - a.quality);
     return sorted.slice(0, Math.min(k, sorted.length));
   }
@@ -227,7 +240,7 @@ export class TileFusionEngine {
   /**
    * Compute weight per tile (for debugging/visualization)
    */
-  private computeWeights(tiles: any[]): number[] {
+  private computeWeights(tiles: TileData[]): number[] {
     const weights: number[] = new Array(tiles.length).fill(0);
     
     // Compute MAD
@@ -272,12 +285,4 @@ export class TileFusionEngine {
       tileWeights: [],
     };
   }
-}
-
-/**
- * Helper: compute median
- */
-function median(values: number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
 }
