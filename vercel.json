@@ -11,6 +11,11 @@
       "codex/unify-branches": true
     }
   },
+  "build": {
+    "env": {
+      "NODE_VERSION": "18"
+    }
+  },
   "headers": [
     {
       "source": "/index.html",
