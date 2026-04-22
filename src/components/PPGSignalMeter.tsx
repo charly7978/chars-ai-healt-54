@@ -61,7 +61,7 @@ const CONFIG = {
   }
 };
 
-const NON_ALERT_RHYTHMS = new Set(['SIN ARRITMIAS', 'SINUS_STABLE', 'SINUS_VARIABLE', 'CALIBRANDO...', 'UNDETERMINED_LOW_QUALITY', 'NORMAL']);
+const NON_ALERT_RHYTHMS = new Set(['SIN ARRITMIAS', 'SINUS_STABLE', 'SINUS_VARIABLE', 'CALIBRANDO...', 'UNDETERMINED_LOW_QUALITY', 'NORMAL', 'BRADYCARDIA_PATTERN', 'TACHYCARDIA_PATTERN']);
 
 const parseRhythmStatus = (statusString?: string) => {
   const [label = 'SIN ARRITMIAS', countStr = '0'] = (statusString || 'SIN ARRITMIAS|0').split('|');
@@ -446,20 +446,29 @@ const PPGSignalMeter = ({
       if (peak) {
         const currentCount = rhythm.count;
         const shouldMarkArrhythmia = rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current;
+        
+        console.log('[Rhythm Debug]', {
+          arrStatus: arrStatus,
+          rhythmLabel: rhythm.label,
+          rhythmCount: rhythm.count,
+          isAlert: rhythm.isAlert,
+          currentCount,
+          lastCount: lastArrhythmiaCountRef.current,
+          shouldMarkArrhythmia
+        });
+        
         if (shouldMarkArrhythmia) {
-          beatArrhythmiaRef.current = true;
           lastArrhythmiaCountRef.current = Math.max(lastArrhythmiaCountRef.current, currentCount);
           const { rrIntervals: rr } = propsRef.current;
           const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
           const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
+          console.log('[Rhythm Debug] Calling markArrhythmiaBack for', retroDuration, 'ms');
           buffer.markArrhythmiaBack(retroDuration);
-        } else {
-          beatArrhythmiaRef.current = false;
         }
-        beatHistoryRef.current.push({ isArrhythmia: beatArrhythmiaRef.current, time: now });
+        beatHistoryRef.current.push({ isArrhythmia: shouldMarkArrhythmia, time: now });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
       }
-      const currentIsArrhythmia = beatArrhythmiaRef.current;
+      const currentIsArrhythmia = false;
       
       buffer.push({ time: now, value: scaledValue, isArrhythmia: currentIsArrhythmia });
       const points = buffer.getPoints();
