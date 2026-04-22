@@ -5,6 +5,10 @@ import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { SignalSourceRanker } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
+import { CHROMProcessor } from './CHROMProcessor';
+import { WaveletFilter } from './WaveletFilter';
+import { LMSAdaptiveFilter } from './LMSAdaptiveFilter';
+import { AdvancedColorSpaceAnalyzer } from './AdvancedColorSpaceAnalyzer';
 
 // Extended contact states
 type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
@@ -28,6 +32,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private roiMask = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
   private sourceRanker = new SignalSourceRanker();
+  
+  // --- Advanced processing modules (optional) ---
+  private chromProcessor: CHROMProcessor | null = null;
+  private waveletFilter: WaveletFilter | null = null;
+  private lmsFilter: LMSAdaptiveFilter | null = null;
+  private colorSpaceAnalyzer: AdvancedColorSpaceAnalyzer | null = null;
+  
+  // --- Configuration flags ---
+  private enableCHROM = false;
+  private enableWavelet = false;
+  private enableLMS = false;
+  private enableAdvancedColorSpace = false;
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -117,9 +133,34 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
-    public onError?: (error: ProcessingError) => void
+    public onError?: (error: ProcessingError) => void,
+    options?: {
+      enableCHROM?: boolean;
+      enableWavelet?: boolean;
+      enableLMS?: boolean;
+      enableAdvancedColorSpace?: boolean;
+    }
   ) {
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
+    
+    // Initialize advanced modules if enabled
+    this.enableCHROM = options?.enableCHROM ?? false;
+    this.enableWavelet = options?.enableWavelet ?? false;
+    this.enableLMS = options?.enableLMS ?? false;
+    this.enableAdvancedColorSpace = options?.enableAdvancedColorSpace ?? false;
+    
+    if (this.enableCHROM) {
+      this.chromProcessor = new CHROMProcessor(300);
+    }
+    if (this.enableWavelet) {
+      this.waveletFilter = new WaveletFilter(30, 6);
+    }
+    if (this.enableLMS) {
+      this.lmsFilter = new LMSAdaptiveFilter(32, 0.01, true);
+    }
+    if (this.enableAdvancedColorSpace) {
+      this.colorSpaceAnalyzer = new AdvancedColorSpaceAnalyzer();
+    }
   }
 
   async initialize(): Promise<void> { this.reset(); }
@@ -242,7 +283,52 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // --- FILTERING ---
     this.rawSignalBuf.push(source.value);
-    const filtered = this.bandpassFilter.filter(source.value);
+    let filtered = this.bandpassFilter.filter(source.value);
+    
+    // --- ADVANCED PROCESSING: CHROM (chrominance-based extraction) ---
+    let chromOutput: number | null = null;
+    if (this.enableCHROM && this.chromProcessor) {
+      chromOutput = this.chromProcessor.processFrame(roi.rawRed, roi.rawGreen, roi.rawBlue);
+      // Use CHROM output as additional signal source if available
+      if (chromOutput !== null) {
+        // Blend with current source based on quality
+        const chromQuality = this.chromProcessor.getQualityMetrics();
+        if (chromQuality.snr > 20) {
+          filtered = filtered * 0.7 + chromOutput * 0.3;
+        }
+      }
+    }
+    
+    // --- ADVANCED PROCESSING: Wavelet denoising ---
+    if (this.enableWavelet && this.waveletFilter && this.filteredBuf.length >= 30) {
+      // Convert buffer to Float64Array for wavelet processing
+      const signalArray = new Float64Array(this.filteredBuf.length);
+      for (let i = 0; i < this.filteredBuf.length; i++) {
+        signalArray[i] = this.filteredBuf.get(i);
+      }
+      
+      // Apply wavelet denoising
+      const denoised = this.waveletFilter.denoise(signalArray, 0.15);
+      // Use the most recent denoised value
+      filtered = denoised[denoised.length - 1];
+      
+      // Reset wavelet filter for next frame (avoids state accumulation)
+      this.waveletFilter.reset();
+    }
+    
+    // --- ADVANCED PROCESSING: LMS adaptive filtering for motion artifacts ---
+    if (this.enableLMS && this.lmsFilter && motionArtifact) {
+      // Use motion score as pseudo-reference for LMS
+      const motionReference = this.motionScore;
+      const lmsResult = this.lmsFilter.process(filtered, motionReference);
+      filtered = lmsResult.output;
+      
+      // Auto-tune step size based on convergence
+      if (this.frameCount % 30 === 0) {
+        this.lmsFilter.autoTuneStepSize();
+      }
+    }
+    
     this.filteredBuf.push(filtered);
 
     // Derivatives for morphology analysis
@@ -645,6 +731,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.frameTimeBuf.clear();
     this.roiMask.reset();
     this.pressureEstimator.reset();
+    
+    // Reset advanced processing modules
+    this.chromProcessor?.reset();
+    this.waveletFilter?.reset();
+    this.lmsFilter?.reset();
+    this.colorSpaceAnalyzer?.reset();
+    
     this.frameCount = 0;
     this.lastLogTime = 0;
     this.lastFrameTime = 0;
