@@ -58,6 +58,8 @@ export interface BPMHypothesis {
   finalBpm: number;
   confidence: number;
   dominantSource: 'peak' | 'spectral' | 'autocorr' | 'median';
+  /** Acuerdo temporal (picos/RR) vs espectral [0..1] */
+  temporalSpectralAgreement?: number;
 }
 
 export interface HeartBeatResult {
@@ -105,4 +107,7 @@ export interface HeartBeatDebug {
     amplitude?: number;
     flags: BeatFlags;
   }>;
+  /** Acuerdo global detectores temporal vs espectral */
+  temporalSpectralAgreement?: number;
+  spectralConfidence?: number;
 }

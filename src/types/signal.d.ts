@@ -9,7 +9,12 @@ export type ExtendedContactState =
   | 'UNSTABLE_CONTACT'
   | 'STABLE_CONTACT'
   | 'SATURATED_CONTACT'
-  | 'EXCESSIVE_PRESSURE';
+  | 'EXCESSIVE_PRESSURE'
+  | 'PARTIAL_CONTACT'
+  | 'CONTACT_UNSTABLE'
+  | 'CONTACT_STABLE_WARMUP'
+  | 'MEASUREMENT_READY'
+  | 'MEASUREMENT_DEGRADED';
 
 export type PressureState = 'LOW_PRESSURE' | 'OPTIMAL_PRESSURE' | 'HIGH_PRESSURE';
 
@@ -47,6 +52,33 @@ export interface ProcessedSignal {
     hasPulsatility: boolean;
     pulsatilityValue: number;
   };
+  /** Telemetría del pipeline (debug / panel) */
+  pipelineDebug?: {
+    fingerMeasurementState?: string;
+    topRois?: Array<{
+      id: number;
+      row: number;
+      col: number;
+      score: number;
+      meanR: number;
+      meanG: number;
+      meanB: number;
+      clipRatio: number;
+      acdcProxy: number;
+      rejectedReason?: string;
+    }>;
+    fusionWeights?: Record<string, number>;
+    fusionCollapse?: boolean;
+    windowSQI?: {
+      score: number;
+      category: string;
+      reasons: string[];
+      gating: string;
+    };
+    frameTiming?: { intervalMs: number; effectiveFps: number; droppedEstimate: number };
+    profiler?: Record<string, number>;
+    fingerFeatures?: Record<string, number>;
+  };
 }
 
 export interface ProcessingError {
@@ -60,6 +92,8 @@ export interface SignalProcessor {
   start: () => void;
   stop: () => void;
   calibrate: () => Promise<boolean>;
+  processFrame?: (imageData: ImageData, frameTimestamp?: number) => void;
+  processFrameDual?: (detectionImageData: ImageData, extractionImageData: ImageData, frameTimestamp?: number) => void;
   onSignalReady?: (signal: ProcessedSignal) => void;
   onError?: (error: ProcessingError) => void;
 }

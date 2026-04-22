@@ -361,10 +361,23 @@ export class AdaptiveROIMask {
       uniformity = Math.max(0, Math.min(1, 1 - cv));
     }
 
-    // Center coverage (inner 3x3 of 7x7)
-    const centerIndices = [16, 17, 18, 23, 24, 25, 30, 31, 32];
-    const centerCount = centerIndices.filter(ti => coarseMask[ti] === 1).length;
-    const centerCov = centerCount / centerIndices.length;
+    // Cobertura central: rejilla interna ~3x3 relativa al tamaño de grilla
+    const cw = Math.max(1, Math.floor(gridWidth / 3));
+    const ch = Math.max(1, Math.floor(gridHeight / 3));
+    const x0 = Math.floor((gridWidth - cw) / 2);
+    const y0 = Math.floor((gridHeight - ch) / 2);
+    let centerCount = 0;
+    let centerTotal = 0;
+    for (let yy = y0; yy < y0 + ch; yy++) {
+      for (let xx = x0; xx < x0 + cw; xx++) {
+        const ti = yy * gridWidth + xx;
+        if (ti >= 0 && ti < coarseMask.length) {
+          centerTotal++;
+          if (coarseMask[ti] === 1) centerCount++;
+        }
+      }
+    }
+    const centerCov = centerTotal > 0 ? centerCount / centerTotal : 0;
 
     const brightness = validTileIndices.length > 0
       ? brightSum / validTileIndices.length : 0;

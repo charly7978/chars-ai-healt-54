@@ -2,6 +2,8 @@
  * HEARTBEAT PROCESSOR V2 — LAYERED ARCHITECTURE
  */
 import { RingBuffer } from './signal-processing/RingBuffer';
+import { estimateHrNarrowbank } from './signal-processing/SpectralHrEstimator';
+import { BeatQualityAssessor } from './signal-processing/BeatQualityAssessor';
 import type {
   BeatCandidate, AcceptedBeat, BeatFlags, BPMHypothesis,
   HeartBeatResult, HeartBeatDebug
@@ -25,9 +27,14 @@ export class HeartBeatProcessor {
 
   private smoothBPM = 0;
   private spectralBPM = 0;
+  private spectralConfidence = 0;
+  private spectralPeakRatio = 0;
   private autocorrBPM = 0;
   private medianRRBPM = 0;
   private lastHypothesis: BPMHypothesis | null = null;
+  private temporalSpectralAgreement = 0;
+  private windowSQIUpstream = 0.45;
+  private fingerMeasurementState = '';
 
   private lastPeakTime = 0;
   private lastPeakValue = 0;
@@ -71,6 +78,9 @@ export class HeartBeatProcessor {
       activeSource?: string;
       perfusionIndex?: number;
       positionDrifting?: boolean;
+      windowSQI?: number;
+      fingerMeasurementState?: string;
+      effectiveSampleRate?: number;
     }
   ): HeartBeatResult {
     this.frameCount++;
@@ -84,6 +94,12 @@ export class HeartBeatProcessor {
         upstreamContext.pressureState === 'LOW_PRESSURE' ? 0.15 : 0;
       this.contactStable = upstreamContext.contactState === 'STABLE_CONTACT';
       this.sourceSwitchRecent = false;
+      if (typeof upstreamContext.windowSQI === 'number') {
+        this.windowSQIUpstream = Math.max(0, Math.min(1, upstreamContext.windowSQI));
+      }
+      if (upstreamContext.fingerMeasurementState) {
+        this.fingerMeasurementState = upstreamContext.fingerMeasurementState;
+      }
     }
 
     this.signalBuf.push(filteredValue);
@@ -105,7 +121,7 @@ export class HeartBeatProcessor {
     }
 
     const { normalizedValue, normRange } = this.normalizeSignal(filteredValue);
-    this.updatePeriodicityEstimates();
+    if (this.frameCount % 22 === 0) this.updateSpectralHr();
     this.updateThreshold(normRange);
 
     const timeSinceLastPeak = this.lastPeakTime > 0 ? now - this.lastPeakTime : 1e9;
@@ -143,7 +159,7 @@ export class HeartBeatProcessor {
         this.lastPeakTime = now;
         this.lastPeakValue = candidate.amplitude;
 
-        currentBeatSQI = this.computeBeatSQI(candidate);
+        currentBeatSQI = this.computeBeatSQI(candidate, this.lastPeakTime > 0 ? timeSinceLastPeak : 650);
         currentFlags = this.computeFlags(candidate, timeSinceLastPeak, expectedRR);
 
         const accepted: AcceptedBeat = {
@@ -182,7 +198,14 @@ export class HeartBeatProcessor {
 
     const hypothesis = this.fuseBPM();
     this.lastHypothesis = hypothesis;
-    const bpmConfidence = this.computeBPMConfidence(hypothesis);
+    let bpmConfidence = this.computeBPMConfidence(hypothesis);
+    bpmConfidence *= 0.35 + 0.65 * this.windowSQIUpstream;
+    if (this.fingerMeasurementState && this.fingerMeasurementState !== 'MEASUREMENT_READY') {
+      bpmConfidence *= 0.35;
+    }
+    if (this.temporalSpectralAgreement < 0.35 && this.spectralBPM > 0 && this.medianRRBPM > 0) {
+      bpmConfidence *= 0.55;
+    }
     const globalSQI = this.computeGlobalSQI();
 
     const debug: HeartBeatDebug = {
@@ -211,6 +234,8 @@ export class HeartBeatProcessor {
         amplitude: undefined,
         flags: beat.flags,
       })),
+      temporalSpectralAgreement: this.temporalSpectralAgreement,
+      spectralConfidence: this.spectralConfidence,
     };
 
     return {
@@ -494,6 +519,17 @@ export class HeartBeatProcessor {
     this.autocorrBPM = fromAutocorrelation;
     const fromSpectral = this.spectralBPM;
 
+    const tempoMid = fromMedianIBI > 0 ? fromMedianIBI : fromTrimmedIBI > 0 ? fromTrimmedIBI : fromAutocorrelation;
+    if (tempoMid > 0 && fromSpectral > 0 && this.spectralConfidence > 0.12) {
+      this.temporalSpectralAgreement = 1 - Math.min(1, Math.abs(tempoMid - fromSpectral) / Math.max(15, tempoMid));
+    } else if (fromSpectral > 0 && this.spectralConfidence > 0.42) {
+      this.temporalSpectralAgreement = 0.45;
+    } else {
+      this.temporalSpectralAgreement = tempoMid > 0 && fromAutocorrelation > 0
+        ? 1 - Math.min(1, Math.abs(tempoMid - fromAutocorrelation) / Math.max(15, tempoMid))
+        : 0;
+    }
+
     const hasEnoughPeaks = this.consecutivePeaks >= 3;
     const peakDomainReliable = hasEnoughPeaks && this.getAvgBeatSQI() > 35;
 
@@ -522,16 +558,36 @@ export class HeartBeatProcessor {
       confidence = 0;
     }
 
+    if (finalBpm > 0 && fromSpectral > 0 && this.spectralConfidence > 0.2) {
+      if (this.temporalSpectralAgreement < 0.18) {
+        finalBpm = finalBpm * 0.35 + fromSpectral * 0.65;
+        dominantSource = 'spectral';
+      } else if (this.temporalSpectralAgreement > 0.72) {
+        finalBpm = finalBpm * 0.9 + fromSpectral * 0.1;
+      }
+    }
+
     if (finalBpm > 0) {
       if (this.smoothBPM === 0) this.smoothBPM = finalBpm;
       else {
         const diff = Math.abs(finalBpm - this.smoothBPM) / Math.max(1, this.smoothBPM);
-        const alpha = diff > 0.25 ? 0.08 : diff > 0.12 ? 0.18 : 0.28;
+        const alpha =
+          this.temporalSpectralAgreement < 0.25 ? Math.min(0.12, diff > 0.25 ? 0.08 : 0.12) : diff > 0.25 ? 0.08 : diff > 0.12 ? 0.18 : 0.28;
         this.smoothBPM = this.smoothBPM * (1 - alpha) + finalBpm * alpha;
       }
     }
 
-    return { fromLastIBI, fromMedianIBI, fromTrimmedIBI, fromAutocorrelation, fromSpectral, finalBpm: this.smoothBPM, confidence, dominantSource };
+    return {
+      fromLastIBI,
+      fromMedianIBI,
+      fromTrimmedIBI,
+      fromAutocorrelation,
+      fromSpectral,
+      finalBpm: this.smoothBPM,
+      confidence,
+      dominantSource,
+      temporalSpectralAgreement: this.temporalSpectralAgreement,
+    };
   }
 
   private computeMedianRRBPM(): number {
@@ -591,20 +647,36 @@ export class HeartBeatProcessor {
     this.smoothBPM = this.smoothBPM * (1 - alpha) + instantBPM * alpha;
   }
 
-  private computeBeatSQI(c: BeatCandidate): number {
-    let sqi = 0;
-    sqi += Math.min(30, c.morphologyScore * 0.3);
-    sqi += c.detectorAgreement * 20;
-    sqi += Math.max(0, c.templateCorrelation) * 15;
-    sqi += Math.min(15, c.rhythmScore * 0.15);
-    sqi += c.localBandPowerRatio * 8;
-    sqi += Math.min(7, this.upstreamSQI * 0.07);
-    sqi += this.contactStable ? 5 : 0;
-    sqi -= c.localMotionPenalty * 15;
-    sqi -= c.localClipPenalty * 12;
-    sqi -= c.localPressurePenalty * 10;
-    if (this.sourceSwitchRecent) sqi -= 5;
-    return clamp(Math.round(sqi), 0, 100);
+  private computeBeatSQI(c: BeatCandidate, timeSinceLast: number): number {
+    const prevIbi = this.rrIntervals.length > 0 ? this.rrIntervals[this.rrIntervals.length - 1] : 0;
+    const expected = this.getExpectedRR();
+    const refractoryOk = timeSinceLast >= 280 && (expected <= 0 || timeSinceLast >= expected * 0.52);
+    const bq = BeatQualityAssessor.assess({
+      prominence: c.prominence,
+      widthMs: c.widthMs,
+      upSlope: c.upSlope,
+      downSlope: c.downSlope,
+      refractoryOk,
+      templateCorrelation: c.templateCorrelation,
+      ibiMs: timeSinceLast,
+      prevIbiMs: prevIbi,
+      motionPenalty: this.motionPenalty,
+      clipPenalty: this.clipPenalty,
+    });
+    let legacy = 0;
+    legacy += Math.min(30, c.morphologyScore * 0.3);
+    legacy += c.detectorAgreement * 20;
+    legacy += Math.max(0, c.templateCorrelation) * 15;
+    legacy += Math.min(15, c.rhythmScore * 0.15);
+    legacy += c.localBandPowerRatio * 8;
+    legacy += Math.min(7, this.upstreamSQI * 0.07);
+    legacy += this.contactStable ? 5 : 0;
+    legacy -= c.localMotionPenalty * 15;
+    legacy -= c.localClipPenalty * 12;
+    legacy -= c.localPressurePenalty * 10;
+    if (this.sourceSwitchRecent) legacy -= 5;
+    const blended = bq.score0100 * 0.58 + clamp(legacy, 0, 100) * 0.42;
+    return clamp(Math.round(blended), 0, 100);
   }
 
   private computeFlags(c: BeatCandidate, timeSinceLast: number, expectedRR: number): BeatFlags {
@@ -756,27 +828,43 @@ export class HeartBeatProcessor {
     this.peakThreshold = this.peakThreshold * 0.82 + target * 0.18;
   }
 
-  private updatePeriodicityEstimates(): void {
-    if (this.frameCount % 60 === 0 && this.signalBuf.length >= 120) {
-      this.spectralBPM = this.estimateAutocorrBPM();
+  private updateSpectralHr(): void {
+    if (this.signalBuf.length < 90) return;
+    const n = Math.min(128, this.signalBuf.length);
+    const arr = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      arr[i] = this.signalBuf.get(this.signalBuf.length - n + i);
     }
+    const sr = this.estimateSampleRate();
+    const res = estimateHrNarrowbank(arr, sr);
+    this.spectralBPM = res.bpm;
+    this.spectralConfidence = res.confidence;
+    this.spectralPeakRatio = res.peakRatio;
   }
 
   private vibrate(): void {
-    try { if (navigator.vibrate) navigator.vibrate(55); } catch {}
+    try {
+      if (navigator.vibrate) navigator.vibrate(55);
+    } catch {
+      /* vibración no disponible */
+    }
   }
 
   private setupAudio(): void {
     const unlock = async () => {
       if (this.audioUnlocked) return;
       try {
-        const AC = window.AudioContext || (window as any).webkitAudioContext;
-        this.audioContext = new AC();
+        const W = window as Window & { webkitAudioContext?: typeof AudioContext };
+        const ACtor = window.AudioContext ?? W.webkitAudioContext;
+        if (!ACtor) return;
+        this.audioContext = new ACtor();
         await this.audioContext.resume();
         this.audioUnlocked = true;
         document.removeEventListener('touchstart', unlock);
         document.removeEventListener('click', unlock);
-      } catch {}
+      } catch {
+        /* audio no disponible */
+      }
     };
     document.addEventListener('touchstart', unlock, { passive: true });
     document.addEventListener('click', unlock, { passive: true });
@@ -800,7 +888,9 @@ export class HeartBeatProcessor {
       osc.start(t);
       osc.stop(t + 0.12);
       this.lastBeepTime = now;
-    } catch {}
+    } catch {
+      /* reproducción omitida */
+    }
   }
 
   getRRIntervals(): number[] { return [...this.rrIntervals]; }
@@ -823,6 +913,8 @@ export class HeartBeatProcessor {
         suspiciousCount: this.suspiciousCount, templateCorrelation: 0,
         morphologyScore: 0, consecutivePeaks: this.consecutivePeaks,
         recentAcceptedBeats: [],
+        temporalSpectralAgreement: 0,
+        spectralConfidence: 0,
       },
     };
   }
@@ -836,6 +928,11 @@ export class HeartBeatProcessor {
     this.acceptedBeats = [];
     this.smoothBPM = 0;
     this.spectralBPM = 0;
+    this.spectralConfidence = 0;
+    this.spectralPeakRatio = 0;
+    this.temporalSpectralAgreement = 0;
+    this.windowSQIUpstream = 0.45;
+    this.fingerMeasurementState = '';
     this.autocorrBPM = 0;
     this.medianRRBPM = 0;
     this.lastPeakTime = 0;

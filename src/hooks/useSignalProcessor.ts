@@ -124,6 +124,20 @@ export const useSignalProcessor = () => {
     }
   }, [isProcessing]);
 
+  const processFrameDual = useCallback(
+    (detectionImageData: ImageData, extractionImageData: ImageData, frameTimestamp?: number) => {
+      if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
+        return;
+      }
+      try {
+        processorRef.current.processFrameDual(detectionImageData, extractionImageData, frameTimestamp);
+      } catch {
+        /* hot path */
+      }
+    },
+    [isProcessing]
+  );
+
   // OBTENER ESTADÍSTICAS RGB REALES PARA SpO2
   const getRGBStats = useCallback(() => {
     if (!processorRef.current) {
@@ -160,6 +174,7 @@ export const useSignalProcessor = () => {
     stopProcessing,
     calibrate,
     processFrame,
+    processFrameDual,
     getRGBStats,
     getPositionQuality,
     getPPGDebugInfo,

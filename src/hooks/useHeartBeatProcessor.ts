@@ -15,6 +15,7 @@ export const useHeartBeatProcessor = () => {
   const [currentBPM, setCurrentBPM] = useState<number>(0);
   const [confidence, setConfidence] = useState<number>(0);
   const [signalQuality, setSignalQuality] = useState<number>(0);
+  const [arrhythmiaActive, setArrhythmiaActive] = useState(false);
 
   const sessionIdRef = useRef<string>('');
   const processingStateRef = useRef<'IDLE' | 'ACTIVE' | 'RESETTING'>('IDLE');
@@ -77,6 +78,9 @@ export const useHeartBeatProcessor = () => {
       activeSource?: string;
       perfusionIndex?: number;
       positionDrifting?: boolean;
+      windowSQI?: number;
+      fingerMeasurementState?: string;
+      effectiveSampleRate?: number;
     }
   ): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
@@ -135,12 +139,15 @@ export const useHeartBeatProcessor = () => {
     processingStateRef.current = 'ACTIVE';
   }, []);
 
-  const setArrhythmiaState = useCallback((_isArrhythmiaDetected: boolean) => {}, []);
+  const setArrhythmiaState = useCallback((isArrhythmiaDetected: boolean) => {
+    setArrhythmiaActive(isArrhythmiaDetected);
+  }, []);
 
   return {
     currentBPM,
     confidence,
     signalQuality,
+    arrhythmiaActive,
     processSignal,
     reset,
     setArrhythmiaState,

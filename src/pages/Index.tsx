@@ -12,6 +12,7 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import type { ProcessedSignal } from "@/types/signal";
 
 const NON_ALERT_RHYTHMS = new Set([
   'SIN ARRITMIAS',
@@ -133,11 +134,12 @@ const Index = () => {
     startProcessing, 
     stopProcessing, 
     lastSignal, 
-    processFrame, 
+    processFrameDual, 
     isProcessing, 
     framesProcessed,
     getRGBStats,
     getPositionQuality,
+    getPPGDebugInfo,
   } = useSignalProcessor();
   
   const { 
@@ -164,13 +166,14 @@ const Index = () => {
   const { saveMeasurement } = useSaveMeasurement();
   const { analysis, isAnalyzing, analyzeVitals, clearAnalysis } = useHealthAnalysis();
   const [showAIAnalysis, setShowAIAnalysis] = useState(false);
+  const [showPpgDebug, setShowPpgDebug] = useState(false);
 
   useEffect(() => {
     // Inicializar canvas de detección (resolución reducida)
     if (!detectionCanvasRef.current) {
       detectionCanvasRef.current = document.createElement('canvas');
-      detectionCanvasRef.current.width = 224; // Lado menor 192-256
-      detectionCanvasRef.current.height = 224;
+      detectionCanvasRef.current.width = 160;
+      detectionCanvasRef.current.height = 120;
       detectionCtxRef.current = detectionCanvasRef.current.getContext('2d', { 
         willReadFrequently: true,
         alpha: false 
@@ -287,7 +290,7 @@ const Index = () => {
       }
     };
 
-    const captureOneFrame = (nowOrMetadata?: number | any) => {
+    const captureOneFrame = (frameTimestampInput?: number) => {
       if (!isProcessingRef.current) return;
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
@@ -295,28 +298,17 @@ const Index = () => {
         return;
       }
 
-      let frameTimestamp: number | undefined;
-      if (typeof nowOrMetadata === 'object' && nowOrMetadata?.mediaTime != null) {
-        frameTimestamp = performance.now();
-      } else if (typeof nowOrMetadata === 'number') {
-        frameTimestamp = nowOrMetadata;
-      } else {
-        frameTimestamp = performance.now();
-      }
+      const frameTimestamp =
+        typeof frameTimestampInput === 'number' && isFinite(frameTimestampInput) ? frameTimestampInput : performance.now();
 
       try {
-        // ADQUISICIÓN DUAL: capturar en ambos canvas
-        // Canvas de detección (resolución reducida) - para detección de dedo
         detectionCtx.drawImage(video, 0, 0, detectionCanvas.width, detectionCanvas.height);
         const detectionImageData = detectionCtx.getImageData(0, 0, detectionCanvas.width, detectionCanvas.height);
-        
-        // Canvas de extracción (resolución media) - para extracción de señal PPG
+
         extractionCtx.drawImage(video, 0, 0, extractionCanvas.width, extractionCanvas.height);
         const extractionImageData = extractionCtx.getImageData(0, 0, extractionCanvas.width, extractionCanvas.height);
-        
-        // Procesar frame con canvas de extracción (compatibilidad con processFrame existente)
-        // TODO: Implementar processFrameDual que use ambos canvas cuando se integren los nuevos módulos
-        processFrame(extractionImageData, frameTimestamp);
+
+        processFrameDual(detectionImageData, extractionImageData, frameTimestamp);
         
         // Ejecutar tareas por frame
         for (const task of schedulerRef.current.frameTasks) {
@@ -334,7 +326,15 @@ const Index = () => {
     const scheduleNext = (video: HTMLVideoElement) => {
       if (!isProcessingRef.current) return;
       if ('requestVideoFrameCallback' in video) {
-        (video as any).requestVideoFrameCallback((now: number, metadata: any) => captureOneFrame(metadata?.presentationTime ?? now));
+        (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: (now: number, meta?: unknown) => void) => void }).requestVideoFrameCallback(
+          (now: number, metadata?: { expectedDisplayTime?: number }) => {
+            const ts =
+              metadata && typeof metadata.expectedDisplayTime === 'number' && isFinite(metadata.expectedDisplayTime)
+                ? metadata.expectedDisplayTime
+                : now;
+            captureOneFrame(ts);
+          }
+        );
       } else {
         frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
       }
@@ -342,7 +342,7 @@ const Index = () => {
     
     console.log('🎬 Dual acquisition started (detection + extraction)');
     captureOneFrame(performance.now());
-  }, [processFrame]);
+  }, [processFrameDual]);
 
   const stopFrameLoop = useCallback(() => {
     isProcessingRef.current = false;
@@ -499,8 +499,7 @@ const Index = () => {
     if (!lastSignal || !isMonitoring) return;
     
     const signalValue = lastSignal.filteredValue;
-    const contactState = (lastSignal as any).contactState || (lastSignal.fingerDetected ? 'STABLE_CONTACT' : 'NO_CONTACT');
-    const ls = lastSignal as typeof lastSignal & {
+    const ls = lastSignal as ProcessedSignal & {
       clipHighRatio?: number;
       clipLowRatio?: number;
       pressureState?: 'LOW_PRESSURE' | 'OPTIMAL_PRESSURE' | 'HIGH_PRESSURE';
@@ -508,10 +507,15 @@ const Index = () => {
       sourceStability?: number;
     };
     const positionQuality = getPositionQuality();
+    const ext = ls.extendedContactState;
+    const win = ls.pipelineDebug?.windowSQI;
+    const windowGate = win ? win.gating !== 'reject' && win.score >= 0.26 : false;
     const stableHumanSignal =
-      contactState === 'STABLE_CONTACT' &&
-      (lastSignal.quality || 0) >= 12 &&
-      (lastSignal.perfusionIndex || 0) >= 0.005;
+      ls.contactState === 'STABLE_CONTACT' &&
+      ext === 'MEASUREMENT_READY' &&
+      windowGate &&
+      (lastSignal.quality || 0) >= 10 &&
+      (lastSignal.perfusionIndex || 0) >= 0.12;
 
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
@@ -529,17 +533,20 @@ const Index = () => {
 
     const heartBeatResult = processHeartBeat(
       signalValue,
-      contactState,
+      ls.contactState,
       lastSignal.timestamp,
       {
         quality: lastSignal.quality,
-        contactState,
+        contactState: ls.contactState,
         motionArtifact: lastSignal.motionArtifact,
         pressureState: ppgPressure ?? (pressureOptimal ? 'OPTIMAL_PRESSURE' : 'LOW_PRESSURE'),
         clipHigh,
         clipLow,
         perfusionIndex: lastSignal.perfusionIndex,
         positionDrifting: positionQuality.drifting,
+        windowSQI: ls.pipelineDebug?.windowSQI?.score ?? 0,
+        fingerMeasurementState: ext,
+        effectiveSampleRate: ls.estimatedSampleRate,
       }
     );
 
@@ -781,6 +788,37 @@ const Index = () => {
 
         <div className="relative z-10 h-full">
           <div className="flex-1 h-full">
+            <button
+              type="button"
+              onClick={() => setShowPpgDebug((v) => !v)}
+              className="fixed bottom-[72px] right-2 z-30 px-2 py-1 text-[10px] bg-slate-900/95 text-amber-200 rounded border border-slate-600 font-mono"
+            >
+              {showPpgDebug ? 'DBG ▾' : 'DBG ▴'}
+            </button>
+            {showPpgDebug && isMonitoring && lastSignal && (() => {
+              const dbg = getPPGDebugInfo();
+              const pd = lastSignal.pipelineDebug;
+              return (
+                <div className="fixed bottom-2 left-1 right-1 z-30 max-h-[40vh] overflow-y-auto bg-black/92 text-[10px] text-lime-100 font-mono p-2 rounded border border-slate-600 shadow-xl">
+                  <div className="text-amber-300 font-bold mb-1">PPG / contacto / ROI / fusión</div>
+                  <div>estado_dedo: {pd?.fingerMeasurementState ?? '—'} | contact_export: {lastSignal.contactState}</div>
+                  <div>ventana_SQI: {pd?.windowSQI ? `${(pd.windowSQI.score * 100).toFixed(0)}% ${pd.windowSQI.gating} [${pd.windowSQI.reasons.slice(0, 2).join('; ')}]` : '—'}</div>
+                  <div>FPS~: {pd?.frameTiming?.effectiveFps?.toFixed(1) ?? '—'} | Δt_ms: {pd?.frameTiming?.intervalMs?.toFixed(1) ?? '—'} | drops≈{pd?.frameTiming?.droppedEstimate ?? 0}</div>
+                  <div>fusión_colapso: {pd?.fusionCollapse ? 'SÍ' : 'no'} | fuente: {lastSignal.activeSource ?? '—'}</div>
+                  <div className="mt-1 text-slate-400">top ROI (id/score/clip):</div>
+                  <div className="whitespace-pre-wrap break-all">
+                    {(pd?.topRois ?? []).slice(0, 5).map((r) => `${r.id}:${r.score.toFixed(2)}/${r.clipRatio.toFixed(2)}`).join(' | ')}
+                  </div>
+                  <div className="mt-1 text-slate-400">pesos fusión (muestra):</div>
+                  <div className="whitespace-pre-wrap break-all">
+                    {pd?.fusionWeights ? JSON.stringify(Object.fromEntries(Object.entries(pd.fusionWeights).filter(([, w]) => w > 0.04).slice(0, 8))) : '—'}
+                  </div>
+                  <div className="mt-1 text-slate-400">profiler_ms (EWMA):</div>
+                  <div>{dbg?.profiler ? JSON.stringify(dbg.profiler) : JSON.stringify(pd?.profiler ?? {})}</div>
+                  <div className="mt-1">BPM_ui: {heartRate || '—'} | calidad_proc: {(lastSignal.quality ?? 0).toFixed(0)}</div>
+                </div>
+              );
+            })()}
             <PPGSignalMeter 
               value={heartbeatSignal}
               quality={lastSignal?.quality || 0}
