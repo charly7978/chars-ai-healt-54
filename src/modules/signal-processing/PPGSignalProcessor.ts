@@ -65,6 +65,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   // --- Multi-source measurements for fusion ---
   private sourceMeasurements: SourceMeasurement[] = [];
+  
+  // --- Kalman HR buffer for output ---
+  private kalmanHRBuffer: RingBuffer = new RingBuffer(30);
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -342,41 +345,121 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       chromOutput = this.chromProcessor.processFrame(roi.rawRed, roi.rawGreen, roi.rawBlue);
       // Use CHROM output as additional signal source if available
       if (chromOutput !== null) {
-        // Blend with current source based on quality
         const chromQuality = this.chromProcessor.getQualityMetrics();
-        if (chromQuality.snr > 20) {
-          filtered = filtered * 0.7 + chromOutput * 0.3;
+        if (chromQuality.snr > 15) {
+          filtered = filtered * 0.6 + chromOutput * 0.4;
+        }
+      }
+    }
+    
+    // --- ADVANCED PROCESSING: POS (Plane Orthogonal to Skin) ---
+    let posOutput: number | null = null;
+    if (this.enablePOS && this.posProcessor) {
+      posOutput = this.posProcessor.processFrame(roi.rawRed, roi.rawGreen, roi.rawBlue);
+      if (posOutput !== null) {
+        const posQuality = this.posProcessor.getQualityMetrics();
+        if (posQuality.snr > 15) {
+          filtered = filtered * 0.6 + posOutput * 0.4;
         }
       }
     }
     
     // --- ADVANCED PROCESSING: Wavelet denoising ---
     if (this.enableWavelet && this.waveletFilter && this.filteredBuf.length >= 30) {
-      // Convert buffer to Float64Array for wavelet processing
       const signalArray = new Float64Array(this.filteredBuf.length);
       for (let i = 0; i < this.filteredBuf.length; i++) {
         signalArray[i] = this.filteredBuf.get(i);
       }
       
-      // Apply wavelet denoising
       const denoised = this.waveletFilter.denoise(signalArray, 0.15);
-      // Use the most recent denoised value
       filtered = denoised[denoised.length - 1];
-      
-      // Reset wavelet filter for next frame (avoids state accumulation)
       this.waveletFilter.reset();
     }
     
-    // --- ADVANCED PROCESSING: LMS adaptive filtering for motion artifacts ---
-    if (this.enableLMS && this.lmsFilter && motionArtifact) {
-      // Use motion score as pseudo-reference for LMS
+    // --- ADVANCED PROCESSING: EMD (Empirical Mode Decomposition) ---
+    if (this.enableEMD && this.emdProcessor && this.filteredBuf.length >= 50) {
+      const signalArray = new Float64Array(this.filteredBuf.length);
+      for (let i = 0; i < this.filteredBuf.length; i++) {
+        signalArray[i] = this.filteredBuf.get(i);
+      }
+      
+      const denoised = this.emdProcessor.denoise(signalArray, 3);
+      filtered = denoised[denoised.length - 1];
+    }
+    
+    // --- ADVANCED PROCESSING: RLS adaptive filtering (faster convergence than LMS) ---
+    if (this.enableRLS && this.rlsFilter && motionArtifact) {
+      const motionReference = this.motionScore;
+      const rlsResult = this.rlsFilter.process(filtered, motionReference);
+      filtered = rlsResult.output;
+    }
+    
+    // --- ADVANCED PROCESSING: LMS adaptive filtering (fallback if RLS not enabled) ---
+    if (this.enableLMS && this.lmsFilter && !this.enableRLS && motionArtifact) {
       const motionReference = this.motionScore;
       const lmsResult = this.lmsFilter.process(filtered, motionReference);
       filtered = lmsResult.output;
       
-      // Auto-tune step size based on convergence
       if (this.frameCount % 30 === 0) {
         this.lmsFilter.autoTuneStepSize();
+      }
+    }
+    
+    // --- ADVANCED PROCESSING: ICA (Independent Component Analysis) ---
+    if (this.enableICA && this.icaProcessor && this.filteredBuf.length >= 100) {
+      const signals: Float64Array[] = [
+        new Float64Array(this.redBuf.length),
+        new Float64Array(this.greenBuf.length),
+        new Float64Array(this.blueBuf.length)
+      ];
+      
+      for (let i = 0; i < this.redBuf.length; i++) {
+        signals[0][i] = this.redBuf.get(i);
+        signals[1][i] = this.greenBuf.get(i);
+        signals[2][i] = this.blueBuf.get(i);
+      }
+      
+      const icaResult = this.icaProcessor.process(signals);
+      const cardiac = this.icaProcessor.identifyCardiacComponent(icaResult.components);
+      
+      if (cardiac.cardiacComponent && cardiac.cardiacComponent.length > 0) {
+        const latestICA = cardiac.cardiacComponent[cardiac.cardiacComponent.length - 1];
+        filtered = filtered * 0.7 + latestICA * 0.3;
+      }
+    }
+    
+    // --- ADVANCED PROCESSING: Kalman Filter for HR smoothing ---
+    let kalmanHR: number | null = null;
+    if (this.enableKalman && this.kalmanFilter) {
+      // Convert filtered signal to instantaneous HR estimate
+      const currentHR = filtered > 0 ? Math.abs(filtered * 60) : 72;
+      const kalmanResult = this.kalmanFilter.update(currentHR, 5);
+      kalmanHR = kalmanResult.heartRate;
+      this.kalmanHRBuffer.push(kalmanHR);
+    }
+    
+    // --- ADVANCED PROCESSING: Bayesian Fusion for multi-source ---
+    if (this.enableBayesian && this.bayesianFusion) {
+      const measurements = [];
+      
+      if (chromOutput !== null) {
+        measurements.push({ value: Math.abs(chromOutput * 60), uncertainty: 5, reliability: 0.85 });
+      }
+      if (posOutput !== null) {
+        measurements.push({ value: Math.abs(posOutput * 60), uncertainty: 5, reliability: 0.85 });
+      }
+      if (kalmanHR !== null) {
+        measurements.push({ value: kalmanHR, uncertainty: 3, reliability: 0.9 });
+      }
+      
+      if (measurements.length >= 2) {
+        const fusionResult = this.bayesianFusion.fuse(measurements);
+        this.sourceMeasurements = measurements;
+        // Use fused HR for quality estimation
+        if (fusionResult.confidence > 0.5) {
+          // Update prior based on fusion
+          this.bayesianFusion.updatePrior(measurements);
+        }
       }
     }
     
@@ -795,6 +878,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.emdProcessor?.reset();
     this.colorSpaceAnalyzer?.reset();
     this.sourceMeasurements = [];
+    this.kalmanHRBuffer.clear();
     
     this.frameCount = 0;
     this.lastLogTime = 0;
@@ -890,6 +974,15 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) : 0,
     };
+  }
+
+  getKalmanHR(): number {
+    if (this.kalmanHRBuffer.length === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < this.kalmanHRBuffer.length; i++) {
+      sum += this.kalmanHRBuffer.get(i);
+    }
+    return sum / this.kalmanHRBuffer.length;
   }
 
   getPositionQuality() {
