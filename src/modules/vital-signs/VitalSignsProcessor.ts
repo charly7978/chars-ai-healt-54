@@ -1,5 +1,6 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessor } from './BloodPressureProcessor';
+import { ArrhythmiaProcessor, type ArrhythmiaDetection } from './arrhythmia-processor';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
 import { SpO2Processor, type SpO2Result } from './SpO2Processor';
 import { SpO2Calibrator } from './SpO2Calibrator';
@@ -70,6 +71,7 @@ export interface RGBData {
 export class VitalSignsProcessor {
   private bloodPressureProcessor: BloodPressureProcessor;
   private rhythmClassifier: RhythmClassifier;
+  private arrhythmiaProcessor: ArrhythmiaProcessor;
   private spo2Processor: SpO2Processor;
   private spo2Calibrator: SpO2Calibrator;
   private glucoseProcessor: GlucoseResearchProcessor;
@@ -143,6 +145,7 @@ export class VitalSignsProcessor {
 
     this.bloodPressureProcessor = new BloodPressureProcessor();
     this.rhythmClassifier = new RhythmClassifier();
+    this.arrhythmiaProcessor = new ArrhythmiaProcessor();
     this.glucoseProcessor = new GlucoseResearchProcessor();
     this.lipidProcessor = new LipidResearchProcessor();
   }
@@ -407,6 +410,9 @@ export class VitalSignsProcessor {
     }
 
     if (beatInputs && beatInputs.length >= 8) {
+      const arrhythmiaDetection = this.arrhythmiaProcessor.processRRData(rrData);
+      
+      // Also keep rhythmClassifier for additional rhythm classification
       const rhythmResult = this.rhythmClassifier.classify(
         beatInputs,
         Math.max(this.upstreamContext.avgBeatSQI, 20),
@@ -414,13 +420,18 @@ export class VitalSignsProcessor {
       );
       this.lastRhythm = rhythmResult;
 
-      const ev = rhythmResult.recentEvents?.length ?? 0;
-      this.measurements.arrhythmiaStatus = `${rhythmResult.rhythmLabel}|${ev}`;
+      // Use new arrhythmia detection
+      const detectionHistory = this.arrhythmiaProcessor.getDetectionHistory();
+      const ev = detectionHistory.filter(d => d.isDetected).length;
+      
+      this.measurements.arrhythmiaStatus = arrhythmiaDetection.isDetected 
+        ? `${arrhythmiaDetection.type}|${ev}`
+        : `${rhythmResult.rhythmLabel}|${ev}`;
       this.measurements.arrhythmiaCount = ev;
       this.measurements.lastArrhythmiaData = {
         timestamp: Date.now(),
-        rmssd: rhythmResult.features.rmssd,
-        rrVariation: rhythmResult.features.rrCV * 100,
+        rmssd: arrhythmiaDetection.metrics.rmssd,
+        rrVariation: arrhythmiaDetection.metrics.rrCV * 100,
       };
     }
   }
@@ -547,6 +558,8 @@ export class VitalSignsProcessor {
     this.spo2Processor.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
+    this.arrhythmiaProcessor.reset();
+    this.rhythmClassifier.reset();
     this.rhythmClassifier.reset();
     this.measurements.arrhythmiaCount = 0;
     this.measurements.arrhythmiaStatus = 'SINUS_STABLE|0';

@@ -364,20 +364,39 @@ const PPGSignalMeter = ({
     
     if (rhythm.isAlert) {
       const pulse = (Math.sin(now / 100) + 1) / 2;
-      ctx.fillStyle = `rgba(239, 68, 68, ${0.3 + pulse * 0.4})`;
-      ctx.fillRect(W - panelW - 3, panelY + panelH + 4, panelW, 30);
-      ctx.strokeStyle = COLORS.TEXT_DANGER;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(W - panelW - 3, panelY + panelH + 4, panelW, 30);
-      ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
-      ctx.fillStyle = COLORS.TEXT_DANGER;
+      
+      // Panel de arritmia independiente y prominente en rojo
+      const arrhythmiaPanelY = panelY + panelH + 8;
+      const arrhythmiaPanelH = 50;
+      const arrhythmiaPanelW = panelW + 6;
+      
+      // Fondo pulsante en rojo
+      ctx.fillStyle = `rgba(220, 38, 38, ${0.2 + pulse * 0.3})`;
+      ctx.fillRect(W - panelW - 3, arrhythmiaPanelY, arrhythmiaPanelW, arrhythmiaPanelH);
+      
+      // Borde rojo grueso
+      ctx.strokeStyle = '#dc2626';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(W - panelW - 3, arrhythmiaPanelY, arrhythmiaPanelW, arrhythmiaPanelH);
+      
+      // Título "ARRITMIA DETECTADA"
+      ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#dc2626';
       ctx.textAlign = 'center';
-      const label = rhythm.count > 0 ? `${rhythm.display} x${rhythm.count}` : rhythm.display;
-      ctx.fillText(`⚠ ${label}`, W - panelW / 2 - 3, panelY + panelH + 22);
+      ctx.fillText('⚠ ARRITMIA DETECTADA', W - panelW / 2 - 3, arrhythmiaPanelY + 18);
+      
+      // Tipo de arritmia
+      ctx.font = 'bold 14px "SF Mono", Consolas, monospace';
+      ctx.fillStyle = '#ef4444';
+      const label = rhythm.count > 0 ? `${rhythm.display} (x${rhythm.count})` : rhythm.display;
+      ctx.fillText(label, W - panelW / 2 - 3, arrhythmiaPanelY + 36);
+      
+      // Métricas adicionales
       if (rawArrhythmiaData && rawArrhythmiaData.rmssd > 0) {
         ctx.font = '10px "SF Mono", Consolas, monospace';
-        ctx.fillStyle = 'rgba(239, 68, 68, 0.8)';
-        ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms`, W - panelW / 2 - 3, panelY + panelH + 42);
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.9)';
+        ctx.fillText(`RMSSD: ${rawArrhythmiaData.rmssd.toFixed(0)}ms | CV: ${(rawArrhythmiaData.rrVariation).toFixed(1)}%`, 
+                   W - panelW / 2 - 3, arrhythmiaPanelY + 52);
       }
     }
   }, []);
