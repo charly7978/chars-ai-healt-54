@@ -135,7 +135,7 @@ const VitalSign = ({
       )}
       onClick={handleClick}
     >
-      <div className="text-[11px] font-medium uppercase tracking-wider text-black/70 mb-1">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-white mb-1">
         {label}
       </div>
       
@@ -197,17 +197,17 @@ const VitalSign = ({
       )}
 
       {showDetails && detailedInfo && (
-        <div className="absolute inset-x-0 top-full z-50 mt-2 p-4 bg-white/90 backdrop-blur-sm rounded-lg shadow-lg text-left">
-          <div className="text-sm font-medium text-gray-900 mb-2">Información adicional:</div>
+        <div className="absolute inset-x-0 top-full z-50 mt-2 p-4 bg-gray-900/90 backdrop-blur-sm rounded-lg shadow-lg text-left">
+          <div className="text-sm font-medium text-white mb-2">Información adicional:</div>
           <div className="grid grid-cols-2 gap-2 mb-2">
             <div className="text-xs">
-              <span className="font-medium">Mediana:</span> {median} {unit}
+              <span className="font-medium text-white/70">Mediana:</span> {median} {unit}
             </div>
             <div className="text-xs">
-              <span className="font-medium">Promedio ponderado:</span> {average} {unit}
+              <span className="font-medium text-white/70">Promedio ponderado:</span> {average} {unit}
             </div>
           </div>
-          <div className="text-xs mt-1 text-gray-800">
+          <div className="text-xs mt-1 text-white/80">
             {detailedInfo.interpretation}
           </div>
         </div>

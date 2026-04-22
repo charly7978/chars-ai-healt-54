@@ -552,9 +552,6 @@ const Index = () => {
         sourceStability,
         avgBeatSQI: heartBeatResult.beatSQI || heartBeatResult.debug.lastBeatSQI || 0,
         beatCount: heartBeatResult.debug.beatsAccepted || heartBeatResult.rrData?.intervals.length || 0,
-        sampleRate,
-        detectorAgreement,
-        rrStability,
       });
 
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
@@ -767,11 +764,11 @@ const Index = () => {
                         <StatusIcon className={`w-5 h-5 text-${statusColor}-400`} />
                         <div>
                           <h3 className="text-white text-sm font-bold tracking-wide">MEDICIÓN COMPLETADA</h3>
-                          <p className={`text-${statusColor}-400 text-[10px] font-semibold tracking-wider`}>{statusText}</p>
+                          <p className={`text-${statusColor}-300 text-[10px] font-semibold tracking-wider`}>{statusText}</p>
                         </div>
                       </div>
                       <button onClick={() => setMeasurementSummary(null)} className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors">
-                        <X className="w-4 h-4 text-slate-400" />
+                        <X className="w-4 h-4 text-white" />
                       </button>
                     </div>
                   </div>
@@ -781,15 +778,15 @@ const Index = () => {
                       <div className="bg-slate-900/80 rounded-xl p-3 text-center border border-slate-800/50">
                         <Heart className="w-4 h-4 text-red-400 mx-auto mb-1" fill="currentColor" />
                         <div className="text-white text-2xl font-bold leading-none">{avgBpm}</div>
-                        <div className="text-slate-500 text-[9px] mt-1 font-medium">BPM PROMEDIO</div>
+                        <div className="text-white/70 text-[9px] mt-1 font-medium">BPM PROMEDIO</div>
                       </div>
                       <div className="bg-slate-900/80 rounded-xl p-3 text-center border border-slate-800/50">
                         <Activity className="w-4 h-4 text-cyan-400 mx-auto mb-1" />
                         <div className="text-white text-2xl font-bold leading-none">
                           {vitalSigns.spo2 > 0 ? vitalSigns.spo2 : '--'}
-                          <span className="text-sm text-slate-400">%</span>
+                          <span className="text-sm text-white/70">%</span>
                         </div>
-                        <div className="text-slate-500 text-[9px] mt-1 font-medium">SpO₂</div>
+                        <div className="text-white/70 text-[9px] mt-1 font-medium">SpO₂</div>
                       </div>
                     </div>
 
@@ -798,7 +795,7 @@ const Index = () => {
                         <Shield className="w-5 h-5 text-blue-400" />
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
-                            <div className="text-slate-500 text-[9px] font-medium">PRESIÓN ARTERIAL</div>
+                            <div className="text-white/70 text-[9px] font-medium">PRESIÓN ARTERIAL</div>
                             {vitalSigns.pressure.confidence && vitalSigns.pressure.confidence !== 'INSUFFICIENT' && (
                               <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded-full ${
                                 vitalSigns.pressure.confidence === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400' :
@@ -811,7 +808,7 @@ const Index = () => {
                           </div>
                           <div className="text-white text-lg font-bold">
                             {vitalSigns.pressure.systolic}/{vitalSigns.pressure.diastolic}
-                            <span className="text-xs text-slate-500 ml-1">mmHg</span>
+                            <span className="text-xs text-white/70 ml-1">mmHg</span>
                           </div>
                         </div>
                       </div>
@@ -819,10 +816,10 @@ const Index = () => {
 
                     <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-800/50">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-slate-400 text-[10px] font-semibold tracking-wide">ANÁLISIS DE RITMO</span>
+                        <span className="text-white text-[10px] font-semibold tracking-wide">ANÁLISIS DE RITMO</span>
                         <div className="flex items-center gap-1">
-                          <Clock className="w-3 h-3 text-slate-500" />
-                          <span className="text-slate-500 text-[9px]">30s</span>
+                          <Clock className="w-3 h-3 text-white/70" />
+                          <span className="text-white/70 text-[9px]">30s</span>
                         </div>
                       </div>
                       <div className="mb-2">

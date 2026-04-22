@@ -48,9 +48,20 @@ export const useSignalProcessor = () => {
       setError(error);
     };
 
-    // CREAR PROCESADOR ÚNICO
+    // CREAR PROCESADOR ÚNICO CON MÁXIMAS CAPACIDADES AVANZADAS
     try {
-      processorRef.current = new PPGSignalProcessor(onSignalReady, onError);
+      processorRef.current = new PPGSignalProcessor(onSignalReady, onError, {
+        enableCHROM: true,
+        enablePOS: true,
+        enableWavelet: true,
+        enableLMS: true,
+        enableRLS: true,
+        enableICA: true,
+        enableKalman: true,
+        enableBayesian: true,
+        enableEMD: true,
+        enableAdvancedColorSpace: true
+      });
       initializationState.current = 'READY';
     } catch (err) {
       initializationState.current = 'ERROR';

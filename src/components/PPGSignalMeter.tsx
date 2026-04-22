@@ -761,7 +761,7 @@ const PPGSignalMeter = ({
         <button onClick={onStartMeasurement} className={`font-semibold text-sm transition-colors border-t border-slate-700/50 ${isMonitoring ? 'bg-red-500/20 hover:bg-red-500/30 active:bg-red-500/40 text-red-300 border-r' : 'bg-emerald-600/20 hover:bg-emerald-600/30 active:bg-emerald-600/40 text-emerald-400 border-r'}`}>
           {isMonitoring ? 'DETENER' : 'INICIAR'}
         </button>
-        <button onClick={handleReset} className="bg-slate-700/20 hover:bg-slate-700/30 active:bg-slate-700/40 text-slate-300 font-semibold text-sm transition-colors border-t border-slate-700/50">
+        <button onClick={handleReset} className="bg-slate-700/20 hover:bg-slate-700/30 active:bg-slate-700/40 text-white font-semibold text-sm transition-colors border-t border-slate-700/50">
           RESET
         </button>
       </div>
