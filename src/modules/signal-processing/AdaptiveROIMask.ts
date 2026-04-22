@@ -259,15 +259,12 @@ export class AdaptiveROIMask {
       this.tileConfidence[ti] = this.tileConfidence[ti] * temporalSmoothing + frameScore * centerBias * (1 - temporalSmoothing);
       const combinedScore = this.tileConfidence[ti] * 0.6 + frameScore * 0.4;
 
-      // Coherence (simulado - será calculado con SpatialCoherence)
-      const coherence = 1 - variancePenalty;
-
       tileMetrics[ti] = {
         meanR, meanG, meanB, redDominance,
         rgRatio, rbRatio, intensity, luminance, chromaticity,
         clipHighPct, clipLowPct,
         validPixels: cnt, centerBias, variance,
-        score: combinedScore, temporalScore: this.tileConfidence[ti], coherence
+        score: combinedScore, temporalScore: this.tileConfidence[ti], coherence: 0
       };
       allScores.push(combinedScore);
     }
