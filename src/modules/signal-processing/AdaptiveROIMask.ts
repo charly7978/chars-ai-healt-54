@@ -1,13 +1,13 @@
 /**
- * ADAPTIVE ROI MASK V2
+ * ADAPTIVE ROI MASK V3
  * 
- * Per-frame adaptive mask that:
- * 1. Uses dynamic 7x7 tile grid
- * 2. Excludes saturated/clipped pixels
- * 3. Computes per-tile hemoglobin score with center bias
- * 4. Adapts thresholds using frame percentiles (no fixed absolutes)
- * 5. Temporal intersection to prevent mask deformation
- * 6. Separates coarse ROI (detection) from fine ROI (extraction)
+ * Per-frame adaptive mask with:
+ * 1. Configurable tile grid (default 7x7)
+ * 2. Enhanced per-tile metrics (chromaticity, variance, coherence)
+ * 3. Coarse mask for detection, fine mask for extraction
+ * 4. Adaptive thresholding with percentiles
+ * 5. Temporal smoothing and hysteresis
+ * 6. Detailed telemetry for debugging
  */
 
 export interface TileMetrics {
@@ -16,13 +16,18 @@ export interface TileMetrics {
   meanB: number;
   redDominance: number;
   rgRatio: number;
+  rbRatio: number;
   intensity: number;
-  clipHighPct: number;  // % pixels > 250
-  clipLowPct: number;   // % pixels < 5
+  luminance: number;
+  chromaticity: { r: number; g: number; b: number };
+  clipHighPct: number;
+  clipLowPct: number;
   validPixels: number;
   centerBias: number;
+  variance: number;
   score: number;
   temporalScore: number;
+  coherence: number;
 }
 
 export interface ROIMaskResult {
@@ -42,35 +47,92 @@ export interface ROIMaskResult {
   validPixelCount: number;
   totalPixelCount: number;
   tileScores: Float64Array;
+  tileMetrics: TileMetrics[];
+  coarseMask: Uint8Array; // Para detección
+  fineMask: Uint8Array; // Para extracción
+  activeTileIndices: number[];
+  telemetry: {
+    frameCount: number;
+    maskStability: number;
+    avgTileScore: number;
+    topTileScore: number;
+    gridWidth: number;
+    gridHeight: number;
+  };
 }
 
-const GRID = 7; // 7x7 tile grid
-const TOTAL_TILES = GRID * GRID;
-const CLIP_HIGH = 250;
-const CLIP_LOW = 5;
+export interface ROIMaskConfig {
+  gridWidth: number;
+  gridHeight: number;
+  clipHigh: number;
+  clipLow: number;
+  sampleStep: number;
+  roiFraction: number;
+  centerBiasStrength: number;
+  temporalSmoothing: number;
+  minValidPixelsPerTile: number;
+}
+
+const DEFAULT_CONFIG: ROIMaskConfig = {
+  gridWidth: 7,
+  gridHeight: 7,
+  clipHigh: 250,
+  clipLow: 5,
+  sampleStep: 2,
+  roiFraction: 0.80,
+  centerBiasStrength: 1.4,
+  temporalSmoothing: 0.7,
+  minValidPixelsPerTile: 3
+};
 
 export class AdaptiveROIMask {
-  private tileConfidence: Float64Array = new Float64Array(TOTAL_TILES);
-  private prevMaskValid: Uint8Array = new Uint8Array(TOTAL_TILES).fill(0);
+  private config: ROIMaskConfig;
+  private totalTiles: number;
+  private tileConfidence: Float64Array;
+  private prevMaskValid: Uint8Array;
   private frameCount = 0;
+  private maskStabilityHistory: number[] = [];
 
-  // Reusable per-tile accumulator arrays to avoid per-frame allocation
-  private tileR = new Float64Array(TOTAL_TILES);
-  private tileG = new Float64Array(TOTAL_TILES);
-  private tileB = new Float64Array(TOTAL_TILES);
-  private tileCount = new Int32Array(TOTAL_TILES);
-  private tileClipHigh = new Int32Array(TOTAL_TILES);
-  private tileClipLow = new Int32Array(TOTAL_TILES);
-  private tileValid = new Int32Array(TOTAL_TILES);
+  // Reusable per-tile accumulator arrays
+  private tileR: Float64Array;
+  private tileG: Float64Array;
+  private tileB: Float64Array;
+  private tileCount: Int32Array;
+  private tileClipHigh: Int32Array;
+  private tileClipLow: Int32Array;
+  private tileValid: Int32Array;
+  private tileR2: Float64Array; // Para varianza
+  private tileG2: Float64Array;
+  private tileB2: Float64Array;
+
+  constructor(config: Partial<ROIMaskConfig> = {}) {
+    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.totalTiles = this.config.gridWidth * this.config.gridHeight;
+    
+    this.tileConfidence = new Float64Array(this.totalTiles);
+    this.prevMaskValid = new Uint8Array(this.totalTiles).fill(0);
+    
+    this.tileR = new Float64Array(this.totalTiles);
+    this.tileG = new Float64Array(this.totalTiles);
+    this.tileB = new Float64Array(this.totalTiles);
+    this.tileCount = new Int32Array(this.totalTiles);
+    this.tileClipHigh = new Int32Array(this.totalTiles);
+    this.tileClipLow = new Int32Array(this.totalTiles);
+    this.tileValid = new Int32Array(this.totalTiles);
+    this.tileR2 = new Float64Array(this.totalTiles);
+    this.tileG2 = new Float64Array(this.totalTiles);
+    this.tileB2 = new Float64Array(this.totalTiles);
+  }
 
   process(imageData: ImageData): ROIMaskResult {
     this.frameCount++;
     const data = imageData.data;
     const w = imageData.width;
     const h = imageData.height;
+    const { gridWidth, gridHeight, clipHigh, clipLow, sampleStep, roiFraction, centerBiasStrength, temporalSmoothing, minValidPixelsPerTile } = this.config;
 
-    // Central ROI: 80% of min dimension
-    const roiSize = Math.min(w, h) * 0.80;
+    // Central ROI
+    const roiSize = Math.min(w, h) * roiFraction;
     const sx = Math.floor((w - roiSize) / 2);
     const sy = Math.floor((h - roiSize) / 2);
     const ex = sx + Math.floor(roiSize);
@@ -82,6 +144,9 @@ export class AdaptiveROIMask {
     this.tileR.fill(0);
     this.tileG.fill(0);
     this.tileB.fill(0);
+    this.tileR2.fill(0);
+    this.tileG2.fill(0);
+    this.tileB2.fill(0);
     this.tileCount.fill(0);
     this.tileClipHigh.fill(0);
     this.tileClipLow.fill(0);
@@ -91,25 +156,23 @@ export class AdaptiveROIMask {
     let totalClipHigh = 0;
     let totalClipLow = 0;
 
-    // Sample every 2nd pixel for performance (still denser than 3)
-    const step = 2;
-    for (let y = sy; y < ey; y += step) {
+    // Sample pixels
+    for (let y = sy; y < ey; y += sampleStep) {
       const rowOff = y * w;
-      for (let x = sx; x < ex; x += step) {
-        const i = (rowOff + x) << 2; // *4
+      for (let x = sx; x < ex; x += sampleStep) {
+        const i = (rowOff + x) << 2;
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
 
-        const tileX = Math.min(GRID - 1, ((x - sx) * GRID / roiW) | 0);
-        const tileY = Math.min(GRID - 1, ((y - sy) * GRID / roiH) | 0);
-        const ti = tileY * GRID + tileX;
+        const tileX = Math.min(gridWidth - 1, ((x - sx) * gridWidth / roiW) | 0);
+        const tileY = Math.min(gridHeight - 1, ((y - sy) * gridHeight / roiH) | 0);
+        const ti = tileY * gridWidth + tileX;
 
         totalPixels++;
 
-        // Check clipping
-        const isClipHigh = r >= CLIP_HIGH || g >= CLIP_HIGH || b >= CLIP_HIGH;
-        const isClipLow = r <= CLIP_LOW && g <= CLIP_LOW && b <= CLIP_LOW;
+        const isClipHigh = r >= clipHigh || g >= clipHigh || b >= clipHigh;
+        const isClipLow = r <= clipLow && g <= clipLow && b <= clipLow;
 
         if (isClipHigh) {
           this.tileClipHigh[ti]++;
@@ -120,30 +183,34 @@ export class AdaptiveROIMask {
           totalClipLow++;
         }
 
-        // Only accumulate valid (non-clipped) pixels for signal
         if (!isClipHigh && !isClipLow) {
           this.tileR[ti] += r;
           this.tileG[ti] += g;
           this.tileB[ti] += b;
+          this.tileR2[ti] += r * r;
+          this.tileG2[ti] += g * g;
+          this.tileB2[ti] += b * b;
           this.tileValid[ti]++;
         }
         this.tileCount[ti]++;
       }
     }
 
-    // --- Compute per-tile metrics ---
-    // First pass: collect all tile scores for percentile-based thresholding
-    const tileMetrics: TileMetrics[] = new Array(TOTAL_TILES);
+    // Compute per-tile metrics
+    const tileMetrics: TileMetrics[] = new Array(this.totalTiles);
     const allScores: number[] = [];
 
-    for (let ti = 0; ti < TOTAL_TILES; ti++) {
+    for (let ti = 0; ti < this.totalTiles; ti++) {
       const cnt = this.tileValid[ti];
       const total = this.tileCount[ti];
       if (cnt === 0 || total === 0) {
         tileMetrics[ti] = {
           meanR: 0, meanG: 0, meanB: 0, redDominance: 0,
-          rgRatio: 0, intensity: 0, clipHighPct: 0, clipLowPct: 0,
-          validPixels: 0, centerBias: 0, score: 0, temporalScore: 0
+          rgRatio: 0, rbRatio: 0, intensity: 0, luminance: 0,
+          chromaticity: { r: 0, g: 0, b: 0 },
+          clipHighPct: 0, clipLowPct: 0,
+          validPixels: 0, centerBias: 0, variance: 0,
+          score: 0, temporalScore: 0, coherence: 0
         };
         continue;
       }
@@ -152,18 +219,31 @@ export class AdaptiveROIMask {
       const meanG = this.tileG[ti] / cnt;
       const meanB = this.tileB[ti] / cnt;
       const intensity = meanR + meanG + meanB;
+      const luminance = 0.299 * meanR + 0.587 * meanG + 0.114 * meanB;
       const redDominance = meanR - (meanG + meanB) / 2;
       const rgRatio = meanG > 1 ? meanR / meanG : 0;
+      const rbRatio = meanB > 1 ? meanR / meanB : 0;
+      const chromaticity = {
+        r: intensity > 0 ? meanR / intensity : 0,
+        g: intensity > 0 ? meanG / intensity : 0,
+        b: intensity > 0 ? meanB / intensity : 0
+      };
       const clipHighPct = this.tileClipHigh[ti] / total;
       const clipLowPct = this.tileClipLow[ti] / total;
 
+      // Variance
+      const varR = (this.tileR2[ti] / cnt) - (meanR * meanR);
+      const varG = (this.tileG2[ti] / cnt) - (meanG * meanG);
+      const varB = (this.tileB2[ti] / cnt) - (meanB * meanB);
+      const variance = (varR + varG + varB) / 3;
+
       // Center bias
-      const gx = ti % GRID;
-      const gy = (ti / GRID) | 0;
-      const nx = GRID > 1 ? gx / (GRID - 1) : 0.5;
-      const ny = GRID > 1 ? gy / (GRID - 1) : 0.5;
+      const gx = ti % gridWidth;
+      const gy = Math.floor(ti / gridWidth);
+      const nx = gridWidth > 1 ? gx / (gridWidth - 1) : 0.5;
+      const ny = gridHeight > 1 ? gy / (gridHeight - 1) : 0.5;
       const dist = Math.sqrt((nx - 0.5) ** 2 + (ny - 0.5) ** 2);
-      const centerBias = Math.max(0.2, 1 - dist * 1.4);
+      const centerBias = Math.max(0.2, 1 - dist * centerBiasStrength);
 
       // Hemoglobin signature score
       const redScore = Math.max(0, Math.min(1, (rgRatio - 1.0) / 0.8));
@@ -171,35 +251,38 @@ export class AdaptiveROIMask {
       const brightScore = Math.max(0, Math.min(1, (intensity - 80) / 300));
       const clipPenalty = Math.min(1, (clipHighPct + clipLowPct) * 3);
       const validRatio = cnt / total;
+      const variancePenalty = Math.min(1, variance / 1000);
 
-      const frameScore = (redScore * 0.35 + domScore * 0.3 + brightScore * 0.15 + validRatio * 0.2) * (1 - clipPenalty);
+      const frameScore = (redScore * 0.3 + domScore * 0.25 + brightScore * 0.15 + validRatio * 0.2) * (1 - clipPenalty) * (1 - variancePenalty);
 
       // Temporal smoothing
-      this.tileConfidence[ti] = this.tileConfidence[ti] * 0.7 + frameScore * centerBias * 0.3;
-      const combinedScore = this.tileConfidence[ti] * 0.65 + frameScore * 0.35;
+      this.tileConfidence[ti] = this.tileConfidence[ti] * temporalSmoothing + frameScore * centerBias * (1 - temporalSmoothing);
+      const combinedScore = this.tileConfidence[ti] * 0.6 + frameScore * 0.4;
+
+      // Coherence (simulado - será calculado con SpatialCoherence)
+      const coherence = 1 - variancePenalty;
 
       tileMetrics[ti] = {
         meanR, meanG, meanB, redDominance,
-        rgRatio, intensity, clipHighPct, clipLowPct,
-        validPixels: cnt, centerBias,
-        score: combinedScore, temporalScore: this.tileConfidence[ti]
+        rgRatio, rbRatio, intensity, luminance, chromaticity,
+        clipHighPct, clipLowPct,
+        validPixels: cnt, centerBias, variance,
+        score: combinedScore, temporalScore: this.tileConfidence[ti], coherence
       };
       allScores.push(combinedScore);
     }
 
-    // --- Adaptive thresholding using percentiles ---
+    // Adaptive thresholding
     allScores.sort((a, b) => a - b);
     const p50 = allScores.length > 0 ? allScores[Math.floor(allScores.length * 0.5)] : 0;
-    const p25 = allScores.length > 0 ? allScores[Math.floor(allScores.length * 0.25)] : 0;
-    // Finger threshold: above p50, but at least 0.3
     const fingerThreshold = Math.max(0.25, p50 * 0.85);
 
-    // --- Identify valid finger tiles ---
-    const currentMask = new Uint8Array(TOTAL_TILES);
-    let fingerTileCount = 0;
+    // Identify valid finger tiles
+    const coarseMask = new Uint8Array(this.totalTiles);
+    const fineMask = new Uint8Array(this.totalTiles);
     const validTileIndices: number[] = [];
 
-    for (let ti = 0; ti < TOTAL_TILES; ti++) {
+    for (let ti = 0; ti < this.totalTiles; ti++) {
       const m = tileMetrics[ti];
       const isFingerTile =
         m.score > fingerThreshold &&
@@ -209,23 +292,31 @@ export class AdaptiveROIMask {
         m.intensity > 80 &&
         m.clipHighPct < 0.5 &&
         m.clipLowPct < 0.5 &&
-        m.validPixels > 3;
+        m.validPixels >= minValidPixelsPerTile;
 
       if (isFingerTile) {
-        currentMask[ti] = 1;
-        fingerTileCount++;
+        coarseMask[ti] = 1;
         validTileIndices.push(ti);
+      }
+      
+      // Fine mask: solo tiles con score alto y baja varianza
+      if (isFingerTile && m.score > fingerThreshold * 1.2 && m.variance < 500) {
+        fineMask[ti] = 1;
       }
     }
 
-    // Temporal intersection: penalize tiles that flip rapidly
+    // Temporal intersection
     let maskChangeCount = 0;
-    for (let ti = 0; ti < TOTAL_TILES; ti++) {
-      if (currentMask[ti] !== this.prevMaskValid[ti]) maskChangeCount++;
+    for (let ti = 0; ti < this.totalTiles; ti++) {
+      if (coarseMask[ti] !== this.prevMaskValid[ti]) maskChangeCount++;
     }
-    this.prevMaskValid.set(currentMask);
+    this.prevMaskValid.set(coarseMask);
+    
+    const maskStability = 1 - (maskChangeCount / this.totalTiles);
+    this.maskStabilityHistory.push(maskStability);
+    if (this.maskStabilityHistory.length > 30) this.maskStabilityHistory.shift();
 
-    // --- Weighted average over valid tiles (fine ROI) ---
+    // Weighted average over valid tiles
     let wR = 0, wG = 0, wB = 0, wTotal = 0;
     let brightSum = 0, brightSqSum = 0;
     let totalValidPx = 0;
@@ -244,7 +335,7 @@ export class AdaptiveROIMask {
 
     // Fallback to all tiles if no finger tiles
     if (wTotal === 0) {
-      for (let ti = 0; ti < TOTAL_TILES; ti++) {
+      for (let ti = 0; ti < this.totalTiles; ti++) {
         const m = tileMetrics[ti];
         if (m.validPixels === 0) continue;
         wR += m.meanR;
@@ -258,12 +349,12 @@ export class AdaptiveROIMask {
     const rawGreen = wTotal > 0 ? wG / wTotal : 0;
     const rawBlue = wTotal > 0 ? wB / wTotal : 0;
 
-    const coverageRatio = fingerTileCount / TOTAL_TILES;
+    const coverageRatio = validTileIndices.length / this.totalTiles;
     const avgFingerScore = validTileIndices.length > 0
       ? validTileIndices.reduce((s, ti) => s + tileMetrics[ti].score, 0) / validTileIndices.length
       : 0;
 
-    // Spatial uniformity among finger tiles
+    // Spatial uniformity
     let uniformity = 0;
     if (validTileIndices.length >= 3) {
       const scores = validTileIndices.map(ti => tileMetrics[ti].score);
@@ -275,7 +366,7 @@ export class AdaptiveROIMask {
 
     // Center coverage (inner 3x3 of 7x7)
     const centerIndices = [16, 17, 18, 23, 24, 25, 30, 31, 32];
-    const centerCount = centerIndices.filter(ti => currentMask[ti] === 1).length;
+    const centerCount = centerIndices.filter(ti => coarseMask[ti] === 1).length;
     const centerCov = centerCount / centerIndices.length;
 
     const brightness = validTileIndices.length > 0
@@ -283,8 +374,12 @@ export class AdaptiveROIMask {
     const brightnessVar = validTileIndices.length > 1
       ? (brightSqSum / validTileIndices.length) - brightness * brightness : 0;
 
-    const tileScores = new Float64Array(TOTAL_TILES);
-    for (let ti = 0; ti < TOTAL_TILES; ti++) tileScores[ti] = tileMetrics[ti].score;
+    const tileScores = new Float64Array(this.totalTiles);
+    for (let ti = 0; ti < this.totalTiles; ti++) tileScores[ti] = tileMetrics[ti].score;
+
+    const avgMaskStability = this.maskStabilityHistory.length > 0
+      ? this.maskStabilityHistory.reduce((a, b) => a + b, 0) / this.maskStabilityHistory.length
+      : 0;
 
     return {
       rawRed, rawGreen, rawBlue,
@@ -299,6 +394,18 @@ export class AdaptiveROIMask {
       validPixelCount: totalValidPx,
       totalPixelCount: totalPixels,
       tileScores,
+      tileMetrics,
+      coarseMask,
+      fineMask,
+      activeTileIndices: validTileIndices,
+      telemetry: {
+        frameCount: this.frameCount,
+        maskStability: avgMaskStability,
+        avgTileScore: avgFingerScore,
+        topTileScore: allScores.length > 0 ? allScores[allScores.length - 1] : 0,
+        gridWidth,
+        gridHeight
+      }
     };
   }
 
@@ -306,5 +413,6 @@ export class AdaptiveROIMask {
     this.tileConfidence.fill(0);
     this.prevMaskValid.fill(0);
     this.frameCount = 0;
+    this.maskStabilityHistory = [];
   }
 }

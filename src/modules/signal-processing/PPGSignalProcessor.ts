@@ -5,6 +5,15 @@ import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { SignalSourceRanker } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
+// Nuevos módulos
+import { ContactStateMachine, type ContactState as CSMContactState, type ContactStateInput, type ContactStateOutput } from './ContactStateMachine';
+import { FingerContactModel, type ContactModelOutput } from './FingerContactModel';
+import { TileTraceBank } from './TileTraceBank';
+import { BeerLambertExtractor, type SignalCandidate } from './BeerLambertExtractor';
+import { SpectralQuality } from './SpectralQuality';
+import { SpatialCoherence } from './SpatialCoherence';
+import { PressureModel, type PressureInput, type PressureOutput } from './PressureModel';
+import { UniformTimeResampler } from './UniformTimeResampler';
 
 // Extended contact states
 type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
@@ -28,6 +37,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private roiMask = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
   private sourceRanker = new SignalSourceRanker();
+  
+  // --- Nuevos módulos ---
+  private contactStateMachine = new ContactStateMachine();
+  private fingerContactModel = new FingerContactModel();
+  private tileTraceBank = new TileTraceBank();
+  private beerLambertExtractor = new BeerLambertExtractor();
+  private spectralQuality = new SpectralQuality();
+  private spatialCoherence = new SpatialCoherence();
+  private pressureModel = new PressureModel();
+  private timeResampler = new UniformTimeResampler(30);
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -636,56 +655,79 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.redDC = 0; this.redAC = 0;
     this.greenDC = 0; this.greenAC = 0;
     this.blueDC = 0; this.blueAC = 0;
-    this.sourceRanker.reset();
-    this.bandpassFilter.reset();
   }
 
   reset(): void {
-    this.resetSignalBuffers();
+    this.redBuf.clear();
+    this.greenBuf.clear();
+    this.blueBuf.clear();
+    this.rawSignalBuf.clear();
+    this.filteredBuf.clear();
+    this.vpgBuf.clear();
+    this.apgBuf.clear();
     this.frameTimeBuf.clear();
-    this.roiMask.reset();
-    this.pressureEstimator.reset();
-    
-    
-    this.frameCount = 0;
-    this.lastLogTime = 0;
-    this.lastFrameTime = 0;
+    this.redDC = 0; this.redAC = 0;
+    this.greenDC = 0; this.greenAC = 0;
+    this.blueDC = 0; this.blueAC = 0;
+    this.redBaseline = 0;
+    this.greenBaseline = 0;
+    this.blueBaseline = 0;
     this.estimatedSampleRate = 30;
-    this.realFps = 0;
-    this.fingerDetected = false;
+    this.lastFrameTime = 0;
+    this.frameCount = 0;
     this.contactState = 'NO_CONTACT';
     this.exportedContactState = 'NO_CONTACT';
+    this.fingerDetected = false;
     this.signalQuality = 0;
     this.fingerConfidenceCount = 0;
     this.fingerLostCount = 0;
     this.stableContactCount = 0;
-    this.smoothedRed = 0; this.smoothedGreen = 0; this.smoothedBlue = 0;
-    this.smoothedCoverage = 0; this.smoothedFingerScore = 0;
-    this.motionScore = 0;
-    this.lastAccel = { x: 0, y: 0, z: 0 };
-    this.activeSourceLabel = 'RG';
-    this.allSourceSQI = {};
-    this.sourceStableFrames = 0;
-    this.sourceStability = 0;
+    this.smoothedRed = 0;
+    this.smoothedGreen = 0;
+    this.smoothedBlue = 0;
+    this.smoothedCoverage = 0;
+    this.smoothedFingerScore = 0;
+    this.positionLocked = false;
+    this.lockedRedBase = 0;
+    this.lockedGreenBase = 0;
+    this.lockedCoverage = 0;
+    this.positionStabilityCount = 0;
+    this.positionDrifting = false;
+    this.positionDrift = 0;
+    this.positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
+    this.positionQualityScore = 0;
+    this.spatialUniformity = 0;
+    this.centerCoverage = 0;
     this.pressureState = 'LOW_PRESSURE';
     this.pressurePenalty = 1.0;
-    this.clipHighRatio = 0; this.clipLowRatio = 0;
-    this.resetBaselines();
-    this.bandpassFilter.setSampleRate(this.estimatedSampleRate);
-    // Position lock
-    this.positionLocked = false;
-    this.lockedRedBase = 0; this.lockedGreenBase = 0; this.lockedCoverage = 0;
-    this.positionStabilityCount = 0;
-    this.spatialUniformity = 0; this.centerCoverage = 0;
-    this.positionDrift = 0; this.positionDrifting = false;
-    this.positionQualityScore = 0;
-    this.positionGuidance = 'COLOQUE SU DEDO';
+    this.motionScore = 0;
+    this.debugEnabled = false;
+    this.lastROIResult = null;
+    this.activeSourceLabel = 'RG';
+    this.allSourceSQI = {};
+    this.clipHighRatio = 0;
+    this.clipLowRatio = 0;
+    this.processingTimeMs = 0;
+    this.realFps = 0;
+    this.sourceStability = 0;
+    this.lastSourceLabel = 'RG';
+    this.sourceStableFrames = 0;
+    this.bandpassFilter.reset();
+    this.roiMask.reset();
+    this.pressureEstimator.reset();
+    this.sourceRanker.reset();
+    // Reset nuevos módulos
+    this.contactStateMachine.reset();
+    this.fingerContactModel.reset();
+    this.tileTraceBank.reset();
+    this.beerLambertExtractor.reset();
+    this.timeResampler.clear();
   }
 
   // ══════════════════════════════════════════════════════
   //  MOTION LISTENER
   // ══════════════════════════════════════════════════════
-
+// ... (rest of the code remains the same)
   private handleMotionEvent = (event: DeviceMotionEvent) => {
     const acc = event.accelerationIncludingGravity;
     if (!acc || acc.x === null || acc.y === null || acc.z === null) return;

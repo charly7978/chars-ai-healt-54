@@ -1,12 +1,33 @@
 /**
- * BANDPASS FILTER V2 — ADAPTIVE SAMPLE RATE + DETRENDING
+ * BANDPASS FILTER V3 — ROBUST DETRENDING + OUTLIER REJECTION
  * 
- * IIR Butterworth 2nd order: HPF 0.5Hz + LPF 5Hz
- * - Recalculates coefficients only on significant sample rate change
- * - Includes robust baseline detrending before bandpass
- * - Separates: raw → detrended → bandpassed
+ * IIR Butterworth 2nd order: HPF + LPF configurable
+ * - Robust detrending (EWMA + median fallback)
+ * - Outlier rejection (winsorization)
+ * - Configurable cutoff frequencies
+ * - Optional light smoothing
+ * - Adaptive sample rate
  */
+export interface BandpassConfig {
+  hpfFreq: number;      // High-pass cutoff (Hz)
+  lpfFreq: number;      // Low-pass cutoff (Hz)
+  detrendAlpha: number; // EWMA alpha for baseline
+  winsorize: boolean;   // Enable outlier rejection
+  winsorizePct: number; // Percentile for winsorization (0-1)
+  smoothAlpha: number;  // Optional smoothing (0 = disabled)
+}
+
+const DEFAULT_CONFIG: BandpassConfig = {
+  hpfFreq: 0.5,
+  lpfFreq: 5.0,
+  detrendAlpha: 0.015,
+  winsorize: true,
+  winsorizePct: 0.05,
+  smoothAlpha: 0
+};
+
 export class BandpassFilter {
+  private config: BandpassConfig;
   private hpfB = [0, 0, 0];
   private hpfA = [1, 0, 0];
   private lpfB = [0, 0, 0];
@@ -15,17 +36,26 @@ export class BandpassFilter {
   private hpfState = { x: [0, 0, 0], y: [0, 0, 0] };
   private lpfState = { x: [0, 0, 0], y: [0, 0, 0] };
 
-  // Detrending state (exponential moving average baseline)
+  // Robust detrending state
   private baselineEWMA = 0;
   private baselineInitialized = false;
-  private readonly DETREND_ALPHA = 0.015; // slow-moving baseline
+  private medianBuffer: number[] = [];
+  private readonly MEDIAN_WINDOW = 60;
+
+  // Outlier rejection state
+  private historyBuffer: number[] = [];
+  private readonly HISTORY_WINDOW = 30;
+
+  // Smoothing state
+  private lastSmoothed = 0;
 
   private sampleRate: number;
   private lastComputedRate = 0;
   private initialized = false;
 
-  constructor(sampleRate: number = 30) {
+  constructor(sampleRate: number = 30, config: Partial<BandpassConfig> = {}) {
     this.sampleRate = sampleRate;
+    this.config = { ...DEFAULT_CONFIG, ...config };
     this.computeCoefficients();
   }
 
@@ -33,8 +63,8 @@ export class BandpassFilter {
     const fs = this.sampleRate;
     this.lastComputedRate = fs;
 
-    // HPF at 0.5Hz — removes DC + slow drift
-    const fcHp = 0.5;
+    // HPF at configurable frequency
+    const fcHp = this.config.hpfFreq;
     const kHp = Math.tan(Math.PI * fcHp / fs);
     const normHp = 1 / (1 + Math.sqrt(2) * kHp + kHp * kHp);
     this.hpfB[0] = normHp;
@@ -44,8 +74,8 @@ export class BandpassFilter {
     this.hpfA[1] = 2 * (kHp * kHp - 1) * normHp;
     this.hpfA[2] = (1 - Math.sqrt(2) * kHp + kHp * kHp) * normHp;
 
-    // LPF at 5Hz — removes HF noise, keeps up to 300 BPM
-    const fcLp = 5.0;
+    // LPF at configurable frequency
+    const fcLp = this.config.lpfFreq;
     const kLp = Math.tan(Math.PI * fcLp / fs);
     const normLp = 1 / (1 + Math.sqrt(2) * kLp + kLp * kLp);
     this.lpfB[0] = kLp * kLp * normLp;
@@ -77,28 +107,81 @@ export class BandpassFilter {
     return state.y[0];
   }
 
-  /** Detrend: remove slow baseline wander */
+  /** Robust detrend: remove slow baseline wander with median fallback */
   detrend(value: number): number {
     if (!this.baselineInitialized) {
       this.baselineEWMA = value;
       this.baselineInitialized = true;
       return 0;
     }
-    this.baselineEWMA = this.baselineEWMA * (1 - this.DETREND_ALPHA) + value * this.DETREND_ALPHA;
+    
+    // Update median buffer
+    this.medianBuffer.push(value);
+    if (this.medianBuffer.length > this.MEDIAN_WINDOW) {
+      this.medianBuffer.shift();
+    }
+    
+    // Use EWMA for baseline, fallback to median if EWMA drifts too much
+    this.baselineEWMA = this.baselineEWMA * (1 - this.config.detrendAlpha) + value * this.config.detrendAlpha;
+    
+    // Check if EWMA is drifting significantly from median
+    if (this.medianBuffer.length >= 30) {
+      const sorted = [...this.medianBuffer].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      const drift = Math.abs(this.baselineEWMA - median);
+      if (drift > Math.abs(median) * 0.2) {
+        // EWMA is drifting, use median instead
+        this.baselineEWMA = median;
+      }
+    }
+    
     return value - this.baselineEWMA;
   }
 
-  /** Full pipeline: detrend → HPF → LPF */
+  /** Outlier rejection via winsorization */
+  private winsorize(value: number): number {
+    if (!this.config.winsorize) return value;
+    
+    this.historyBuffer.push(value);
+    if (this.historyBuffer.length > this.HISTORY_WINDOW) {
+      this.historyBuffer.shift();
+    }
+    
+    if (this.historyBuffer.length < 10) return value;
+    
+    const sorted = [...this.historyBuffer].sort((a, b) => a - b);
+    const pLow = sorted[Math.floor(this.historyBuffer.length * this.config.winsorizePct)];
+    const pHigh = sorted[Math.floor(this.historyBuffer.length * (1 - this.config.winsorizePct))];
+    
+    return Math.max(pLow, Math.min(pHigh, value));
+  }
+
+  /** Full pipeline: winsorize → detrend → HPF → LPF → smooth */
   filter(value: number): number {
     if (!this.initialized || !isFinite(value)) return 0;
-    const detrended = this.detrend(value);
+    
+    // Outlier rejection
+    const cleaned = this.winsorize(value);
+    
+    // Detrend
+    const detrended = this.detrend(cleaned);
+    
+    // Bandpass
     const hpf = this.applyBiquad(detrended, this.hpfB, this.hpfA, this.hpfState);
-    return this.applyBiquad(hpf, this.lpfB, this.lpfA, this.lpfState);
+    const bandpassed = this.applyBiquad(hpf, this.lpfB, this.lpfA, this.lpfState);
+    
+    // Optional smoothing
+    if (this.config.smoothAlpha > 0) {
+      this.lastSmoothed = this.lastSmoothed * (1 - this.config.smoothAlpha) + bandpassed * this.config.smoothAlpha;
+      return this.lastSmoothed;
+    }
+    
+    return bandpassed;
   }
 
   /** Get detrended value only (no bandpass) */
   getDetrended(value: number): number {
-    return this.detrend(value);
+    return this.detrend(this.winsorize(value));
   }
 
   reset(): void {
@@ -106,6 +189,9 @@ export class BandpassFilter {
     this.lpfState = { x: [0, 0, 0], y: [0, 0, 0] };
     this.baselineEWMA = 0;
     this.baselineInitialized = false;
+    this.medianBuffer = [];
+    this.historyBuffer = [];
+    this.lastSmoothed = 0;
   }
 
   /** Only recompute if rate changed significantly (>1.5 fps) */

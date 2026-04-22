@@ -63,11 +63,31 @@ const Index = () => {
   const arrhythmiaDetectedRef = useRef(false);
   const lastArrhythmiaData = useRef<{ timestamp: number; rmssd: number; rrVariation: number; } | null>(null);
   const cameraRef = useRef<CameraViewHandle>(null);
+  
+  // ADQUISICIÓN DUAL: dos canvas para rutas separadas
+  const detectionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const detectionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  const extractionCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const extractionCtxRef = useRef<CanvasRenderingContext2D | null>(null);
+  
+  // Canvas legacy para compatibilidad
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+  
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
   const frameTimestampHistoryRef = useRef<number[]>([]);
+  
+  // Scheduler para tareas por frame/ventana
+  const schedulerRef = useRef<{
+    frameTasks: (() => void)[];
+    windowTasks: (() => void)[];
+    lastWindowTime: number;
+  }>({
+    frameTasks: [],
+    windowTasks: [],
+    lastWindowTime: 0
+  });
 
   const EMA_ALPHA = 0.3;
   const emaRef = useRef({
@@ -146,6 +166,29 @@ const Index = () => {
   const [showAIAnalysis, setShowAIAnalysis] = useState(false);
 
   useEffect(() => {
+    // Inicializar canvas de detección (resolución reducida)
+    if (!detectionCanvasRef.current) {
+      detectionCanvasRef.current = document.createElement('canvas');
+      detectionCanvasRef.current.width = 224; // Lado menor 192-256
+      detectionCanvasRef.current.height = 224;
+      detectionCtxRef.current = detectionCanvasRef.current.getContext('2d', { 
+        willReadFrequently: true,
+        alpha: false 
+      });
+    }
+    
+    // Inicializar canvas de extracción (resolución media)
+    if (!extractionCanvasRef.current) {
+      extractionCanvasRef.current = document.createElement('canvas');
+      extractionCanvasRef.current.width = 320; // Resolución 128-224
+      extractionCanvasRef.current.height = 240;
+      extractionCtxRef.current = extractionCanvasRef.current.getContext('2d', { 
+        willReadFrequently: true,
+        alpha: false 
+      });
+    }
+    
+    // Canvas legacy para compatibilidad
     if (!canvasRef.current) {
       canvasRef.current = document.createElement('canvas');
       canvasRef.current.width = 320;
@@ -223,12 +266,26 @@ const Index = () => {
     if (isProcessingRef.current) return;
     isProcessingRef.current = true;
     
-    const canvas = canvasRef.current;
-    const ctx = ctxRef.current;
-    if (!canvas || !ctx) {
+    const detectionCanvas = detectionCanvasRef.current;
+    const detectionCtx = detectionCtxRef.current;
+    const extractionCanvas = extractionCanvasRef.current;
+    const extractionCtx = extractionCtxRef.current;
+    
+    if (!detectionCanvas || !detectionCtx || !extractionCanvas || !extractionCtx) {
       isProcessingRef.current = false;
       return;
     }
+
+    // Scheduler: ejecuta tareas por ventana (cada ~1s)
+    const executeWindowTasks = () => {
+      const now = performance.now();
+      if (now - schedulerRef.current.lastWindowTime >= 1000) {
+        schedulerRef.current.lastWindowTime = now;
+        for (const task of schedulerRef.current.windowTasks) {
+          try { task(); } catch (e) { console.error('Window task error:', e); }
+        }
+      }
+    };
 
     const captureOneFrame = (nowOrMetadata?: number | any) => {
       if (!isProcessingRef.current) return;
@@ -248,10 +305,29 @@ const Index = () => {
       }
 
       try {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        processFrame(imageData, frameTimestamp);
-      } catch {}
+        // ADQUISICIÓN DUAL: capturar en ambos canvas
+        // Canvas de detección (resolución reducida) - para detección de dedo
+        detectionCtx.drawImage(video, 0, 0, detectionCanvas.width, detectionCanvas.height);
+        const detectionImageData = detectionCtx.getImageData(0, 0, detectionCanvas.width, detectionCanvas.height);
+        
+        // Canvas de extracción (resolución media) - para extracción de señal PPG
+        extractionCtx.drawImage(video, 0, 0, extractionCanvas.width, extractionCanvas.height);
+        const extractionImageData = extractionCtx.getImageData(0, 0, extractionCanvas.width, extractionCanvas.height);
+        
+        // Procesar frame con canvas de extracción (compatibilidad con processFrame existente)
+        // TODO: Implementar processFrameDual que use ambos canvas cuando se integren los nuevos módulos
+        processFrame(extractionImageData, frameTimestamp);
+        
+        // Ejecutar tareas por frame
+        for (const task of schedulerRef.current.frameTasks) {
+          try { task(); } catch (e) { console.error('Frame task error:', e); }
+        }
+        
+        // Ejecutar tareas por ventana
+        executeWindowTasks();
+      } catch (e) {
+        console.error('Frame capture error:', e);
+      }
       scheduleNext(video);
     };
 
@@ -264,7 +340,7 @@ const Index = () => {
       }
     };
     
-    console.log('🎬 Capture started (rVFC with real timestamps)');
+    console.log('🎬 Dual acquisition started (detection + extraction)');
     captureOneFrame(performance.now());
   }, [processFrame]);
 
