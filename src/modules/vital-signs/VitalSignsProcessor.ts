@@ -410,9 +410,7 @@ export class VitalSignsProcessor {
     }
 
     if (beatInputs && beatInputs.length >= 8) {
-      const arrhythmiaDetection = this.arrhythmiaProcessor.processRRData(rrData);
-      
-      // Also keep rhythmClassifier for additional rhythm classification
+      // Temporarily disable new ArrhythmiaProcessor and use only RhythmClassifier
       const rhythmResult = this.rhythmClassifier.classify(
         beatInputs,
         Math.max(this.upstreamContext.avgBeatSQI, 20),
@@ -420,18 +418,13 @@ export class VitalSignsProcessor {
       );
       this.lastRhythm = rhythmResult;
 
-      // Use new arrhythmia detection
-      const detectionHistory = this.arrhythmiaProcessor.getDetectionHistory();
-      const ev = detectionHistory.filter(d => d.isDetected).length;
-      
-      this.measurements.arrhythmiaStatus = arrhythmiaDetection.isDetected 
-        ? `${arrhythmiaDetection.type}|${ev}`
-        : `${rhythmResult.rhythmLabel}|${ev}`;
+      const ev = rhythmResult.recentEvents?.length ?? 0;
+      this.measurements.arrhythmiaStatus = `${rhythmResult.rhythmLabel}|${ev}`;
       this.measurements.arrhythmiaCount = ev;
       this.measurements.lastArrhythmiaData = {
         timestamp: Date.now(),
-        rmssd: arrhythmiaDetection.metrics.rmssd,
-        rrVariation: arrhythmiaDetection.metrics.rrCV * 100,
+        rmssd: rhythmResult.features.rmssd,
+        rrVariation: rhythmResult.features.rrCV * 100,
       };
     }
   }
