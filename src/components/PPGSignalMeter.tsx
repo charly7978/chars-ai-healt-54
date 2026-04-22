@@ -464,20 +464,36 @@ const PPGSignalMeter = ({
       if (peak) {
         const currentCount = rhythm.count;
         const shouldMarkArrhythmia = rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current;
+        
+        // Debug logging
+        console.log('[Arrhythmia Debug]', {
+          rhythmStatus: arrStatus,
+          rhythmLabel: rhythm.label,
+          rhythmCount: rhythm.count,
+          isAlert: rhythm.isAlert,
+          currentCount,
+          lastCount: lastArrhythmiaCountRef.current,
+          shouldMarkArrhythmia
+        });
+        
         if (shouldMarkArrhythmia) {
           beatArrhythmiaRef.current = true;
           lastArrhythmiaCountRef.current = Math.max(lastArrhythmiaCountRef.current, currentCount);
           const { rrIntervals: rr } = propsRef.current;
           const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
           const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
-          buffer.markArrhythmiaBack(retroDuration);
+          
+          console.log('[Arrhythmia Debug] Marking as arrhythmia for', retroDuration, 'ms');
           
           // Reset after retroDuration to avoid marking all subsequent beats
           if (arrhythmiaTimerRef.current) clearTimeout(arrhythmiaTimerRef.current);
           arrhythmiaTimerRef.current = window.setTimeout(() => {
             beatArrhythmiaRef.current = false;
             arrhythmiaTimerRef.current = null;
+            console.log('[Arrhythmia Debug] Reset arrhythmia flag');
           }, retroDuration);
+        } else {
+          beatArrhythmiaRef.current = false;
         }
         beatHistoryRef.current.push({ isArrhythmia: beatArrhythmiaRef.current, time: now });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
