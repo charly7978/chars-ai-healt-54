@@ -6,8 +6,14 @@ import { PressureProxyEstimator, type PressureState, type PressureEstimate } fro
 import { SignalSourceRanker } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
 import { CHROMProcessor } from './CHROMProcessor';
+import { POSProcessor } from './POSProcessor';
 import { WaveletFilter } from './WaveletFilter';
 import { LMSAdaptiveFilter } from './LMSAdaptiveFilter';
+import { RLSAdaptiveFilter } from './RLSAdaptiveFilter';
+import { ICAProcessor } from './ICAProcessor';
+import { KalmanFilter } from './KalmanFilter';
+import { BayesianFusion, type SourceMeasurement } from './BayesianFusion';
+import { EMDProcessor } from './EMDProcessor';
 import { AdvancedColorSpaceAnalyzer } from './AdvancedColorSpaceAnalyzer';
 
 // Extended contact states
@@ -35,15 +41,30 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   
   // --- Advanced processing modules (optional) ---
   private chromProcessor: CHROMProcessor | null = null;
+  private posProcessor: POSProcessor | null = null;
   private waveletFilter: WaveletFilter | null = null;
   private lmsFilter: LMSAdaptiveFilter | null = null;
+  private rlsFilter: RLSAdaptiveFilter | null = null;
+  private icaProcessor: ICAProcessor | null = null;
+  private kalmanFilter: KalmanFilter | null = null;
+  private bayesianFusion: BayesianFusion | null = null;
+  private emdProcessor: EMDProcessor | null = null;
   private colorSpaceAnalyzer: AdvancedColorSpaceAnalyzer | null = null;
   
   // --- Configuration flags ---
   private enableCHROM = false;
+  private enablePOS = false;
   private enableWavelet = false;
   private enableLMS = false;
+  private enableRLS = false;
+  private enableICA = false;
+  private enableKalman = false;
+  private enableBayesian = false;
+  private enableEMD = false;
   private enableAdvancedColorSpace = false;
+  
+  // --- Multi-source measurements for fusion ---
+  private sourceMeasurements: SourceMeasurement[] = [];
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -136,8 +157,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onError?: (error: ProcessingError) => void,
     options?: {
       enableCHROM?: boolean;
+      enablePOS?: boolean;
       enableWavelet?: boolean;
       enableLMS?: boolean;
+      enableRLS?: boolean;
+      enableICA?: boolean;
+      enableKalman?: boolean;
+      enableBayesian?: boolean;
+      enableEMD?: boolean;
       enableAdvancedColorSpace?: boolean;
     }
   ) {
@@ -145,18 +172,42 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     
     // Initialize advanced modules if enabled
     this.enableCHROM = options?.enableCHROM ?? false;
+    this.enablePOS = options?.enablePOS ?? false;
     this.enableWavelet = options?.enableWavelet ?? false;
     this.enableLMS = options?.enableLMS ?? false;
+    this.enableRLS = options?.enableRLS ?? false;
+    this.enableICA = options?.enableICA ?? false;
+    this.enableKalman = options?.enableKalman ?? false;
+    this.enableBayesian = options?.enableBayesian ?? false;
+    this.enableEMD = options?.enableEMD ?? false;
     this.enableAdvancedColorSpace = options?.enableAdvancedColorSpace ?? false;
     
     if (this.enableCHROM) {
       this.chromProcessor = new CHROMProcessor(300);
+    }
+    if (this.enablePOS) {
+      this.posProcessor = new POSProcessor(300);
     }
     if (this.enableWavelet) {
       this.waveletFilter = new WaveletFilter(30, 6);
     }
     if (this.enableLMS) {
       this.lmsFilter = new LMSAdaptiveFilter(32, 0.01, true);
+    }
+    if (this.enableRLS) {
+      this.rlsFilter = new RLSAdaptiveFilter(32, 0.99, 0.01);
+    }
+    if (this.enableICA) {
+      this.icaProcessor = new ICAProcessor(3, 50, 1e-6, 'tanh');
+    }
+    if (this.enableKalman) {
+      this.kalmanFilter = new KalmanFilter(72, 1/30, 0.1, 5.0);
+    }
+    if (this.enableBayesian) {
+      this.bayesianFusion = new BayesianFusion(72, 15);
+    }
+    if (this.enableEMD) {
+      this.emdProcessor = new EMDProcessor(8, 10, 0.05);
     }
     if (this.enableAdvancedColorSpace) {
       this.colorSpaceAnalyzer = new AdvancedColorSpaceAnalyzer();
@@ -734,9 +785,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     
     // Reset advanced processing modules
     this.chromProcessor?.reset();
+    this.posProcessor?.reset();
     this.waveletFilter?.reset();
     this.lmsFilter?.reset();
+    this.rlsFilter?.reset();
+    this.icaProcessor?.reset();
+    this.kalmanFilter?.reset(72);
+    this.bayesianFusion?.reset();
+    this.emdProcessor?.reset();
     this.colorSpaceAnalyzer?.reset();
+    this.sourceMeasurements = [];
     
     this.frameCount = 0;
     this.lastLogTime = 0;
