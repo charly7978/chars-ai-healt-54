@@ -105,6 +105,7 @@ const PPGSignalMeter = ({
   const beatArrhythmiaRef = useRef(false);
   const lastArrhythmiaCountRef = useRef(0);
   const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
+  const arrhythmiaTimerRef = useRef<number | null>(null);
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
@@ -207,27 +208,44 @@ const PPGSignalMeter = ({
     const { COLORS } = CONFIG;
     const plot = getPlotArea();
     const stats = amplitudeStatsRef.current;
-    ctx.font = '11px "SF Mono", Consolas, monospace';
-    ctx.fillStyle = COLORS.SCALE_TEXT;
+    
+    // Draw scale values with better visibility
+    ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = COLORS.TEXT_PRIMARY;
     ctx.textAlign = 'right';
     const steps = 5;
     for (let i = 0; i <= steps; i++) {
       const y = plot.y + (i / steps) * plot.height;
       const val = stats.max - (i / steps) * stats.range;
+      
+      // Draw grid line with label
+      ctx.strokeStyle = i === 0 || i === steps ? COLORS.GRID_MAJOR : COLORS.GRID_MINOR;
+      ctx.lineWidth = i === 0 || i === steps ? 1.5 : 0.5;
+      ctx.beginPath();
+      ctx.moveTo(plot.x, y);
+      ctx.lineTo(plot.x + plot.width, y);
+      ctx.stroke();
+      
+      // Draw value label
+      ctx.fillStyle = i === 0 || i === steps ? COLORS.TEXT_PRIMARY : COLORS.SCALE_TEXT;
       ctx.fillText(val.toFixed(0), plot.x - 8, y + 4);
-      ctx.strokeStyle = COLORS.SCALE_TEXT;
-      ctx.lineWidth = 1;
+      
+      // Draw tick mark
+      ctx.strokeStyle = COLORS.TEXT_PRIMARY;
+      ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(plot.x - 5, y);
       ctx.lineTo(plot.x, y);
       ctx.stroke();
     }
+    
+    // Draw scale title
     ctx.save();
     ctx.translate(15, plot.centerY);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = 'center';
-    ctx.fillStyle = COLORS.TEXT_SECONDARY;
-    ctx.font = '10px "SF Mono", Consolas, monospace';
+    ctx.fillStyle = COLORS.TEXT_PRIMARY;
+    ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
     ctx.fillText('AMPLITUD (μV)', 0, 0);
     ctx.restore();
   }, [getPlotArea]);
@@ -453,8 +471,13 @@ const PPGSignalMeter = ({
           const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
           const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
           buffer.markArrhythmiaBack(retroDuration);
-        } else {
-          beatArrhythmiaRef.current = false;
+          
+          // Reset after retroDuration to avoid marking all subsequent beats
+          if (arrhythmiaTimerRef.current) clearTimeout(arrhythmiaTimerRef.current);
+          arrhythmiaTimerRef.current = window.setTimeout(() => {
+            beatArrhythmiaRef.current = false;
+            arrhythmiaTimerRef.current = null;
+          }, retroDuration);
         }
         beatHistoryRef.current.push({ isArrhythmia: beatArrhythmiaRef.current, time: now });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
