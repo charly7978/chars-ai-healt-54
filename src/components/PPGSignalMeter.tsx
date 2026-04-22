@@ -459,11 +459,12 @@ const PPGSignalMeter = ({
         
         if (shouldMarkArrhythmia) {
           lastArrhythmiaCountRef.current = Math.max(lastArrhythmiaCountRef.current, currentCount);
-          const { rrIntervals: rr } = propsRef.current;
-          const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
-          const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
-          console.log('[Rhythm Debug] Calling markArrhythmiaBack for', retroDuration, 'ms');
-          buffer.markArrhythmiaBack(retroDuration);
+          // DISABLED: markArrhythmiaBack marks all points in buffer as arrhythmic
+          // const { rrIntervals: rr } = propsRef.current;
+          // const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
+          // const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
+          // console.log('[Rhythm Debug] Calling markArrhythmiaBack for', retroDuration, 'ms');
+          // buffer.markArrhythmiaBack(retroDuration);
         }
         beatHistoryRef.current.push({ isArrhythmia: shouldMarkArrhythmia, time: now });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);
