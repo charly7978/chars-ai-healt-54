@@ -269,53 +269,6 @@ export class SignalSourceRanker {
     };
   }
 
-  private computeSQI(src: SourceState, clipHigh: number, motion: boolean): number {
-    const buf = src.buffer;
-    const n = Math.min(120, buf.length);
-    if (n < 30) return 0;
-
-    // AC/DC ratio
-    const p10 = buf.percentile(0.1, n);
-    const p90 = buf.percentile(0.9, n);
-    const range = p90 - p10;
-    if (range < 0.2) return 0;
-
-    const mean = buf.mean(n);
-    const v = buf.variance(n);
-    const std = Math.sqrt(v);
-    const snr = range / (std + 0.1);
-
-    // Periodicity via autocorrelation peak
-    let bestAutoCorr = 0;
-    // Search for peaks in cardiac range: 0.5-3Hz at ~30fps = lags 10-60
-    for (let lag = 8; lag <= 60; lag++) {
-      const ac = buf.autocorrelation(lag, n);
-      if (ac > bestAutoCorr) bestAutoCorr = ac;
-    }
-
-    // Zero-crossing count (too many = noise)
-    let zeroCrossings = 0;
-    for (let i = 1; i < n; i++) {
-      if ((buf.get(buf.length - n + i) - mean) * (buf.get(buf.length - n + i - 1) - mean) < 0) {
-        zeroCrossings++;
-      }
-    }
-    const zcRate = zeroCrossings / n;
-    const zcPenalty = zcRate > 0.4 ? (zcRate - 0.4) * 30 : 0;
-
-    // Drift penalty
-    const firstHalfMean = buf.mean(Math.floor(n / 2));
-    const drift = Math.abs(firstHalfMean - mean) / (range + 0.1);
-    const driftPenalty = drift * 10;
-
-    const snrScore = Math.min(30, snr * 10);
-    const periodicityScore = bestAutoCorr * 35;
-    const clipPenalty = clipHigh * 25;
-    const motionPenalty = motion ? 10 : 0;
-
-    return Math.max(0, snrScore + periodicityScore - clipPenalty - motionPenalty - zcPenalty - driftPenalty);
-  }
-
   getActiveSource(): string { return this.activeSource; }
 
   reset(): void {

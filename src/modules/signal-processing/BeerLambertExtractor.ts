@@ -143,29 +143,7 @@ export class BeerLambertExtractor {
       computationalCost: 0.45
     });
 
-    // 9. tile_coherent_green (simulado - requiere tiles reales)
-    candidates.push({
-      name: 'tile_coherent_G',
-      value: gNorm * 1000,
-      formula: 'G_norm (tile-weighted)',
-      baseline: 0,
-      quality: 0.7 * (1 - clipPenalty),
-      clipProtected: true,
-      computationalCost: 0.6
-    });
-
-    // 10. tile_coherent_red (simulado)
-    candidates.push({
-      name: 'tile_coherent_R',
-      value: rNorm * 1000,
-      formula: 'R_norm (tile-weighted)',
-      baseline: 0,
-      quality: 0.65 * (1 - clipPenalty),
-      clipProtected: true,
-      computationalCost: 0.6
-    });
-
-    // 11. weighted_absorbance_fusion
+    // 9. weighted_absorbance_fusion
     const weightedAbs = gAbs * 0.7 + rAbs * 0.3;
     candidates.push({
       name: 'weighted_abs',
@@ -175,28 +153,6 @@ export class BeerLambertExtractor {
       quality: 0.85 * (1 - clipPenalty),
       clipProtected: true,
       computationalCost: 0.55
-    });
-
-    // 12. centered_blob_candidate (simulado - centrado en blob)
-    candidates.push({
-      name: 'centered_blob',
-      value: gAbs * 500,
-      formula: 'G_abs (blob-centered)',
-      baseline: 0,
-      quality: 0.8 * (1 - clipPenalty),
-      clipProtected: true,
-      computationalCost: 0.7
-    });
-
-    // 13. edge_suppressed (supresión de bordes - simulado)
-    candidates.push({
-      name: 'edge_suppressed',
-      value: gAbs * 500,
-      formula: 'G_abs (edge-suppressed)',
-      baseline: 0,
-      quality: 0.75 * (1 - clipPenalty),
-      clipProtected: true,
-      computationalCost: 0.65
     });
 
     // Penalizar candidatos si hay clipping severo
