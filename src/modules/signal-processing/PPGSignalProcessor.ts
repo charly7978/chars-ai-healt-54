@@ -5,16 +5,6 @@ import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { SignalSourceRanker } from './SignalSourceRanker';
 import { computeGlobalSQI } from './SignalQualityEstimator';
-import { CHROMProcessor } from './CHROMProcessor';
-import { POSProcessor } from './POSProcessor';
-import { WaveletFilter } from './WaveletFilter';
-import { LMSAdaptiveFilter } from './LMSAdaptiveFilter';
-import { RLSAdaptiveFilter } from './RLSAdaptiveFilter';
-import { ICAProcessor } from './ICAProcessor';
-import { KalmanFilter } from './KalmanFilter';
-import { BayesianFusion, type SourceMeasurement } from './BayesianFusion';
-import { EMDProcessor } from './EMDProcessor';
-import { AdvancedColorSpaceAnalyzer } from './AdvancedColorSpaceAnalyzer';
 
 // Extended contact states
 type ExtendedContactState = ContactState | 'ACQUIRING_CONTACT' | 'SATURATED_CONTACT' | 'EXCESSIVE_PRESSURE';
@@ -38,36 +28,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private roiMask = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
   private sourceRanker = new SignalSourceRanker();
-  
-  // --- Advanced processing modules (optional) ---
-  private chromProcessor: CHROMProcessor | null = null;
-  private posProcessor: POSProcessor | null = null;
-  private waveletFilter: WaveletFilter | null = null;
-  private lmsFilter: LMSAdaptiveFilter | null = null;
-  private rlsFilter: RLSAdaptiveFilter | null = null;
-  private icaProcessor: ICAProcessor | null = null;
-  private kalmanFilter: KalmanFilter | null = null;
-  private bayesianFusion: BayesianFusion | null = null;
-  private emdProcessor: EMDProcessor | null = null;
-  private colorSpaceAnalyzer: AdvancedColorSpaceAnalyzer | null = null;
-  
-  // --- Configuration flags ---
-  private enableCHROM = false;
-  private enablePOS = false;
-  private enableWavelet = false;
-  private enableLMS = false;
-  private enableRLS = false;
-  private enableICA = false;
-  private enableKalman = false;
-  private enableBayesian = false;
-  private enableEMD = false;
-  private enableAdvancedColorSpace = false;
-  
-  // --- Multi-source measurements for fusion ---
-  private sourceMeasurements: SourceMeasurement[] = [];
-  
-  // --- Kalman HR buffer for output ---
-  private kalmanHRBuffer: RingBuffer = new RingBuffer(30);
 
   // --- Ring buffers (zero-alloc) ---
   private readonly BUF_SIZE = 300;
@@ -157,64 +117,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
-    public onError?: (error: ProcessingError) => void,
-    options?: {
-      enableCHROM?: boolean;
-      enablePOS?: boolean;
-      enableWavelet?: boolean;
-      enableLMS?: boolean;
-      enableRLS?: boolean;
-      enableICA?: boolean;
-      enableKalman?: boolean;
-      enableBayesian?: boolean;
-      enableEMD?: boolean;
-      enableAdvancedColorSpace?: boolean;
-    }
+    public onError?: (error: ProcessingError) => void
   ) {
     this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
-    
-    // Initialize advanced modules if enabled
-    this.enableCHROM = options?.enableCHROM ?? false;
-    this.enablePOS = options?.enablePOS ?? false;
-    this.enableWavelet = options?.enableWavelet ?? false;
-    this.enableLMS = options?.enableLMS ?? false;
-    this.enableRLS = options?.enableRLS ?? false;
-    this.enableICA = options?.enableICA ?? false;
-    this.enableKalman = options?.enableKalman ?? false;
-    this.enableBayesian = options?.enableBayesian ?? false;
-    this.enableEMD = options?.enableEMD ?? false;
-    this.enableAdvancedColorSpace = options?.enableAdvancedColorSpace ?? false;
-    
-    if (this.enableCHROM) {
-      this.chromProcessor = new CHROMProcessor(300);
-    }
-    if (this.enablePOS) {
-      this.posProcessor = new POSProcessor(300);
-    }
-    if (this.enableWavelet) {
-      this.waveletFilter = new WaveletFilter(30, 6);
-    }
-    if (this.enableLMS) {
-      this.lmsFilter = new LMSAdaptiveFilter(32, 0.01, true);
-    }
-    if (this.enableRLS) {
-      this.rlsFilter = new RLSAdaptiveFilter(32, 0.99, 0.01);
-    }
-    if (this.enableICA) {
-      this.icaProcessor = new ICAProcessor(3, 50, 1e-6, 'tanh');
-    }
-    if (this.enableKalman) {
-      this.kalmanFilter = new KalmanFilter(72, 1/30, 0.1, 5.0);
-    }
-    if (this.enableBayesian) {
-      this.bayesianFusion = new BayesianFusion(72, 15);
-    }
-    if (this.enableEMD) {
-      this.emdProcessor = new EMDProcessor(8, 10, 0.05);
-    }
-    if (this.enableAdvancedColorSpace) {
-      this.colorSpaceAnalyzer = new AdvancedColorSpaceAnalyzer();
-    }
   }
 
   async initialize(): Promise<void> { this.reset(); }
@@ -337,132 +242,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     // --- FILTERING ---
     this.rawSignalBuf.push(source.value);
-    let filtered = this.bandpassFilter.filter(source.value);
-    
-    // --- ADVANCED PROCESSING: CHROM (chrominance-based extraction) ---
-    let chromOutput: number | null = null;
-    if (this.enableCHROM && this.chromProcessor) {
-      chromOutput = this.chromProcessor.processFrame(roi.rawRed, roi.rawGreen, roi.rawBlue);
-      // Use CHROM output as additional signal source if available
-      if (chromOutput !== null) {
-        const chromQuality = this.chromProcessor.getQualityMetrics();
-        if (chromQuality.snr > 15) {
-          filtered = filtered * 0.6 + chromOutput * 0.4;
-        }
-      }
-    }
-    
-    // --- ADVANCED PROCESSING: POS (Plane Orthogonal to Skin) ---
-    let posOutput: number | null = null;
-    if (this.enablePOS && this.posProcessor) {
-      posOutput = this.posProcessor.processFrame(roi.rawRed, roi.rawGreen, roi.rawBlue);
-      if (posOutput !== null) {
-        const posQuality = this.posProcessor.getQualityMetrics();
-        if (posQuality.snr > 15) {
-          filtered = filtered * 0.6 + posOutput * 0.4;
-        }
-      }
-    }
-    
-    // --- ADVANCED PROCESSING: Wavelet denoising ---
-    if (this.enableWavelet && this.waveletFilter && this.filteredBuf.length >= 30) {
-      const signalArray = new Float64Array(this.filteredBuf.length);
-      for (let i = 0; i < this.filteredBuf.length; i++) {
-        signalArray[i] = this.filteredBuf.get(i);
-      }
-      
-      const denoised = this.waveletFilter.denoise(signalArray, 0.15);
-      filtered = denoised[denoised.length - 1];
-      this.waveletFilter.reset();
-    }
-    
-    // --- ADVANCED PROCESSING: EMD (Empirical Mode Decomposition) ---
-    if (this.enableEMD && this.emdProcessor && this.filteredBuf.length >= 50) {
-      const signalArray = new Float64Array(this.filteredBuf.length);
-      for (let i = 0; i < this.filteredBuf.length; i++) {
-        signalArray[i] = this.filteredBuf.get(i);
-      }
-      
-      const denoised = this.emdProcessor.denoise(signalArray, 3);
-      filtered = denoised[denoised.length - 1];
-    }
-    
-    // --- ADVANCED PROCESSING: RLS adaptive filtering (faster convergence than LMS) ---
-    if (this.enableRLS && this.rlsFilter && motionArtifact) {
-      const motionReference = this.motionScore;
-      const rlsResult = this.rlsFilter.process(filtered, motionReference);
-      filtered = rlsResult.output;
-    }
-    
-    // --- ADVANCED PROCESSING: LMS adaptive filtering (fallback if RLS not enabled) ---
-    if (this.enableLMS && this.lmsFilter && !this.enableRLS && motionArtifact) {
-      const motionReference = this.motionScore;
-      const lmsResult = this.lmsFilter.process(filtered, motionReference);
-      filtered = lmsResult.output;
-      
-      if (this.frameCount % 30 === 0) {
-        this.lmsFilter.autoTuneStepSize();
-      }
-    }
-    
-    // --- ADVANCED PROCESSING: ICA (Independent Component Analysis) ---
-    if (this.enableICA && this.icaProcessor && this.filteredBuf.length >= 100) {
-      const signals: Float64Array[] = [
-        new Float64Array(this.redBuf.length),
-        new Float64Array(this.greenBuf.length),
-        new Float64Array(this.blueBuf.length)
-      ];
-      
-      for (let i = 0; i < this.redBuf.length; i++) {
-        signals[0][i] = this.redBuf.get(i);
-        signals[1][i] = this.greenBuf.get(i);
-        signals[2][i] = this.blueBuf.get(i);
-      }
-      
-      const icaResult = this.icaProcessor.process(signals);
-      const cardiac = this.icaProcessor.identifyCardiacComponent(icaResult.components);
-      
-      if (cardiac.cardiacComponent && cardiac.cardiacComponent.length > 0) {
-        const latestICA = cardiac.cardiacComponent[cardiac.cardiacComponent.length - 1];
-        filtered = filtered * 0.7 + latestICA * 0.3;
-      }
-    }
-    
-    // --- ADVANCED PROCESSING: Kalman Filter for HR smoothing ---
-    let kalmanHR: number | null = null;
-    if (this.enableKalman && this.kalmanFilter) {
-      // Convert filtered signal to instantaneous HR estimate
-      const currentHR = filtered > 0 ? Math.abs(filtered * 60) : 72;
-      const kalmanResult = this.kalmanFilter.update(currentHR, 5);
-      kalmanHR = kalmanResult.heartRate;
-      this.kalmanHRBuffer.push(kalmanHR);
-    }
-    
-    // --- ADVANCED PROCESSING: Bayesian Fusion for multi-source ---
-    if (this.enableBayesian && this.bayesianFusion) {
-      const measurements = [];
-      
-      if (chromOutput !== null) {
-        measurements.push({ value: Math.abs(chromOutput * 60), uncertainty: 5, reliability: 0.85 });
-      }
-      if (posOutput !== null) {
-        measurements.push({ value: Math.abs(posOutput * 60), uncertainty: 5, reliability: 0.85 });
-      }
-      if (kalmanHR !== null) {
-        measurements.push({ value: kalmanHR, uncertainty: 3, reliability: 0.9 });
-      }
-      
-      if (measurements.length >= 2) {
-        const fusionResult = this.bayesianFusion.fuse(measurements);
-        this.sourceMeasurements = measurements;
-        // Use fused HR for quality estimation
-        if (fusionResult.confidence > 0.5) {
-          // Update prior based on fusion
-          this.bayesianFusion.updatePrior(measurements);
-        }
-      }
-    }
-    
+    const filtered = this.bandpassFilter.filter(source.value);
     this.filteredBuf.push(filtered);
 
     // Derivatives for morphology analysis
@@ -866,19 +646,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.roiMask.reset();
     this.pressureEstimator.reset();
     
-    // Reset advanced processing modules
-    this.chromProcessor?.reset();
-    this.posProcessor?.reset();
-    this.waveletFilter?.reset();
-    this.lmsFilter?.reset();
-    this.rlsFilter?.reset();
-    this.icaProcessor?.reset();
-    this.kalmanFilter?.reset(72);
-    this.bayesianFusion?.reset();
-    this.emdProcessor?.reset();
-    this.colorSpaceAnalyzer?.reset();
-    this.sourceMeasurements = [];
-    this.kalmanHRBuffer.clear();
     
     this.frameCount = 0;
     this.lastLogTime = 0;
@@ -974,15 +741,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       ratioOfRatios: this.greenDC > 0 && this.greenAC > 0 && this.redDC > 0
         ? (this.redAC / this.redDC) / (this.greenAC / this.greenDC) : 0,
     };
-  }
-
-  getKalmanHR(): number {
-    if (this.kalmanHRBuffer.length === 0) return 0;
-    let sum = 0;
-    for (let i = 0; i < this.kalmanHRBuffer.length; i++) {
-      sum += this.kalmanHRBuffer.get(i);
-    }
-    return sum / this.kalmanHRBuffer.length;
   }
 
   getPositionQuality() {
