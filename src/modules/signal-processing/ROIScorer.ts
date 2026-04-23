@@ -21,7 +21,8 @@ export class ROIScorer {
     cells: ROICellMetrics[],
     motionLocal: number,
     spectralConcentration: number,
-    pulseTemplateCorr: number
+    pulseTemplateCorr: number,
+    reputationMult?: Float64Array
   ): {
     scores: Float64Array;
     weights: Float64Array;
@@ -66,6 +67,9 @@ export class ROIScorer {
       const sm = this.prevScores[i] * (1 - this.alpha) + scores[i] * this.alpha;
       this.prevScores[i] = sm;
       scores[i] = sm;
+      if (reputationMult && reputationMult.length === n) {
+        scores[i] *= reputationMult[i];
+      }
     }
 
     const order = Array.from({ length: n }, (_, i) => i);

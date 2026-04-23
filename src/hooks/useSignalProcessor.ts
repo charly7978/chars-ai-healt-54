@@ -1,136 +1,171 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { PPGSignalProcessor } from '../modules/signal-processing/PPGSignalProcessor';
-import { ProcessedSignal, ProcessingError } from '../types/signal';
+import { MotionTracker } from '../modules/signal-processing/MotionTracker';
+import { PPGProcessingWorkerBridge } from '../modules/signal-processing/PPGProcessingWorkerBridge';
+import type { ProcessedSignal, ProcessingError } from '../types/signal';
+
+type CaptureCtx = Parameters<PPGSignalProcessor['applyCaptureContext']>[0];
 
 /**
- * HOOK ÚNICO Y DEFINITIVO - ELIMINADAS TODAS LAS DUPLICIDADES
- * Sistema completamente unificado con prevención absoluta de múltiples instancias
+ * Procesador PPG único + motion compartido + worker DSP opcional con fallback al main thread.
  */
 export const useSignalProcessor = () => {
   const processorRef = useRef<PPGSignalProcessor | null>(null);
+  const motionRef = useRef<MotionTracker | null>(null);
+  const bridgeRef = useRef<PPGProcessingWorkerBridge | null>(null);
+  const workerActiveRef = useRef(false);
+  const lastAcStatsRef = useRef({
+    redAC: 0,
+    redDC: 0,
+    greenAC: 0,
+    greenDC: 0,
+    rgRatio: 0,
+    ratioOfRatios: 0,
+  });
+  const lastPositionRef = useRef({
+    locked: false,
+    drifting: false,
+    spatialUniformity: 0,
+    centerCoverage: 0,
+    positionDrift: 0,
+    guidance: 'COLOQUE SU DEDO',
+    qualityScore: 0,
+  });
+
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastSignal, setLastSignal] = useState<ProcessedSignal | null>(null);
   const [error, setError] = useState<ProcessingError | null>(null);
   const [framesProcessed, setFramesProcessed] = useState(0);
-  
-  // CONTROL ÚNICO DE INSTANCIA - PREVENIR DUPLICIDADES ABSOLUTAMENTE
+
   const instanceLock = useRef<boolean>(false);
-  const sessionIdRef = useRef<string>("");
+  const sessionIdRef = useRef<string>('');
   const initializationState = useRef<'IDLE' | 'INITIALIZING' | 'READY' | 'ERROR'>('IDLE');
-  
-  // INICIALIZACIÓN ÚNICA Y DEFINITIVA
+
   useEffect(() => {
-    // BLOQUEO DE MÚLTIPLES INSTANCIAS
     if (instanceLock.current || initializationState.current !== 'IDLE') {
       return;
     }
-    
+
     instanceLock.current = true;
     initializationState.current = 'INITIALIZING';
-    
+
     const t = Date.now().toString(36);
     const p = (performance.now() | 0).toString(36);
     sessionIdRef.current = `sig_${t}_${p}`;
 
-    // CALLBACKS ÚNICOS SIN MEMORY LEAKS
+    const motion = new MotionTracker();
+    motionRef.current = motion;
+
     const onSignalReady = (signal: ProcessedSignal) => {
       if (initializationState.current !== 'READY') return;
-      
+      if (signal.acStats) {
+        lastAcStatsRef.current = signal.acStats;
+      }
+      if (signal.positionQuality) {
+        lastPositionRef.current = signal.positionQuality;
+      }
       setLastSignal(signal);
       setError(null);
-      // CRÍTICO: Limitar contador para evitar números infinitos que afectan rendimiento
-      setFramesProcessed(prev => (prev + 1) % 10000);
+      setFramesProcessed((prev) => (prev + 1) % 10000);
     };
 
-    const onError = (error: ProcessingError) => {
-      console.error(`Error procesador: ${error.code}`);
-      setError(error);
+    const onError = (err: ProcessingError) => {
+      console.error(`Error procesador: ${err.code}`);
+      setError(err);
     };
 
-    // CREAR PROCESADOR ÚNICO
     try {
       processorRef.current = new PPGSignalProcessor(onSignalReady, onError);
+      const bridge = new PPGProcessingWorkerBridge(motion, onSignalReady, onError);
+      bridgeRef.current = bridge;
+      void bridge.init().then((ok) => {
+        workerActiveRef.current = Boolean(ok);
+        if (!ok) {
+          bridgeRef.current = null;
+        }
+      });
       initializationState.current = 'READY';
-    } catch (err) {
+    } catch {
       initializationState.current = 'ERROR';
       instanceLock.current = false;
     }
-    
+
     return () => {
+      workerActiveRef.current = false;
+      bridgeRef.current?.destroy();
+      bridgeRef.current = null;
       if (processorRef.current) {
         processorRef.current.stop();
         processorRef.current = null;
       }
+      motion.stop();
+      motionRef.current = null;
       initializationState.current = 'IDLE';
       instanceLock.current = false;
     };
   }, []);
 
-  // INICIO ÚNICO SIN DUPLICIDADES
   const startProcessing = useCallback(() => {
     if (!processorRef.current || initializationState.current !== 'READY') {
       return;
     }
-
     if (isProcessing) {
       return;
     }
-    
     setIsProcessing(true);
     setFramesProcessed(0);
     setError(null);
-    
+    motionRef.current?.start();
     processorRef.current.start();
   }, [isProcessing]);
 
-  // PARADA ÚNICA Y LIMPIA - SIN DEPENDER DE isProcessing STATE
   const stopProcessing = useCallback(() => {
     if (!processorRef.current) {
       return;
     }
-    
-    // Primero detener el procesador, luego actualizar estado
     processorRef.current.stop();
+    motionRef.current?.stop();
     setIsProcessing(false);
     setLastSignal(null);
     setFramesProcessed(0);
   }, []);
 
-  // CALIBRACIÓN ÚNICA
   const calibrate = useCallback(async () => {
     if (!processorRef.current || initializationState.current !== 'READY') {
       return false;
     }
-
     try {
-      const success = await processorRef.current.calibrate();
-      return success;
-    } catch (error) {
+      return await processorRef.current.calibrate();
+    } catch {
       return false;
     }
   }, []);
 
-  // PROCESAMIENTO DE FRAME ÚNICO — acepta timestamp real del frame
   const processFrame = useCallback((imageData: ImageData, frameTimestamp?: number) => {
     if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
       return;
     }
-    
     try {
-      processorRef.current.processFrame(imageData, frameTimestamp);
-    } catch (error) {
-      // Error silenciado para rendimiento
+      const m = motionRef.current?.getScore() ?? 0;
+      processorRef.current.processFrame(imageData, frameTimestamp, m);
+    } catch {
+      /* hot path */
     }
   }, [isProcessing]);
 
   const processFrameDual = useCallback(
     (detectionImageData: ImageData, extractionImageData: ImageData, frameTimestamp?: number) => {
-      if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
+      if (initializationState.current !== 'READY' || !isProcessing) {
         return;
       }
+      const m = motionRef.current?.getScore() ?? 0;
       try {
-        processorRef.current.processFrameDual(detectionImageData, extractionImageData, frameTimestamp);
+        if (workerActiveRef.current && bridgeRef.current) {
+          bridgeRef.current.enqueueFrame(detectionImageData, extractionImageData, frameTimestamp ?? performance.now());
+          return;
+        }
+        processorRef.current?.processFrameDual(detectionImageData, extractionImageData, frameTimestamp, m);
       } catch {
         /* hot path */
       }
@@ -138,8 +173,14 @@ export const useSignalProcessor = () => {
     [isProcessing]
   );
 
-  // OBTENER ESTADÍSTICAS RGB REALES PARA SpO2
+  const applyCaptureContext = useCallback((ctx: CaptureCtx) => {
+    processorRef.current?.applyCaptureContext(ctx);
+  }, []);
+
   const getRGBStats = useCallback(() => {
+    if (workerActiveRef.current) {
+      return lastAcStatsRef.current;
+    }
     if (!processorRef.current) {
       return {
         redAC: 0,
@@ -147,22 +188,41 @@ export const useSignalProcessor = () => {
         greenAC: 0,
         greenDC: 0,
         rgRatio: 0,
-        ratioOfRatios: 0
+        ratioOfRatios: 0,
       };
     }
     return processorRef.current.getRGBStats();
   }, []);
 
   const getPositionQuality = useCallback(() => {
+    if (workerActiveRef.current) {
+      return lastPositionRef.current;
+    }
     if (!processorRef.current) {
-      return { locked: false, drifting: false, spatialUniformity: 0, centerCoverage: 0, positionDrift: 0, guidance: 'COLOQUE SU DEDO', qualityScore: 0 };
+      return {
+        locked: false,
+        drifting: false,
+        spatialUniformity: 0,
+        centerCoverage: 0,
+        positionDrift: 0,
+        guidance: 'COLOQUE SU DEDO',
+        qualityScore: 0,
+      };
     }
     return processorRef.current.getPositionQuality();
   }, []);
 
   const getPPGDebugInfo = useCallback(() => {
-    if (!processorRef.current) return null;
-    return processorRef.current.getDebugInfo();
+    const base = processorRef.current?.getDebugInfo() ?? null;
+    if (!base) return null;
+    const st = bridgeRef.current?.getStatus();
+    return {
+      ...base,
+      workerMode: st?.mode,
+      workerFallbackReason: st?.fallbackReason,
+      workerQueue: bridgeRef.current?.getQueueDepth(),
+      workerLatencyMs: bridgeRef.current?.getLatencyEwmaMs(),
+    };
   }, []);
 
   return {
@@ -175,13 +235,15 @@ export const useSignalProcessor = () => {
     calibrate,
     processFrame,
     processFrameDual,
+    applyCaptureContext,
     getRGBStats,
     getPositionQuality,
     getPPGDebugInfo,
     debugInfo: {
       sessionId: sessionIdRef.current,
       initializationState: initializationState.current,
-      instanceLocked: instanceLock.current
-    }
+      instanceLocked: instanceLock.current,
+      workerActive: workerActiveRef.current,
+    },
   };
 };

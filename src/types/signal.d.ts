@@ -37,6 +37,24 @@ export interface ProcessedSignal {
   perfusionIndex?: number;
   rawRed?: number;
   rawGreen?: number;
+  /** AC/DC RGB último frame (útil cuando el DSP corre en worker) */
+  acStats?: {
+    redAC: number;
+    redDC: number;
+    greenAC: number;
+    greenDC: number;
+    rgRatio: number;
+    ratioOfRatios: number;
+  };
+  positionQuality?: {
+    locked: boolean;
+    drifting: boolean;
+    spatialUniformity: number;
+    centerCoverage: number;
+    positionDrift: number;
+    guidance: string;
+    qualityScore: number;
+  };
   clipHighRatio?: number;
   clipLowRatio?: number;
   roiCoverage?: number;
@@ -74,7 +92,12 @@ export interface ProcessedSignal {
       category: string;
       reasons: string[];
       gating: string;
+      spectral?: Record<string, number>;
     };
+    fusionMeta?: Record<string, unknown>;
+    acquisition?: Record<string, unknown>;
+    performanceProfile?: string;
+    roiReputation?: Record<string, unknown>;
     frameTiming?: { intervalMs: number; effectiveFps: number; droppedEstimate: number };
     profiler?: Record<string, number>;
     fingerFeatures?: Record<string, number>;

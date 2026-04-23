@@ -4,6 +4,8 @@ import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
+import { VideoFrameScheduler } from "@/modules/signal-processing/VideoFrameScheduler";
+import { ExtractionResolutionController } from "@/modules/signal-processing/ExtractionResolutionController";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
@@ -78,6 +80,8 @@ const Index = () => {
   const frameLoopRef = useRef<number | null>(null);
   const isProcessingRef = useRef(false);
   const frameTimestampHistoryRef = useRef<number[]>([]);
+  const videoSchedulerRef = useRef<VideoFrameScheduler | null>(null);
+  const extractionResRef = useRef<ExtractionResolutionController>(new ExtractionResolutionController());
   
   // Scheduler para tareas por frame/ventana
   const schedulerRef = useRef<{
@@ -140,6 +144,7 @@ const Index = () => {
     getRGBStats,
     getPositionQuality,
     getPPGDebugInfo,
+    applyCaptureContext,
   } = useSignalProcessor();
   
   const { 
@@ -180,10 +185,10 @@ const Index = () => {
       });
     }
     
-    // Inicializar canvas de extracción (resolución media)
+    // Inicializar canvas de extracción (tamaño inicial; se reajusta en el loop)
     if (!extractionCanvasRef.current) {
       extractionCanvasRef.current = document.createElement('canvas');
-      extractionCanvasRef.current.width = 320; // Resolución 128-224
+      extractionCanvasRef.current.width = 320;
       extractionCanvasRef.current.height = 240;
       extractionCtxRef.current = extractionCanvasRef.current.getContext('2d', { 
         willReadFrequently: true,
@@ -290,11 +295,14 @@ const Index = () => {
       }
     };
 
-    const captureOneFrame = (frameTimestampInput?: number) => {
+    const sched = new VideoFrameScheduler();
+    videoSchedulerRef.current = sched;
+
+    const captureOneFrame = (frameTimestampInput?: number, _meta?: unknown) => {
       if (!isProcessingRef.current) return;
       const video = cameraRef.current?.getVideoElement();
       if (!video || video.readyState < 2 || video.videoWidth === 0) {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame());
+        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
         return;
       }
 
@@ -305,47 +313,80 @@ const Index = () => {
         detectionCtx.drawImage(video, 0, 0, detectionCanvas.width, detectionCanvas.height);
         const detectionImageData = detectionCtx.getImageData(0, 0, detectionCanvas.width, detectionCanvas.height);
 
-        extractionCtx.drawImage(video, 0, 0, extractionCanvas.width, extractionCanvas.height);
-        const extractionImageData = extractionCtx.getImageData(0, 0, extractionCanvas.width, extractionCanvas.height);
+        const extCtl = extractionResRef.current;
+        const tier = extCtl.getTier();
+        if (extractionCanvas.width !== tier.outWidth || extractionCanvas.height !== tier.outHeight) {
+          extractionCanvas.width = tier.outWidth;
+          extractionCanvas.height = tier.outHeight;
+          extractionCtxRef.current = extractionCanvas.getContext('2d', { willReadFrequently: true, alpha: false });
+        }
+        const extCtx = extractionCtxRef.current;
+        if (!extCtx) return;
+
+        const crop = extCtl.computeCentralCrop(video.videoWidth, video.videoHeight, detectionCanvas.width, detectionCanvas.height);
+        extCtx.drawImage(
+          video,
+          crop.sx,
+          crop.sy,
+          crop.sw,
+          crop.sh,
+          0,
+          0,
+          extractionCanvas.width,
+          extractionCanvas.height
+        );
+        const extractionImageData = extCtx.getImageData(0, 0, extractionCanvas.width, extractionCanvas.height);
+
+        const vm = sched.getMetrics();
+        applyCaptureContext({
+          detectionWidth: detectionCanvas.width,
+          detectionHeight: detectionCanvas.height,
+          extractionWidth: extractionCanvas.width,
+          extractionHeight: extractionCanvas.height,
+          cropSource: { sx: crop.sx, sy: crop.sy, sw: crop.sw, sh: crop.sh },
+          extractionTierId: tier.id,
+          upscaleFromDetection: crop.upscaleFromDetection,
+          extractionMode: `${vm.mode}|${extCtl.getTierId()}`,
+        });
 
         processFrameDual(detectionImageData, extractionImageData, frameTimestamp);
-        
-        // Ejecutar tareas por frame
+
+        const pd = getPPGDebugInfo();
+        const prof = pd?.profiler as Record<string, number> | undefined;
+        const totalMs = prof?.total ?? 0;
+        if (totalMs > 42) extractionResRef.current.stepDown();
+        else if (totalMs > 0 && totalMs < 18 && vm.effectiveFps > 25) extractionResRef.current.stepUp();
+
         for (const task of schedulerRef.current.frameTasks) {
           try { task(); } catch (e) { console.error('Frame task error:', e); }
         }
-        
-        // Ejecutar tareas por ventana
         executeWindowTasks();
       } catch (e) {
         console.error('Frame capture error:', e);
       }
-      scheduleNext(video);
     };
 
-    const scheduleNext = (video: HTMLVideoElement) => {
+    const boot = () => {
+      const v = cameraRef.current?.getVideoElement();
       if (!isProcessingRef.current) return;
-      if ('requestVideoFrameCallback' in video) {
-        (video as HTMLVideoElement & { requestVideoFrameCallback: (cb: (now: number, meta?: unknown) => void) => void }).requestVideoFrameCallback(
-          (now: number, metadata?: { expectedDisplayTime?: number }) => {
-            const ts =
-              metadata && typeof metadata.expectedDisplayTime === 'number' && isFinite(metadata.expectedDisplayTime)
-                ? metadata.expectedDisplayTime
-                : now;
-            captureOneFrame(ts);
-          }
-        );
-      } else {
-        frameLoopRef.current = requestAnimationFrame(() => captureOneFrame(performance.now()));
+      if (!v || v.readyState < 2 || v.videoWidth === 0) {
+        frameLoopRef.current = requestAnimationFrame(boot);
+        return;
       }
+      sched.start(v, (ts) => {
+        if (!isProcessingRef.current) return;
+        captureOneFrame(ts);
+      });
     };
-    
-    console.log('🎬 Dual acquisition started (detection + extraction)');
-    captureOneFrame(performance.now());
-  }, [processFrameDual]);
+    boot();
+
+    console.log('🎬 Dual acquisition (det baja + ext crop alta) + VideoFrameScheduler');
+  }, [processFrameDual, applyCaptureContext, getPPGDebugInfo]);
 
   const stopFrameLoop = useCallback(() => {
     isProcessingRef.current = false;
+    videoSchedulerRef.current?.stop();
+    videoSchedulerRef.current = null;
     if (frameLoopRef.current) {
       cancelAnimationFrame(frameLoopRef.current);
       frameLoopRef.current = null;
@@ -531,6 +572,27 @@ const Index = () => {
       (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
       estimateSampleRateFromFrames(lastSignal.timestamp);
 
+    const pd = ls.pipelineDebug;
+    const fusionMeta = pd?.fusionMeta as { phaseAlignmentQuality?: number } | undefined;
+    const specWin = pd?.windowSQI?.spectral as
+      | {
+          spectralDominanceScore?: number;
+          detectorAgreementScore?: number;
+          dominantFrequencyStability?: number;
+        }
+      | undefined;
+    const spectralQualityAggregate = specWin
+      ? Math.max(
+          0,
+          Math.min(
+            1,
+            (specWin.spectralDominanceScore ?? 0) * 0.34 +
+              (specWin.detectorAgreementScore ?? 0) * 0.33 +
+              (specWin.dominantFrequencyStability ?? 0) * 0.33
+          )
+        )
+      : 0.45;
+
     const heartBeatResult = processHeartBeat(
       signalValue,
       ls.contactState,
@@ -547,6 +609,8 @@ const Index = () => {
         windowSQI: ls.pipelineDebug?.windowSQI?.score ?? 0,
         fingerMeasurementState: ext,
         effectiveSampleRate: ls.estimatedSampleRate,
+        phaseAlignmentQuality: fusionMeta?.phaseAlignmentQuality ?? 0.55,
+        spectralQualityAggregate,
       }
     );
 
@@ -804,7 +868,33 @@ const Index = () => {
                   <div>estado_dedo: {pd?.fingerMeasurementState ?? '—'} | contact_export: {lastSignal.contactState}</div>
                   <div>ventana_SQI: {pd?.windowSQI ? `${(pd.windowSQI.score * 100).toFixed(0)}% ${pd.windowSQI.gating} [${pd.windowSQI.reasons.slice(0, 2).join('; ')}]` : '—'}</div>
                   <div>FPS~: {pd?.frameTiming?.effectiveFps?.toFixed(1) ?? '—'} | Δt_ms: {pd?.frameTiming?.intervalMs?.toFixed(1) ?? '—'} | drops≈{pd?.frameTiming?.droppedEstimate ?? 0}</div>
-                  <div>fusión_colapso: {pd?.fusionCollapse ? 'SÍ' : 'no'} | fuente: {lastSignal.activeSource ?? '—'}</div>
+                  <div>
+                    worker: {String(dbg?.workerMode)} {dbg?.workerFallbackReason ? `(${dbg.workerFallbackReason})` : ''} | q={dbg?.workerQueue ?? 0} | lat~ms{' '}
+                    {dbg?.workerLatencyMs?.toFixed(1) ?? '—'}
+                  </div>
+                  <div>
+                    cap: det {String((pd?.acquisition as { detectionWidth?: number })?.detectionWidth)}×
+                    {String((pd?.acquisition as { detectionHeight?: number })?.detectionHeight)} | ext{' '}
+                    {String((pd?.acquisition as { extractionWidth?: number })?.extractionWidth)}×
+                    {String((pd?.acquisition as { extractionHeight?: number })?.extractionHeight)} | tier{' '}
+                    {String((pd?.acquisition as { extractionTierId?: string })?.extractionTierId)} | mode{' '}
+                    {String((pd?.acquisition as { extractionMode?: string })?.extractionMode)}
+                  </div>
+                  <div>
+                    perf: {String(pd?.performanceProfile)} | refino: {String((pd?.roiReputation as { refinementStage?: string })?.refinementStage)} | ROI_sw/min{' '}
+                    {String((pd?.roiReputation as { switchesPerMinute?: number })?.switchesPerMinute)}
+                  </div>
+                  <div>
+                    espectral: f_dom≈{((pd?.windowSQI?.spectral as { dominantFrequencyHz?: number })?.dominantFrequencyHz ?? 0).toFixed(2)} Hz | acuerdo_temp/esp{' '}
+                    {((pd?.windowSQI?.spectral as { detectorAgreementScore?: number })?.detectorAgreementScore ?? 0).toFixed(2)}
+                  </div>
+                  <div>
+                    fusión: colapso {pd?.fusionCollapse ? 'SÍ' : 'no'} | faseQ{' '}
+                    {((pd?.fusionMeta as { phaseAlignmentQuality?: number })?.phaseAlignmentQuality ?? 0).toFixed(2)} | acuerdo{' '}
+                    {((pd?.fusionMeta as { sourceAgreement?: number })?.sourceAgreement ?? 0).toFixed(2)} | motivo{' '}
+                    {String((pd?.fusionMeta as { fusionCollapseReason?: string })?.fusionCollapseReason || '—')}
+                  </div>
+                  <div>fuente: {lastSignal.activeSource ?? '—'}</div>
                   <div className="mt-1 text-slate-400">top ROI (id/score/clip):</div>
                   <div className="whitespace-pre-wrap break-all">
                     {(pd?.topRois ?? []).slice(0, 5).map((r) => `${r.id}:${r.score.toFixed(2)}/${r.clipRatio.toFixed(2)}`).join(' | ')}

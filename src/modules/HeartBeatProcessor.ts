@@ -81,13 +81,23 @@ export class HeartBeatProcessor {
       windowSQI?: number;
       fingerMeasurementState?: string;
       effectiveSampleRate?: number;
+      phaseAlignmentQuality?: number;
+      spectralQualityAggregate?: number;
     }
   ): HeartBeatResult {
     this.frameCount++;
     const now = timestamp ?? performance.now();
 
+    let phaseAlign = 0.55;
+    let spectralAgg = 0.45;
     if (upstreamContext) {
       this.upstreamSQI = upstreamContext.quality ?? 50;
+      if (typeof upstreamContext.phaseAlignmentQuality === 'number') {
+        phaseAlign = Math.max(0, Math.min(1, upstreamContext.phaseAlignmentQuality));
+      }
+      if (typeof upstreamContext.spectralQualityAggregate === 'number') {
+        spectralAgg = Math.max(0, Math.min(1, upstreamContext.spectralQualityAggregate));
+      }
       this.motionPenalty = upstreamContext.motionArtifact ? 0.3 : 0;
       this.clipPenalty = Math.min(1, (upstreamContext.clipHigh ?? 0) + (upstreamContext.clipLow ?? 0)) * 0.5;
       this.pressurePenalty = upstreamContext.pressureState === 'HIGH_PRESSURE' ? 0.4 :
@@ -200,6 +210,8 @@ export class HeartBeatProcessor {
     this.lastHypothesis = hypothesis;
     let bpmConfidence = this.computeBPMConfidence(hypothesis);
     bpmConfidence *= 0.35 + 0.65 * this.windowSQIUpstream;
+    bpmConfidence *= 0.4 + 0.6 * phaseAlign;
+    bpmConfidence *= 0.42 + 0.58 * spectralAgg;
     if (this.fingerMeasurementState && this.fingerMeasurementState !== 'MEASUREMENT_READY') {
       bpmConfidence *= 0.35;
     }

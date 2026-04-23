@@ -5,6 +5,7 @@
 
 import { RingBuffer } from './RingBuffer';
 import type { FusedSignalMeta } from './pipeline-types';
+import { normalizedCrossCorrLag } from './SpectralFusionSupport';
 
 interface SourceState {
   buffer: RingBuffer;
@@ -27,6 +28,8 @@ export interface FusionUpdateInput {
   spatialCoherence: number;
   /** Señal de referencia previa para continuidad temporal */
   prevFused: number;
+  /** Calidad espectral global ventana [0..1] */
+  spectralQuality01?: number;
 }
 
 export interface FusionOutput {
@@ -82,7 +85,22 @@ export class SignalFusionEngine {
   update(inp: FusionUpdateInput): FusionOutput {
     this.frameCount++;
     const eps = 0.01;
-    const { rawR, rawG, rawB, baseR, baseG, baseB, redPI, greenPI, clipHigh, motionArtifact, pressureState, spatialCoherence, prevFused } = inp;
+    const {
+      rawR,
+      rawG,
+      rawB,
+      baseR,
+      baseG,
+      baseB,
+      redPI,
+      greenPI,
+      clipHigh,
+      motionArtifact,
+      pressureState,
+      spatialCoherence,
+      prevFused,
+      spectralQuality01,
+    } = inp;
 
     const rNorm = baseR > 10 ? (baseR - rawR) / baseR : 0;
     const gNorm = baseG > 10 ? (baseG - rawG) / baseG : 0;
@@ -142,6 +160,47 @@ export class SignalFusionEngine {
       if (sc > 0.12) collapse = false;
     }
 
+    const domLab = LABELS.slice().sort((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0))[0];
+    const refBuf = this.sources.get(domLab)!.buffer;
+    const pairwiseLag: Record<string, number> = {};
+    const coherenceBySource: Record<string, number> = {};
+    const lagPenaltyBySource: Record<string, number> = {};
+    let phaseQacc = 0;
+    let phaseQn = 0;
+    for (const l of LABELS) {
+      if (l === domLab) {
+        pairwiseLag[l] = 0;
+        coherenceBySource[l] = 1;
+        lagPenaltyBySource[l] = 0;
+        phaseQacc += 1;
+        phaseQn++;
+        continue;
+      }
+      const tgt = this.sources.get(l)!.buffer;
+      const n = Math.min(80, Math.min(refBuf.length, tgt.length));
+      if (n < 36) {
+        pairwiseLag[l] = 0;
+        coherenceBySource[l] = 0.45;
+        lagPenaltyBySource[l] = 0.2;
+        scores[l] *= 0.88;
+      } else {
+        const { lag, ncc } = normalizedCrossCorrLag(refBuf, tgt, n, 12);
+        pairwiseLag[l] = lag;
+        coherenceBySource[l] = ncc;
+        const lp = Math.min(1, Math.abs(lag) / 11) * (1.05 - Math.min(1, ncc));
+        lagPenaltyBySource[l] = lp;
+        scores[l] *= Math.max(0.08, 1 - 0.52 * lp);
+        phaseQacc += Math.max(0, Math.min(1, ncc * (1 - lp)));
+        phaseQn++;
+      }
+    }
+
+    const specQ = typeof spectralQuality01 === 'number' && isFinite(spectralQuality01) ? spectralQuality01 : 0.5;
+    for (const l of LABELS) {
+      const coh = coherenceBySource[l] ?? 0.5;
+      scores[l] *= 0.28 + 0.72 * Math.max(0.15, specQ) * (0.38 + 0.62 * coh);
+    }
+
     const temp = 0.09;
     let sumExp = 0;
     const rawW: Record<string, number> = {};
@@ -172,12 +231,31 @@ export class SignalFusionEngine {
     this.lastFusion = fused;
 
     const dom = LABELS.slice().sort((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0))[0];
+    const phaseAlignmentQuality = phaseQn > 0 ? phaseQacc / phaseQn : 0;
+    const sorted = LABELS.map((l) => scores[l] ?? 0).sort((a, b) => b - a);
+    const sourceAgreement =
+      sorted.length >= 2 && sorted[0] > 1e-6 ? Math.max(0, Math.min(1, 1 - sorted[1] / sorted[0])) : 0.35;
+    const collapseReason = collapse
+      ? specQ < 0.22
+        ? 'spectral_low'
+        : phaseAlignmentQuality < 0.28
+          ? 'phase_misalign'
+          : 'low_source_scores'
+      : '';
 
     const meta: FusedSignalMeta = {
       dominantSources: [dom],
       weights,
       collapse,
       ensembleValue: fused,
+      dominantSource: dom,
+      sourceAgreement,
+      phaseAlignmentQuality,
+      fusionCollapseReason: collapseReason,
+      pairwiseLagSamples: pairwiseLag,
+      coherenceBySource,
+      lagPenaltyBySource,
+      dominantSourcePersistence: this.weightEwma.get(dom) ?? 0,
     };
 
     return {

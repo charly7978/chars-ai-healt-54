@@ -215,6 +215,86 @@ export class MultiROIExtractor {
     };
   }
 
+  /**
+   * Coarse-to-fine: micro-rejilla 3×3 dentro de la celda (row,col) del coarse.
+   * Devuelve un boost acotado para sumar al score coarse de esa celda y vecinas.
+   */
+  refineCellQuality(
+    imageData: ImageData,
+    inner: { sx: number; sy: number; w: number; h: number },
+    row: number,
+    col: number,
+    gridRows: number,
+    gridCols: number
+  ): { boostCenter: number; bestLocalRow: number; bestLocalCol: number } {
+    const roiW = inner.w;
+    const roiH = inner.h;
+    const cellW = roiW / gridCols;
+    const cellH = roiH / gridRows;
+    const bx = inner.sx + col * cellW;
+    const by = inner.sy + row * cellH;
+    const mx = 0.1 * cellW;
+    const my = 0.1 * cellH;
+    const sx0 = Math.floor(bx + mx);
+    const sy0 = Math.floor(by + my);
+    const sw = Math.max(6, Math.floor(cellW - 2 * mx));
+    const sh = Math.max(6, Math.floor(cellH - 2 * my));
+    const data = imageData.data;
+    const iw = imageData.width;
+    const ih = imageData.height;
+
+    let bestAc = 0;
+    let br = 0,
+      bc = 0;
+    const sr = 3,
+      sc = 3;
+    for (let gy = 0; gy < sr; gy++) {
+      for (let gx = 0; gx < sc; gx++) {
+        const rx0 = sx0 + (gx * sw) / sc;
+        const ry0 = sy0 + (gy * sh) / sr;
+        const rx1 = sx0 + ((gx + 1) * sw) / sc;
+        const ry1 = sy0 + ((gy + 1) * sh) / sr;
+        let sumR = 0,
+          sumG = 0,
+          sumB = 0,
+          cnt = 0;
+        for (let py = Math.floor(ry0); py < ry1; py += 2) {
+          for (let px = Math.floor(rx0); px < rx1; px += 2) {
+            if (px < 0 || py < 0 || px >= iw || py >= ih) continue;
+            const idx = (py * iw + px) << 2;
+            sumR += data[idx];
+            sumG += data[idx + 1];
+            sumB += data[idx + 2];
+            cnt++;
+          }
+        }
+        if (cnt < 6) continue;
+        const mr = sumR / cnt;
+        const mg = sumG / cnt;
+        const mb = sumB / cnt;
+        let vr = 0;
+        for (let py = Math.floor(ry0); py < ry1; py += 2) {
+          for (let px = Math.floor(rx0); px < rx1; px += 2) {
+            if (px < 0 || py < 0 || px >= iw || py >= ih) continue;
+            const idx = (py * iw + px) << 2;
+            const d = data[idx] - mr;
+            vr += d * d;
+          }
+        }
+        vr /= cnt;
+        const dc = (mr + mg + mb) / 3;
+        const acdc = dc > 1e-3 ? Math.sqrt(vr) / dc : 0;
+        if (acdc > bestAc) {
+          bestAc = acdc;
+          br = gy;
+          bc = gx;
+        }
+      }
+    }
+    const boostCenter = Math.max(-0.12, Math.min(0.2, bestAc * 1.65 - 0.055));
+    return { boostCenter, bestLocalRow: br, bestLocalCol: bc };
+  }
+
   /** Fusión ponderada RGB de las filas rankeadas externamente */
   static fuseWeightedRGB(cells: ROICellMetrics[], weights: Float64Array): { r: number; g: number; b: number } {
     let wr = 0,

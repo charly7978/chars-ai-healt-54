@@ -3,22 +3,30 @@
  */
 
 import { RingBuffer } from './RingBuffer';
-import type { SQICategory, SQIGating, WindowSQIMetrics } from './pipeline-types';
+import type { SQICategory, SQIGating, WindowSQIMetrics, WindowSpectralSQISlice } from './pipeline-types';
+import { computeSpectralWindowFeatures } from './SpectralFusionSupport';
 
 export class SignalQualityEngine {
   private vBuf: RingBuffer;
   private tBuf: RingBuffer;
   private lastWindowScore = 0.35;
+  private prevDominantHz = 0;
+  private welchSegments = 3;
 
   constructor(capacity = 420) {
     this.vBuf = new RingBuffer(capacity);
     this.tBuf = new RingBuffer(capacity);
   }
 
+  setWelchSegments(n: number): void {
+    this.welchSegments = Math.max(2, Math.min(6, Math.round(n)));
+  }
+
   reset(): void {
     this.vBuf.clear();
     this.tBuf.clear();
     this.lastWindowScore = 0.35;
+    this.prevDominantHz = 0;
   }
 
   push(value: number, timestampMs: number): void {
@@ -101,6 +109,7 @@ export class SignalQualityEngine {
     const entropyScore = Math.max(0, 1 - Math.abs(entNorm - 0.72) * 1.8) * 0.1;
 
     let bestAc = 0;
+    let bestLagAc = 0;
     const maxLag = Math.min(80, m - 5);
     for (let lag = 6; lag <= maxLag; lag++) {
       let c = 0,
@@ -114,7 +123,10 @@ export class SignalQualityEngine {
         b += y * y;
       }
       const ac = c / (Math.sqrt(a * b) + 1e-12);
-      if (ac > bestAc) bestAc = ac;
+      if (ac > bestAc) {
+        bestAc = ac;
+        bestLagAc = lag;
+      }
     }
     const periodicity = Math.max(0, Math.min(1, bestAc)) * 0.28;
     if (bestAc < 0.18) reasons.push('poca periodicidad');
@@ -135,12 +147,53 @@ export class SignalQualityEngine {
       Math.max(0, 0.12 - skewPen - kurtPen - wanderPen);
 
     const score = Math.max(0, Math.min(1, scoreRaw));
-    this.lastWindowScore = this.lastWindowScore * 0.65 + score * 0.35;
+
+    const deltas: number[] = [];
+    for (let i = 1; i < m; i++) {
+      const dt = this.tBuf.get(startIdx + i) - this.tBuf.get(startIdx + i - 1);
+      if (dt > 5 && dt < 140) deltas.push(dt);
+    }
+    deltas.sort((a, b) => a - b);
+    const medDt = deltas.length >= 4 ? deltas[Math.floor(deltas.length / 2)] : 1000 / Math.max(15, estimatedSampleRate);
+    const fsEff = Math.max(14, Math.min(64, 1000 / Math.max(8, medDt)));
+
+    const temporalPeakHz = bestLagAc > 0 ? fsEff / bestLagAc : null;
+    const spec = computeSpectralWindowFeatures(vals, fsEff, this.welchSegments, this.prevDominantHz, temporalPeakHz);
+    this.prevDominantHz = spec.dominantFrequencyHz > 0.2 ? spec.dominantFrequencyHz : this.prevDominantHz * 0.92;
+
+    const specAgg = Math.max(
+      0,
+      Math.min(
+        1,
+        spec.spectralDominanceScore * 0.28 +
+          spec.harmonicityScore * 0.18 +
+          spec.dominantFrequencyStability * 0.2 +
+          spec.detectorAgreementScore * 0.22 +
+          (1 - spec.spectralEntropyPenalty) * 0.12
+      )
+    );
+    if (spec.spectralDominanceScore < 0.18) reasons.push('pico espectral débil');
+    if (spec.detectorAgreementScore < 0.32) reasons.push('discrepancia tempo-espectral');
+
+    const spectralSlice: WindowSpectralSQISlice = {
+      dominantFrequencyHz: spec.dominantFrequencyHz,
+      dominantBpm: spec.dominantBpm,
+      spectralDominanceScore: spec.spectralDominanceScore,
+      harmonicityScore: spec.harmonicityScore,
+      spectralEntropyPenalty: spec.spectralEntropyPenalty,
+      dominantFrequencyStability: spec.dominantFrequencyStability,
+      detectorAgreementScore: spec.detectorAgreementScore,
+      peakProminenceRatio: spec.peakProminenceRatio,
+      bandPowerRatio: spec.bandPowerRatio,
+    };
+
+    const blendedCore = score * 0.62 + specAgg * 0.38;
+    this.lastWindowScore = this.lastWindowScore * 0.58 + blendedCore * 0.42;
 
     if (skewPen + kurtPen > 0.1) reasons.push('forma distribución rara');
     if (periodicity < 0.06) reasons.push('sin pico autocorr');
 
-    return finalizeWindow(this.lastWindowScore, reasons);
+    return finalizeWindow(this.lastWindowScore, reasons, spectralSlice);
   }
 
   getLastScore(): number {
@@ -166,7 +219,7 @@ function finalize(score: number, cat: SQICategory, reasons: string[], gating: SQ
   return { score, category: cat, reasons, gating };
 }
 
-function finalizeWindow(score: number, reasons: string[]): WindowSQIMetrics {
+function finalizeWindow(score: number, reasons: string[], spectral?: WindowSpectralSQISlice): WindowSQIMetrics {
   let cat: SQICategory = 'poor';
   if (score >= 0.72) cat = 'excellent';
   else if (score >= 0.55) cat = 'good';
@@ -178,5 +231,12 @@ function finalizeWindow(score: number, reasons: string[]): WindowSQIMetrics {
   else if (score >= 0.22) gating = 'hold_previous';
   else gating = 'reject';
 
-  return { score, category: cat, reasons, gating };
+  if (spectral && spectral.spectralDominanceScore < 0.14 && gating === 'accept_high_confidence') {
+    gating = 'accept_low_confidence';
+  }
+  if (spectral && spectral.detectorAgreementScore < 0.22 && gating !== 'reject') {
+    gating = 'hold_previous';
+  }
+
+  return { score, category: cat, reasons, gating, spectral };
 }

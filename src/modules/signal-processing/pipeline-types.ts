@@ -14,11 +14,25 @@ export type SQICategory = 'poor' | 'usable' | 'good' | 'excellent';
 
 export type SQIGating = 'reject' | 'hold_previous' | 'accept_low_confidence' | 'accept_high_confidence';
 
+export interface WindowSpectralSQISlice {
+  dominantFrequencyHz: number;
+  dominantBpm: number;
+  spectralDominanceScore: number;
+  harmonicityScore: number;
+  spectralEntropyPenalty: number;
+  dominantFrequencyStability: number;
+  detectorAgreementScore: number;
+  peakProminenceRatio: number;
+  bandPowerRatio: number;
+}
+
 export interface WindowSQIMetrics {
   score: number;
   category: SQICategory;
   reasons: string[];
   gating: SQIGating;
+  /** Métricas espectrales (Welch) integradas en la ventana */
+  spectral?: WindowSpectralSQISlice;
 }
 
 export interface FusedSignalMeta {
@@ -26,6 +40,15 @@ export interface FusedSignalMeta {
   weights: Record<string, number>;
   collapse: boolean;
   ensembleValue: number;
+  dominantSource?: string;
+  sourceAgreement?: number;
+  phaseAlignmentQuality?: number;
+  fusionCollapseReason?: string;
+  /** lags en muestras vs referencia (top fuente) */
+  pairwiseLagSamples?: Record<string, number>;
+  coherenceBySource?: Record<string, number>;
+  lagPenaltyBySource?: Record<string, number>;
+  dominantSourcePersistence?: number;
 }
 
 export interface ROIQualityRow {

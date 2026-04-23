@@ -4,7 +4,7 @@ import { RingBuffer } from './RingBuffer';
 import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { computeGlobalSQI } from './SignalQualityEstimator';
-import { MultiROIExtractor } from './MultiROIExtractor';
+import { MultiROIExtractor, type ROICellMetrics } from './MultiROIExtractor';
 import { ROIScorer } from './ROIScorer';
 import { SignalFusionEngine } from './SignalFusionEngine';
 import { SignalQualityEngine } from './SignalQualityEngine';
@@ -18,6 +18,8 @@ import type {
   ROIQualityRow,
   WindowSQIMetrics,
 } from './pipeline-types';
+import { ROIReputationModel } from './ROIReputationModel';
+import { PerformanceModeController } from './PerformanceModeController';
 
 /**
  * Motor cPPG: doble canvas, multi-ROI, fusión ponderada, SQI ventana, FSM de contacto,
@@ -57,10 +59,37 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private estimatedSampleRate = 30;
   private lastFrameTime = 0;
 
+  /** Movimiento inyectado por frame (sensor en hook principal o worker relay) */
   private motionScore = 0;
-  private motionListenerActive = false;
-  private lastAccel = { x: 0, y: 0, z: 0 };
   private readonly MOTION_THRESH = 0.6;
+  private perfModeController = new PerformanceModeController();
+  private roiReputation = new ROIReputationModel(25);
+  private spectralGateForFinger = 0.45;
+  private refinementFrame = 0;
+  private lastRefinementStage: 'coarse' | 'fine' = 'coarse';
+  private fineBoostEwma = 0;
+  private lastGoodFiltered = 0;
+  private lastGoodRaw = 0;
+  private lastGoodQuality = 0;
+  private captureContext: {
+    detectionWidth: number;
+    detectionHeight: number;
+    extractionWidth: number;
+    extractionHeight: number;
+    cropSource: { sx: number; sy: number; sw: number; sh: number };
+    extractionTierId: string;
+    upscaleFromDetection: number;
+    extractionMode: string;
+  } = {
+    detectionWidth: 160,
+    detectionHeight: 120,
+    extractionWidth: 320,
+    extractionHeight: 240,
+    cropSource: { sx: 0, sy: 0, sw: 1, sh: 1 },
+    extractionTierId: 'M',
+    upscaleFromDetection: 1,
+    extractionMode: 'BALANCED',
+  };
 
   private luminanceRing = new RingBuffer(36);
   private lastAutocorrPeak = 0;
@@ -104,6 +133,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastWindowSqi: WindowSQIMetrics | null = null;
   private lastFingerFeatures: FingerFrameFeatures | null = null;
   private lastTiming = { intervalMs: 0, effectiveFps: 0, droppedEstimate: 0 };
+  private lastRoiCells: ROICellMetrics[] = [];
+  private lastRoiScores = new Float64Array(25);
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -120,12 +151,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.reset();
-    this.startMotionListener();
   }
 
   stop(): void {
     this.isProcessing = false;
-    this.stopMotionListener();
   }
 
   async calibrate(): Promise<boolean> {
@@ -133,15 +162,32 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   /** Compat: un solo ImageData (extracción = detección) */
-  processFrame(imageData: ImageData, frameTimestamp?: number): void {
-    this.processFrameDual(imageData, imageData, frameTimestamp);
+  processFrame(imageData: ImageData, frameTimestamp?: number, motionScore = 0): void {
+    this.processFrameDual(imageData, imageData, frameTimestamp, motionScore);
   }
 
-  processFrameDual(detectionImageData: ImageData, extractionImageData: ImageData, frameTimestamp?: number): void {
+  /** Contexto de captura (resoluciones / crop) — lo rellena Index vía hook antes de cada frame */
+  applyCaptureContext(ctx: Partial<typeof this.captureContext>): void {
+    this.captureContext = { ...this.captureContext, ...ctx };
+  }
+
+  getAcquisitionProfile(): Readonly<typeof this.captureContext> {
+    return this.captureContext;
+  }
+
+  processFrameDual(
+    detectionImageData: ImageData,
+    extractionImageData: ImageData,
+    frameTimestamp?: number,
+    motionScoreInput?: number
+  ): void {
     if (!this.isProcessing || !this.onSignalReady) return;
 
     const tAll = performance.now();
     const timestamp = frameTimestamp ?? performance.now();
+    this.motionScore =
+      typeof motionScoreInput === 'number' && isFinite(motionScoreInput) ? motionScoreInput : 0;
+
     this.updateSampleRate(timestamp);
 
     this.lastTiming = this.frameTiming.recordFrame(timestamp);
@@ -154,7 +200,38 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const tRoi = performance.now();
     const multi = this.multiRoi.process(extractionImageData);
     const motionLocal = this.motionScore / (this.MOTION_THRESH + 0.01);
-    const scored = this.roiScorer.scoreFrame(multi.cells, motionLocal, this.lastAutocorrPeak, this.lastPulseCorr);
+    const specConc =
+      this.lastWindowSqi?.spectral?.spectralDominanceScore ??
+      this.lastAutocorrPeak * 0.55 + this.lastPulseCorr * 0.45;
+    const preScored = this.roiScorer.scoreFrame(
+      multi.cells,
+      motionLocal,
+      specConc,
+      this.lastPulseCorr,
+      undefined
+    );
+    const repMult = this.roiReputation.update(multi.cells, preScored.scores, specConc, timestamp);
+    const scored = this.roiScorer.scoreFrame(
+      multi.cells,
+      motionLocal,
+      specConc,
+      this.lastPulseCorr,
+      repMult
+    );
+    this.lastRoiCells = multi.cells;
+    this.lastRoiScores = scored.scores;
+
+    this.refinementFrame++;
+    const stride = this.perfModeController.getRefinementStride();
+    if (this.refinementFrame % stride === 0 && scored.topIndices.length > 0) {
+      const topId = scored.topIndices[0];
+      const cell = multi.cells[topId];
+      const r = this.multiRoi.refineCellQuality(extractionImageData, multi.innerRect, cell.row, cell.col, 5, 5);
+      this.fineBoostEwma = this.fineBoostEwma * 0.82 + r.boostCenter * 0.18;
+      this.lastRefinementStage = 'fine';
+    } else {
+      this.lastRefinementStage = 'coarse';
+    }
     const fusedRgb = MultiROIExtractor.fuseWeightedRGB(multi.cells, scored.weights);
     this.profiler.mark('roiScore', performance.now() - tRoi);
 
@@ -243,7 +320,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.pressurePenalty = pressure.penalty;
 
     const preSqi = this.windowSqiEngine.getLastScore();
-    const fingerOut = this.fingerMachine.process(feats, timestamp, preSqi);
+    const fingerSqiIn = Math.min(preSqi, this.spectralGateForFinger);
+    const fingerOut = this.fingerMachine.process(feats, timestamp, fingerSqiIn);
     this.fingerMeasurementState = fingerOut.state;
     this.exportedContactState = fingerOut.exportedContact;
     this.fingerDetected = this.fingerMeasurementState !== 'NO_CONTACT';
@@ -296,6 +374,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const tFus = performance.now();
     const redPI = this.redDC > 0 ? this.redAC / this.redDC : 0;
     const greenPI = this.greenDC > 0 ? this.greenAC / this.greenDC : 0;
+    const spectralQ01 =
+      this.lastWindowSqi?.spectral != null
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              this.lastWindowSqi.spectral.spectralDominanceScore * 0.38 +
+                this.lastWindowSqi.spectral.harmonicityScore * 0.22 +
+                this.lastWindowSqi.spectral.detectorAgreementScore * 0.4
+            )
+          )
+        : undefined;
+
     const fusion = this.fusionEngine.update({
       rawR: fusedRgb.r,
       rawG: fusedRgb.g,
@@ -310,6 +401,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       pressureState: this.pressureState,
       spatialCoherence: Math.max(0, 1 - cvS),
       prevFused: this.lastFusionValue,
+      spectralQuality01: spectralQ01,
     });
     this.profiler.mark('fusion', performance.now() - tFus);
     this.lastFusionMeta = fusion.meta;
@@ -323,8 +415,22 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const tSqi = performance.now();
     this.windowSqiEngine.push(filtered, timestamp);
+    this.windowSqiEngine.setWelchSegments(this.perfModeController.getWelchSegments());
     this.lastWindowSqi = this.windowSqiEngine.computeWindowSQI(this.estimatedSampleRate);
     this.profiler.mark('sqi', performance.now() - tSqi);
+    if (this.lastWindowSqi.spectral) {
+      this.spectralGateForFinger =
+        0.28 +
+        0.72 *
+          Math.max(
+            0,
+            Math.min(
+              1,
+              this.lastWindowSqi.spectral.spectralDominanceScore * 0.5 +
+                this.lastWindowSqi.spectral.detectorAgreementScore * 0.5
+            )
+          );
+    }
 
     const perfusionIndex = this.calculatePerfusionIndex();
     const signalRange = this.getSignalRange();
@@ -351,13 +457,55 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const windowFactor = this.lastWindowSqi ? this.lastWindowSqi.score : 0.35;
     const fingerGate = shouldGateBpmOutput(this.fingerMeasurementState) ? 1 : 0.4;
-    const gatedQuality = this.signalQuality * (0.45 + 0.55 * windowFactor) * fingerGate;
+    const phaseQ = this.lastFusionMeta?.phaseAlignmentQuality ?? 0.55;
+    const specAgg =
+      this.lastWindowSqi?.spectral != null
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              this.lastWindowSqi.spectral.spectralDominanceScore * 0.35 +
+                this.lastWindowSqi.spectral.detectorAgreementScore * 0.35 +
+                this.lastWindowSqi.spectral.dominantFrequencyStability * 0.3
+            )
+          )
+        : 0.4;
+    let gatedQuality = this.signalQuality * (0.45 + 0.55 * windowFactor) * fingerGate;
+    gatedQuality *= 0.55 + 0.45 * specAgg;
+    gatedQuality *= 0.52 + 0.48 * Math.max(0.25, phaseQ);
+    gatedQuality *= 1 + Math.min(0.12, this.fineBoostEwma);
+    gatedQuality = Math.min(100, Math.max(0, gatedQuality));
+
+    const collapseBad = fusion.meta.collapse || (fusion.meta.phaseAlignmentQuality ?? 1) < 0.22;
+    const spectralBad = specAgg < 0.18;
+    const degradedHold = collapseBad || spectralBad || (this.lastWindowSqi?.gating === 'reject' && windowFactor < 0.2);
+
+    let outRaw = fusion.fusedValue;
+    let outFiltered = filtered;
+    let outQuality = gatedQuality;
+    if (degradedHold && this.lastGoodQuality > 5) {
+      outRaw = this.lastGoodRaw;
+      outFiltered = this.lastGoodFiltered;
+      outQuality = Math.min(outQuality, this.lastGoodQuality * 0.72);
+    } else if (!degradedHold && gatedQuality > 8) {
+      this.lastGoodFiltered = filtered;
+      this.lastGoodRaw = fusion.fusedValue;
+      this.lastGoodQuality = gatedQuality;
+    }
+
+    this.perfModeController.observe({
+      effectiveFps: this.lastTiming.effectiveFps || this.realFps,
+      processingTimeMs: performance.now() - tAll,
+      workerQueueDepth: 0,
+      workerLatencyMs: 0,
+      droppedEstimate: this.lastTiming.droppedEstimate,
+    });
 
     this.emitSignal({
       timestamp,
-      rawValue: fusion.fusedValue,
-      filteredValue: filtered,
-      quality: Math.min(100, gatedQuality),
+      rawValue: outRaw,
+      filteredValue: outFiltered,
+      quality: Math.min(100, outQuality),
       fingerDetected: this.fingerDetected,
       contactState: this.exportedContactState,
       extendedContactState: this.fingerMeasurementState,
@@ -371,7 +519,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       roiCoverage: this.smoothedCoverage,
       pressureState: this.pressureState,
       activeSource: fusion.primaryLabel,
-      sourceStability: fusion.meta.collapse ? 0 : 0.6,
+      sourceStability: fusion.meta.collapse ? 0 : Math.min(1, fusion.meta.sourceAgreement ?? 0.55),
       sqiBySource: fusion.allSQI,
       estimatedSampleRate: this.estimatedSampleRate,
       realFps: this.lastTiming.effectiveFps || this.realFps,
@@ -396,14 +544,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       topRois: this.lastTopRois,
       fusionWeights: this.lastFusionMeta?.weights ?? {},
       fusionCollapse: this.lastFusionMeta?.collapse ?? true,
+      fusionMeta: this.lastFusionMeta
+        ? {
+            phaseAlignmentQuality: this.lastFusionMeta.phaseAlignmentQuality,
+            sourceAgreement: this.lastFusionMeta.sourceAgreement,
+            dominantSource: this.lastFusionMeta.dominantSource,
+            fusionCollapseReason: this.lastFusionMeta.fusionCollapseReason,
+            pairwiseLagSamples: this.lastFusionMeta.pairwiseLagSamples,
+            coherenceBySource: this.lastFusionMeta.coherenceBySource,
+          }
+        : undefined,
       windowSQI: this.lastWindowSqi
         ? {
             score: this.lastWindowSqi.score,
             category: this.lastWindowSqi.category,
             reasons: this.lastWindowSqi.reasons,
             gating: this.lastWindowSqi.gating,
+            spectral: this.lastWindowSqi.spectral,
           }
         : undefined,
+      acquisition: { ...this.captureContext },
+      performanceProfile: this.perfModeController.getProfile(),
+      roiReputation: this.roiReputation.getDebug(this.lastRoiCells, this.lastRoiScores, this.lastRefinementStage),
       frameTiming: this.lastTiming,
       profiler: this.profiler.snapshot(),
       fingerFeatures: ff
@@ -420,6 +582,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     };
     this.onSignalReady({
       ...partial,
+      acStats: this.getRGBStats(),
+      positionQuality: this.getPositionQuality(),
       pipelineDebug,
     } as ProcessedSignal);
   }
@@ -585,58 +749,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     return d > 1e-9 ? c / d : 0;
   }
 
-  private handleMotionEvent = (event: DeviceMotionEvent) => {
-    const acc = event.accelerationIncludingGravity;
-    if (!acc || acc.x === null || acc.y === null || acc.z === null) return;
-    const dx = (acc.x ?? 0) - this.lastAccel.x;
-    const dy = (acc.y ?? 0) - this.lastAccel.y;
-    const dz = (acc.z ?? 0) - this.lastAccel.z;
-    this.lastAccel = { x: acc.x ?? 0, y: acc.y ?? 0, z: acc.z ?? 0 };
-    const accelRMS = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const rot = event.rotationRate;
-    let gyroRMS = 0;
-    if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
-      gyroRMS = Math.sqrt((rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2) / 120;
-    }
-    this.motionScore = this.motionScore * 0.85 + (accelRMS * 0.5 + gyroRMS * 0.3) * 0.15;
-  };
-
-  private startMotionListener(): void {
-    if (this.motionListenerActive) return;
-    try {
-      if (typeof DeviceMotionEvent !== 'undefined') {
-        const DME = DeviceMotionEvent as typeof DeviceMotionEvent & {
-          requestPermission?: () => Promise<'granted' | 'denied' | string>;
-        };
-        if (typeof DME.requestPermission === 'function') {
-          void DME
-            .requestPermission()
-            .then((state) => {
-              if (state === 'granted') {
-                window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
-                this.motionListenerActive = true;
-              }
-            })
-            .catch(() => {
-              /* permiso denegado o no soportado */
-            });
-        } else {
-          window.addEventListener('devicemotion', this.handleMotionEvent, { passive: true });
-          this.motionListenerActive = true;
-        }
-      }
-    } catch {
-      /* devicemotion no disponible */
-    }
-  }
-
-  private stopMotionListener(): void {
-    if (!this.motionListenerActive) return;
-    window.removeEventListener('devicemotion', this.handleMotionEvent);
-    this.motionListenerActive = false;
-    this.motionScore = 0;
-  }
-
   getRGBStats() {
     return {
       redAC: this.redAC,
@@ -698,6 +810,16 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.estimatedSampleRate = 30;
     this.lastFrameTime = 0;
     this.motionScore = 0;
+    this.roiReputation.reset();
+    this.perfModeController = new PerformanceModeController();
+    this.refinementFrame = 0;
+    this.fineBoostEwma = 0;
+    this.spectralGateForFinger = 0.45;
+    this.lastRoiCells = [];
+    this.lastRoiScores = new Float64Array(25);
+    this.lastGoodFiltered = 0;
+    this.lastGoodRaw = 0;
+    this.lastGoodQuality = 0;
     this.fingerMachine.reset();
     this.fusionEngine.reset();
     this.roiScorer.reset();

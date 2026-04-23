@@ -81,6 +81,8 @@ export const useHeartBeatProcessor = () => {
       windowSQI?: number;
       fingerMeasurementState?: string;
       effectiveSampleRate?: number;
+      phaseAlignmentQuality?: number;
+      spectralQualityAggregate?: number;
     }
   ): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {
