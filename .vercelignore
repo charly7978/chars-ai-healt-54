@@ -1,4 +1,5 @@
 # Ignore dependencies and cache to force rebuild
+# Redeploy trigger: REFA2 - 2026-04-24 15:06
 node_modules
 dist
 .next
