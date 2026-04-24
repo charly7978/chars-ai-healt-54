@@ -6,17 +6,26 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
 const createFallbackClient = () => {
-  const error = new Error('Supabase is not configured in this environment');
+  const error = new Error('Supabase is not configured in this environment. Please set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY environment variables.');
 
   return {
     auth: {
-      getUser: async () => ({ data: { user: null }, error }),
+      getUser: async () => {
+        console.error('[supabase] Cannot get user: Supabase not configured');
+        return { data: { user: null }, error };
+      },
     },
     from: () => ({
-      insert: async () => ({ error }),
+      insert: async () => {
+        console.error('[supabase] Cannot insert data: Supabase not configured');
+        return { error };
+      },
     }),
     functions: {
-      invoke: async () => ({ data: null, error }),
+      invoke: async () => {
+        console.error('[supabase] Cannot invoke function: Supabase not configured');
+        return { data: null, error };
+      },
     },
   } as any;
 };
@@ -24,7 +33,7 @@ const createFallbackClient = () => {
 const hasSupabaseEnv = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY);
 
 if (!hasSupabaseEnv) {
-  console.warn('[supabase] Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY. Running with fallback client.');
+  console.error('[supabase] CRITICAL: Missing VITE_SUPABASE_URL or VITE_SUPABASE_PUBLISHABLE_KEY. Backend features (auth, save measurements, AI analysis) will NOT work.');
 }
 
 // Import the supabase client like this:

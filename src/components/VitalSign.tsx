@@ -13,6 +13,7 @@ interface VitalSignProps {
   average?: number;
   confidenceLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
   featureQuality?: number;
+  isResearch?: boolean;
 }
 
 const VitalSign = ({ 
@@ -25,7 +26,8 @@ const VitalSign = ({
   median,
   average,
   confidenceLevel,
-  featureQuality
+  featureQuality,
+  isResearch = false
 }: VitalSignProps) => {
   const [showDetails, setShowDetails] = useState(false);
 
@@ -135,8 +137,13 @@ const VitalSign = ({
       )}
       onClick={handleClick}
     >
-      <div className="text-[11px] font-medium uppercase tracking-wider text-white mb-1">
+      <div className="text-[11px] font-medium uppercase tracking-wider text-white mb-1 flex items-center gap-1">
         {label}
+        {isResearch && (
+          <span className="text-[8px] font-bold px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded border border-amber-500/30">
+            RESEARCH
+          </span>
+        )}
       </div>
       
       <div className="font-bold text-xl sm:text-2xl transition-all duration-300">

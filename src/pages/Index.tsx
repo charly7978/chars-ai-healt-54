@@ -939,12 +939,13 @@ const Index = () => {
                 confidenceLevel={vitalSigns.pressure?.confidence}
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
-              <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} />
-              <VitalSign 
+              <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} isResearch={true} />
+              <VitalSign
                 label="COLEST./TRIGL. (EST.)"
                 value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
                 unit="mg/dL"
                 highlighted={showResults}
+                isResearch={true}
               />
               <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
             </div>

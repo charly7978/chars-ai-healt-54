@@ -134,7 +134,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastFingerFeatures: FingerFrameFeatures | null = null;
   private lastTiming = { intervalMs: 0, effectiveFps: 0, droppedEstimate: 0 };
   private lastRoiCells: ROICellMetrics[] = [];
-  private lastRoiScores = new Float64Array(25);
+  private lastRoiScores: Float64Array<ArrayBufferLike> = new Float64Array(25);
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
@@ -158,7 +158,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   }
 
   async calibrate(): Promise<boolean> {
-    return true;
+    // Calibration not implemented - returning false to indicate failure
+    console.warn('[PPGSignalProcessor] Calibration not implemented. This is a no-op.');
+    return false;
   }
 
   /** Compat: un solo ImageData (extracción = detección) */

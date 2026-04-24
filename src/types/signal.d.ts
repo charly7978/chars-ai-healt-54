@@ -1,4 +1,6 @@
 import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
+import type { WindowSpectralSQISlice } from '../modules/signal-processing/pipeline-types';
+import type { ROIReputationDebug } from '../modules/signal-processing/ROIReputationModel';
 
 export type ContactState = 'NO_CONTACT' | 'UNSTABLE_CONTACT' | 'STABLE_CONTACT';
 
@@ -92,12 +94,12 @@ export interface ProcessedSignal {
       category: string;
       reasons: string[];
       gating: string;
-      spectral?: Record<string, number>;
+      spectral?: WindowSpectralSQISlice;
     };
     fusionMeta?: Record<string, unknown>;
     acquisition?: Record<string, unknown>;
     performanceProfile?: string;
-    roiReputation?: Record<string, unknown>;
+    roiReputation?: ROIReputationDebug;
     frameTiming?: { intervalMs: number; effectiveFps: number; droppedEstimate: number };
     profiler?: Record<string, number>;
     fingerFeatures?: Record<string, number>;
