@@ -27,26 +27,39 @@ export const useSaveMeasurement = () => {
       
       // Validar que hay datos significativos para guardar
       const hasValidData = 
-        data.heartRate > 30 || 
-        data.vitalSigns.spo2 > 70 ||
-        data.vitalSigns.pressure.systolic > 60;
+        (data.heartRate != null && data.heartRate > 30) || 
+        (data.vitalSigns.spo2 != null && data.vitalSigns.spo2 > 70) ||
+        (data.vitalSigns.pressure.systolic != null && data.vitalSigns.pressure.systolic > 60);
       
       if (!hasValidData) {
         console.log('⚠️ Datos insuficientes para guardar');
         return false;
       }
       
-      // Preparar datos para inserción
-      const measurementRecord = {
+      // Preparar datos para inserción - sin defaults ficticios
+      const measurementRecord: Record<string, any> = {
         user_id: user.id,
-        heart_rate: Math.round(data.heartRate) || 0,
-        spo2: Math.round(data.vitalSigns.spo2) || 0,
-        systolic: Math.round(data.vitalSigns.pressure.systolic) || 0,
-        diastolic: Math.round(data.vitalSigns.pressure.diastolic) || 0,
-        arrhythmia_count: data.vitalSigns.arrhythmiaCount || 0,
-        quality: Math.round(data.signalQuality) || 0,
         measured_at: new Date().toISOString()
       };
+      
+      if (data.heartRate != null) {
+        measurementRecord.heart_rate = Math.round(data.heartRate);
+      }
+      if (data.vitalSigns.spo2 != null) {
+        measurementRecord.spo2 = Math.round(data.vitalSigns.spo2);
+      }
+      if (data.vitalSigns.pressure.systolic != null) {
+        measurementRecord.systolic = Math.round(data.vitalSigns.pressure.systolic);
+      }
+      if (data.vitalSigns.pressure.diastolic != null) {
+        measurementRecord.diastolic = Math.round(data.vitalSigns.pressure.diastolic);
+      }
+      if (data.vitalSigns.arrhythmiaCount != null) {
+        measurementRecord.arrhythmia_count = data.vitalSigns.arrhythmiaCount;
+      }
+      if (data.signalQuality != null) {
+        measurementRecord.quality = Math.round(data.signalQuality);
+      }
       
       console.log('💾 Guardando medición:', measurementRecord);
       

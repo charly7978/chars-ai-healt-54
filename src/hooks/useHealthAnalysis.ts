@@ -34,15 +34,15 @@ export const useHealthAnalysis = () => {
     try {
       const { data: result, error } = await supabase.functions.invoke('analyze-vitals', {
         body: {
-          heartRate: heartRate || 70,
-          spo2: vitalSigns.spo2 || 97,
-          systolic: vitalSigns.pressure?.systolic || 120,
-          diastolic: vitalSigns.pressure?.diastolic || 80,
-          arrhythmiaCount: vitalSigns.arrhythmiaCount || 0,
-          glucose: vitalSigns.glucose || undefined,
+          heartRate: heartRate ?? undefined,
+          spo2: vitalSigns.spo2 ?? undefined,
+          systolic: vitalSigns.pressure?.systolic ?? undefined,
+          diastolic: vitalSigns.pressure?.diastolic ?? undefined,
+          arrhythmiaCount: vitalSigns.arrhythmiaCount ?? undefined,
+          glucose: vitalSigns.glucose ?? undefined,
           
-          totalCholesterol: vitalSigns.lipids?.totalCholesterol || undefined,
-          triglycerides: vitalSigns.lipids?.triglycerides || undefined,
+          totalCholesterol: vitalSigns.lipids?.totalCholesterol ?? undefined,
+          triglycerides: vitalSigns.lipids?.triglycerides ?? undefined,
           quality,
           confidence: vitalSigns.measurementConfidence,
         }

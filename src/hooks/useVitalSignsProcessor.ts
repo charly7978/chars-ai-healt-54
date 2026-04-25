@@ -28,10 +28,6 @@ export const useVitalSignsProcessor = () => {
     processorRef.current?.startCalibration();
   }, []);
   
-  const forceCalibrationCompletion = useCallback(() => {
-    processorRef.current?.forceCalibrationCompletion();
-  }, []);
-  
   const setRGBData = useCallback((data: RGBData) => {
     processorRef.current?.setRGBData(data);
   }, []);
@@ -117,7 +113,6 @@ export const useVitalSignsProcessor = () => {
     reset,
     fullReset,
     startCalibration,
-    forceCalibrationCompletion,
     hasValidPressureEstimate,
     lastValidResults,
     getCalibrationProgress: useCallback(() => processorRef.current?.getCalibrationProgress() ?? 0, []),

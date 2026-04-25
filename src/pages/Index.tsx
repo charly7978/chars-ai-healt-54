@@ -162,7 +162,6 @@ const Index = () => {
     hasValidPressureEstimate,
     lastValidResults,
     startCalibration,
-    forceCalibrationCompletion,
     getCalibrationProgress,
     setHeartRuntime,
     ingestBeatOpticalRatio,
@@ -449,14 +448,14 @@ const Index = () => {
       measurementTimerRef.current = null;
     }
     stopProcessing();
-    if (isCalibrating) forceCalibrationCompletion();
+    // Eliminado forceCalibrationCompletion - no se permite bypass de calibración
     const savedResults = resetVitalSigns();
     if (savedResults || vitalSigns.spo2 > 0) {
       const dataToSave = savedResults || vitalSigns;
       await saveMeasurement({
         heartRate,
         vitalSigns: dataToSave,
-        signalQuality: lastSignal?.quality || 0
+        signalQuality: lastSignal?.quality ?? undefined
       });
     }
     setIsCameraOn(false);
@@ -479,7 +478,7 @@ const Index = () => {
     setElapsedTime(0);
     setCalibrationProgress(0);
     console.log('✅ Medición finalizada y guardada');
-  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, forceCalibrationCompletion, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
+  }, [isMonitoring, isCalibrating, cameraStream, stopFrameLoop, stopProcessing, resetVitalSigns, saveMeasurement, heartRate, vitalSigns, lastSignal]);
 
   const handleReset = useCallback(() => {
     console.log('🔄 Reset completo...');
@@ -555,8 +554,8 @@ const Index = () => {
       ls.contactState === 'STABLE_CONTACT' &&
       ext === 'MEASUREMENT_READY' &&
       windowGate &&
-      (lastSignal.quality || 0) >= 10 &&
-      (lastSignal.perfusionIndex || 0) >= 0.12;
+      (lastSignal.quality ?? 0) >= 10 &&
+      (lastSignal.perfusionIndex ?? 0) >= 0.12;
 
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
@@ -566,7 +565,7 @@ const Index = () => {
       (positionQuality.locked && !positionQuality.drifting && positionQuality.qualityScore >= 0.55);
     const sourceStability = Math.max(
       0,
-      Math.min(1, (ls.sourceStability ?? positionQuality.qualityScore) || 0)
+      Math.min(1, (ls.sourceStability ?? positionQuality.qualityScore) ?? 0)
     );
     const sampleRate =
       (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
@@ -658,7 +657,7 @@ const Index = () => {
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 300);
       totalBeatsRef.current++;
-      const currentArrCount = vitalSigns.arrhythmiaCount || 0;
+      const currentArrCount = vitalSigns.arrhythmiaCount ?? 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {
         arrhythmiaBeatsRef.current++;
         lastArrhythmiaCountForBeatsRef.current = currentArrCount;
@@ -674,7 +673,7 @@ const Index = () => {
     if (vitalSignsFrameCounter.current >= VITALS_PROCESS_EVERY_N_FRAMES) {
       vitalSignsFrameCounter.current = 0;
       const rgbStats = getRGBStats();
-      const detectorAgreement = heartBeatResult.detectorAgreement || heartBeatResult.debug.detectorAgreement || 0;
+      const detectorAgreement = heartBeatResult.detectorAgreement ?? heartBeatResult.debug.detectorAgreement ?? 0;
       const rrStability = computeRRStability(heartBeatResult.rrData?.intervals || []);
       const beatInputs = heartBeatResult.debug.recentAcceptedBeats && heartBeatResult.debug.recentAcceptedBeats.length > 0
         ? heartBeatResult.debug.recentAcceptedBeats.slice(-12).map((beat) => ({
@@ -697,8 +696,8 @@ const Index = () => {
         pressureOptimal,
         clipHighRatio: clipHigh,
         sourceStability,
-        avgBeatSQI: heartBeatResult.beatSQI || heartBeatResult.debug.lastBeatSQI || 0,
-        beatCount: heartBeatResult.debug.beatsAccepted || heartBeatResult.rrData?.intervals.length || 0,
+        avgBeatSQI: heartBeatResult.beatSQI ?? heartBeatResult.debug.lastBeatSQI ?? 0,
+        beatCount: heartBeatResult.debug.beatsAccepted ?? heartBeatResult.rrData?.intervals.length ?? 0,
       });
 
       if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
@@ -911,8 +910,8 @@ const Index = () => {
             })()}
             <PPGSignalMeter 
               value={heartbeatSignal}
-              quality={lastSignal?.quality || 0}
-              isFingerDetected={lastSignal?.fingerDetected || false}
+              quality={lastSignal?.quality ?? 0}
+              isFingerDetected={lastSignal?.fingerDetected ?? false}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
               isMonitoring={isMonitoring}
@@ -942,12 +941,12 @@ const Index = () => {
               <VitalSign label="GLUCOSA (EST.)" value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"} unit="mg/dL" highlighted={showResults} isResearch={true} />
               <VitalSign
                 label="COLEST./TRIGL. (EST.)"
-                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol || "--"}/${vitalSigns.lipids?.triglycerides || "--"}` : "--/--"}
+                value={vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0 ? `${vitalSigns.lipids?.totalCholesterol ?? "--"}/${vitalSigns.lipids?.triglycerides ?? "--"}` : "--/--"}
                 unit="mg/dL"
                 highlighted={showResults}
                 isResearch={true}
               />
-              <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus || "SIN ARRITMIAS|0"} highlighted={showResults} />
+              <VitalSign label="ARRITMIAS" value={vitalSigns.arrhythmiaStatus ?? "SIN ARRITMIAS|0"} highlighted={showResults} />
             </div>
           </div>
 
@@ -960,16 +959,20 @@ const Index = () => {
             const statusIcon = normalPercent >= 95 ? CheckCircle2 : AlertTriangle;
             const StatusIcon = statusIcon;
             
+            const statusBgClass = statusColor === 'emerald' ? 'bg-emerald-500/10' : statusColor === 'yellow' ? 'bg-yellow-500/10' : 'bg-red-500/10';
+            const statusTextClass = statusColor === 'emerald' ? 'text-emerald-400' : statusColor === 'yellow' ? 'text-yellow-400' : 'text-red-400';
+            const statusTextColorClass = statusColor === 'emerald' ? 'text-emerald-300' : statusColor === 'yellow' ? 'text-yellow-300' : 'text-red-300';
+            
             return (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fade-in">
                 <div className="bg-slate-950 border border-slate-700/50 rounded-2xl max-w-sm w-[92%] shadow-2xl overflow-hidden">
-                  <div className={`px-4 py-3 bg-${statusColor}-500/10 border-b border-slate-800`}>
+                  <div className={`px-4 py-3 ${statusBgClass} border-b border-slate-800`}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <StatusIcon className={`w-5 h-5 text-${statusColor}-400`} />
+                        <StatusIcon className={`w-5 h-5 ${statusTextClass}`} />
                         <div>
                           <h3 className="text-white text-sm font-bold tracking-wide">MEDICIÓN COMPLETADA</h3>
-                          <p className={`text-${statusColor}-300 text-[10px] font-semibold tracking-wider`}>{statusText}</p>
+                          <p className={`${statusTextColorClass} text-[10px] font-semibold tracking-wider`}>{statusText}</p>
                         </div>
                       </div>
                       <button onClick={() => setMeasurementSummary(null)} className="p-1.5 rounded-full bg-slate-800 hover:bg-slate-700 transition-colors">
@@ -1065,7 +1068,7 @@ const Index = () => {
                     </div>
                     <button
                       onClick={() => {
-                        analyzeVitals({ heartRate, vitalSigns, quality: lastSignal?.quality || 0 });
+                        analyzeVitals({ heartRate, vitalSigns, quality: lastSignal?.quality ?? undefined });
                         setShowAIAnalysis(true);
                       }}
                       disabled={isAnalyzing}

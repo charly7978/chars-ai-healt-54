@@ -174,7 +174,11 @@ export const useSignalProcessor = () => {
   );
 
   const applyCaptureContext = useCallback((ctx: CaptureCtx) => {
-    processorRef.current?.applyCaptureContext(ctx);
+    // Solo aplicar contexto al procesador main thread si el worker NO está activo
+    // Cuando el worker está activo, es la autoridad única y maneja su propio contexto
+    if (!workerActiveRef.current) {
+      processorRef.current?.applyCaptureContext(ctx);
+    }
   }, []);
 
   const getRGBStats = useCallback(() => {

@@ -177,18 +177,6 @@ export class VitalSignsProcessor {
     this.signalHistory = [];
   }
 
-  /**
-   * BYPASS: Forces calibration completion without real calibration.
-   * This is a dangerous bypass that skips the actual calibration process.
-   * Only use this for testing or when user explicitly requests to skip calibration.
-   * In production, this should be removed or replaced with proper calibration logic.
-   */
-  forceCalibrationCompletion(): void {
-    console.warn('[VitalSignsProcessor] forceCalibrationCompletion called - bypassing real calibration');
-    this.isCalibrating = false;
-    this.calibrationSamples = this.CALIBRATION_REQUIRED;
-  }
-
   setRGBData(data: RGBData): void { this.rgbData = data; }
 
   setUpstreamContext(ctx: {
