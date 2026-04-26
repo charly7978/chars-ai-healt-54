@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from "react";
 import { CameraConstraintReport, type ConstraintReport } from "../modules/signal-processing/CameraConstraintReport";
 import { FrameTimingMonitor, type TimingMetrics } from "../modules/signal-processing/FrameTimingMonitor";
+import { DebugPanel } from "./DebugPanel";
 
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
@@ -36,6 +37,7 @@ interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
   onWarmUpComplete?: () => void;
   isMonitoring: boolean;
+  enableDebug?: boolean;
 }
 
 /**
@@ -52,6 +54,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   onStreamReady,
   onWarmUpComplete,
   isMonitoring,
+  enableDebug = false,
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -514,21 +517,58 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   }, [isMonitoring, onStreamReady, onWarmUpComplete]);
 
   return (
-    <video
-      ref={videoRef}
-      playsInline
-      muted
-      autoPlay
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        objectFit: "cover",
-        opacity: 1,
-        pointerEvents: "none",
-      }}
-    />
+    <>
+      <video
+        ref={videoRef}
+        playsInline
+        muted
+        autoPlay
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          opacity: 1,
+          pointerEvents: "none",
+        }}
+      />
+      {enableDebug && (
+        <DebugPanel
+          diagnostics={{
+            deviceLabel: diagnosticsRef.current.deviceLabel,
+            deviceId: diagnosticsRef.current.deviceId,
+            capabilities: {
+              hasTorch: diagnosticsRef.current.hasTorch,
+              hasExposureMode: diagnosticsRef.current.supportedConstraints.includes('exposureMode'),
+              hasWhiteBalanceMode: diagnosticsRef.current.supportedConstraints.includes('whiteBalanceMode'),
+              hasFocusMode: diagnosticsRef.current.supportedConstraints.includes('focusMode'),
+              hasIso: diagnosticsRef.current.supportedConstraints.includes('iso'),
+              hasZoom: diagnosticsRef.current.supportedConstraints.includes('zoom'),
+            },
+            settings: {
+              deviceId: diagnosticsRef.current.deviceId,
+              label: diagnosticsRef.current.deviceLabel,
+              width: diagnosticsRef.current.resolution.width,
+              height: diagnosticsRef.current.resolution.height,
+              frameRate: diagnosticsRef.current.realFrameRate,
+              torch: diagnosticsRef.current.torchActive,
+            },
+            realFps: diagnosticsRef.current.realFrameRate,
+            torchRequested: diagnosticsRef.current.torchRequested,
+            torchActive: diagnosticsRef.current.torchActive,
+            torchEffective: diagnosticsRef.current.torchEffective,
+            constraintFailures: constraintReportRef.current.getReport().failedConstraints,
+            constraintIgnored: constraintReportRef.current.getReport().ignoredConstraints,
+            warmUpStatus: warmUpStatus,
+            warmUpProgress: warmUpProgress,
+            stabilizationScore: diagnosticsRef.current.stabilizationScore,
+          }}
+          backend="CPU"
+          visible={true}
+        />
+      )}
+    </>
   );
 });
 
