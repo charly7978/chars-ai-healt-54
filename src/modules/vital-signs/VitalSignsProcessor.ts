@@ -642,7 +642,7 @@ export class VitalSignsProcessor {
   }
 
   reset(): VitalSignsResult | null {
-    const result = this.getFormattedResult();
+    // FAIL-CLOSED: reset() SIEMPRE devuelve null, nunca valores antiguos
     this.signalHistory = [];
     this.validPulseCount = 0;
     this.spo2Processor.reset();
@@ -652,10 +652,10 @@ export class VitalSignsProcessor {
     this.rhythmClassifier.reset();
     this.rhythmClassifier.reset();
     this.measurements.arrhythmiaCount = 0;
-    this.measurements.arrhythmiaStatus = 'SINUS_STABLE|0';
+    this.measurements.arrhythmiaStatus = 'NO_VALID_PPG|0';
     this.measurements.lastArrhythmiaData = null;
     this.appendSessionSummary();
-    return result.spo2 !== 0 ? result : null;
+    return null;
   }
 
   hasValidPressureEstimate(): boolean {

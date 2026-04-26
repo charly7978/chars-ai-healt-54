@@ -53,10 +53,6 @@ export class HeartBeatProcessor {
   private suspiciousCount = 0;
   private lastRejectionReason = '';
 
-  private audioContext: AudioContext | null = null;
-  private audioUnlocked = false;
-  private lastBeepTime = 0;
-
   private upstreamSQI = 50;
   private motionPenalty = 0;
   private clipPenalty = 0;
@@ -65,7 +61,7 @@ export class HeartBeatProcessor {
   private sourceSwitchRecent = false;
 
   constructor() {
-    this.setupAudio();
+    // FAIL-CLOSED: Constructor puro, sin efectos secundarios (audio, vibración)
   }
 
   processSignal(
@@ -214,8 +210,8 @@ export class HeartBeatProcessor {
           this.updateTemplate();
         }
 
-        this.vibrate();
-        this.playBeep();
+        // FAIL-CLOSED: Vibración/beep movidos a capa de presentación
+        // Solo se ejecutan si LIVE_PPG_VALIDATED === true
       } else {
         rejectionReason = candidate.rejectionReason;
         this.lastRejectionReason = rejectionReason;
@@ -912,57 +908,6 @@ export class HeartBeatProcessor {
     this.spectralPeakRatio = res.peakRatio;
   }
 
-  private vibrate(): void {
-    try {
-      if (navigator.vibrate) navigator.vibrate(55);
-    } catch {
-      /* vibración no disponible */
-    }
-  }
-
-  private setupAudio(): void {
-    const unlock = async () => {
-      if (this.audioUnlocked) return;
-      try {
-        const W = window as Window & { webkitAudioContext?: typeof AudioContext };
-        const ACtor = window.AudioContext ?? W.webkitAudioContext;
-        if (!ACtor) return;
-        this.audioContext = new ACtor();
-        await this.audioContext.resume();
-        this.audioUnlocked = true;
-        document.removeEventListener('touchstart', unlock);
-        document.removeEventListener('click', unlock);
-      } catch {
-        /* audio no disponible */
-      }
-    };
-    document.addEventListener('touchstart', unlock, { passive: true });
-    document.addEventListener('click', unlock, { passive: true });
-  }
-
-  private async playBeep(): Promise<void> {
-    if (!this.audioContext || !this.audioUnlocked) return;
-    const now = performance.now();
-    if (now - this.lastBeepTime < 220) return;
-    try {
-      if (this.audioContext.state === 'suspended') await this.audioContext.resume();
-      const t = this.audioContext.currentTime;
-      const osc = this.audioContext.createOscillator();
-      const gain = this.audioContext.createGain();
-      osc.frequency.setValueAtTime(820, t);
-      osc.frequency.exponentialRampToValueAtTime(460, t + 0.08);
-      gain.gain.setValueAtTime(0.12, t);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-      osc.connect(gain);
-      gain.connect(this.audioContext.destination);
-      osc.start(t);
-      osc.stop(t + 0.12);
-      this.lastBeepTime = now;
-    } catch {
-      /* reproducción omitida */
-    }
-  }
-
   getRRIntervals(): number[] { return [...this.rrIntervals]; }
   getLastPeakTime(): number { return this.lastPeakTime; }
   getSQI(): number { return this.computeGlobalSQI(); }
@@ -1022,7 +967,7 @@ export class HeartBeatProcessor {
   }
 
   dispose(): void {
-    if (this.audioContext) this.audioContext.close().catch(() => {});
+    // FAIL-CLOSED: Sin efectos secundarios, nada que limpiar
   }
 }
 

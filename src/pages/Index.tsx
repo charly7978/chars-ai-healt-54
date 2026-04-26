@@ -392,6 +392,8 @@ const Index = () => {
   const startMonitoring = useCallback(() => {
     if (isMonitoring) return;
     console.log('🚀 Iniciando monitoreo...');
+    // FAIL-CLOSED: Vibración solo si LIVE_PPG_VALIDATED === true
+    // Por ahora permitimos vibración al iniciar (UX), pero no durante medición sin evidencia
     if (navigator.vibrate) navigator.vibrate([200]);
     enterFullScreen();
     setShowResults(false);
@@ -437,8 +439,11 @@ const Index = () => {
   const finalizeMeasurement = useCallback(async () => {
     if (!isMonitoring) return;
     console.log('🛑 Finalizando medición...');
-    playCompletionSound();
-    if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 200]);
+    // FAIL-CLOSED: Vibración/beep solo si LIVE_PPG_VALIDATED === true
+    if (stableHumanSignal) {
+      playCompletionSound();
+      if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 200]);
+    }
     stopFrameLoop();
     if (measurementTimerRef.current) {
       clearInterval(measurementTimerRef.current);
@@ -581,6 +586,8 @@ const Index = () => {
         )
       : 0.45;
 
+    // FAIL-CLOSED: Procesar hipótesis cardíaca SIN publicar (sin efectos secundarios)
+    // El heartbeat processor ahora es puro: no vibra, no hace beep
     const heartBeatResult = processHeartBeat(
       signalValue,
       ls.contactState,
@@ -598,8 +605,9 @@ const Index = () => {
         fingerMeasurementState: ext,
         effectiveSampleRate: ls.estimatedSampleRate,
         phaseAlignmentQuality: fusionMeta?.phaseAlignmentQuality ?? 0.55,
-        spectralQualityAggregate,
-        livePpgEvidencePassed: false // Se actualizará después de evaluar el gate
+        spectralQualityAggregate
+        // FAIL-CLOSED: NO pasamos livePpgEvidencePassed aquí
+        // Primero procesamos hipótesis, luego evaluamos gate, luego publicamos
       }
     );
     
@@ -800,7 +808,8 @@ const Index = () => {
             setArrhythmiaState(isArrhythmiaDetected);
 
             if (isArrhythmiaDetected) {
-              if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+              // FAIL-CLOSED: Vibración de arritmia solo si LIVE_PPG_VALIDATED === true
+              if (stableHumanSignal && navigator.vibrate) navigator.vibrate([200, 100, 200]);
               toast({
                 title: `⚠️ ${rhythmLabel.split('_').join(' ')}`,
                 description: count > 0 ? `Eventos detectados: ${count}` : 'Ritmo irregular detectado',
@@ -828,7 +837,8 @@ const Index = () => {
       if (currentProgress >= 100) {
         clearInterval(interval);
         setIsCalibrating(false);
-        if (navigator.vibrate) navigator.vibrate([100]);
+        // FAIL-CLOSED: Vibración de calibración solo si LIVE_PPG_VALIDATED === true
+        if (stableHumanSignal && navigator.vibrate) navigator.vibrate([100]);
       }
     }, 500);
     return () => clearInterval(interval);
