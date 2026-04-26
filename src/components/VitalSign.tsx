@@ -4,7 +4,7 @@ import { parseArrhythmiaStatus, getArrhythmiaText, getArrhythmiaColor } from '@/
 
 interface VitalSignProps {
   label: string;
-  value: string | number;
+  value: string | number | null;
   unit?: string;
   highlighted?: boolean;
   calibrationProgress?: number;
@@ -14,6 +14,8 @@ interface VitalSignProps {
   confidenceLevel?: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
   featureQuality?: number;
   isResearch?: boolean;
+  isAuthorized?: boolean;
+  blockedReasons?: string[];
 }
 
 const VitalSign = ({ 
@@ -27,11 +29,16 @@ const VitalSign = ({
   average,
   confidenceLevel,
   featureQuality,
-  isResearch = false
+  isResearch = false,
+  isAuthorized = true,
+  blockedReasons = []
 }: VitalSignProps) => {
   const [showDetails, setShowDetails] = useState(false);
 
-  const getRiskLabel = (label: string, value: string | number) => {
+  const getRiskLabel = (label: string, value: string | number | null) => {
+    // Si no está autorizado o el valor es null, no hay riesgo
+    if (!isAuthorized || value === null) return '';
+    
     if (typeof value === 'number' && normalRange) {
       if (value > normalRange.max) return 'Valor alto';
       if (value < normalRange.min) return 'Valor bajo';
@@ -106,15 +113,19 @@ const VitalSign = ({
     );
   };
 
-  const getDetailedInfo = (label: string, value: string | number) => {
+  const getDetailedInfo = (label: string, value: string | number | null) => {
     let interpretation = "";
     
-    if (typeof value === 'number' && normalRange) {
+    if (!isAuthorized || value === null) {
+      interpretation = "MEDICIÓN BLOQUEADA - NO HAY SEÑAL BIOLÓGICA VÁLIDA";
+    } else if (typeof value === 'number' && normalRange) {
       interpretation = value > normalRange.max 
         ? "Su valor está por encima del rango normal."
         : value < normalRange.min 
           ? "Su valor está por debajo del rango normal."
           : "Su valor está dentro del rango normal.";
+    } else if (blockedReasons.length > 0) {
+      interpretation = `Bloqueado: ${blockedReasons.join(', ')}`;
     }
     
     return { median, average, interpretation };
@@ -147,12 +158,21 @@ const VitalSign = ({
       </div>
       
       <div className="font-bold text-xl sm:text-2xl transition-all duration-300">
-        <span className="text-gradient-soft animate-value-glow">
-          {isArrhytmia && typeof value === 'string'
-            ? getArrhythmiaText(parseArrhythmiaStatus(value))
-            : value}
+        <span className={cn(
+          "text-gradient-soft animate-value-glow",
+          !isAuthorized || value === null ? "text-gray-500" : ""
+        )}>
+          {!isAuthorized || value === null ? (
+            "--"
+          ) : isArrhytmia && typeof value === 'string' ? (
+            getArrhythmiaText(parseArrhythmiaStatus(value))
+          ) : (
+            value
+          )}
         </span>
-        {unit && <span className="text-xs text-white/70 ml-1">{unit}</span>}
+        {unit && (isAuthorized && value !== null) && (
+          <span className="text-xs text-white/70 ml-1">{unit}</span>
+        )}
       </div>
 
       {confidenceLevel && confidenceLevel !== 'INSUFFICIENT' && label === 'PRESIÓN ARTERIAL' && (
@@ -181,13 +201,13 @@ const VitalSign = ({
         </div>
       )}
 
-      {!isArrhytmia && riskLabel && (
+      {!isArrhytmia && riskLabel && isAuthorized && value !== null && (
         <div className={`text-sm font-medium mt-1 ${riskColor}`}>
           {riskLabel}
         </div>
       )}
       
-      {isArrhytmia && getArrhythmiaDisplay(value)}
+      {isArrhytmia && isAuthorized && value !== null && getArrhythmiaDisplay(value)}
       
       {calibrationProgress !== undefined && (
         <div className="absolute inset-0 bg-transparent overflow-hidden pointer-events-none border-0">
@@ -206,17 +226,30 @@ const VitalSign = ({
       {showDetails && detailedInfo && (
         <div className="absolute inset-x-0 top-full z-50 mt-2 p-4 bg-gray-900/90 backdrop-blur-sm rounded-lg shadow-lg text-left">
           <div className="text-sm font-medium text-white mb-2">Información adicional:</div>
-          <div className="grid grid-cols-2 gap-2 mb-2">
-            <div className="text-xs">
-              <span className="font-medium text-white/70">Mediana:</span> {median} {unit}
+          {isAuthorized && value !== null ? (
+            <>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <div className="text-xs">
+                  <span className="font-medium text-white/70">Mediana:</span> {median} {unit}
+                </div>
+                <div className="text-xs">
+                  <span className="font-medium text-white/70">Promedio ponderado:</span> {average} {unit}
+                </div>
+              </div>
+              <div className="text-xs mt-1 text-white/80">
+                {detailedInfo.interpretation}
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-red-400">
+              {detailedInfo.interpretation}
+              {blockedReasons.length > 0 && (
+                <div className="mt-2 text-yellow-400">
+                  Razones: {blockedReasons.join(', ')}
+                </div>
+              )}
             </div>
-            <div className="text-xs">
-              <span className="font-medium text-white/70">Promedio ponderado:</span> {average} {unit}
-            </div>
-          </div>
-          <div className="text-xs mt-1 text-white/80">
-            {detailedInfo.interpretation}
-          </div>
+          )}
         </div>
       )}
     </div>
