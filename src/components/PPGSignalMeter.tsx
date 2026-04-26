@@ -21,6 +21,7 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
+  livePpgEvidencePassed?: boolean; // FAIL-CLOSED: evidencia PPG viva obligatoria
 }
 
 const CONFIG = {
@@ -91,14 +92,15 @@ const PPGSignalMeter = ({
   isPeak = false,
   bpm = 0,
   spo2 = 0,
-  rrIntervals = []
+  rrIntervals = [],
+  livePpgEvidencePassed = false
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
   const isRunningRef = useRef(false);
   const dataBufferRef = useRef<CircularBuffer | null>(null);
   
-  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData });
+  const propsRef = useRef({ value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData, livePpgEvidencePassed });
   const lastPeakTimeRef = useRef(0);
   const [showPulse, setShowPulse] = useState(false);
   
@@ -110,7 +112,7 @@ const PPGSignalMeter = ({
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
 
   useEffect(() => {
-    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData };
+    propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData, livePpgEvidencePassed };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
       ibiDisplayRef.current = Math.round(last);
@@ -441,7 +443,10 @@ const PPGSignalMeter = ({
         animationRef.current = requestAnimationFrame(render);
         return;
       }
-      const scaledValue = signalValue * 2;
+      
+      // FAIL-CLOSED: Si no hay evidencia PPG viva, mostrar onda plana y mensaje
+      const hasValidPpg = livePpgEvidencePassed && quality >= 15;
+      const scaledValue = hasValidPpg ? signalValue * 2 : 0;
       
       if (peak) {
         const currentCount = rhythm.count;
@@ -473,6 +478,33 @@ const PPGSignalMeter = ({
       
       buffer.push({ time: now, value: scaledValue, isArrhythmia: currentIsArrhythmia });
       const points = buffer.getPoints();
+      
+      // FAIL-CLOSED: Si no hay PPG válida, dibujar línea plana y mensaje
+      if (!hasValidPpg) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(100, 116, 139, 0.3)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(plot.x, plot.centerY);
+        ctx.lineTo(plot.x + plot.width, plot.centerY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        
+        ctx.font = 'bold 14px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_WARNING;
+        ctx.textAlign = 'center';
+        ctx.fillText('SIN PPG VÁLIDA', plot.x + plot.width / 2, plot.centerY - 20);
+        
+        ctx.font = '11px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_SECONDARY;
+        ctx.fillText('Ajuste posición y presión', plot.x + plot.width / 2, plot.centerY + 20);
+        ctx.restore();
+        
+        animationRef.current = requestAnimationFrame(render);
+        return;
+      }
+      
       if (points.length > 30) {
         const recentPoints = points.slice(-150);
         const values = recentPoints.map(p => p.value);

@@ -9,6 +9,7 @@ import { ExtractionResolutionController } from "@/modules/signal-processing/Extr
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
 import { useVitalSignsProcessor } from "@/hooks/useVitalSignsProcessor";
 import { useSaveMeasurement } from "@/hooks/useSaveMeasurement";
+import { livePpgEvidenceGate, type LivePpgEvidenceInput, type LivePpgEvidenceResult } from "@/modules/signal-processing/LivePpgEvidenceGate";
 import { useHealthAnalysis } from "@/hooks/useHealthAnalysis";
 import PPGSignalMeter from "@/components/PPGSignalMeter";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
@@ -160,7 +161,6 @@ const Index = () => {
     reset: resetVitalSigns,
     fullReset: fullResetVitalSigns,
     hasValidPressureEstimate,
-    lastValidResults,
     startCalibration,
     getCalibrationProgress,
     setHeartRuntime,
@@ -262,12 +262,8 @@ const Index = () => {
     };
   }, []);
 
-  useEffect(() => {
-    if (lastValidResults && !isMonitoring) {
-      setVitalSigns(lastValidResults);
-      setShowResults(true);
-    }
-  }, [lastValidResults, isMonitoring]);
+  // FAIL-CLOSED: Eliminado useEffect que revivía resultados anteriores sin señal actual
+  // La UI principal solo refleja CURRENT_EVIDENCE_STATE
 
   const startFrameLoop = useCallback(() => {
     if (isProcessingRef.current) return;
@@ -549,14 +545,6 @@ const Index = () => {
     const positionQuality = getPositionQuality();
     const ext = ls.extendedContactState;
     const win = ls.pipelineDebug?.windowSQI;
-    const windowGate = win ? win.gating !== 'reject' && win.score >= 0.26 : false;
-    const stableHumanSignal =
-      ls.contactState === 'STABLE_CONTACT' &&
-      ext === 'MEASUREMENT_READY' &&
-      windowGate &&
-      (lastSignal.quality ?? 0) >= 10 &&
-      (lastSignal.perfusionIndex ?? 0) >= 0.12;
-
     const clipHigh = ls.clipHighRatio ?? 0;
     const clipLow = ls.clipLowRatio ?? 0;
     const ppgPressure = ls.pressureState;
@@ -570,7 +558,7 @@ const Index = () => {
     const sampleRate =
       (ls.estimatedSampleRate && ls.estimatedSampleRate >= 15 ? ls.estimatedSampleRate : null) ??
       estimateSampleRateFromFrames(lastSignal.timestamp);
-
+    
     const pd = ls.pipelineDebug;
     const fusionMeta = pd?.fusionMeta as { phaseAlignmentQuality?: number } | undefined;
     const specWin = pd?.windowSQI?.spectral as
@@ -610,10 +598,61 @@ const Index = () => {
         effectiveSampleRate: ls.estimatedSampleRate,
         phaseAlignmentQuality: fusionMeta?.phaseAlignmentQuality ?? 0.55,
         spectralQualityAggregate,
+        livePpgEvidencePassed: false // Se actualizará después de evaluar el gate
       }
     );
+    
+    // FAIL-CLOSED: Reemplazar stableHumanSignal blando con LivePpgEvidenceGate severo
+    const evidenceInput: LivePpgEvidenceInput = {
+      timestamp: lastSignal.timestamp,
+      sampleRate,
+      contactState: ls.contactState,
+      extendedContactState: ext,
+      quality: lastSignal.quality ?? 0,
+      perfusionIndex: lastSignal.perfusionIndex ?? 0,
+      clipHighRatio: clipHigh,
+      clipLowRatio: clipLow,
+      motionArtifact: typeof lastSignal.motionArtifact === 'boolean' ? (lastSignal.motionArtifact ? 1 : 0) : lastSignal.motionArtifact ?? 1,
+      sourceStability,
+      pressureState: ppgPressure,
+      windowSQI: ls.pipelineDebug?.windowSQI,
+      beatDebug: {
+        acceptedBeats: heartBeatResult.debug?.beatsAccepted ?? 0,
+        consecutivePeaks: heartBeatResult.debug?.consecutivePeaks ?? 0,
+        avgBeatSQI: heartBeatResult.beatSQI ?? 0,
+        avgMorphologyScore: heartBeatResult.debug?.morphologyScore ?? 0,
+        avgDetectorAgreement: heartBeatResult.detectorAgreement ?? 0,
+        temporalSpectralAgreement: heartBeatResult.debug?.temporalSpectralAgreement ?? 0,
+        spectralConfidence: heartBeatResult.debug?.spectralConfidence ?? 0,
+        medianRRBpm: heartBeatResult.debug?.medianRRBpm ?? 0,
+        spectralBpm: heartBeatResult.debug?.spectralBpm ?? 0,
+        autocorrBpm: heartBeatResult.debug?.autocorrBpm ?? 0
+      },
+      roiEvidence: undefined, // TODO: Implementar ROI multicelda
+      radiometry: undefined // TODO: Implementar control radiométrico
+    };
+    
+    const evidence: LivePpgEvidenceResult = livePpgEvidenceGate.evaluate(evidenceInput);
+    const stableHumanSignal = evidence.passed && evidence.tier === "VALID_LIVE_PPG";
+
 
     setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
+    
+    // FAIL-CLOSED: Invalidar medición inmediatamente si no hay evidencia PPG viva
+    if (!stableHumanSignal && evidence.hardFail) {
+      setVitalSigns(prev => ({
+        ...prev,
+        spo2: 0,
+        glucose: 0,
+        pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
+        arrhythmiaCount: 0,
+        arrhythmiaStatus: "NO_VALID_PPG|0",
+        lipids: { totalCholesterol: 0, triglycerides: 0 },
+        lastArrhythmiaData: undefined,
+        signalQuality: 0,
+        measurementConfidence: 'INVALID'
+      }));
+    }
 
     if (!stableHumanSignal) {
       unstableFrameCounter.current++;
@@ -691,24 +730,6 @@ const Index = () => {
           }))
         : undefined;
 
-      setUpstreamContext({
-        contactStable: stableHumanSignal,
-        pressureOptimal,
-        clipHighRatio: clipHigh,
-        sourceStability,
-        avgBeatSQI: heartBeatResult.beatSQI ?? heartBeatResult.debug.lastBeatSQI ?? 0,
-        beatCount: heartBeatResult.debug.beatsAccepted ?? heartBeatResult.rrData?.intervals.length ?? 0,
-      });
-
-      if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
-        setRGBData({
-          redAC: rgbStats.redAC,
-          redDC: rgbStats.redDC,
-          greenAC: rgbStats.greenAC,
-          greenDC: rgbStats.greenDC
-        });
-      }
-
       const usableRRData = heartBeatResult.rrData && heartBeatResult.rrData.intervals.length >= 2 && heartBeatResult.bpmConfidence > 0.18
         ? heartBeatResult.rrData
         : undefined;
@@ -719,7 +740,25 @@ const Index = () => {
         beatCount: heartBeatResult.debug.beatsAccepted,
       });
 
-      const vitals = processVitalSigns(lastSignal.filteredValue, usableRRData, beatInputs);
+      setUpstreamContext({
+        contactStable: stableHumanSignal,
+        pressureOptimal,
+        clipHighRatio: clipHigh,
+        sourceStability,
+        avgBeatSQI: heartBeatResult.beatSQI ?? heartBeatResult.debug.lastBeatSQI ?? 0,
+        beatCount: heartBeatResult.debug.beatsAccepted ?? heartBeatResult.rrData?.intervals.length ?? 0,
+      });
+
+      const vitals = processVitalSigns(lastSignal.filteredValue, usableRRData, beatInputs, { passed: stableHumanSignal });
+
+      if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
+        setRGBData({
+          redAC: rgbStats.redAC,
+          redDC: rgbStats.redDC,
+          greenAC: rgbStats.greenAC,
+          greenDC: rgbStats.greenDC
+        });
+      }
 
       const e = emaRef.current;
       const smoothed: typeof vitals = {
@@ -923,6 +962,7 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
+              livePpgEvidencePassed={stableHumanSignal}
             />
           </div>
 

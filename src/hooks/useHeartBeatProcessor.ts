@@ -83,6 +83,7 @@ export const useHeartBeatProcessor = () => {
       effectiveSampleRate?: number;
       phaseAlignmentQuality?: number;
       spectralQualityAggregate?: number;
+      livePpgEvidencePassed?: boolean;
     }
   ): HeartBeatResult => {
     if (!processorRef.current || processingStateRef.current !== 'ACTIVE') {

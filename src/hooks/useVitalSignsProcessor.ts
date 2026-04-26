@@ -7,9 +7,11 @@ import { VitalSignsProcessor, VitalSignsResult, RGBData } from '../modules/vital
  */
 export const useVitalSignsProcessor = () => {
   const processorRef = useRef<VitalSignsProcessor | null>(null);
-  const [lastValidResults, setLastValidResults] = useState<VitalSignsResult | null>(null);
+  // lastValidResults SOLO para debug histórico, NUNCA para renderizar valores actuales
+  const lastValidResultsDebug = useRef<VitalSignsResult | null>(null);
   const sessionId = useRef<string>(`${Date.now().toString(36)}${(performance.now() | 0).toString(36)}`);
   const processedSignals = useRef<number>(0);
+  const livePpgEvidencePassed = useRef<boolean>(false);
   
   if (!processorRef.current) {
     processorRef.current = new VitalSignsProcessor();
@@ -50,12 +52,13 @@ export const useVitalSignsProcessor = () => {
       ibiMs: number; beatSQI: number; morphologyScore: number;
       detectorAgreement: number; amplitude?: number;
       flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
-    }>
+    }>,
+    livePpgEvidence?: { passed: boolean }
   ): VitalSignsResult => {
     const defaultResult: VitalSignsResult = {
       spo2: 0, glucose: 0,
       pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
-      arrhythmiaCount: 0, arrhythmiaStatus: "SINUS_STABLE|0",
+      arrhythmiaCount: 0, arrhythmiaStatus: "NO_VALID_PPG|0",
       lipids: { totalCholesterol: 0, triglycerides: 0 },
       isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined,
       signalQuality: 0, measurementConfidence: 'INVALID' as const,
@@ -63,32 +66,61 @@ export const useVitalSignsProcessor = () => {
     
     if (!processorRef.current) return defaultResult;
     
+    // FAIL-CLOSED: Si no hay evidencia PPG viva, devolver INVALID inmediatamente
+    if (livePpgEvidence && !livePpgEvidence.passed) {
+      livePpgEvidencePassed.current = false;
+      return defaultResult;
+    }
+    
     processedSignals.current++;
     const result = processorRef.current.processSignal(value, rrData, beatInputs);
     
-    if (
-      result.measurementConfidence !== 'INVALID' ||
-      result.pressure.confidence !== 'INSUFFICIENT' ||
-      result.spo2 > 0 || result.glucose > 0 ||
-      result.lipids.totalCholesterol > 0 || result.arrhythmiaCount > 0
-    ) {
-      setLastValidResults(result);
+    // Solo guardar para debug histórico si hay evidencia PPG válida
+    if (livePpgEvidence && livePpgEvidence.passed) {
+      if (
+        result.measurementConfidence !== 'INVALID' ||
+        result.pressure.confidence !== 'INSUFFICIENT' ||
+        result.spo2 > 0 || result.glucose > 0 ||
+        result.lipids.totalCholesterol > 0 || result.arrhythmiaCount > 0
+      ) {
+        lastValidResultsDebug.current = result;
+        livePpgEvidencePassed.current = true;
+      }
+    } else {
+      livePpgEvidencePassed.current = false;
     }
     
     return result;
   }, []);
 
   const reset = useCallback(() => {
-    if (!processorRef.current) return lastValidResults;
-    const savedResults = processorRef.current.reset();
-    const resultToReturn = savedResults ?? lastValidResults;
-    if (resultToReturn) setLastValidResults(resultToReturn);
-    return resultToReturn;
-  }, [lastValidResults]);
+    // FAIL-CLOSED: reset() SIEMPRE devuelve INVALID, nunca último resultado válido
+    if (!processorRef.current) {
+      return {
+        spo2: 0, glucose: 0,
+        pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
+        arrhythmiaCount: 0, arrhythmiaStatus: "NO_VALID_PPG|0",
+        lipids: { totalCholesterol: 0, triglycerides: 0 },
+        isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined,
+        signalQuality: 0, measurementConfidence: 'INVALID' as const,
+      };
+    }
+    processorRef.current.reset();
+    livePpgEvidencePassed.current = false;
+    return {
+      spo2: 0, glucose: 0,
+      pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT' as const, featureQuality: 0 },
+      arrhythmiaCount: 0, arrhythmiaStatus: "NO_VALID_PPG|0",
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      isCalibrating: false, calibrationProgress: 0, lastArrhythmiaData: undefined,
+      signalQuality: 0, measurementConfidence: 'INVALID' as const,
+    };
+  }, []);
 
   const fullReset = useCallback(() => {
     processorRef.current?.fullReset();
-    setLastValidResults(null);
+    lastValidResultsDebug.current = null;
+    livePpgEvidencePassed.current = false;
     processedSignals.current = 0;
   }, []);
 
@@ -114,11 +146,13 @@ export const useVitalSignsProcessor = () => {
     fullReset,
     startCalibration,
     hasValidPressureEstimate,
-    lastValidResults,
+    // NO exportar lastValidResults - solo para debug interno
+    getDebugLastValid: useCallback(() => lastValidResultsDebug.current, []),
     getCalibrationProgress: useCallback(() => processorRef.current?.getCalibrationProgress() ?? 0, []),
     debugInfo: {
       processedSignals: processedSignals.current,
-      sessionId: sessionId.current
+      sessionId: sessionId.current,
+      livePpgEvidencePassed: livePpgEvidencePassed.current
     },
   };
 };

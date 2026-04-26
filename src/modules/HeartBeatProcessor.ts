@@ -35,6 +35,10 @@ export class HeartBeatProcessor {
   private temporalSpectralAgreement = 0;
   private windowSQIUpstream = 0.45;
   private fingerMeasurementState = '';
+  
+  // FAIL-CLOSED: Evidencia PPG obligatoria para publicar BPM
+  private livePpgEvidencePassed = false;
+  private lastContactState = '';
 
   private lastPeakTime = 0;
   private lastPeakValue = 0;
@@ -83,6 +87,7 @@ export class HeartBeatProcessor {
       effectiveSampleRate?: number;
       phaseAlignmentQuality?: number;
       spectralQualityAggregate?: number;
+      livePpgEvidencePassed?: boolean;
     }
   ): HeartBeatResult {
     this.frameCount++;
@@ -110,6 +115,22 @@ export class HeartBeatProcessor {
       if (upstreamContext.fingerMeasurementState) {
         this.fingerMeasurementState = upstreamContext.fingerMeasurementState;
       }
+      
+      // FAIL-CLOSED: Rastrear evidencia PPG
+      if (typeof upstreamContext.livePpgEvidencePassed === 'boolean') {
+        this.livePpgEvidencePassed = upstreamContext.livePpgEvidencePassed;
+      }
+      
+      // FAIL-CLOSED: Hard reset si contactState cambia a inválido
+      const currentState = upstreamContext.contactState ?? '';
+      if (this.lastContactState && currentState !== this.lastContactState) {
+        if (currentState === 'NO_CONTACT' || currentState === 'INSUFFICIENT_SIGNAL' || 
+            currentState === 'INVALID' || currentState === 'MATERIAL_SIGNAL' || 
+            currentState === 'CAMERA_NOISE') {
+          this.hardReset();
+        }
+      }
+      this.lastContactState = currentState;
     }
 
     this.signalBuf.push(filteredValue);
@@ -219,6 +240,24 @@ export class HeartBeatProcessor {
       bpmConfidence *= 0.55;
     }
     const globalSQI = this.computeGlobalSQI();
+    
+    // FAIL-CLOSED: Verificaciones severas antes de publicar BPM
+    const meetsMinimumEvidence =
+      this.beatsAccepted >= 6 &&
+      this.consecutivePeaks >= 6 &&
+      this.getAvgBeatSQI() >= 65 &&
+      this.temporalSpectralAgreement >= 0.70 &&
+      this.spectralConfidence >= 0.70 &&
+      this.detectorAgreementAverage() >= 0.70 &&
+      this.rrIntervals.length >= 5 &&
+      this.signalBuf.length >= 240; // ~8 segundos a 30 fps
+    
+    // Si no hay evidencia PPG viva o no cumple mínimos, BPM = 0
+    if (!this.livePpgEvidencePassed || !meetsMinimumEvidence) {
+      hypothesis.finalBpm = 0;
+      hypothesis.confidence = 0;
+      bpmConfidence = 0;
+    }
 
     const debug: HeartBeatDebug = {
       instantBpm: isPeak && timeSinceLastPeak > 0 ? 60000 / timeSinceLastPeak : 0,
@@ -761,6 +800,25 @@ export class HeartBeatProcessor {
     const recent = this.acceptedBeats.slice(-8);
     if (recent.length === 0) return 0;
     return recent.reduce((s, b) => s + b.beatSQI, 0) / recent.length;
+  }
+  
+  private detectorAgreementAverage(): number {
+    const recent = this.acceptedBeats.slice(-8);
+    if (recent.length === 0) return 0;
+    return recent.reduce((s, b) => s + b.detectorAgreementScore, 0) / recent.length;
+  }
+  
+  private hardReset(): void {
+    this.smoothBPM = 0;
+    this.spectralBPM = 0;
+    this.autocorrBPM = 0;
+    this.medianRRBPM = 0;
+    this.beatsAccepted = 0;
+    this.consecutivePeaks = 0;
+    this.rrIntervals = [];
+    this.acceptedBeats = [];
+    this.lastPeakTime = 0;
+    this.livePpgEvidencePassed = false;
   }
 
   private computeDerivative(): number {

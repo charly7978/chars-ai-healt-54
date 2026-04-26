@@ -68,6 +68,23 @@ export interface RGBData {
   greenDC: number;
 }
 
+export interface EvidenceContext {
+  livePpgPassed: boolean;
+  livePpgScore: number;
+  evidenceTier: "INVALID" | "WEAK" | "PROBABLE_PPG" | "VALID_LIVE_PPG";
+  bpm: number;
+  bpmConfidence: number;
+  acceptedBeats: number;
+  rrIntervals: number[];
+  signalQuality: number;
+  perfusionIndex: number;
+  spectralDominance: number;
+  temporalSpectralAgreement: number;
+  sourceStability: number;
+  negativeControlScore: number;
+  rejectionReasons: string[];
+}
+
 export class VitalSignsProcessor {
   private bloodPressureProcessor: BloodPressureProcessor;
   private rhythmClassifier: RhythmClassifier;
@@ -109,12 +126,30 @@ export class VitalSignsProcessor {
     contactStable: false,
     pressureOptimal: false,
     clipHighRatio: 0,
+    clipLowRatio: 0,
     sourceStability: 0,
     avgBeatSQI: 0,
     beatCount: 0,
     sampleRate: 30,
     detectorAgreement: 0,
     rrStability: 0,
+  };
+  
+  private evidenceContext: EvidenceContext = {
+    livePpgPassed: false,
+    livePpgScore: 0,
+    evidenceTier: "INVALID",
+    bpm: 0,
+    bpmConfidence: 0,
+    acceptedBeats: 0,
+    rrIntervals: [],
+    signalQuality: 0,
+    perfusionIndex: 0,
+    spectralDominance: 0,
+    temporalSpectralAgreement: 0,
+    sourceStability: 0,
+    negativeControlScore: 0,
+    rejectionReasons: [],
   };
 
   private heartRuntime = { bpm: 0, bpmConfidence: 0, beatCount: 0 };
@@ -155,6 +190,10 @@ export class VitalSignsProcessor {
     if (ctx.bpmConfidence !== undefined) this.heartRuntime.bpmConfidence = ctx.bpmConfidence;
     if (ctx.beatCount !== undefined) this.heartRuntime.beatCount = ctx.beatCount;
   }
+  
+  setEvidenceContext(ctx: EvidenceContext): void {
+    this.evidenceContext = ctx;
+  }
 
   /** En ventana de pico cardíaco: refuerza SpO2 con ratio alineado a latido */
   ingestBeatOpticalRatio(): void {
@@ -183,6 +222,7 @@ export class VitalSignsProcessor {
     contactStable?: boolean;
     pressureOptimal?: boolean;
     clipHighRatio?: number;
+    clipLowRatio?: number;
     sourceStability?: number;
     avgBeatSQI?: number;
     beatCount?: number;
@@ -193,6 +233,7 @@ export class VitalSignsProcessor {
     if (ctx.contactStable !== undefined) this.upstreamContext.contactStable = ctx.contactStable;
     if (ctx.pressureOptimal !== undefined) this.upstreamContext.pressureOptimal = ctx.pressureOptimal;
     if (ctx.clipHighRatio !== undefined) this.upstreamContext.clipHighRatio = ctx.clipHighRatio;
+    if (ctx.clipLowRatio !== undefined) this.upstreamContext.clipLowRatio = ctx.clipLowRatio;
     if (ctx.sourceStability !== undefined) this.upstreamContext.sourceStability = ctx.sourceStability;
     if (ctx.avgBeatSQI !== undefined) this.upstreamContext.avgBeatSQI = ctx.avgBeatSQI;
     if (ctx.beatCount !== undefined) this.upstreamContext.beatCount = ctx.beatCount;
@@ -219,8 +260,14 @@ export class VitalSignsProcessor {
     }
 
     this.measurements.signalQuality = this.calculateSignalQuality();
+    
+    // FAIL-CLOSED: Si no hay evidencia PPG viva, devolver INVALID inmediatamente
+    if (!this.evidenceContext.livePpgPassed) {
+      return this.getInvalidResult();
+    }
+    
     const hasRealPulse = this.validateRealPulse(rrData);
-    if (!hasRealPulse) return this.getFormattedResult();
+    if (!hasRealPulse) return this.getInvalidResult();
 
     if (this.signalHistory.length >= 20 && rrData && rrData.intervals.length >= 2) {
       this.calculateVitalSigns(signalValue, rrData, beatInputs);
@@ -315,8 +362,20 @@ export class VitalSignsProcessor {
       this.spo2Calibrator.setOpticalBiasR(this.deviceCalibrationEngine.getOpticalBiasR());
     }
 
+    // FAIL-CLOSED: SpO₂ solo si hay evidencia PPG viva y condiciones óptimas
     if (spo2Result.value > 0 && spo2Result.enabledState !== 'WITHHELD_LOW_QUALITY') {
-      this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
+      // Verificaciones adicionales para SpO₂
+      const redACDC = this.rgbData.redDC > 0 ? this.rgbData.redAC / this.rgbData.redDC : 0;
+      const greenACDC = this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0;
+      const ratioStable = redACDC > 0.01 && greenACDC > 0.01;
+      const clippingAcceptable = this.upstreamContext.clipHighRatio < 0.08 && this.upstreamContext.clipLowRatio < 0.08;
+      const piSufficient = this.evidenceContext.perfusionIndex >= 0.35;
+      
+      if (ratioStable && clippingAcceptable && piSufficient && this.evidenceContext.livePpgPassed) {
+        this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
+      } else {
+        this.measurements.spo2 = 0;
+      }
     }
 
     const cycles = PPGFeatureExtractor.detectCardiacCycles(this.signalHistory, sampleRate);
@@ -342,10 +401,19 @@ export class VitalSignsProcessor {
       this.lastBpTrendFirst = !!bpEstimate.trendFirst;
       this.lastBpTrendLabel = bpEstimate.trendLabel;
 
-      if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+      // FAIL-CLOSED: Presión arterial solo si hay calibración individual del usuario
+    // NO inventar 120/80, NO estimar desde BPM solamente
+    if (bpEstimate.systolic > 0 && bpEstimate.confidence !== 'INSUFFICIENT') {
+      const hasCalibration = this.bpCalibrationManager.getRecord() !== null;
+      if (hasCalibration && this.evidenceContext.livePpgPassed) {
         this.measurements.systolicPressure = this.smoothValue(this.measurements.systolicPressure, bpEstimate.systolic, 'stable');
         this.measurements.diastolicPressure = this.smoothValue(this.measurements.diastolicPressure, bpEstimate.diastolic, 'stable');
+      } else {
+        this.measurements.systolicPressure = 0;
+        this.measurements.diastolicPressure = 0;
+        this.lastBPConfidence = 'INSUFFICIENT';
       }
+    }  
     }
 
     const piGreen = this.rgbData.greenDC > 0 ? (this.rgbData.greenAC / this.rgbData.greenDC) * 100 : 0;
@@ -371,9 +439,15 @@ export class VitalSignsProcessor {
         personalizationState: base.personalizationState,
       });
       this.lastGlucose = glucoseResult;
+      // FAIL-CLOSED: Glucosa solo si hay modelo calibrado con datos reales del usuario
       if (glucoseResult.value > 0 && glucoseResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
-        this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseResult.value, 'dynamic');
-        this.userBaseline.updateFromSession({ glucoseEma: this.measurements.glucose });
+        const hasCalibration = base.personalizationState === 'CALIBRATED' as any && base.glucoseEma > 0;
+        if (hasCalibration && this.evidenceContext.livePpgPassed) {
+          this.measurements.glucose = this.smoothValue(this.measurements.glucose, glucoseResult.value, 'dynamic');
+          this.userBaseline.updateFromSession({ glucoseEma: this.measurements.glucose });
+        } else {
+          this.measurements.glucose = 0;
+        }
       }
 
       const lipidResult = this.lipidProcessor.process({
@@ -394,18 +468,26 @@ export class VitalSignsProcessor {
         personalizationState: base.personalizationState,
       });
       this.lastLipids = lipidResult;
+      // FAIL-CLOSED: Lípidos solo si hay dataset de calibración real del usuario
       if (lipidResult.totalCholesterol > 0 && lipidResult.enabledState !== 'WITHHELD_LOW_QUALITY') {
-        this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipidResult.totalCholesterol, 'dynamic');
-        this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipidResult.triglycerides, 'dynamic');
-        this.userBaseline.updateFromSession({
-          cholesterolEma: this.measurements.totalCholesterol,
-          triglyceridesEma: this.measurements.triglycerides,
-        });
+        const hasCalibration = base.personalizationState === 'CALIBRATED' as any && 
+                           (base.cholesterolEma > 0 || base.triglyceridesEma > 0);
+        if (hasCalibration && this.evidenceContext.livePpgPassed) {
+          this.measurements.totalCholesterol = this.smoothValue(this.measurements.totalCholesterol, lipidResult.totalCholesterol, 'dynamic');
+          this.measurements.triglycerides = this.smoothValue(this.measurements.triglycerides, lipidResult.triglycerides, 'dynamic');
+          this.userBaseline.updateFromSession({
+            cholesterolEma: this.measurements.totalCholesterol,
+            triglyceridesEma: this.measurements.triglycerides,
+          });
+        } else {
+          this.measurements.totalCholesterol = 0;
+          this.measurements.triglycerides = 0;
+        }
       }
     }
 
-    if (beatInputs && beatInputs.length >= 8) {
-      // Temporarily disable new ArrhythmiaProcessor and use only RhythmClassifier
+    // FAIL-CLOSED: Arritmia solo si hay RR intervals reales y evidencia PPG viva
+    if (beatInputs && beatInputs.length >= 8 && this.evidenceContext.livePpgPassed) {
       const rhythmResult = this.rhythmClassifier.classify(
         beatInputs,
         Math.max(this.upstreamContext.avgBeatSQI, 20),
@@ -421,7 +503,27 @@ export class VitalSignsProcessor {
         rmssd: rhythmResult.features.rmssd,
         rrVariation: rhythmResult.features.rrCV * 100,
       };
+    } else {
+      // FAIL-CLOSED: Sin beats reales, arrhythmiaStatus = NO_VALID_PPG
+      this.measurements.arrhythmiaStatus = "NO_VALID_PPG|0";
+      this.measurements.arrhythmiaCount = 0;
     }
+  }
+
+  private getInvalidResult(): VitalSignsResult {
+    return {
+      spo2: 0,
+      glucose: 0,
+      pressure: { systolic: 0, diastolic: 0, confidence: 'INSUFFICIENT', featureQuality: 0 },
+      arrhythmiaCount: 0,
+      arrhythmiaStatus: "NO_VALID_PPG|0",
+      lipids: { totalCholesterol: 0, triglycerides: 0 },
+      isCalibrating: this.isCalibrating,
+      calibrationProgress: Math.min(100, Math.round((this.calibrationSamples / this.CALIBRATION_REQUIRED) * 100)),
+      lastArrhythmiaData: undefined,
+      signalQuality: 0,
+      measurementConfidence: 'INVALID'
+    };
   }
 
   private getFormattedResult(): VitalSignsResult {
