@@ -45,6 +45,7 @@ const Index = () => {
   });
   const [heartRate, setHeartRate] = useState(0);
   const [heartbeatSignal, setHeartbeatSignal] = useState(0);
+  const [stableHumanSignal, setStableHumanSignal] = useState(false);
   const [beatMarker, setBeatMarker] = useState(0);
   const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -633,13 +634,13 @@ const Index = () => {
     };
     
     const evidence: LivePpgEvidenceResult = livePpgEvidenceGate.evaluate(evidenceInput);
-    const stableHumanSignal = evidence.passed && evidence.tier === "VALID_LIVE_PPG";
+    const hasStableHumanSignal = evidence.passed && evidence.tier === "VALID_LIVE_PPG";
+    setStableHumanSignal(hasStableHumanSignal);
 
-
-    setHeartbeatSignal(stableHumanSignal ? heartBeatResult.filteredValue : 0);
+    setHeartbeatSignal(hasStableHumanSignal ? heartBeatResult.filteredValue : 0);
     
     // FAIL-CLOSED: Invalidar medición inmediatamente si no hay evidencia PPG viva
-    if (!stableHumanSignal && evidence.hardFail) {
+    if (!hasStableHumanSignal && evidence.hardFail) {
       setVitalSigns(prev => ({
         ...prev,
         spo2: 0,
@@ -947,12 +948,13 @@ const Index = () => {
                 </div>
               );
             })()}
-            <PPGSignalMeter 
+            <PPGSignalMeter
               value={heartbeatSignal}
               quality={lastSignal?.quality ?? 0}
               isFingerDetected={lastSignal?.fingerDetected ?? false}
               onStartMeasurement={handleToggleMonitoring}
               onReset={handleReset}
+              livePpgEvidencePassed={stableHumanSignal}
               isMonitoring={isMonitoring}
               arrhythmiaStatus={vitalSigns.arrhythmiaStatus}
               rawArrhythmiaData={lastArrhythmiaData.current}
@@ -962,7 +964,6 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
-              livePpgEvidencePassed={stableHumanSignal}
             />
           </div>
 

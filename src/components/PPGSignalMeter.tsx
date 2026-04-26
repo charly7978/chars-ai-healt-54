@@ -8,6 +8,7 @@ interface PPGSignalMeterProps {
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
   onReset: () => void;
+  livePpgEvidencePassed?: boolean;
   isMonitoring?: boolean;
   arrhythmiaStatus?: string;
   rawArrhythmiaData?: {
@@ -21,7 +22,6 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
-  livePpgEvidencePassed?: boolean; // FAIL-CLOSED: evidencia PPG viva obligatoria
 }
 
 const CONFIG = {
