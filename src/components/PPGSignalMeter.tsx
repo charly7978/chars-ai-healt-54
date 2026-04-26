@@ -110,6 +110,7 @@ const PPGSignalMeter = ({
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
+  const invalidSinceRef = useRef<number | null>(null);
 
   useEffect(() => {
     propsRef.current = { value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData, livePpgEvidencePassed };
@@ -126,7 +127,10 @@ const PPGSignalMeter = ({
   }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData]);
 
   useEffect(() => {
-    if (isPeak && isFingerDetected) {
+    const { isPeak: peak, livePpgEvidencePassed: livePassed, quality: q } = propsRef.current;
+    const hasValidPpg = livePassed === true && q >= 15;
+    
+    if (hasValidPpg && peak && isFingerDetected) {
       const now = Date.now();
       if (now - lastPeakTimeRef.current > 250) {
         lastPeakTimeRef.current = now;
@@ -134,7 +138,7 @@ const PPGSignalMeter = ({
         setTimeout(() => setShowPulse(false), 120);
       }
     }
-  }, [isPeak, isFingerDetected]);
+  }, [isFingerDetected]);
 
   useEffect(() => {
     if (!dataBufferRef.current) dataBufferRef.current = new CircularBuffer(CONFIG.BUFFER_SIZE);
@@ -429,7 +433,7 @@ const PPGSignalMeter = ({
       }
       lastRenderTime = now;
       
-      const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, isPeak: peak } = propsRef.current;
+      const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, isPeak: peak, livePpgEvidencePassed: livePassed, quality: q } = propsRef.current;
       const rhythm = parseRhythmStatus(arrStatus);
       const plot = getPlotArea();
       const { WINDOW_MS, COLORS } = CONFIG;
@@ -445,31 +449,30 @@ const PPGSignalMeter = ({
       }
       
       // FAIL-CLOSED: Si no hay evidencia PPG viva, mostrar onda plana y mensaje
-      const hasValidPpg = livePpgEvidencePassed && quality >= 15;
+      const hasValidPpg = livePassed === true && q >= 15;
       const scaledValue = hasValidPpg ? signalValue * 2 : 0;
       
-      if (peak) {
+      // FAIL-CLOSED: Limpiar buffers si no hay PPG válida por >1 segundo
+      if (!hasValidPpg) {
+        if (invalidSinceRef.current === null) {
+          invalidSinceRef.current = now;
+        } else if (now - invalidSinceRef.current > 1000) {
+          beatHistoryRef.current = [];
+          ibiDisplayRef.current = 0;
+          hrvDisplayRef.current = { sdnn: 0, rmssd: 0 };
+          dataBufferRef.current?.clear();
+        }
+      } else {
+        invalidSinceRef.current = null;
+      }
+      
+      // FAIL-CLOSED: Solo actualizar beatHistory si hay PPG válida y pico
+      if (hasValidPpg && peak) {
         const currentCount = rhythm.count;
         const shouldMarkArrhythmia = rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current;
         
-        console.log('[Rhythm Debug]', {
-          arrStatus: arrStatus,
-          rhythmLabel: rhythm.label,
-          rhythmCount: rhythm.count,
-          isAlert: rhythm.isAlert,
-          currentCount,
-          lastCount: lastArrhythmiaCountRef.current,
-          shouldMarkArrhythmia
-        });
-        
         if (shouldMarkArrhythmia) {
           lastArrhythmiaCountRef.current = Math.max(lastArrhythmiaCountRef.current, currentCount);
-          // DISABLED: markArrhythmiaBack marks all points in buffer as arrhythmic
-          // const { rrIntervals: rr } = propsRef.current;
-          // const lastRR = rr && rr.length > 0 ? rr[rr.length - 1] : 800;
-          // const retroDuration = Math.min(Math.max(lastRR, 400), 1500);
-          // console.log('[Rhythm Debug] Calling markArrhythmiaBack for', retroDuration, 'ms');
-          // buffer.markArrhythmiaBack(retroDuration);
         }
         beatHistoryRef.current.push({ isArrhythmia: shouldMarkArrhythmia, time: now });
         if (beatHistoryRef.current.length > 20) beatHistoryRef.current = beatHistoryRef.current.slice(-20);

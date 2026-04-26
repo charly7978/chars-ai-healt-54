@@ -42,6 +42,9 @@ export interface PPGSample {
   saturationRatioR: number;
   saturationRatioG: number;
   saturationRatioB: number;
+  validPixelRatio: number;
+  clipHighRatio: number;
+  clipLowRatio: number;
   contactScore: number;
   motionScore: number;
   roiBox: ROIBox;
@@ -100,30 +103,71 @@ export class PPGExtraction {
   }
 
   /**
-   * Calcular media RGB del ROI
+   * Calcular media RGB del ROI con estadísticas completas
    */
-  private calculateMeanRGB(imageData: ImageData, roi: ROIBox): { r: number; g: number; b: number } {
+  private calculateMeanRGB(imageData: ImageData, roi: ROIBox): { 
+    r: number; g: number; b: number; 
+    stdR: number; stdG: number; stdB: number;
+    validPixelRatio: number;
+    clipHighRatio: number;
+    clipLowRatio: number;
+  } {
     const data = imageData.data;
     const w = imageData.width;
     const { x, y, width, height } = roi;
     
     let sumR = 0, sumG = 0, sumB = 0;
+    let sumSqR = 0, sumSqG = 0, sumSqB = 0;
     let count = 0;
+    let validPixels = 0;
+    let clipHighPixels = 0;
+    let clipLowPixels = 0;
     
     for (let py = y; py < y + height; py++) {
       for (let px = x; px < x + width; px++) {
         const idx = (py * w + px) * 4;
-        sumR += data[idx];
-        sumG += data[idx + 1];
-        sumB += data[idx + 2];
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        
+        // Rechazar píxeles inválidos
+        if (r >= 250 || g >= 250 || b >= 250 || r <= 3 || g <= 3 || b <= 3) {
+          if (r >= 250 || g >= 250 || b >= 250) clipHighPixels++;
+          if (r <= 3 && g <= 3 && b <= 3) clipLowPixels++;
+          continue;
+        }
+        
+        validPixels++;
+        sumR += r;
+        sumG += g;
+        sumB += b;
+        sumSqR += r * r;
+        sumSqG += g * g;
+        sumSqB += b * b;
         count++;
       }
     }
     
+    const totalPixels = width * height;
+    const meanR = count > 0 ? sumR / count : 0;
+    const meanG = count > 0 ? sumG / count : 0;
+    const meanB = count > 0 ? sumB / count : 0;
+    
+    // Calcular desviación estándar
+    const varianceR = count > 0 ? (sumSqR / count) - (meanR * meanR) : 0;
+    const varianceG = count > 0 ? (sumSqG / count) - (meanG * meanG) : 0;
+    const varianceB = count > 0 ? (sumSqB / count) - (meanB * meanB) : 0;
+    
     return {
-      r: count > 0 ? sumR / count : 0,
-      g: count > 0 ? sumG / count : 0,
-      b: count > 0 ? sumB / count : 0,
+      r: meanR,
+      g: meanG,
+      b: meanB,
+      stdR: Math.sqrt(Math.max(0, varianceR)),
+      stdG: Math.sqrt(Math.max(0, varianceG)),
+      stdB: Math.sqrt(Math.max(0, varianceB)),
+      validPixelRatio: totalPixels > 0 ? validPixels / totalPixels : 0,
+      clipHighRatio: totalPixels > 0 ? clipHighPixels / totalPixels : 0,
+      clipLowRatio: totalPixels > 0 ? clipLowPixels / totalPixels : 0,
     };
   }
 
@@ -287,7 +331,7 @@ export class PPGExtraction {
     this.frameCount++;
     const timestamp = performance.now();
     
-    // Calcular media RGB del ROI
+    // Calcular media RGB del ROI con estadísticas
     const meanRGB = this.calculateMeanRGB(imageData, roi);
     
     // Calcular saturación por canal
@@ -347,6 +391,9 @@ export class PPGExtraction {
       saturationRatioR: saturationRatio.r,
       saturationRatioG: saturationRatio.g,
       saturationRatioB: saturationRatio.b,
+      validPixelRatio: meanRGB.validPixelRatio,
+      clipHighRatio: meanRGB.clipHighRatio,
+      clipLowRatio: meanRGB.clipLowRatio,
       contactScore,
       motionScore,
       roiBox: roi,

@@ -44,6 +44,33 @@ export const useVitalSignsProcessor = () => {
   }) => {
     processorRef.current?.setUpstreamContext(ctx);
   }, []);
+
+  const setEvidenceContext = useCallback((ctx: {
+    livePpgPassed: boolean;
+    livePpgQuality: number;
+    reasons: string[];
+    dominantFrequencyHz?: number;
+    detectorAgreementScore?: number;
+    channelCoherence?: number;
+    acDc?: { r?: number; g?: number; b?: number };
+  }) => {
+    processorRef.current?.setEvidenceContext({
+      livePpgPassed: ctx.livePpgPassed,
+      livePpgScore: ctx.livePpgQuality,
+      evidenceTier: ctx.livePpgPassed ? 'VALID_LIVE_PPG' : 'INVALID',
+      bpm: 0,
+      bpmConfidence: 0,
+      acceptedBeats: 0,
+      rrIntervals: [],
+      signalQuality: 0,
+      perfusionIndex: ctx.acDc?.g ?? 0,
+      spectralDominance: 0,
+      temporalSpectralAgreement: 0,
+      sourceStability: 0,
+      negativeControlScore: 0,
+      rejectionReasons: ctx.reasons
+    });
+  }, []);
   
   const processSignal = useCallback((
     value: number, 
@@ -53,7 +80,15 @@ export const useVitalSignsProcessor = () => {
       detectorAgreement: number; amplitude?: number;
       flags: { isWeak: boolean; isPremature: boolean; isSuspicious: boolean; isDoublePeak: boolean };
     }>,
-    livePpgEvidence?: { passed: boolean }
+    livePpgEvidence?: { 
+      passed: boolean; 
+      qualityScore?: number; 
+      reasons?: string[];
+      dominantFrequencyHz?: number;
+      detectorAgreementScore?: number;
+      channelCoherence?: number;
+      acDc?: { r?: number; g?: number; b?: number };
+    }
   ): VitalSignsResult => {
     const defaultResult: VitalSignsResult = {
       spo2: 0, glucose: 0,
@@ -65,6 +100,26 @@ export const useVitalSignsProcessor = () => {
     };
     
     if (!processorRef.current) return defaultResult;
+    
+    // FAIL-CLOSED: Setear evidenceContext antes de procesar
+    if (livePpgEvidence) {
+      processorRef.current.setEvidenceContext({
+        livePpgPassed: livePpgEvidence.passed === true,
+        livePpgScore: livePpgEvidence.qualityScore ?? 0,
+        evidenceTier: livePpgEvidence.passed ? 'VALID_LIVE_PPG' : 'INVALID',
+        bpm: 0,
+        bpmConfidence: 0,
+        acceptedBeats: 0,
+        rrIntervals: [],
+        signalQuality: 0,
+        perfusionIndex: livePpgEvidence.acDc?.g ?? 0,
+        spectralDominance: 0,
+        temporalSpectralAgreement: 0,
+        sourceStability: 0,
+        negativeControlScore: 0,
+        rejectionReasons: livePpgEvidence.reasons ?? []
+      });
+    }
     
     // FAIL-CLOSED: Si no hay evidencia PPG viva, devolver INVALID inmediatamente
     if (livePpgEvidence && !livePpgEvidence.passed) {
@@ -138,6 +193,7 @@ export const useVitalSignsProcessor = () => {
 
   return {
     processSignal,
+    setEvidenceContext,
     setRGBData,
     setUpstreamContext,
     setHeartRuntime,

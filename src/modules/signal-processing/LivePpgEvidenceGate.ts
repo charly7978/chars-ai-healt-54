@@ -66,6 +66,14 @@ export interface LivePpgEvidenceInput {
     whiteBalanceLocked: boolean;
     torchEnabled: boolean;
   };
+  multichannelEvidence?: {
+    channelCoherence: number;
+    acDcRatioR: number;
+    acDcRatioG: number;
+    acDcRatioB: number;
+    spectralSnrDb: number;
+    autocorrelationScore: number;
+  };
 }
 
 export interface LivePpgEvidenceResult {
@@ -119,6 +127,14 @@ export class LivePpgEvidenceGate {
   private readonly MIN_SCORE_FOR_PASS = 0.78;
   private readonly MIN_FREQ_HZ = 0.65;
   private readonly MAX_FREQ_HZ = 3.5;
+  private readonly MIN_CHANNEL_COHERENCE = 0.45;
+  private readonly TARGET_CHANNEL_COHERENCE = 0.60;
+  private readonly MIN_AC_DC_RATIO = 0.003;
+  private readonly TARGET_AC_DC_RATIO = 0.008;
+  private readonly MIN_SPECTRAL_SNR_DB = 3.0;
+  private readonly TARGET_SPECTRAL_SNR_DB = 6.0;
+  private readonly MIN_AUTOCORRELATION_SCORE = 0.40;
+  private readonly TARGET_AUTOCORRELATION_SCORE = 0.55;
 
   evaluate(input: LivePpgEvidenceInput): LivePpgEvidenceResult {
     const reasons: string[] = [];
@@ -236,6 +252,43 @@ export class LivePpgEvidenceGate {
     }
     metrics.dominantFrequencyHz = input.windowSQI?.spectral?.dominantFrequencyHz ?? 0;
 
+    // 15. Coherencia multicanal muy baja (canales no correlacionados = ruido)
+    if (input.multichannelEvidence?.channelCoherence !== undefined &&
+        input.multichannelEvidence.channelCoherence < this.MIN_CHANNEL_COHERENCE) {
+      hardFail = true;
+      reasons.push(`CHANNEL_COHERENCE_TOO_LOW: ${input.multichannelEvidence.channelCoherence.toFixed(3)} < ${this.MIN_CHANNEL_COHERENCE}`);
+    }
+    metrics.channelCoherence = input.multichannelEvidence?.channelCoherence ?? 0;
+
+    // 16. AC/DC ratio muy bajo en todos los canales (sin perfusión)
+    if (input.multichannelEvidence) {
+      const { acDcRatioR, acDcRatioG, acDcRatioB } = input.multichannelEvidence;
+      const maxAcDc = Math.max(acDcRatioR, acDcRatioG, acDcRatioB);
+      if (maxAcDc < this.MIN_AC_DC_RATIO) {
+        hardFail = true;
+        reasons.push(`AC_DC_RATIO_TOO_LOW: max(${acDcRatioR.toFixed(4)}, ${acDcRatioG.toFixed(4)}, ${acDcRatioB.toFixed(4)}) < ${this.MIN_AC_DC_RATIO}`);
+      }
+    }
+    metrics.acDcRatioR = input.multichannelEvidence?.acDcRatioR ?? 0;
+    metrics.acDcRatioG = input.multichannelEvidence?.acDcRatioG ?? 0;
+    metrics.acDcRatioB = input.multichannelEvidence?.acDcRatioB ?? 0;
+
+    // 17. SNR espectral muy bajo (ruido blanco)
+    if (input.multichannelEvidence?.spectralSnrDb !== undefined &&
+        input.multichannelEvidence.spectralSnrDb < this.MIN_SPECTRAL_SNR_DB) {
+      hardFail = true;
+      reasons.push(`SPECTRAL_SNR_TOO_LOW: ${input.multichannelEvidence.spectralSnrDb.toFixed(1)} dB < ${this.MIN_SPECTRAL_SNR_DB} dB`);
+    }
+    metrics.spectralSnrDb = input.multichannelEvidence?.spectralSnrDb ?? 0;
+
+    // 18. Autocorrelación muy baja (sin periodicidad)
+    if (input.multichannelEvidence?.autocorrelationScore !== undefined &&
+        input.multichannelEvidence.autocorrelationScore < this.MIN_AUTOCORRELATION_SCORE) {
+      hardFail = true;
+      reasons.push(`AUTOCORRELATION_TOO_LOW: ${input.multichannelEvidence.autocorrelationScore.toFixed(3)} < ${this.MIN_AUTOCORRELATION_SCORE}`);
+    }
+    metrics.autocorrelationScore = input.multichannelEvidence?.autocorrelationScore ?? 0;
+
     // Si hay hard fail, retornar inmediatamente
     if (hardFail) {
       return {
@@ -304,17 +357,48 @@ export class LivePpgEvidenceGate {
       this.TARGET_PHASE_COHERENCE
     );
 
-    // Score ponderado según especificación
+    const normalizedChannelCoherence = this.normalize(
+      input.multichannelEvidence?.channelCoherence ?? 0,
+      this.MIN_CHANNEL_COHERENCE,
+      this.TARGET_CHANNEL_COHERENCE
+    );
+
+    const normalizedAcDcRatio = this.normalize(
+      Math.max(
+        input.multichannelEvidence?.acDcRatioR ?? 0,
+        input.multichannelEvidence?.acDcRatioG ?? 0,
+        input.multichannelEvidence?.acDcRatioB ?? 0
+      ),
+      this.MIN_AC_DC_RATIO,
+      this.TARGET_AC_DC_RATIO
+    );
+
+    const normalizedSpectralSnr = this.normalize(
+      input.multichannelEvidence?.spectralSnrDb ?? 0,
+      this.MIN_SPECTRAL_SNR_DB,
+      this.TARGET_SPECTRAL_SNR_DB
+    );
+
+    const normalizedAutocorrelation = this.normalize(
+      input.multichannelEvidence?.autocorrelationScore ?? 0,
+      this.MIN_AUTOCORRELATION_SCORE,
+      this.TARGET_AUTOCORRELATION_SCORE
+    );
+
+    // Score ponderado según especificación (actualizado con multicanal)
     const score =
-      0.18 * normalizedWindowSQI +
-      0.14 * normalizedSpectralDominance +
-      0.14 * normalizedDetectorAgreement +
-      0.12 * normalizedFreqStability +
-      0.12 * normalizedTemporalSpectralAgreement +
-      0.10 * normalizedBeatSQI +
-      0.08 * normalizedMorphologyScore +
-      0.07 * normalizedSpatialCoherence +
-      0.05 * normalizedPhaseCoherence;
+      0.14 * normalizedWindowSQI +
+      0.11 * normalizedSpectralDominance +
+      0.11 * normalizedDetectorAgreement +
+      0.10 * normalizedFreqStability +
+      0.10 * normalizedTemporalSpectralAgreement +
+      0.08 * normalizedBeatSQI +
+      0.07 * normalizedMorphologyScore +
+      0.06 * normalizedSpatialCoherence +
+      0.04 * normalizedPhaseCoherence +
+      0.09 * normalizedChannelCoherence +
+      0.06 * normalizedAcDcRatio +
+      0.04 * normalizedSpectralSnr;
 
     metrics.score = score;
     metrics.normalizedWindowSQI = normalizedWindowSQI;
@@ -326,6 +410,10 @@ export class LivePpgEvidenceGate {
     metrics.normalizedMorphologyScore = normalizedMorphologyScore;
     metrics.normalizedSpatialCoherence = normalizedSpatialCoherence;
     metrics.normalizedPhaseCoherence = normalizedPhaseCoherence;
+    metrics.normalizedChannelCoherence = normalizedChannelCoherence;
+    metrics.normalizedAcDcRatio = normalizedAcDcRatio;
+    metrics.normalizedSpectralSnr = normalizedSpectralSnr;
+    metrics.normalizedAutocorrelation = normalizedAutocorrelation;
 
     // === DETERMINACIÓN DE TIER ===
     

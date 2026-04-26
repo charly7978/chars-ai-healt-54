@@ -3,7 +3,7 @@ import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2, Brain, 
 import { playCompletionSound } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
-import { useSignalProcessor } from "@/hooks/useSignalProcessor";
+import { usePPGPhase1Adapter } from "@/hooks/usePPGPhase1Adapter";
 import { VideoFrameScheduler } from "@/modules/signal-processing/VideoFrameScheduler";
 import { ExtractionResolutionController } from "@/modules/signal-processing/ExtractionResolutionController";
 import { useHeartBeatProcessor } from "@/hooks/useHeartBeatProcessor";
@@ -55,6 +55,7 @@ const Index = () => {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [rrIntervals, setRRIntervals] = useState<number[]>([]);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
   const [measurementSummary, setMeasurementSummary] = useState<{
     totalBeats: number;
     arrhythmiaBeats: number;
@@ -147,7 +148,12 @@ const Index = () => {
     getPositionQuality,
     getPPGDebugInfo,
     applyCaptureContext,
-  } = useSignalProcessor();
+    rgbStats,
+    multichannelEvidence,
+  } = usePPGPhase1Adapter({ 
+    videoElement,
+    enableDebug: true,
+  });
   
   const { 
     processSignal: processHeartBeat, 
@@ -421,6 +427,7 @@ const Index = () => {
       const video = cameraRef.current?.getVideoElement();
       if (video && video.readyState >= 2) {
         console.log('✅ Video listo:', video.videoWidth, 'x', video.videoHeight);
+        setVideoElement(video);
         startFrameLoop();
       } else {
         const checkReady = setInterval(() => {
@@ -428,6 +435,7 @@ const Index = () => {
           if (v && v.readyState >= 2 && v.videoWidth > 0) {
             clearInterval(checkReady);
             console.log('✅ Video listo (retry):', v.videoWidth, 'x', v.videoHeight);
+            setVideoElement(v);
             startFrameLoop();
           }
         }, 100);
@@ -663,7 +671,7 @@ const Index = () => {
       }));
     }
 
-    if (!stableHumanSignal) {
+    if (!hasStableHumanSignal) {
       unstableFrameCounter.current++;
       if (unstableFrameCounter.current >= UNSTABLE_ZERO_THRESHOLD) {
         setHeartRate(0);

@@ -22,8 +22,14 @@ export interface ROIMetrics {
   meanR: number;
   meanG: number;
   meanB: number;
+  stdR: number;
+  stdG: number;
+  stdB: number;
   variance: number;
   saturationRatio: number;
+  clipHighR: number;
+  clipHighG: number;
+  clipHighB: number;
   darkRatio: number;
   qualityScore: number;
 }
@@ -98,8 +104,10 @@ export class DynamicROI {
     const { x, y, width, height } = roi;
     
     let sumR = 0, sumG = 0, sumB = 0;
+    let sumSqR = 0, sumSqG = 0, sumSqB = 0;
     let sumSq = 0;
     let saturatedPixels = 0;
+    let clipHighR = 0, clipHighG = 0, clipHighB = 0;
     let darkPixels = 0;
     let count = 0;
     
@@ -113,10 +121,16 @@ export class DynamicROI {
         sumR += r;
         sumG += g;
         sumB += b;
+        sumSqR += r * r;
+        sumSqG += g * g;
+        sumSqB += b * b;
         
         const mean = (r + g + b) / 3;
         sumSq += mean * mean;
         
+        if (r >= this.SATURATION_THRESHOLD) clipHighR++;
+        if (g >= this.SATURATION_THRESHOLD) clipHighG++;
+        if (b >= this.SATURATION_THRESHOLD) clipHighB++;
         if (r >= this.SATURATION_THRESHOLD || g >= this.SATURATION_THRESHOLD || b >= this.SATURATION_THRESHOLD) {
           saturatedPixels++;
         }
@@ -134,6 +148,9 @@ export class DynamicROI {
     const meanB = sumB / count;
     const mean = (meanR + meanG + meanB) / 3;
     const variance = (sumSq / count) - (mean * mean);
+    const varianceR = (sumSqR / count) - (meanR * meanR);
+    const varianceG = (sumSqG / count) - (meanG * meanG);
+    const varianceB = (sumSqB / count) - (meanB * meanB);
     const saturationRatio = saturatedPixels / count;
     const darkRatio = darkPixels / count;
     
@@ -162,8 +179,14 @@ export class DynamicROI {
       meanR,
       meanG,
       meanB,
+      stdR: Math.sqrt(Math.max(0, varianceR)),
+      stdG: Math.sqrt(Math.max(0, varianceG)),
+      stdB: Math.sqrt(Math.max(0, varianceB)),
       variance,
       saturationRatio,
+      clipHighR: clipHighR / count,
+      clipHighG: clipHighG / count,
+      clipHighB: clipHighB / count,
       darkRatio,
       qualityScore,
     };
