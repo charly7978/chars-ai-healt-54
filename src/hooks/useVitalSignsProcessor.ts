@@ -88,6 +88,7 @@ export const useVitalSignsProcessor = () => {
       detectorAgreementScore?: number;
       channelCoherence?: number;
       acDc?: { r?: number; g?: number; b?: number };
+      perfusionIndex?: number;
     }
   ): VitalSignsResult => {
     const defaultResult: VitalSignsResult = {
@@ -112,7 +113,7 @@ export const useVitalSignsProcessor = () => {
         acceptedBeats: 0,
         rrIntervals: [],
         signalQuality: 0,
-        perfusionIndex: livePpgEvidence.acDc?.g ?? 0,
+        perfusionIndex: livePpgEvidence.perfusionIndex ?? 0,
         spectralDominance: 0,
         temporalSpectralAgreement: 0,
         sourceStability: 0,

@@ -739,7 +739,10 @@ const Index = () => {
         (specWin as { dominantFrequencyHz?: number } | undefined)?.dominantFrequencyHz,
       detectorAgreementScore: specWin?.detectorAgreementScore,
       channelCoherence,
+      // perfusionIndex en la app está en % (PI = AC/DC * 100). Se pasa como
+      // tercer argumento al evidenceContext del VitalSignsProcessor.
       acDc: { r: acDcR, g: acDcG },
+      perfusionIndex: ls.perfusionIndex ?? 0,
     });
 
     if (rgbStats.redDC > 0 && rgbStats.greenDC > 0) {
