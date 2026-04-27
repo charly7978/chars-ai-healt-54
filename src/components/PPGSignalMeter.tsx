@@ -41,11 +41,11 @@ const CONFIG = {
   // Ventana más corta = barrido más rápido y "eléctrico", como un monitor clínico real.
   WINDOW_MS: 2200,
   TARGET_FPS: 60,
-  // Buffer más grande para no perder muestras a 60 fps × 2.2 s.
   BUFFER_SIZE: 420,
-  // HUD compacto arriba; se reserva un poco menos abajo (la barra inferior
-  // de signos vitales secundarios flota encima del canvas).
-  PLOT_AREA: { LEFT: 38, RIGHT: 14, TOP: 86, BOTTOM: 86 },
+  // HUD más generoso: TOP=130 deja sitio para 3 paneles de 110 px de
+  // altura con tipografía cómoda. BOTTOM=110 reserva espacio para la
+  // barra de signos vitales secundarios que flota encima del canvas.
+  PLOT_AREA: { LEFT: 50, RIGHT: 18, TOP: 130, BOTTOM: 110 },
   COLORS: {
     // Fondo y rejilla neutros, no de "saturación de videojuego".
     BG: '#070b14',
@@ -300,18 +300,18 @@ const PPGSignalMeter = ({
       const { COLORS } = CONFIG;
       const plot = getPlotArea();
       const stats = amplitudeStatsRef.current;
-      ctx.font = '10px "SF Mono", Consolas, monospace';
+      ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.SCALE_TEXT;
       ctx.textAlign = 'right';
       const steps = 4;
       for (let i = 0; i <= steps; i++) {
         const y = plot.y + (i / steps) * plot.height;
         const val = stats.max - (i / steps) * stats.range;
-        ctx.fillText(val.toFixed(0), plot.x - 4, y + 3);
+        ctx.fillText(val.toFixed(0), plot.x - 6, y + 4);
         ctx.strokeStyle = COLORS.SCALE_TEXT;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(plot.x - 3, y);
+        ctx.moveTo(plot.x - 4, y);
         ctx.lineTo(plot.x, y);
         ctx.stroke();
       }
@@ -320,23 +320,24 @@ const PPGSignalMeter = ({
     const drawTimeScale = (ctx: CanvasRenderingContext2D) => {
       const { COLORS, WINDOW_MS } = CONFIG;
       const plot = getPlotArea();
-      ctx.font = '10px "SF Mono", Consolas, monospace';
+      ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.SCALE_TEXT;
       ctx.textAlign = 'center';
       const seconds = WINDOW_MS / 1000;
       for (let s = 0; s <= seconds; s++) {
         const x = plot.x + plot.width - (s / seconds) * plot.width;
-        ctx.fillText(`${s}s`, x, plot.y + plot.height + 14);
+        ctx.fillText(`${s}s`, x, plot.y + plot.height + 18);
         ctx.strokeStyle = COLORS.SCALE_TEXT;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(x, plot.y + plot.height);
-        ctx.lineTo(x, plot.y + plot.height + 4);
+        ctx.lineTo(x, plot.y + plot.height + 5);
         ctx.stroke();
       }
       ctx.textAlign = 'right';
       ctx.fillStyle = COLORS.TEXT_PRIMARY;
-      ctx.fillText('25 mm/s', plot.x + plot.width, plot.y + plot.height + 28);
+      ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
+      ctx.fillText('25 mm/s', plot.x + plot.width, plot.y + plot.height + 38);
     };
 
     const drawVitalInfo = (ctx: CanvasRenderingContext2D) => {
@@ -345,16 +346,16 @@ const PPGSignalMeter = ({
       const { bpm: bpmCurrent, spo2: spo2Current, arrhythmiaStatus, quality } = propsRef.current;
       const rhythm = parseRhythmStatus(arrhythmiaStatus);
 
-      // HUD compacto en una sola fila: 3 paneles con anchos proporcionales.
-      // Padding 6 px entre paneles. Altura única 70 px.
-      const padX = 6;
-      const padOuter = 4;
+      // HUD agrandado para que se lea con claridad en monitor forense.
+      // 3 paneles a lo largo del ancho con tipografía cómoda.
+      const padX = 8;
+      const padOuter = 6;
       const totalW = w - padOuter * 2;
       const innerSpacing = padX * 2;
-      const sidePanelW = Math.max(96, Math.min(150, (totalW - innerSpacing) * 0.27));
+      const sidePanelW = Math.max(140, Math.min(220, (totalW - innerSpacing) * 0.30));
       const centerW = totalW - innerSpacing - sidePanelW * 2;
-      const panelH = 70;
-      const panelY = 6;
+      const panelH = 110;
+      const panelY = 10;
 
       const leftX = padOuter;
       const centerX = leftX + sidePanelW + padX;
@@ -364,23 +365,23 @@ const PPGSignalMeter = ({
       ctx.fillStyle = 'rgba(0, 30, 15, 0.92)';
       ctx.fillRect(leftX, panelY, sidePanelW, panelH);
       ctx.strokeStyle = COLORS.TEXT_PRIMARY;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1.5;
       ctx.strokeRect(leftX + 0.5, panelY + 0.5, sidePanelW - 1, panelH - 1);
-      ctx.font = '9px "SF Mono", Consolas, monospace';
+      ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.textAlign = 'left';
-      ctx.fillText('FRECUENCIA', leftX + 6, panelY + 13);
-      ctx.font = 'bold 28px "SF Mono", Consolas, monospace';
+      ctx.fillText('FRECUENCIA', leftX + 10, panelY + 22);
+      ctx.font = 'bold 56px "SF Mono", Consolas, monospace';
       ctx.fillStyle = bpmCurrent > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY;
       ctx.textBaseline = 'alphabetic';
-      ctx.fillText(bpmCurrent > 0 ? bpmCurrent.toString() : '--', leftX + 6, panelY + 44);
-      ctx.font = '10px "SF Mono", Consolas, monospace';
+      ctx.fillText(bpmCurrent > 0 ? bpmCurrent.toString() : '--', leftX + 10, panelY + 78);
+      ctx.font = 'bold 16px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.textAlign = 'right';
-      ctx.fillText('BPM', leftX + sidePanelW - 6, panelY + 44);
+      ctx.fillText('BPM', leftX + sidePanelW - 10, panelY + 78);
       ctx.textAlign = 'left';
       if (bpmCurrent > 0) {
-        ctx.font = '9px "SF Mono", Consolas, monospace';
+        ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
         let hrLabel = 'NORMAL';
         let hrColor = COLORS.TEXT_PRIMARY;
         if (bpmCurrent < 60) {
@@ -391,7 +392,7 @@ const PPGSignalMeter = ({
           hrColor = COLORS.TEXT_WARNING;
         }
         ctx.fillStyle = hrColor;
-        ctx.fillText(hrLabel, leftX + 6, panelY + 60);
+        ctx.fillText(hrLabel, leftX + 10, panelY + 100);
       }
 
       // ===== Panel central: Calidad + ritmo + IBI/HRV =====
@@ -399,16 +400,16 @@ const PPGSignalMeter = ({
       ctx.fillRect(centerX, panelY, centerW, panelH);
       const qBorder = quality > 60 ? COLORS.TEXT_PRIMARY : quality > 30 ? COLORS.TEXT_WARNING : COLORS.TEXT_DANGER;
       ctx.strokeStyle = qBorder;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1.5;
       ctx.strokeRect(centerX + 0.5, panelY + 0.5, centerW - 1, panelH - 1);
-      ctx.font = '9px "SF Mono", Consolas, monospace';
+      ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.textAlign = 'center';
-      ctx.fillText('CALIDAD SEÑAL', centerX + centerW / 2, panelY + 13);
-      const barX = centerX + 8;
-      const barY = panelY + 18;
-      const barWidth = centerW - 16;
-      const barHeight = 5;
+      ctx.fillText('CALIDAD SEÑAL', centerX + centerW / 2, panelY + 22);
+      const barX = centerX + 12;
+      const barY = panelY + 30;
+      const barWidth = centerW - 24;
+      const barHeight = 9;
       ctx.fillStyle = 'rgba(255,255,255,0.10)';
       ctx.fillRect(barX, barY, barWidth, barHeight);
       const qPct = Math.max(0, Math.min(1, quality / 100));
@@ -427,28 +428,28 @@ const PPGSignalMeter = ({
         ctx.fillStyle = qGrad;
         ctx.fillRect(barX, barY, qPct * barWidth, barHeight);
       }
-      ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+      ctx.font = 'bold 18px "SF Mono", Consolas, monospace';
       ctx.fillStyle = qBorder;
-      ctx.fillText(`${quality.toFixed(0)}%`, centerX + centerW / 2, panelY + 38);
+      ctx.fillText(`${quality.toFixed(0)}%`, centerX + centerW / 2, panelY + 60);
 
-      // Línea inferior del panel central: IBI / RITMO / SDNN / RMSSD en un grid.
+      // Línea inferior del panel central: IBI / RITMO / SDNN / RMSSD
       const ibi = ibiDisplayRef.current;
       const hrv = hrvDisplayRef.current;
-      ctx.font = '9px "SF Mono", Consolas, monospace';
-      const lineY = panelY + 53;
-      const line2Y = panelY + 64;
+      ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
+      const lineY = panelY + 82;
+      const line2Y = panelY + 100;
       ctx.textAlign = 'left';
       ctx.fillStyle = COLORS.IBI_TEXT;
-      ctx.fillText(`IBI ${ibi > 0 ? ibi + 'ms' : '--'}`, centerX + 8, lineY);
+      ctx.fillText(`IBI ${ibi > 0 ? ibi + 'ms' : '--'}`, centerX + 12, lineY);
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.textAlign = 'right';
-      ctx.fillText(`SDNN ${hrv.sdnn > 0 ? hrv.sdnn : '--'}`, centerX + centerW - 8, lineY);
+      ctx.fillText(`SDNN ${hrv.sdnn > 0 ? hrv.sdnn : '--'}`, centerX + centerW - 12, lineY);
       ctx.textAlign = 'left';
       ctx.fillStyle = rhythm.color;
-      ctx.fillText(rhythm.display.length > 18 ? rhythm.display.slice(0, 18) + '…' : rhythm.display, centerX + 8, line2Y);
+      ctx.fillText(rhythm.display.length > 22 ? rhythm.display.slice(0, 22) + '…' : rhythm.display, centerX + 12, line2Y);
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.textAlign = 'right';
-      ctx.fillText(`RMSSD ${hrv.rmssd > 0 ? hrv.rmssd : '--'}`, centerX + centerW - 8, line2Y);
+      ctx.fillText(`RMSSD ${hrv.rmssd > 0 ? hrv.rmssd : '--'}`, centerX + centerW - 12, line2Y);
 
       // ===== Panel derecho: SpO2 =====
       ctx.fillStyle = 'rgba(0, 15, 30, 0.92)';
@@ -462,48 +463,47 @@ const PPGSignalMeter = ({
           ? COLORS.TEXT_DANGER
           : COLORS.TEXT_SECONDARY;
       ctx.strokeStyle = spo2Border;
-      ctx.lineWidth = 1;
+      ctx.lineWidth = 1.5;
       ctx.strokeRect(rightX + 0.5, panelY + 0.5, sidePanelW - 1, panelH - 1);
-      ctx.font = '9px "SF Mono", Consolas, monospace';
+      ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.textAlign = 'left';
-      ctx.fillText('O₂ SATURACIÓN', rightX + 6, panelY + 13);
-      ctx.font = 'bold 28px "SF Mono", Consolas, monospace';
+      ctx.fillText('O₂ SATURACIÓN', rightX + 10, panelY + 22);
+      ctx.font = 'bold 56px "SF Mono", Consolas, monospace';
       ctx.fillStyle = spo2Border;
-      ctx.fillText(spo2Current > 0 ? spo2Current.toFixed(0) : '--', rightX + 6, panelY + 44);
-      ctx.font = '10px "SF Mono", Consolas, monospace';
+      ctx.fillText(spo2Current > 0 ? spo2Current.toFixed(0) : '--', rightX + 10, panelY + 78);
+      ctx.font = 'bold 18px "SF Mono", Consolas, monospace';
       ctx.fillStyle = COLORS.TEXT_SECONDARY;
       ctx.textAlign = 'right';
-      ctx.fillText('%', rightX + sidePanelW - 6, panelY + 44);
+      ctx.fillText('%', rightX + sidePanelW - 10, panelY + 78);
       if (spo2Current > 0) {
-        ctx.font = '9px "SF Mono", Consolas, monospace';
+        ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
         ctx.textAlign = 'left';
         let spLabel = 'NORMAL';
         if (spo2Current < 90) spLabel = 'HIPOXEMIA';
         else if (spo2Current < 95) spLabel = 'HIP. LEVE';
         ctx.fillStyle = spo2Border;
-        ctx.fillText(spLabel, rightX + 6, panelY + 60);
+        ctx.fillText(spLabel, rightX + 10, panelY + 100);
       }
 
-      // ===== Indicador de arritmia (compacto, debajo del panel SpO2) =====
+      // ===== Indicador de arritmia =====
       if (rhythm.isAlert) {
-        const alertY = panelY + panelH + 4;
-        const alertH = 22;
+        const alertY = panelY + panelH + 6;
+        const alertH = 28;
         ctx.fillStyle = 'rgba(220, 38, 38, 0.22)';
         ctx.fillRect(rightX, alertY, sidePanelW, alertH);
         ctx.strokeStyle = '#dc2626';
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 2;
         ctx.strokeRect(rightX + 0.5, alertY + 0.5, sidePanelW - 1, alertH - 1);
-        ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+        ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
         ctx.fillStyle = '#fca5a5';
         ctx.textAlign = 'center';
-        ctx.fillText('⚠ ARRITMIA', rightX + sidePanelW / 2, alertY + 14);
+        ctx.fillText('⚠ ARRITMIA', rightX + sidePanelW / 2, alertY + 19);
       }
 
       // ===== Leyenda de etiquetas debajo del panel central =====
-      // Pequeña, no invade la onda; explica qué significan N / B / T / PVC / AF.
-      const legendY = panelY + panelH + 4;
-      ctx.font = '9px "SF Mono", Consolas, monospace';
+      const legendY = panelY + panelH + 6;
+      ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
       ctx.textAlign = 'left';
       const legendItems: Array<{ k: string; c: string; t: string }> = [
         { k: 'N', c: '#3b82f6', t: 'sinusal' },
@@ -512,16 +512,16 @@ const PPGSignalMeter = ({
         { k: 'PVC', c: '#ef4444', t: 'prematuro' },
         { k: 'AF', c: '#ef4444', t: 'fib.' },
       ];
-      let lx = centerX + 6;
-      const ly = legendY + 12;
+      let lx = centerX + 8;
+      const ly = legendY + 18;
       for (const item of legendItems) {
         ctx.fillStyle = item.c;
         ctx.fillText(item.k, lx, ly);
         const kw = ctx.measureText(item.k).width;
         ctx.fillStyle = COLORS.TEXT_SECONDARY;
         ctx.fillText(' ' + item.t, lx + kw, ly);
-        lx += kw + ctx.measureText(' ' + item.t).width + 8;
-        if (lx > centerX + centerW - 30) break;
+        lx += kw + ctx.measureText(' ' + item.t).width + 10;
+        if (lx > centerX + centerW - 40) break;
       }
     };
 
@@ -715,22 +715,21 @@ const PPGSignalMeter = ({
         visibleCoords.push({ x, y, t: pt.time, v: pt.value });
       }
 
-      // Trazo único, fino, sobrio. Sin neón, sin glow exagerado, sin
-      // múltiples capas. Estilo monitor clínico real: una línea limpia
-      // con micro-resplandor sutil que aporta definición sin ser arcade.
+      // Trazo único, sobrio pero visible. Línea de 2.2 px en color
+      // verde médico — fácil de leer en pantalla móvil sin ser arcade.
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.shadowBlur = 0;
       ctx.strokeStyle = '#22c55e';
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = 2.2;
       ctx.stroke(wave);
 
-      // Aviso en modo provisional, discreto.
+      // Aviso en modo provisional, discreto pero legible.
       if (provisionalPpg) {
-        ctx.font = '9px "SF Mono", Consolas, monospace';
+        ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
         ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
         ctx.textAlign = 'center';
-        ctx.fillText('VALIDANDO PULSO', plot.x + plot.width / 2, plot.y + 11);
+        ctx.fillText('VALIDANDO PULSO', plot.x + plot.width / 2, plot.y + 14);
       }
 
       // SEGMENTOS ARRÍTMICOS — solo el latido específico se redibuja
@@ -755,7 +754,7 @@ const PPGSignalMeter = ({
           }
           if (!segStarted) continue;
           ctx.strokeStyle = '#ef4444';
-          ctx.lineWidth = 1.8;
+          ctx.lineWidth = 2.6;
           ctx.stroke(seg);
         }
       }
@@ -765,7 +764,7 @@ const PPGSignalMeter = ({
       // arrítmicos y los fuera de rango (B/T) sí muestran etiqueta.
       const history = beatHistoryRef.current;
       if (history.length > 0 && visibleCoords.length > 0) {
-        ctx.font = '9px "SF Mono", Consolas, monospace';
+        ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
         ctx.textAlign = 'center';
         for (const beat of history) {
           if (beat.time < cutoff || beat.time > now) continue;
@@ -785,22 +784,22 @@ const PPGSignalMeter = ({
             // Punto rojo + etiqueta
             ctx.fillStyle = '#ef4444';
             ctx.beginPath();
-            ctx.arc(c.x, c.y, 3, 0, Math.PI * 2);
+            ctx.arc(c.x, c.y, 4, 0, Math.PI * 2);
             ctx.fill();
             ctx.fillStyle = '#fca5a5';
-            ctx.fillText(beat.label, c.x, c.y - 9);
+            ctx.fillText(beat.label, c.x, c.y - 12);
           } else if (beat.label === 'B' || beat.label === 'T') {
             ctx.fillStyle = '#f59e0b';
             ctx.beginPath();
-            ctx.arc(c.x, c.y, 2.4, 0, Math.PI * 2);
+            ctx.arc(c.x, c.y, 3.2, 0, Math.PI * 2);
             ctx.fill();
             ctx.fillStyle = '#fcd34d';
-            ctx.fillText(beat.label, c.x, c.y - 8);
+            ctx.fillText(beat.label, c.x, c.y - 11);
           } else {
-            // Latido sinusal normal: solo un punto verde fino, sin etiqueta.
+            // Latido sinusal normal: solo un punto verde, sin etiqueta.
             ctx.fillStyle = 'rgba(34, 197, 94, 0.95)';
             ctx.beginPath();
-            ctx.arc(c.x, c.y, 1.8, 0, Math.PI * 2);
+            ctx.arc(c.x, c.y, 2.4, 0, Math.PI * 2);
             ctx.fill();
           }
         }

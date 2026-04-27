@@ -13,10 +13,14 @@ export interface ExtractionTier {
   cropFraction: number;
 }
 
+// cropFraction subido a 0.92-0.96: con dedo cubriendo la lente, TODA la
+// imagen es tejido perfundido. Antes 0.52-0.62 descartaba el ~40% del
+// frame, lo que hacía que el operador necesitara colocar el dedo
+// EXACTAMENTE en el centro. Ahora se usa casi todo el frame.
 const TIERS: Record<ExtractionTierId, ExtractionTier> = {
-  S: { id: 'S', outWidth: 240, outHeight: 180, cropFraction: 0.62 },
-  M: { id: 'M', outWidth: 320, outHeight: 240, cropFraction: 0.58 },
-  L: { id: 'L', outWidth: 360, outHeight: 360, cropFraction: 0.52 },
+  S: { id: 'S', outWidth: 320, outHeight: 240, cropFraction: 0.92 },
+  M: { id: 'M', outWidth: 400, outHeight: 300, cropFraction: 0.94 },
+  L: { id: 'L', outWidth: 480, outHeight: 360, cropFraction: 0.96 },
 };
 
 export interface CentralCropSpec {

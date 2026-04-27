@@ -17,13 +17,15 @@ export interface MultiROIConfig {
 
 // PPG con flash: el rojo está saturado-medio porque la hemoglobina lo
 // transmite. Si excluimos píxeles R>=250, descartamos la región MÁS
-// informativa del frame (donde está el AC fisiológico). Subimos el techo
-// a 254 para conservar todo lo que no es saturación dura del sensor.
-// sampleStep=1: muestreo denso, no decimar la señal antes de promediar.
+// informativa del frame (donde está el AC fisiológico).
+// innerFraction=0.95: cuando el dedo cubre la cámara, cubre TODO el
+// frame, no solo el centro. Antes 0.78 descartaba el 22% del área útil
+// (típicamente el borde donde la pulsación SÍ existe). Ahora se usa el
+// 95% del frame; el 5% exterior se deja por seguridad anti-vignetting.
 const DEFAULT: MultiROIConfig = {
   gridRows: 5,
   gridCols: 5,
-  innerFraction: 0.78,
+  innerFraction: 0.95,
   clipHigh: 254,
   clipLow: 3,
   sampleStep: 1,

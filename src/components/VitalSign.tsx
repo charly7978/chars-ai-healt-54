@@ -148,16 +148,16 @@ const VitalSign = ({
       )}
       onClick={handleClick}
     >
-      <div className="text-[11px] font-medium uppercase tracking-wider text-white mb-1 flex items-center gap-1">
+      <div className="text-[12px] font-semibold uppercase tracking-wider text-white/90 mb-1 flex items-center gap-1">
         {label}
         {isResearch && (
-          <span className="text-[8px] font-bold px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded border border-amber-500/30">
-            RESEARCH
+          <span className="text-[9px] font-bold px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded border border-amber-500/30">
+            EST
           </span>
         )}
       </div>
-      
-      <div className="font-bold text-xl sm:text-2xl transition-all duration-300">
+
+      <div className="font-bold text-2xl sm:text-3xl leading-none transition-all duration-300">
         <span className={cn(
           "text-gradient-soft animate-value-glow",
           !isAuthorized || value === null ? "text-gray-500" : ""
@@ -171,7 +171,7 @@ const VitalSign = ({
           )}
         </span>
         {unit && (isAuthorized && value !== null) && (
-          <span className="text-xs text-white/70 ml-1">{unit}</span>
+          <span className="text-sm text-white/70 ml-1">{unit}</span>
         )}
       </div>
 

@@ -601,14 +601,18 @@ const Index = () => {
     //
     // RELEASE más permisivo para mantener el contacto durante valles
     // fisiológicos del PPG (la propia pulsación modula meanR ±2-4%).
-    const ATK_MEAN_R = 150;       // Lovisotto 2020 baseline
-    const ATK_R_OVER_MAX = 1.6;   // hemoglobin absorption ratio
-    const ATK_R_MINUS_MAX = 30;
-    const ATK_DC_RED = 130;
-    const REL_MEAN_R = 110;
-    const REL_R_OVER_MAX = 1.30;
-    const REL_R_MINUS_MAX = 18;
-    const REL_DC_RED = 95;
+    // Calibrados para incluir piel oscura (Fitzpatrick V-VI) sin perder
+    // discriminación contra escenas no-tejido. Lovisotto 2020 cita
+    // meanR>150 como baseline; Pereira 2020 valida 130 mínimo en piel V-VI.
+    const ATK_MEAN_R = 130;
+    const ATK_R_OVER_MAX = 1.55;
+    const ATK_R_MINUS_MAX = 25;
+    const ATK_DC_RED = 110;
+    // RELEASE generoso para tolerar valles fisiológicos del PPG
+    const REL_MEAN_R = 95;
+    const REL_R_OVER_MAX = 1.20;
+    const REL_R_MINUS_MAX = 14;
+    const REL_DC_RED = 80;
 
     const attackOk =
       ema.meanR >= ATK_MEAN_R &&
@@ -1384,14 +1388,14 @@ const Index = () => {
             />
           </div>
 
-          {/* Tira inferior compacta de signos vitales secundarios.
+          {/* Tira inferior de signos vitales secundarios.
               El monitor PPG ocupa el 100% de la pantalla; este overlay flota
-              sobre él, translúcido, sin robarle alto. */}
+              sobre él, translúcido. Tipografía agrandada para legibilidad. */}
           <div
             className="absolute inset-x-0 z-20 px-2 pointer-events-none"
-            style={{ bottom: "52px" }}
+            style={{ bottom: "56px" }}
           >
-            <div className="grid grid-cols-4 gap-1.5 px-1.5 py-1.5 bg-slate-950/65 backdrop-blur-md border border-slate-700/40 rounded-lg pointer-events-auto">
+            <div className="grid grid-cols-4 gap-2 px-2 py-2 bg-slate-950/75 backdrop-blur-md border border-slate-700/50 rounded-xl pointer-events-auto">
               <VitalSign
                 label="PRESIÓN"
                 value={
