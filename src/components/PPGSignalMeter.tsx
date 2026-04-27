@@ -1,9 +1,11 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react';
-import { Heart } from 'lucide-react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { CircularBuffer, PPGDataPoint } from '../utils/CircularBuffer';
 
 interface PPGSignalMeterProps {
-  value: number;
+  // Callback de muestreo: el monitor lee el valor instantáneo del PPG
+  // SIN provocar re-render del padre. Antes la señal venía como prop
+  // y forzaba reconciliación de React 60 veces/segundo.
+  getValue: () => number;
   quality: number;
   isFingerDetected: boolean;
   onStartMeasurement: () => void;
@@ -18,7 +20,6 @@ interface PPGSignalMeterProps {
   } | null;
   preserveResults?: boolean;
   diagnosticMessage?: string;
-  isPeak?: boolean;
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
@@ -95,7 +96,7 @@ const parseRhythmStatus = (statusString?: string) => {
 };
 
 const PPGSignalMeter = ({
-  value,
+  getValue,
   quality,
   isFingerDetected,
   onStartMeasurement,
@@ -104,7 +105,6 @@ const PPGSignalMeter = ({
   arrhythmiaStatus,
   rawArrhythmiaData,
   preserveResults = false,
-  isPeak = false,
   bpm = 0,
   spo2 = 0,
   rrIntervals = [],
@@ -116,26 +116,33 @@ const PPGSignalMeter = ({
   const dataBufferRef = useRef<CircularBuffer | null>(null);
 
   const propsRef = useRef({
-    value,
     quality,
     isFingerDetected,
     arrhythmiaStatus,
     preserveResults,
-    isPeak,
     bpm,
     spo2,
     rrIntervals,
     rawArrhythmiaData,
     livePpgEvidencePassed,
+    getValue,
   });
   const lastPeakTimeRef = useRef(0);
-  const [showPulse, setShowPulse] = useState(false);
 
   const lastArrhythmiaCountRef = useRef(0);
   // Historial de latidos: time, tipo, y label corto fijo (PVC, AF, B, T, N).
   const beatHistoryRef = useRef<
     Array<{ time: number; isArrhythmia: boolean; label: 'N' | 'PVC' | 'AF' | 'B' | 'T' }>
   >([]);
+  // Detector de pico INTERNO del monitor (sin depender de isPeak prop):
+  // se busca cruce descendente del derivativo en la señal muestreada.
+  const peakDetectStateRef = useRef({
+    prev: 0,
+    prev2: 0,
+    rising: false,
+    lastPeakTime: 0,
+    threshold: 0,
+  });
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
@@ -145,17 +152,16 @@ const PPGSignalMeter = ({
   // ============ Sincronización de props (evita closure stale) ============
   useEffect(() => {
     propsRef.current = {
-      value,
       quality,
       isFingerDetected,
       arrhythmiaStatus,
       preserveResults,
-      isPeak,
       bpm,
       spo2,
       rrIntervals,
       rawArrhythmiaData,
       livePpgEvidencePassed,
+      getValue,
     };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
@@ -170,22 +176,13 @@ const PPGSignalMeter = ({
         sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
       hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
     }
-  }, [value, quality, isFingerDetected, arrhythmiaStatus, preserveResults, isPeak, bpm, spo2, rrIntervals, rawArrhythmiaData, livePpgEvidencePassed]);
+  }, [getValue, quality, isFingerDetected, arrhythmiaStatus, preserveResults, bpm, spo2, rrIntervals, rawArrhythmiaData, livePpgEvidencePassed]);
 
-  // ============ Pulso visual sobre pico ============
-  useEffect(() => {
-    const { isPeak: peak, livePpgEvidencePassed: livePassed, quality: q } = propsRef.current;
-    const hasValidPpg = livePassed === true && q >= 15;
-    if (hasValidPpg && peak && isFingerDetected) {
-      const now = Date.now();
-      if (now - lastPeakTimeRef.current > 250) {
-        lastPeakTimeRef.current = now;
-        setShowPulse(true);
-        const t = setTimeout(() => setShowPulse(false), 110);
-        return () => clearTimeout(t);
-      }
-    }
-  }, [isPeak, isFingerDetected]);
+  // (Flash del corazón eliminado: producía 2 setStates por latido, lo que
+  // forzaba reconciliación de React 120-200 veces/min y generaba los
+  // micro-cortes visibles en la onda. La onda + marcadores N/PVC en el
+  // canvas ya muestran cada latido sin recurrir a state de React.)
+  void lastPeakTimeRef;
 
   // ============ Init buffer + cleanup ============
   useEffect(() => {
@@ -550,7 +547,33 @@ const PPGSignalMeter = ({
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const { value: signalValue, isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, isPeak: peak, livePpgEvidencePassed: livePassed, quality: q } = propsRef.current;
+      const { isFingerDetected: detected, arrhythmiaStatus: arrStatus, preserveResults: preserve, livePpgEvidencePassed: livePassed, quality: q, getValue: getV } = propsRef.current;
+      const signalValue = getV();
+
+      // Detector de pico interno (sin re-renders externos):
+      // - rising: pendiente positiva sostenida.
+      // - peak detectado al cambiar de positiva a negativa con amplitud
+      //   por encima del umbral adaptativo.
+      // - refractory 350 ms.
+      const pd = peakDetectStateRef.current;
+      const dy = signalValue - pd.prev;
+      const dy2 = pd.prev - pd.prev2;
+      const refractoryMs = 350;
+      let peak = false;
+      if (livePassed && q >= 15) {
+        // Threshold adaptativo: 35% del pico reciente (Pan-Tompkins simplificado).
+        if (signalValue > pd.threshold) pd.threshold = signalValue;
+        else pd.threshold *= 0.998;
+        const minAmp = pd.threshold * 0.35;
+        if (dy2 > 0 && dy <= 0 && pd.prev > minAmp && now - pd.lastPeakTime > refractoryMs) {
+          peak = true;
+          pd.lastPeakTime = now;
+        }
+      } else {
+        pd.threshold *= 0.99;
+      }
+      pd.prev2 = pd.prev;
+      pd.prev = signalValue;
       const rhythm = parseRhythmStatus(arrStatus);
       const plot = getPlotArea();
       const { WINDOW_MS, COLORS } = CONFIG;
@@ -806,24 +829,6 @@ const PPGSignalMeter = ({
   return (
     <div className="fixed inset-0 bg-slate-950">
       <canvas ref={canvasRef} className="w-full h-full absolute inset-0" />
-      {/* Indicador de pulso flotante - alineado con el panel BPM del canvas */}
-      <div
-        className="absolute z-10 pointer-events-none"
-        style={{ top: '12px', left: '50%', transform: 'translateX(-50%)' }}
-      >
-        <div
-          className={`p-1 rounded-full transition-all duration-100 ${
-            showPulse ? 'bg-red-500/40 scale-125' : 'bg-emerald-500/0'
-          }`}
-        >
-          <Heart
-            className={`w-4 h-4 transition-all duration-100 ${
-              showPulse ? 'text-red-400' : 'text-emerald-400/60'
-            }`}
-            fill={showPulse ? 'currentColor' : 'none'}
-          />
-        </div>
-      </div>
       <div className="fixed bottom-0 left-0 right-0 h-12 grid grid-cols-2 z-10">
         <button
           onClick={onStartMeasurement}

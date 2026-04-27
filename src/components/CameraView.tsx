@@ -117,71 +117,45 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       clipHistoryRef.current = [];
     };
 
-    // PHASE 1: Find main back camera with torch - enhanced with capability verification
+    // Selección de cámara optimizada: NO abrir múltiples streams para
+    // probar cada cámara (eso causaba flicker y retraso de 1-3 s al
+    // arranque). Estrategia simple:
+    //  1. enumerateDevices() para obtener el listado.
+    //  2. Si solo hay una back/environment, usarla directamente.
+    //  3. Si hay varias, escoger la primera back/rear/environment por label.
     const findMainBackCamera = async (): Promise<string | null> => {
       try {
-        // Request minimal access first to get labels
+        // Pedir permiso una sola vez con facingMode environment para que
+        // los labels estén disponibles tras enumerate.
         const tempStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         tempStream.getTracks().forEach(t => t.stop());
-        
+
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         console.log('📷 Cameras found:', videoDevices.length);
-        
-        const cameraCandidates: { deviceId: string; label: string; hasTorch: boolean; resolution?: { width: number; height: number } }[] = [];
 
-        // Try each back camera to find one with torch
-        for (const device of videoDevices) {
-          const label = device.label.toLowerCase();
-          const isBack = label.includes('back') || label.includes('rear') || label.includes('environment') ||
-            label.includes('trasera') || label.includes('camera 0') || label.includes('camera0') ||
-            videoDevices.length === 1;
-          
-          if (isBack) {
-            try {
-              const ts = await navigator.mediaDevices.getUserMedia({
-                video: { deviceId: { exact: device.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }
-              });
-              const track = ts.getVideoTracks()[0];
-              const caps = track.getCapabilities?.() as any;
-              const settings = track.getSettings?.() as any;
-              const hasTorch = caps?.torch === true;
-              
-              cameraCandidates.push({
-                deviceId: device.deviceId,
-                label: device.label || 'Unknown',
-                hasTorch,
-                resolution: settings ? { width: settings.width, height: settings.height } : undefined
-              });
-              
-              ts.getTracks().forEach(t => t.stop());
-            } catch (e) {
-              console.warn('Failed to test camera:', device.label, e);
-            }
-          }
+        if (videoDevices.length === 0) return null;
+        if (videoDevices.length === 1) {
+          // Caso típico desktop o un único sensor: usar directamente.
+          const d = videoDevices[0];
+          diagnosticsRef.current.deviceLabel = d.label || 'Unknown';
+          diagnosticsRef.current.deviceId = d.deviceId;
+          constraintReportRef.current.setDeviceInfo(d.deviceId, d.label);
+          return d.deviceId;
         }
 
-        // Sort candidates: torch first, then resolution
-        cameraCandidates.sort((a, b) => {
-          if (a.hasTorch && !b.hasTorch) return -1;
-          if (!a.hasTorch && b.hasTorch) return 1;
-          const resA = (a.resolution?.width || 0) * (a.resolution?.height || 0);
-          const resB = (b.resolution?.width || 0) * (b.resolution?.height || 0);
-          return resB - resA;
+        // Móvil con múltiples cámaras: escoger primera 'back' / 'rear' /
+        // 'environment' / 'trasera' por label, sin abrir streams de prueba.
+        const back = videoDevices.find(d => {
+          const lab = d.label.toLowerCase();
+          return lab.includes('back') || lab.includes('rear') || lab.includes('environment') ||
+                 lab.includes('trasera') || lab.includes('camera 0') || lab.includes('camera0');
         });
-
-        if (cameraCandidates.length > 0) {
-          const best = cameraCandidates[0];
-          console.log('✅ Best camera selected:', best.label, '| Torch:', best.hasTorch, '| Res:', best.resolution);
-          diagnosticsRef.current.deviceLabel = best.label;
-          diagnosticsRef.current.deviceId = best.deviceId;
-          diagnosticsRef.current.hasTorch = best.hasTorch;
-          constraintReportRef.current.setDeviceInfo(best.deviceId, best.label);
-          return best.deviceId;
-        }
-        
-        console.warn('⚠️ No suitable camera found');
-        return null;
+        const chosen = back ?? videoDevices[0];
+        diagnosticsRef.current.deviceLabel = chosen.label || 'Unknown';
+        diagnosticsRef.current.deviceId = chosen.deviceId;
+        constraintReportRef.current.setDeviceInfo(chosen.deviceId, chosen.label);
+        return chosen.deviceId;
       } catch (e) {
         console.error('❌ Camera enumeration failed:', e);
         return null;
@@ -368,10 +342,14 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             constraintReportRef.current.addIgnoredConstraint('exposureMode');
           }
 
+          // ExposureCompensation: NO subexponer artificialmente. Antes se
+          // forzaba -0.35 EV, lo que oscurecía el frame y reducía la señal
+          // del rojo bajo el dedo. Dejamos en 0 (neutro) o ligeramente
+          // positivo para mejor SNR cuando el flash satura sólo el centro.
           if (caps?.exposureCompensation) {
             const min = caps.exposureCompensation.min ?? -2;
             const max = caps.exposureCompensation.max ?? 2;
-            const target = Math.max(min, Math.min(max, -0.35));
+            const target = Math.max(min, Math.min(max, 0));
             await tryConstraint('exposureCompensation', target);
           }
 
@@ -406,20 +384,41 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             constraintReportRef.current.addIgnoredConstraint('iso');
           }
 
-          // Focus
+          // Focus: fijar para evitar que el autofoco re-enfoque durante
+          // la medición (lo que produce frames borrosos y micro-cortes
+          // visibles en la onda PPG cada 5-15 s).
+          //   - 'manual' con focusDistance al mínimo (macro): foco fijo a
+          //     ~5 cm, óptimo para finger-PPG donde el dedo cubre la lente.
+          //   - 'single-shot': enfoca una vez y se queda fijo.
+          //   - 'continuous': último recurso (acepta los re-enfoques).
+          let focusFixed = false;
           if (caps?.focusMode?.includes('manual')) {
             const focusResult = await tryConstraint('focusMode', 'manual');
+            if (focusResult.success && caps?.focusDistance) {
+              // focusDistance min = más cerca; ideal para dedo pegado al lente.
+              const minDist = caps.focusDistance.min ?? 0.05;
+              await tryConstraint('focusDistance', minDist);
+            }
             diagnosticsRef.current.focusLocked = focusResult.success;
             if (focusResult.success) {
+              focusFixed = true;
               constraintReportRef.current.setLocks(diagnosticsRef.current.exposureLocked, diagnosticsRef.current.wbLocked, true);
-            } else {
-              constraintReportRef.current.addFailedConstraint('focusMode');
             }
-          } else if (caps?.focusMode?.includes('continuous')) {
+          }
+          if (!focusFixed && caps?.focusMode?.includes('single-shot')) {
+            const focusResult = await tryConstraint('focusMode', 'single-shot');
+            diagnosticsRef.current.focusLocked = focusResult.success;
+            if (focusResult.success) {
+              focusFixed = true;
+              constraintReportRef.current.setLocks(diagnosticsRef.current.exposureLocked, diagnosticsRef.current.wbLocked, true);
+            }
+          }
+          if (!focusFixed && caps?.focusMode?.includes('continuous')) {
             await tryConstraint('focusMode', 'continuous');
             constraintReportRef.current.addIgnoredConstraint('focusMode');
-          } else {
-            constraintReportRef.current.addIgnoredConstraint('focusMode');
+          }
+          if (!focusFixed) {
+            constraintReportRef.current.addFailedConstraint('focusMode');
           }
 
           // PHASE 6: Verify effective settings and generate report

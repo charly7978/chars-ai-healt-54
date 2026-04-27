@@ -50,9 +50,15 @@ const Index = () => {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>(DEFAULT_VITALS);
   const [heartRate, setHeartRate] = useState(0);
-  const [heartbeatSignal, setHeartbeatSignal] = useState(0);
+  // heartbeatSignal vivía en useState y se actualizaba 60 veces/segundo
+  // forzando reconciliación de React completa. Ahora vive en un ref que
+  // el monitor lee directamente vía callback (sin re-render del Index).
+  const heartbeatSignalRef = useRef(0);
+  const setHeartbeatSignal = useCallback((v: number) => {
+    heartbeatSignalRef.current = v;
+  }, []);
+  const getHeartbeatSignal = useCallback(() => heartbeatSignalRef.current, []);
   const [stableHumanSignal, setStableHumanSignal] = useState(false);
-  const [beatMarker, setBeatMarker] = useState(0);
   const [arrhythmiaCount, setArrhythmiaCount] = useState<string | number>("--");
   const [elapsedTime, setElapsedTime] = useState(0);
   const [showResults, setShowResults] = useState(false);
@@ -508,7 +514,6 @@ const Index = () => {
     chromaEngagedRef.current = false;
     lastValidBpmRef.current = { bpm: 0, ts: 0 };
     setHeartbeatSignal(0);
-    setBeatMarker(0);
     setRRIntervals([]);
     setVitalSigns(DEFAULT_VITALS);
     setArrhythmiaCount("--");
@@ -670,7 +675,6 @@ const Index = () => {
       setArrhythmiaCount("--");
       lastArrhythmiaData.current = null;
       setRRIntervals([]);
-      setBeatMarker(0);
       // Reset del HeartBeatProcessor solo una vez tras la fall persistente.
       if (chromaFailStreakRef.current === CHROMA_PERSIST_FAIL_FRAMES) {
         resetHeartBeat();
@@ -865,11 +869,12 @@ const Index = () => {
     const wantWaveform = (ls.quality ?? 0) >= 6 || ls.contactState !== "NO_CONTACT";
     setHeartbeatSignal(wantWaveform ? heartBeatResult.filteredValue : 0);
 
-    // Marcador de pico al monitor (siempre que haya señal viva). Beep + vibración
-    // sólo con gate validado. Throttle anti-rebote a 250 ms para evitar dobles.
+    // Beep + vibración por latido validado. Throttle anti-rebote 250 ms.
+    // Nota: el marcador visual del corazón en el monitor se omite porque
+    // hace que React re-renderice 2 veces por pulso (set 1 / set 0 con
+    // setTimeout). La onda con sus marcadores N en canvas ya muestra el
+    // latido visualmente.
     if (heartBeatResult.isPeak && wantWaveform) {
-      setBeatMarker(1);
-      setTimeout(() => setBeatMarker(0), 200);
       if (passed) {
         const nowMs = ls.timestamp;
         if (nowMs - lastBeepAtRef.current > 250) {
@@ -908,7 +913,6 @@ const Index = () => {
       if (unstableFrameCounter.current >= UNSTABLE_ZERO_THRESHOLD) {
         setHeartRate(0);
         vitalSignsFrameCounter.current = 0;
-        setBeatMarker(0);
         setRRIntervals([]);
         setArrhythmiaCount("--");
         if (arrhythmiaDetectedRef.current) {
@@ -1363,7 +1367,7 @@ const Index = () => {
                 );
               })()}
             <PPGSignalMeter
-              value={heartbeatSignal}
+              getValue={getHeartbeatSignal}
               quality={lastSignal?.quality ?? 0}
               isFingerDetected={lastSignal?.fingerDetected ?? false}
               onStartMeasurement={handleToggleMonitoring}
@@ -1374,7 +1378,6 @@ const Index = () => {
               rawArrhythmiaData={lastArrhythmiaData.current}
               preserveResults={showResults}
               diagnosticMessage={lastSignal?.diagnostics?.message}
-              isPeak={beatMarker === 1}
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
