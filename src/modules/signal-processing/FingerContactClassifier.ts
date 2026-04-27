@@ -97,7 +97,17 @@ export class FingerContactClassifier {
   private thresholds: AdaptiveThresholds = { ...DEFAULT_THRESHOLDS };
   private lastContactState: ContactState = ContactState.NO_CONTACT;
   private lastScore = 0;
-  private readonly STATE_HYSTERESIS = 5; // Require 5+ frames to transition
+  
+  // HYSTERESIS ADAPTATIVA DINÁMICA — Phase 5 Optimization
+  // Base: 5 frames, min: 3 frames (respuesta rápida), max: 12 frames (estabilidad forzada)
+  private readonly BASE_HYSTERESIS = 5;
+  private readonly MIN_HYSTERESIS = 3;
+  private readonly MAX_HYSTERESIS = 12;
+  private readonly VARIANCE_WINDOW = 20; // frames para calcular varianza
+  private scoreHistory: number[] = []; // Circular buffer de scores
+  private adaptiveHysteresis = this.BASE_HYSTERESIS;
+  private pendingState: ContactState | null = null;
+  private pendingCount = 0;
 
   // Pre-allocated buffers to avoid GC pressure in hot path (Phase 3)
   private histBuf = new Uint16Array(256);
@@ -108,8 +118,6 @@ export class FingerContactClassifier {
   private lastSaturation = NaN;
   private lastCoverage = NaN;
   private lastPulsatility = NaN;
-  private pendingState: ContactState | null = null;
-  private pendingCount = 0;
   
   /**
    * Classify finger contact from a frame's radiometric data
@@ -402,8 +410,30 @@ export class FingerContactClassifier {
   
   /**
    * Apply hysteresis to prevent state fluttering
+   * PHASE 5: Hysteresis adaptativa basada en varianza de scores
    */
   private applyHysteresis(proposedState: ContactState, score: number): ContactState {
+    // Actualizar historial de scores para calcular varianza
+    this.scoreHistory.push(score);
+    if (this.scoreHistory.length > this.VARIANCE_WINDOW) {
+      this.scoreHistory.shift();
+    }
+    
+    // Calcular varianza y ajustar hysteresis dinámicamente
+    if (this.scoreHistory.length >= 10) {
+      const mean = this.scoreHistory.reduce((a, b) => a + b, 0) / this.scoreHistory.length;
+      const variance = this.scoreHistory.reduce((sum, s) => sum + (s - mean) ** 2, 0) / this.scoreHistory.length;
+      const cv = mean > 0 ? Math.sqrt(variance) / mean : 0; // Coeficiente de variación
+      
+      // Si hay alta variabilidad (CV > 0.25), aumentar hysteresis para estabilidad
+      // Si hay baja variabilidad (CV < 0.1), reducir hysteresis para respuesta rápida
+      if (cv > 0.25) {
+        this.adaptiveHysteresis = Math.min(this.MAX_HYSTERESIS, this.adaptiveHysteresis + 1);
+      } else if (cv < 0.1) {
+        this.adaptiveHysteresis = Math.max(this.MIN_HYSTERESIS, this.adaptiveHysteresis - 1);
+      }
+    }
+    
     if (proposedState === this.lastContactState) {
       this.pendingState = null;
       this.pendingCount = 0;
@@ -417,7 +447,7 @@ export class FingerContactClassifier {
     }
 
     this.pendingCount++;
-    if (this.pendingCount >= this.STATE_HYSTERESIS) {
+    if (this.pendingCount >= this.adaptiveHysteresis) {
       this.lastContactState = proposedState;
       this.lastScore = score;
       this.pendingState = null;

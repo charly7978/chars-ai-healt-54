@@ -112,13 +112,16 @@ export interface ROIMaskResult {
 }
 
 export interface ROIMaskConfig {
-  gridSize: 7 | 9;
+  gridSize: 5 | 7 | 9 | 11;
   clipHighThreshold: number;
   clipLowThreshold: number;
   minValidPixelsPerTile: number;
   temporalStabilityWindow: number;
   centerBiasStrength: number;
   enableRadiometric: boolean;
+  // Phase 5: Adaptive grid based on resolution
+  autoGridSize: boolean; // Automatically select grid based on image resolution
+  minTileSizePixels: number; // Minimum pixels per tile for statistical significance
 }
 
 export class AdaptiveROIMask {
@@ -151,6 +154,8 @@ export class AdaptiveROIMask {
       temporalStabilityWindow: 5,
       centerBiasStrength: 1.4,
       enableRadiometric: false,
+      autoGridSize: true, // Phase 5: Auto-select optimal grid
+      minTileSizePixels: 32, // Minimum 32x32 pixels per tile for significance
       ...config
     };
     
@@ -223,10 +228,48 @@ export class AdaptiveROIMask {
   }
 
   /**
+   * Calcular tamaño de grilla óptimo basado en resolución
+   * Phase 5: Grid adaptativo para máxima significancia estadística
+   */
+  private calculateOptimalGridSize(width: number, height: number): 5 | 7 | 9 | 11 {
+    if (!this.config.autoGridSize) {
+      return this.config.gridSize;
+    }
+    
+    // ROI es 80% de la dimensión mínima
+    const roiSize = Math.min(width, height) * 0.80;
+    const minTileSize = this.config.minTileSizePixels;
+    
+    // Calcular grid máximo que da tiles de al menos minTileSize pixels
+    const maxGrid = Math.floor(roiSize / minTileSize);
+    
+    // Seleccionar grid permitido más cercano
+    const allowedGrids: (5 | 7 | 9 | 11)[] = [5, 7, 9, 11];
+    let optimal: 5 | 7 | 9 | 11 = 7; // default
+    
+    for (const grid of allowedGrids) {
+      if (grid <= maxGrid) {
+        optimal = grid;
+      } else {
+        break;
+      }
+    }
+    
+    return optimal;
+  }
+
+  /**
    * Procesar imagen y generar máscaras avanzadas
+   * Phase 5: Grid adaptativo automático
    */
   process(imageData: ImageData): ROIMaskResult {
     this.frameCount++;
+    
+    // Phase 5: Auto-calcular grid óptimo según resolución
+    const optimalGrid = this.calculateOptimalGridSize(imageData.width, imageData.height);
+    if (optimalGrid !== this.grid) {
+      this.setGridSize(optimalGrid);
+    }
     
     // Reset accumulators
     this.tileR.fill(0);
@@ -690,7 +733,7 @@ export class AdaptiveROIMask {
     return this.grid;
   }
 
-  setGridSize(size: 7 | 9): void {
+  setGridSize(size: 5 | 7 | 9 | 11): void {
     this.config.gridSize = size;
     this.grid = size;
     this.totalTiles = size * size;

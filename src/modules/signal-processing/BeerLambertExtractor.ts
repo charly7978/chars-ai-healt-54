@@ -8,9 +8,12 @@
  * - tile_coherent_green/red (señales coherentes entre tiles)
  * - pca_tile_pulse (componente principal)
  * - log_ratio_candidate (ratio logarítmico)
+ * - ica_cardiac/motion/thermal (FastICA Phase 5)
  * 
  * Fórmulas claras y estables, sin magia estadística opaca.
  */
+
+import { createFastICAExtractor } from './FastICAExtractor';
 
 export interface SignalCandidate {
   id: string;
@@ -101,6 +104,18 @@ export class BeerLambertExtractor {
     // 6. Ratio logarítmico
     const logRatio = this.extractLogRatioSignal(tileTraceBank);
     if (logRatio) candidates.push(this.createCandidate('log_ratio_candidate', logRatio, 'ratio', ['R', 'G']));
+    
+    // 7. FastICA Independent Component Analysis (Phase 5)
+    const icaComponents = this.extractFastICAComponents(tileTraceBank);
+    for (const comp of icaComponents) {
+      const id = `ica_${comp.sourceType}`;
+      const candidate = this.createCandidate(id, comp.signal, 'ica', ['R', 'G', 'B']);
+      // Boost score for cardiac-type ICA components
+      if (comp.sourceType === 'cardiac') {
+        candidate.score = Math.min(1, comp.confidence * 1.2); // 20% boost for ICA cardiac
+      }
+      candidates.push(candidate);
+    }
     
     // Calcular métricas de calidad para todos los candidatos
     for (const candidate of candidates) {
@@ -254,6 +269,32 @@ export class BeerLambertExtractor {
   }
 
   /**
+   * Extraer componentes independientes via FastICA (Phase 5)
+   */
+  private extractFastICAComponents(tileTraceBank: any): any[] {
+    const rSignal = tileTraceBank.getWeightedSignal('absorbR');
+    const gSignal = tileTraceBank.getWeightedSignal('absorbG');
+    const bSignal = tileTraceBank.getWeightedSignal('absorbB');
+    
+    if (!rSignal || !gSignal || !bSignal) return [];
+    if (rSignal.length < 60) return []; // Need minimum samples for ICA
+    
+    try {
+      const ica = createFastICAExtractor({
+        nComponents: 3,
+        maxIterations: 100,
+        nonlinearity: 'pow3',
+        symmetric: true
+      });
+      
+      return ica.extractComponents(rSignal, gSignal, bSignal);
+    } catch (e) {
+      // FastICA can fail on singular matrices - gracefully degrade
+      return [];
+    }
+  }
+
+  /**
    * Calcular métricas de calidad para candidato
    */
   private calculateQualityMetrics(candidate: SignalCandidate): void {
@@ -266,18 +307,6 @@ export class BeerLambertExtractor {
     }
     
     // 1. Amplitud
-    candidate.amplitude = this.calculateAmplitude(signal);
-    
-    // 2. Ratio AC/DC
-    candidate.acdcRatio = this.calculateACDCRatio(signal);
-    
-    // 3. Signal-to-noise ratio
-    candidate.signalToNoise = this.calculateSNR(signal);
-    
-    // 4. Potencia espectral
-    candidate.spectralPower = this.calculateSpectralPower(signal);
-    
-    // 5. Band power ratio
     candidate.bandPowerRatio = this.calculateBandPowerRatio(signal);
     
     // 6. Periodicidad (autocorrelación)
