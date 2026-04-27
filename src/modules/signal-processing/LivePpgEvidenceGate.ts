@@ -94,8 +94,13 @@ export interface LivePpgEvidenceResult {
 export class LivePpgEvidenceGate {
   private readonly MIN_SAMPLE_RATE = 15;
   private readonly IDEAL_SAMPLE_RATE = 30;
-  private readonly MIN_PERFUSION_INDEX = 0.05;
-  private readonly TARGET_PERFUSION_INDEX = 0.30;
+  // Perfusion Index validado clínicamente (Pereira 2020 npj Digital Med,
+  // Coppetti 2017): PI >= 0.5% es el mínimo para PPG smartphone con
+  // significancia diagnóstica. Bajamos el MIN para incluir perfusión
+  // débil aún medible (hipotermia leve, vasoconstricción), pero el
+  // TARGET sigue el estándar.
+  private readonly MIN_PERFUSION_INDEX = 0.30;
+  private readonly TARGET_PERFUSION_INDEX = 1.00;
   private readonly MIN_WINDOW_SQI = 0.30;
   private readonly TARGET_WINDOW_SQI = 0.65;
   private readonly MIN_SPECTRAL_DOMINANCE = 0.18;

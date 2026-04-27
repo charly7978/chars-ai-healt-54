@@ -50,6 +50,14 @@ export class HeartBeatProcessor {
   private consecutivePeaks = 0;
   private frameCount = 0;
   private peakThreshold = 4.0;
+  // Pan-Tompkins adaptado para PPG (Pan & Tompkins 1985, IEEE TBME):
+  //   SignalLevel = 0.125·PEAK + 0.875·SignalLevel
+  //   NoiseLevel  = 0.125·NOISE + 0.875·NoiseLevel
+  //   Threshold   = NoiseLevel + 0.25·(SignalLevel − NoiseLevel)
+  // Refractory PPG: 300 ms (2× más que ECG por morfología más lenta).
+  private ptSignalLevel = 0;
+  private ptNoiseLevel = 0;
+  private readonly PT_REFRACTORY_MS = 300;
 
   private beatsAccepted = 0;
   private beatsRejected = 0;
@@ -200,6 +208,8 @@ export class HeartBeatProcessor {
 
       if (candidate.status === 'accepted') {
         isPeak = true;
+        // Pan-Tompkins: actualizar SignalLevel cada vez que se acepta un pico.
+        this.updatePTSignalLevel(candidate.amplitude);
 
         if (this.lastPeakTime > 0 && timeSinceLastPeak >= 280 && timeSinceLastPeak <= 2200) {
           this.rrIntervals.push(timeSinceLastPeak);
@@ -246,6 +256,10 @@ export class HeartBeatProcessor {
         rejectionReason = candidate.rejectionReason;
         this.lastRejectionReason = rejectionReason;
         this.beatsRejected++;
+        // Pan-Tompkins: actualizar NoiseLevel cuando se rechaza un candidato.
+        // Esto permite que el threshold se adapte a la amplitud del ruido
+        // de fondo automáticamente.
+        this.updatePTNoiseLevel(candidate.amplitude);
       }
     }
 
@@ -488,7 +502,9 @@ export class HeartBeatProcessor {
   }
 
   private getRefractoryState(timeSinceLast: number, expectedRR: number): 'hard' | 'soft' | 'open' {
-    const hardLimit = 280;
+    // Pan-Tompkins adaptado para PPG: 300 ms (vs 200 ms del ECG) por
+    // morfología más lenta y para evitar contar el dícroto como pico.
+    const hardLimit = this.PT_REFRACTORY_MS;
     if (timeSinceLast < hardLimit) return 'hard';
     if (expectedRR > 0) {
       const softLimit = expectedRR * 0.55;
@@ -856,6 +872,9 @@ export class HeartBeatProcessor {
     this.timestampBuf.clear();
     this.templateValid = false;
     this.templateLen = 0;
+    this.ptSignalLevel = 0;
+    this.ptNoiseLevel = 0;
+    this.peakThreshold = 4.0;
   }
 
   private computeDerivative(): number {
@@ -929,13 +948,32 @@ export class HeartBeatProcessor {
   }
 
   private updateThreshold(range: number): void {
-    // Threshold adaptativo: mucho más sensible si hay soporte periódico,
-    // y se ajusta dinámicamente al rango p10-p90 actual de la señal.
-    // Para señales débiles (range pequeño), permite picos pequeños.
-    const periodicSupport = this.autocorrBPM > 0;
-    const base = periodicSupport ? 1.4 : 2.4;
-    const target = clamp(base + range * 0.25, 0.9, 6.0);
-    this.peakThreshold = this.peakThreshold * 0.80 + target * 0.20;
+    // Pan-Tompkins adaptive threshold (validado IEEE TBME 1985):
+    //   Threshold = NoiseLevel + 0.25 * (SignalLevel - NoiseLevel)
+    // Si todavía no hay suficientes muestras de signal/noise, fallback al
+    // threshold rango-relativo. Una vez cargado, el PT-threshold sigue
+    // automáticamente a la amplitud de los picos sin parámetros mágicos.
+    if (this.ptSignalLevel > 0 && this.ptSignalLevel > this.ptNoiseLevel) {
+      const ptTh = this.ptNoiseLevel + 0.25 * (this.ptSignalLevel - this.ptNoiseLevel);
+      // Suavizado para no oscilar entre frames
+      this.peakThreshold = this.peakThreshold * 0.75 + ptTh * 0.25;
+    } else {
+      const base = this.autocorrBPM > 0 ? 1.4 : 2.4;
+      const target = clamp(base + range * 0.25, 0.9, 6.0);
+      this.peakThreshold = this.peakThreshold * 0.80 + target * 0.20;
+    }
+  }
+
+  /** Actualiza SignalLevel cuando se acepta un latido (Pan-Tompkins). */
+  private updatePTSignalLevel(peakAmplitude: number): void {
+    const a = Math.abs(peakAmplitude);
+    this.ptSignalLevel = this.ptSignalLevel * 0.875 + a * 0.125;
+  }
+
+  /** Actualiza NoiseLevel cuando se rechaza un candidato (Pan-Tompkins). */
+  private updatePTNoiseLevel(noiseAmplitude: number): void {
+    const a = Math.abs(noiseAmplitude);
+    this.ptNoiseLevel = this.ptNoiseLevel * 0.875 + a * 0.125;
   }
 
   private updateSpectralHr(): void {
@@ -998,6 +1036,8 @@ export class HeartBeatProcessor {
     this.lastPeakValue = 0;
     this.consecutivePeaks = 0;
     this.peakThreshold = 4.0;
+    this.ptSignalLevel = 0;
+    this.ptNoiseLevel = 0;
     this.frameCount = 0;
     this.beatsAccepted = 0;
     this.beatsRejected = 0;

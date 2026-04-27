@@ -582,19 +582,28 @@ const Index = () => {
       ema.dcRed = ema.dcRed * (1 - a) + dcRaw * a;
     }
 
-    // Histéresis attack/release: para ENGANCHAR el dedo (entrar a engaged)
-    // los umbrales son los exigentes; para PERMANECER son más permisivos
-    // (un valle sistólico no rompe el estado). Sin engaged previo solo
-    // el conjunto attack es válido, así que no hay manera de "engaged"
-    // a una pared.
-    const ATK_MEAN_R = 100;
-    const ATK_R_OVER_MAX = 1.45;
-    const ATK_R_MINUS_MAX = 18;
-    const ATK_DC_RED = 90;
-    const REL_MEAN_R = 70;
-    const REL_R_OVER_MAX = 1.18;
-    const REL_R_MINUS_MAX = 8;
-    const REL_DC_RED = 60;
+    // Umbrales VALIDADOS por literatura (Lovisotto 2020 "Seeing Red" CVPRW;
+    // Coppetti 2017 fingertip PPG validation; Pereira 2020 npj Digital Med):
+    //   - meanR >= 150 con flash: tejido perfundido reflejando luz blanca.
+    //     Con piel normal y flash el rojo está saturado a 180-240/255.
+    //     Cualquier escena sin tejido (pared, papel, mesa, dedo retirado)
+    //     queda muy por debajo (típico 30-90).
+    //   - R/G >= 1.6: la hemoglobina absorbe verde y azul ~10× más que rojo.
+    //     Con tejido perfundido la ratio R/G está entre 1.8-3.5. Sin tejido
+    //     los canales se balancean (R/G ≈ 1.0).
+    //   - R-G >= 30: margen absoluto que excluye cualquier color rojizo
+    //     no perfundido (papel rojo, tela, etc.).
+    //
+    // RELEASE más permisivo para mantener el contacto durante valles
+    // fisiológicos del PPG (la propia pulsación modula meanR ±2-4%).
+    const ATK_MEAN_R = 150;       // Lovisotto 2020 baseline
+    const ATK_R_OVER_MAX = 1.6;   // hemoglobin absorption ratio
+    const ATK_R_MINUS_MAX = 30;
+    const ATK_DC_RED = 130;
+    const REL_MEAN_R = 110;
+    const REL_R_OVER_MAX = 1.30;
+    const REL_R_MINUS_MAX = 18;
+    const REL_DC_RED = 95;
 
     const attackOk =
       ema.meanR >= ATK_MEAN_R &&

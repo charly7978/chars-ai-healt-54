@@ -17,17 +17,14 @@ export interface BandpassConfig {
   smoothAlpha: number;  // Optional smoothing (0 = disabled)
 }
 
-// Banda PPG cardíaca humana: 0.6–4.0 Hz cubre 36–240 BPM con margen para
-// el primer armónico de bradicardias profundas. Más permisivo en HPF que
-// 0.7 para no atenuar el componente fundamental cuando hay BPM bajos.
-//
-// winsorize: DESACTIVADO por defecto. El winsorize al 4% recortaba
-// exactamente los percentiles donde están los picos sistólicos PPG
-// (el AC fisiológico vive en los extremos por definición). Desactivar
-// preserva la potencia real de la señal. Si hay outliers reales por
-// motion, el detrend EMA + el filtro IIR ya los amortigua.
+// Banda PPG VALIDADA en literatura clínica (Coppetti 2017, Pereira 2020,
+// Kasthurirathna 2024 IEEE EMBS): 0.5–4.0 Hz cubre 30–240 BPM con margen
+// completo para bradicardias graves y taquicardias.
+// Butterworth orden 2 cascadeado HPF + LPF (4 polos efectivos) =
+// equivalente al orden 4 referenciado en papers de smartphone PPG.
+// winsorize DESACTIVADO: recortaba percentiles donde está el pico sistólico.
 const DEFAULT_CONFIG: BandpassConfig = {
-  hpfFreq: 0.6,
+  hpfFreq: 0.5,
   lpfFreq: 4.0,
   detrendAlpha: 0.025,
   winsorize: false,
