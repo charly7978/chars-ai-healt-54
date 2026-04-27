@@ -108,6 +108,28 @@ const Index = () => {
   // (~130 ms a 30 fps) antes de procesar el heartbeat al primer contacto.
   const chromaOkStreakRef = useRef(0);
   const CHROMA_CONFIRM_FRAMES = 4;
+  // Streak de frames consecutivos SIN firma cromática. Solo tras 18 frames
+  // (~600 ms a 30 fps) se borran buffers y se resetea el procesador.
+  // Esto evita destruir la medición ante valles fisiológicos de PPG (la
+  // propia pulsación cardíaca hace que R oscile ±2-3% por absorción
+  // sistólica de la hemoglobina, eso ES la señal). Ningún destello físico
+  // del dedo dura más de 600 ms; un dedo retirado cae bajo el umbral
+  // permanentemente.
+  const chromaFailStreakRef = useRef(0);
+  const CHROMA_PERSIST_FAIL_FRAMES = 18;
+  // EMAs de los descriptores cromáticos para amortiguar el ruido frame-a-frame
+  // y los micro-valles de la propia pulsación. La validación se hace contra
+  // estas medias suavizadas.
+  const chromaEmaRef = useRef({ meanR: 0, rOverMax: 0, rMinusMax: 0, dcRed: 0, initialized: false });
+  // Bandera de "engaged": una vez que el chroma se valida y el operador
+  // tiene dedo, mantenemos histéresis: salir del estado engaged exige
+  // umbrales más bajos (release) que entrar (attack).
+  const chromaEngagedRef = useRef(false);
+  // Último BPM válido y su timestamp: durante huecos breves de hasta 2.5 s
+  // el monitor mantiene el último BPM real (comportamiento de monitor
+  // clínico estándar; evita parpadeo numérico durante valles transitorios).
+  const lastValidBpmRef = useRef({ bpm: 0, ts: 0 });
+  const BPM_HOLD_MS = 2500;
 
   const UNSTABLE_ZERO_THRESHOLD = 12;
   const GATE_FAIL_INVALIDATE_FRAMES = 8;
@@ -517,6 +539,10 @@ const Index = () => {
     greenAcBufferRef.current = [];
     fusedAcBufferRef.current = [];
     chromaOkStreakRef.current = 0;
+    chromaFailStreakRef.current = 0;
+    chromaEmaRef.current = { meanR: 0, rOverMax: 0, rMinusMax: 0, dcRed: 0, initialized: false };
+    chromaEngagedRef.current = false;
+    lastValidBpmRef.current = { bpm: 0, ts: 0 };
     setVitalSigns({ ...DEFAULT_VITALS, arrhythmiaStatus: "SINUS_STABLE|0" });
     startProcessing();
     setIsCameraOn(true);
@@ -626,6 +652,10 @@ const Index = () => {
     greenAcBufferRef.current = [];
     fusedAcBufferRef.current = [];
     chromaOkStreakRef.current = 0;
+    chromaFailStreakRef.current = 0;
+    chromaEmaRef.current = { meanR: 0, rOverMax: 0, rMinusMax: 0, dcRed: 0, initialized: false };
+    chromaEngagedRef.current = false;
+    lastValidBpmRef.current = { bpm: 0, ts: 0 };
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setRRIntervals([]);
@@ -678,38 +708,86 @@ const Index = () => {
     const maxNonRed = Math.max(meanGcurr, 1);
     const rOverMax = meanRcurr / maxNonRed;
     const rMinusMax = meanRcurr - maxNonRed;
-    // Umbral DC: con flash hay reflexión inmediata, redDC tarda ~30 frames
-    // en consolidarse; aceptamos meanR como proxy si DC aún no maduró.
-    const dcRedRef = (acStatsEarly.redDC ?? 0) > 30 ? acStatsEarly.redDC : meanRcurr;
-    const dcRedPhysiologic = dcRedRef >= 90;
-    // Umbrales calibrados para incluir piel oscura y perfusión baja, pero
-    // excluir cualquier escena sin tejido + flash (paredes, aire, papel,
-    // sábanas, ropa). Con flash reflejándose en tejido, R domina por la
-    // absorción selectiva de hemoglobina (banda verde/azul) sobre el rojo.
-    const chromaOk =
-      meanRcurr >= 100 &&             // R saturado-medio (con flash)
-      rOverMax >= 1.45 &&             // R / max(G,B) — incluye piel oscura
-      rMinusMax >= 18 &&              // dominancia absoluta R sobre G
-      dcRedPhysiologic;               // tejido reflejando flash
+    // ============================================================
+    // EMA cromática para amortiguar valles fisiológicos de la pulsación
+    // (que también modulan ligeramente meanR / rOverMax) y ruido por
+    // frame, sin perder reactividad ante una retirada real del dedo.
+    // Tau ~250 ms a 30 fps con alpha=0.18.
+    // ============================================================
+    const ema = chromaEmaRef.current;
+    if (!ema.initialized) {
+      ema.meanR = meanRcurr;
+      ema.rOverMax = rOverMax;
+      ema.rMinusMax = rMinusMax;
+      ema.dcRed = (acStatsEarly.redDC ?? 0) > 30 ? acStatsEarly.redDC : meanRcurr;
+      ema.initialized = true;
+    } else {
+      const a = 0.18;
+      ema.meanR = ema.meanR * (1 - a) + meanRcurr * a;
+      ema.rOverMax = ema.rOverMax * (1 - a) + rOverMax * a;
+      ema.rMinusMax = ema.rMinusMax * (1 - a) + rMinusMax * a;
+      const dcRaw = (acStatsEarly.redDC ?? 0) > 30 ? acStatsEarly.redDC : meanRcurr;
+      ema.dcRed = ema.dcRed * (1 - a) + dcRaw * a;
+    }
+
+    // Histéresis attack/release: para ENGANCHAR el dedo (entrar a engaged)
+    // los umbrales son los exigentes; para PERMANECER son más permisivos
+    // (un valle sistólico no rompe el estado). Sin engaged previo solo
+    // el conjunto attack es válido, así que no hay manera de "engaged"
+    // a una pared.
+    const ATK_MEAN_R = 100;
+    const ATK_R_OVER_MAX = 1.45;
+    const ATK_R_MINUS_MAX = 18;
+    const ATK_DC_RED = 90;
+    const REL_MEAN_R = 70;
+    const REL_R_OVER_MAX = 1.18;
+    const REL_R_MINUS_MAX = 8;
+    const REL_DC_RED = 60;
+
+    const attackOk =
+      ema.meanR >= ATK_MEAN_R &&
+      ema.rOverMax >= ATK_R_OVER_MAX &&
+      ema.rMinusMax >= ATK_R_MINUS_MAX &&
+      ema.dcRed >= ATK_DC_RED;
+    const releaseOk =
+      ema.meanR >= REL_MEAN_R &&
+      ema.rOverMax >= REL_R_OVER_MAX &&
+      ema.rMinusMax >= REL_R_MINUS_MAX &&
+      ema.dcRed >= REL_DC_RED;
+
+    let chromaOk: boolean;
+    if (chromaEngagedRef.current) {
+      chromaOk = releaseOk;
+      if (!releaseOk) chromaEngagedRef.current = false;
+    } else {
+      chromaOk = attackOk;
+      if (attackOk) chromaEngagedRef.current = true;
+    }
 
     if (!chromaOk) {
       chromaOkStreakRef.current = 0;
-      // Sin firma cromática de tejido + flash: la app NO procesa nada.
-      // Todos los buffers transitorios se limpian para que no quede memoria
-      // del estado anterior (eso era lo que generaba "valores fantasma" en
-      // los primeros segundos al retirar el dedo).
+      chromaFailStreakRef.current++;
+      // Mientras dure poco (<600 ms) NO destruimos buffers ni tocamos UI:
+      // es probablemente un valle fisiológico, motion momentáneo o
+      // microtransición de exposición. Mantenemos el último BPM válido.
+      if (chromaFailStreakRef.current < CHROMA_PERSIST_FAIL_FRAMES) {
+        // Hold: si tenemos un BPM válido reciente, lo mantenemos visible.
+        const heldFresh = lastValidBpmRef.current.bpm > 0 && Date.now() - lastValidBpmRef.current.ts < BPM_HOLD_MS;
+        if (!heldFresh && heartRate !== 0) setHeartRate(0);
+        // La onda recibe 0 SOLO durante este hueco corto, para indicar
+        // visualmente la pérdida momentánea sin parpadear todo el HUD.
+        setHeartbeatSignal(0);
+        return;
+      }
+      // Falla persistente: reset duro y limpieza completa.
       stableHumanSignalRef.current = false;
       if (stableHumanSignal) setStableHumanSignal(false);
       gateFailStreakRef.current = GATE_FAIL_INVALIDATE_FRAMES;
-      // Onda plana al monitor: la señal AC visible reflejaría ruido sin
-      // significado fisiológico, por eso se silencia.
       setHeartbeatSignal(0);
-      // Buffers de canales y señal fusionada: limpiar para no contaminar
-      // futuras evaluaciones espectrales.
       redAcBufferRef.current = [];
       greenAcBufferRef.current = [];
       fusedAcBufferRef.current = [];
-      // Vitales y BPM a cero (con guard de igualdad para no re-renderizar).
+      lastValidBpmRef.current = { bpm: 0, ts: 0 };
       if (heartRate !== 0) setHeartRate(0);
       setVitalSigns((prev) =>
         prev.spo2 === 0 &&
@@ -735,14 +813,17 @@ const Index = () => {
       lastArrhythmiaData.current = null;
       setRRIntervals([]);
       setBeatMarker(0);
-      // Reset duro del HeartBeatProcessor cada ~30 frames sin dedo,
-      // para que no acumule picos de ruido ni memoria de plantilla.
-      unstableFrameCounter.current++;
-      if (unstableFrameCounter.current === 30) {
+      // Reset del HeartBeatProcessor solo una vez tras la fall persistente.
+      if (chromaFailStreakRef.current === CHROMA_PERSIST_FAIL_FRAMES) {
         resetHeartBeat();
+        // Después invalidamos también la EMA cromática para que el próximo
+        // contacto entre por attack-thresholds.
+        ema.initialized = false;
       }
+      unstableFrameCounter.current = chromaFailStreakRef.current - CHROMA_PERSIST_FAIL_FRAMES;
       return;
     }
+    chromaFailStreakRef.current = 0;
     chromaOkStreakRef.current++;
     if (chromaOkStreakRef.current < CHROMA_CONFIRM_FRAMES) {
       // Firma cromática presente pero no confirmada: silenciar onda y
@@ -1065,7 +1146,17 @@ const Index = () => {
     }
     const smoothedBPM = bpmFinal > 0 ? applyEMA(emaRef.current.bpm, bpmFinal) : 0;
     emaRef.current.bpm = smoothedBPM;
-    setHeartRate(smoothedBPM);
+    if (smoothedBPM > 0) {
+      lastValidBpmRef.current = { bpm: smoothedBPM, ts: Date.now() };
+      setHeartRate(smoothedBPM);
+    } else {
+      // Hold del último BPM válido durante BPM_HOLD_MS para evitar parpadeo
+      // ante valles fisiológicos breves o pequeñas pérdidas momentáneas
+      // de coherencia espectral. Comportamiento estándar de monitor clínico.
+      const lv = lastValidBpmRef.current;
+      const heldFresh = lv.bpm > 0 && Date.now() - lv.ts < BPM_HOLD_MS;
+      if (!heldFresh && heartRate !== 0) setHeartRate(0);
+    }
 
     if (heartBeatResult.isPeak) {
       ingestBeatOpticalRatio();
