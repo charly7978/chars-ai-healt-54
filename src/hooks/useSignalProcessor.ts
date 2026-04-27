@@ -143,7 +143,7 @@ export const useSignalProcessor = () => {
   }, []);
 
   const processFrame = useCallback((imageData: ImageData, frameTimestamp?: number) => {
-    if (!processorRef.current || initializationState.current !== 'READY' || !isProcessing) {
+    if (!processorRef.current || initializationState.current !== 'READY' || !isProcessingRef.current) {
       return;
     }
     try {
@@ -152,11 +152,13 @@ export const useSignalProcessor = () => {
     } catch {
       /* hot path */
     }
-  }, [isProcessing]);
+  }, []);
 
+  const isProcessingRef = useRef(isProcessing);
+  isProcessingRef.current = isProcessing;
   const processFrameDual = useCallback(
     (detectionImageData: ImageData, extractionImageData: ImageData, frameTimestamp?: number) => {
-      if (initializationState.current !== 'READY' || !isProcessing) {
+      if (initializationState.current !== 'READY' || !isProcessingRef.current) {
         return;
       }
       const m = motionRef.current?.getScore() ?? 0;
@@ -170,7 +172,7 @@ export const useSignalProcessor = () => {
         /* hot path */
       }
     },
-    [isProcessing]
+    []
   );
 
   const applyCaptureContext = useCallback((ctx: CaptureCtx) => {
