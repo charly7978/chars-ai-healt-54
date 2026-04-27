@@ -102,15 +102,13 @@ const Index = () => {
   // (~130 ms a 30 fps) antes de procesar el heartbeat al primer contacto.
   const chromaOkStreakRef = useRef(0);
   const CHROMA_CONFIRM_FRAMES = 4;
-  // Streak de frames consecutivos SIN firma cromática. Solo tras 18 frames
-  // (~600 ms a 30 fps) se borran buffers y se resetea el procesador.
-  // Esto evita destruir la medición ante valles fisiológicos de PPG (la
-  // propia pulsación cardíaca hace que R oscile ±2-3% por absorción
-  // sistólica de la hemoglobina, eso ES la señal). Ningún destello físico
-  // del dedo dura más de 600 ms; un dedo retirado cae bajo el umbral
-  // permanentemente.
+  // Streak de frames consecutivos SIN firma cromática. Solo tras 36 frames
+  // (~1.2 s a 30 fps) se borran buffers y se resetea el procesador.
+  // Tolera valles fisiológicos largos, pequeños movimientos del dedo, y
+  // microtransiciones de auto-exposición. Un dedo retirado cae bajo
+  // umbral permanentemente y supera fácilmente este margen.
   const chromaFailStreakRef = useRef(0);
-  const CHROMA_PERSIST_FAIL_FRAMES = 18;
+  const CHROMA_PERSIST_FAIL_FRAMES = 36;
   // EMAs de los descriptores cromáticos para amortiguar el ruido frame-a-frame
   // y los micro-valles de la propia pulsación. La validación se hace contra
   // estas medias suavizadas.
@@ -563,9 +561,10 @@ const Index = () => {
     const rMinusMax = meanRcurr - maxNonRed;
     // ============================================================
     // EMA cromática para amortiguar valles fisiológicos de la pulsación
-    // (que también modulan ligeramente meanR / rOverMax) y ruido por
-    // frame, sin perder reactividad ante una retirada real del dedo.
-    // Tau ~250 ms a 30 fps con alpha=0.18.
+    // (que también modulan meanR / rOverMax) y ruido por frame, sin
+    // perder reactividad ante una retirada real del dedo.
+    // Tau efectivo ~500 ms a 30 fps con alpha=0.10. Mantiene la señal
+    // estable durante valles cardíacos (que duran ~150-300 ms).
     // ============================================================
     const ema = chromaEmaRef.current;
     if (!ema.initialized) {
@@ -575,7 +574,7 @@ const Index = () => {
       ema.dcRed = (acStatsEarly.redDC ?? 0) > 30 ? acStatsEarly.redDC : meanRcurr;
       ema.initialized = true;
     } else {
-      const a = 0.18;
+      const a = 0.10;
       ema.meanR = ema.meanR * (1 - a) + meanRcurr * a;
       ema.rOverMax = ema.rOverMax * (1 - a) + rOverMax * a;
       ema.rMinusMax = ema.rMinusMax * (1 - a) + rMinusMax * a;

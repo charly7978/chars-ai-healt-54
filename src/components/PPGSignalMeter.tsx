@@ -131,7 +131,10 @@ const PPGSignalMeter = ({
   const [showPulse, setShowPulse] = useState(false);
 
   const lastArrhythmiaCountRef = useRef(0);
-  const beatHistoryRef = useRef<{ isArrhythmia: boolean; time: number }[]>([]);
+  // Historial de latidos: time, tipo, y label corto fijo (PVC, AF, B, T, N).
+  const beatHistoryRef = useRef<
+    Array<{ time: number; isArrhythmia: boolean; label: 'N' | 'PVC' | 'AF' | 'B' | 'T' }>
+  >([]);
   const amplitudeStatsRef = useRef({ min: -50, max: 50, range: 100 });
   const ibiDisplayRef = useRef<number>(0);
   const hrvDisplayRef = useRef<{ sdnn: number; rmssd: number }>({ sdnn: 0, rmssd: 0 });
@@ -497,6 +500,30 @@ const PPGSignalMeter = ({
         ctx.textAlign = 'center';
         ctx.fillText('⚠ ARRITMIA', rightX + sidePanelW / 2, alertY + 14);
       }
+
+      // ===== Leyenda de etiquetas debajo del panel central =====
+      // Pequeña, no invade la onda; explica qué significan N / B / T / PVC / AF.
+      const legendY = panelY + panelH + 4;
+      ctx.font = '9px "SF Mono", Consolas, monospace';
+      ctx.textAlign = 'left';
+      const legendItems: Array<{ k: string; c: string; t: string }> = [
+        { k: 'N', c: '#3b82f6', t: 'sinusal' },
+        { k: 'B', c: '#f59e0b', t: 'bradi' },
+        { k: 'T', c: '#f59e0b', t: 'taqui' },
+        { k: 'PVC', c: '#ef4444', t: 'prematuro' },
+        { k: 'AF', c: '#ef4444', t: 'fib.' },
+      ];
+      let lx = centerX + 6;
+      const ly = legendY + 12;
+      for (const item of legendItems) {
+        ctx.fillStyle = item.c;
+        ctx.fillText(item.k, lx, ly);
+        const kw = ctx.measureText(item.k).width;
+        ctx.fillStyle = COLORS.TEXT_SECONDARY;
+        ctx.fillText(' ' + item.t, lx + kw, ly);
+        lx += kw + ctx.measureText(' ' + item.t).width + 8;
+        if (lx > centerX + centerW - 30) break;
+      }
     };
 
     const render = (now: number) => {
@@ -563,17 +590,30 @@ const PPGSignalMeter = ({
         invalidSinceRef.current = null;
       }
 
-      // Anotar pico en historia. Se permite también en modo provisional para
-      // que el operador vea inmediatamente la respuesta del detector temporal;
-      // las arritmias solo se marcan cuando el gate validó (evita falsos
-      // positivos por ruido durante la consolidación).
+      // Anotar pico en historia con etiqueta clínica clara: N / PVC / AF / B / T.
+      // Solo se marcan arrítmicos cuando el gate ha validado, para evitar
+      // falsos positivos durante la fase provisional.
       if (hasAnySignal && peak) {
         const currentCount = rhythm.count;
-        const shouldMarkArrhythmia =
+        const isArrhythmia =
           validatedPpg && (rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current);
-        if (shouldMarkArrhythmia)
+        let label: 'N' | 'PVC' | 'AF' | 'B' | 'T' = 'N';
+        if (isArrhythmia) {
+          // Clasificar según el rhythm label upstream y el BPM actual.
+          // El RhythmClassifier produce: PVC, AF (atrial fibrillation), etc.
+          const lab = rhythm.label.toUpperCase();
+          if (lab.includes('AF') || lab.includes('FIB')) label = 'AF';
+          else if (lab.includes('PVC') || lab.includes('PREMATURE') || lab.includes('PAC')) label = 'PVC';
+          else label = 'PVC';
           lastArrhythmiaCountRef.current = Math.max(lastArrhythmiaCountRef.current, currentCount);
-        beatHistoryRef.current.push({ isArrhythmia: shouldMarkArrhythmia, time: now });
+        } else {
+          // Latido sinusal: clasificar por BPM (bradi / taqui / normal).
+          const bpmCurr = propsRef.current.bpm;
+          if (bpmCurr > 0 && bpmCurr < 60) label = 'B';
+          else if (bpmCurr > 100) label = 'T';
+          else label = 'N';
+        }
+        beatHistoryRef.current.push({ time: now, isArrhythmia, label });
         if (beatHistoryRef.current.length > 16) beatHistoryRef.current.shift();
       }
 
@@ -659,64 +699,88 @@ const PPGSignalMeter = ({
         fill.closePath();
       }
 
-      // Relleno del área (degradado vertical) - ámbar provisional / verde validado
+      // Relleno verde fijo bajo la onda. Sin alternancia ámbar/verde:
+      // un solo color estable que corresponde a "PPG en pantalla".
       const fillGrad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-      if (validatedPpg) {
-        fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
-        fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
-        fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
-      } else {
-        fillGrad.addColorStop(0, 'rgba(245, 158, 11, 0.10)');
-        fillGrad.addColorStop(0.5, 'rgba(245, 158, 11, 0.03)');
-        fillGrad.addColorStop(1, 'rgba(245, 158, 11, 0.0)');
-      }
+      fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
+      fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
+      fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
       ctx.fillStyle = fillGrad;
       ctx.fill(fill);
 
-      // Onda eléctrica: doble pasada para fosforescencia clínica auténtica.
+      // Onda principal SIEMPRE verde (3 capas de fosforescencia clínica).
+      // Solo los SEGMENTOS adyacentes a un latido arrítmico se redibujan
+      // encima en rojo: el resto del trazo permanece verde.
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      if (validatedPpg) {
-        // Capa 1 (resplandor exterior): trazo grueso translúcido con sombra.
-        ctx.shadowColor = 'rgba(74, 222, 128, 0.85)';
-        ctx.shadowBlur = 14;
-        ctx.strokeStyle = 'rgba(74, 222, 128, 0.55)';
-        ctx.lineWidth = 4.8;
-        ctx.stroke(wave);
-        // Capa 2 (núcleo nítido): trazo fino blanco-verde sin sombra,
-        // antialiasing perfecto sobre la capa exterior.
-        ctx.shadowBlur = 0;
-        ctx.strokeStyle = '#86efac';
-        ctx.lineWidth = 2.0;
-        ctx.stroke(wave);
-        // Capa 3 (centro brillante): hilo blanquecino central.
-        ctx.strokeStyle = 'rgba(240, 253, 244, 0.85)';
-        ctx.lineWidth = 0.9;
-        ctx.stroke(wave);
-      } else {
-        ctx.shadowColor = 'rgba(245, 158, 11, 0.35)';
-        ctx.shadowBlur = 6;
-        ctx.strokeStyle = COLORS.TEXT_WARNING;
-        ctx.lineWidth = 1.8;
-        ctx.stroke(wave);
-        ctx.shadowBlur = 0;
-      }
+      ctx.shadowColor = 'rgba(74, 222, 128, 0.85)';
+      ctx.shadowBlur = 14;
+      ctx.strokeStyle = 'rgba(74, 222, 128, 0.55)';
+      ctx.lineWidth = 4.8;
+      ctx.stroke(wave);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#86efac';
+      ctx.lineWidth = 2.0;
+      ctx.stroke(wave);
+      ctx.strokeStyle = 'rgba(240, 253, 244, 0.85)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke(wave);
 
-      // Aviso en modo provisional
+      // Aviso en modo provisional (texto pequeño, no toca el color de onda)
       if (provisionalPpg) {
-        ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
-        ctx.fillStyle = COLORS.TEXT_WARNING;
+        ctx.font = '10px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_SECONDARY;
         ctx.textAlign = 'center';
         ctx.fillText('VALIDANDO PULSO…', plot.x + plot.width / 2, plot.y + 12);
       }
 
-      // Picos visibles (asociados al historial de latidos)
+      // ============================================================
+      // SEGMENTOS ARRÍTMICOS — solo el latido específico se redibuja
+      // en rojo, sobre la onda verde ya pintada. El operador identifica
+      // exactamente cuál latido fue anómalo, no toda la traza.
+      // ============================================================
+      const arrhythmiaBeats = beatHistoryRef.current.filter((b) => b.isArrhythmia);
+      if (arrhythmiaBeats.length > 0 && visibleCoords.length > 2) {
+        // Para cada beat arrítmico, redibujar el sub-tramo de la onda
+        // en una ventana de ±SEGMENT_MS alrededor del pico.
+        const SEGMENT_MS = 250; // ~250 ms cubre la sístole y parte de la diástole
+        for (const beat of arrhythmiaBeats) {
+          if (beat.time < cutoff || beat.time > now) continue;
+          const tStart = beat.time - SEGMENT_MS;
+          const tEnd = beat.time + SEGMENT_MS;
+          const seg = new Path2D();
+          let segStarted = false;
+          for (const c of visibleCoords) {
+            if (c.t < tStart || c.t > tEnd) continue;
+            if (!segStarted) {
+              seg.moveTo(c.x, c.y);
+              segStarted = true;
+            } else {
+              seg.lineTo(c.x, c.y);
+            }
+          }
+          if (!segStarted) continue;
+          // Mismo render trifásico, en rojo.
+          ctx.shadowColor = 'rgba(239, 68, 68, 0.85)';
+          ctx.shadowBlur = 14;
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+          ctx.lineWidth = 4.8;
+          ctx.stroke(seg);
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = '#fca5a5';
+          ctx.lineWidth = 2.2;
+          ctx.stroke(seg);
+          ctx.strokeStyle = 'rgba(254, 242, 242, 0.95)';
+          ctx.lineWidth = 0.9;
+          ctx.stroke(seg);
+        }
+      }
+
+      // Marcadores de pico: punto en el ápex + etiqueta clínica clara.
       const history = beatHistoryRef.current;
       if (history.length > 0 && visibleCoords.length > 0) {
-        const visStart = visibleCoords[0].t;
         for (const beat of history) {
           if (beat.time < cutoff || beat.time > now) continue;
-          // Buscar coord más cercana en tiempo (binario aprox: lineal corto)
           let bestIdx = 0;
           let bestDist = Infinity;
           for (let i = 0; i < visibleCoords.length; i++) {
@@ -729,20 +793,37 @@ const PPGSignalMeter = ({
           }
           if (bestDist > 200) continue;
           const c = visibleCoords[bestIdx];
-          const peakColor = beat.isArrhythmia ? COLORS.PEAK_ARRHYTHMIA : COLORS.PEAK_NORMAL;
-          // Marcador
+          // Color del marcador coherente con el segmento:
+          //  - N (normal sinusal):     azul
+          //  - B (bradicardia):        ámbar
+          //  - T (taquicardia):        ámbar
+          //  - PVC / AF (arrítmico):   rojo
+          let pColor: string;
+          let pLabelColor: string;
+          if (beat.isArrhythmia) {
+            pColor = '#ef4444';
+            pLabelColor = '#fca5a5';
+          } else if (beat.label === 'B' || beat.label === 'T') {
+            pColor = '#f59e0b';
+            pLabelColor = '#fcd34d';
+          } else {
+            pColor = '#3b82f6';
+            pLabelColor = '#93c5fd';
+          }
+          // Punto del marcador
           ctx.beginPath();
           ctx.arc(c.x, c.y, beat.isArrhythmia ? 6 : 4.5, 0, Math.PI * 2);
-          ctx.fillStyle = peakColor;
+          ctx.fillStyle = pColor;
           ctx.fill();
           ctx.beginPath();
           ctx.arc(c.x, c.y, 1.5, 0, Math.PI * 2);
           ctx.fillStyle = '#fff';
           ctx.fill();
-          ctx.font = 'bold 9px "SF Mono", Consolas, monospace';
-          ctx.fillStyle = beat.isArrhythmia ? COLORS.TEXT_DANGER : COLORS.SIGNAL_NORMAL;
+          // Etiqueta encima del marcador
+          ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = pLabelColor;
           ctx.textAlign = 'center';
-          ctx.fillText(beat.isArrhythmia ? 'A' : 'N', c.x, c.y - 9);
+          ctx.fillText(beat.label, c.x, c.y - 10);
         }
       }
 
