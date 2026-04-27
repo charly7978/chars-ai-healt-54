@@ -17,6 +17,7 @@ type WorkerIn =
       ts: number;
       motion: number;
     }
+  | { type: 'context'; ctx: Record<string, unknown> }
   | { type: 'destroy' };
 
 let proc: PPGSignalProcessor | null = null;
@@ -43,6 +44,10 @@ function postSig(sig: ProcessedSignal) {
       proc.stop();
       proc = null;
     }
+    return;
+  }
+  if (d.type === 'context' && proc) {
+    proc.applyCaptureContext(d.ctx as Parameters<typeof proc.applyCaptureContext>[0]);
     return;
   }
   if (d.type === 'process' && proc) {

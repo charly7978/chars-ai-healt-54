@@ -1,4 +1,3 @@
-import { HeartBeatProcessor } from '../modules/HeartBeatProcessor';
 import type { WindowSpectralSQISlice } from '../modules/signal-processing/pipeline-types';
 import type { ROIReputationDebug } from '../modules/signal-processing/ROIReputationModel';
 
@@ -127,8 +126,3 @@ export interface SignalProcessor {
   onError?: (error: ProcessingError) => void;
 }
 
-declare global {
-  interface Window {
-    heartBeatProcessor: HeartBeatProcessor;
-  }
-}

@@ -97,12 +97,6 @@ const Index = () => {
   const gateFailStreakRef = useRef(0);
   const gateLastPassedAtRef = useRef(0);
   const lastBeepAtRef = useRef(0);
-  // Buffers de canales R y G (AC) para Channel Stability Score:
-  // sin sangre real, R y G no comparten un pico espectral en banda cardíaca.
-  const redAcBufferRef = useRef<number[]>([]);
-  const greenAcBufferRef = useRef<number[]>([]);
-  const fusedAcBufferRef = useRef<number[]>([]);
-  const RG_BUFFER_SIZE = 180; // ~6 s a 30 fps
   // Streak de frames consecutivos con firma cromática válida. Evita que un
   // destello/parpadeo active el detector. Se exigen 4 frames consecutivos
   // (~130 ms a 30 fps) antes de procesar el heartbeat al primer contacto.
@@ -161,147 +155,12 @@ const Index = () => {
     return Math.max(0, Math.min(1, 1 - cv * 2));
   }, []);
 
-  /**
-   * Skewness SQI (Elgendi 2017, npj Biosensing 2024): la forma de onda
-   * cardíaca real tiene skewness NEGATIVA (subida sistólica abrupta + caída
-   * diastólica más lenta con notch dícroto). El ruido de cámara, AE/AWB,
-   * objetos rojos estáticos, paredes — todos tienen distribución
-   * aproximadamente simétrica (skewness ≈ 0).
-   * Skewness ≤ -0.20 indica forma cardíaca; > -0.05 indica ruido/no-PPG.
-   */
-  const computeSkewness = useCallback((buf: number[], n: number): number => {
-    const len = Math.min(n, buf.length);
-    if (len < 30) return 0;
-    const start = buf.length - len;
-    let mean = 0;
-    for (let i = 0; i < len; i++) mean += buf[start + i];
-    mean /= len;
-    let m2 = 0;
-    let m3 = 0;
-    for (let i = 0; i < len; i++) {
-      const d = buf[start + i] - mean;
-      const d2 = d * d;
-      m2 += d2;
-      m3 += d2 * d;
-    }
-    m2 /= len;
-    m3 /= len;
-    const std = Math.sqrt(m2);
-    if (std < 1e-9) return 0;
-    return m3 / (std * std * std);
-  }, []);
-
-  /**
-   * Channel Stability Score (papers 2025-2026): mide si los canales R y G
-   * comparten un pico espectral común en banda cardíaca. La hemoglobina
-   * pulsátil produce modulación SINCRONIZADA en R y G a la misma frecuencia.
-   * El ruido de cámara (auto-exposición, sensor, luz ambiente apuntando a
-   * pared/aire) NO produce esta coincidencia espectral.
-   *
-   * Devuelve:
-   *  - bpm: frecuencia común si existe; 0 si no
-   *  - score: 0..1 donde 1 = picos perfectamente coincidentes y prominentes
-   *  - rPeak, gPeak: BPM dominante en cada canal
-   */
-  const computeChannelStability = useCallback((
-    redBuf: number[],
-    greenBuf: number[],
-    sr: number
-  ): { bpm: number; score: number; rPeak: number; gPeak: number; agreement: number } => {
-    const n = Math.min(redBuf.length, greenBuf.length);
-    if (n < 90 || sr < 10) return { bpm: 0, score: 0, rPeak: 0, gPeak: 0, agreement: 0 };
-
-    const rArr = new Float64Array(n);
-    const gArr = new Float64Array(n);
-    let rMean = 0, gMean = 0;
-    const rOff = redBuf.length - n;
-    const gOff = greenBuf.length - n;
-    for (let i = 0; i < n; i++) {
-      const rv = redBuf[rOff + i];
-      const gv = greenBuf[gOff + i];
-      rMean += rv;
-      gMean += gv;
-      rArr[i] = rv;
-      gArr[i] = gv;
-    }
-    rMean /= n;
-    gMean /= n;
-    for (let i = 0; i < n; i++) {
-      rArr[i] -= rMean;
-      gArr[i] -= gMean;
-    }
-    // Hann window
-    for (let i = 0; i < n; i++) {
-      const w = 0.5 * (1 - Math.cos((2 * Math.PI * i) / Math.max(1, n - 1)));
-      rArr[i] *= w;
-      gArr[i] *= w;
-    }
-
-    const BPM_MIN = 38;
-    const BPM_MAX = 195;
-    const STEPS = 64;
-    let rMaxP = 0, rMaxIdx = 0;
-    let gMaxP = 0, gMaxIdx = 0;
-    let rTotal = 0, gTotal = 0;
-    const rPow = new Float64Array(STEPS);
-    const gPow = new Float64Array(STEPS);
-
-    for (let s = 0; s < STEPS; s++) {
-      const bpm = BPM_MIN + ((BPM_MAX - BPM_MIN) * s) / (STEPS - 1);
-      const omega = (2 * Math.PI * (bpm / 60)) / sr;
-      let rcr = 0, rci = 0, gcr = 0, gci = 0;
-      for (let i = 0; i < n; i++) {
-        const a = omega * i;
-        const c = Math.cos(a);
-        const si = Math.sin(a);
-        rcr += rArr[i] * c;
-        rci += rArr[i] * si;
-        gcr += gArr[i] * c;
-        gci += gArr[i] * si;
-      }
-      const rp = rcr * rcr + rci * rci;
-      const gp = gcr * gcr + gci * gci;
-      rPow[s] = rp;
-      gPow[s] = gp;
-      rTotal += rp;
-      gTotal += gp;
-      if (rp > rMaxP) {
-        rMaxP = rp;
-        rMaxIdx = s;
-      }
-      if (gp > gMaxP) {
-        gMaxP = gp;
-        gMaxIdx = s;
-      }
-    }
-
-    const rBpm = BPM_MIN + ((BPM_MAX - BPM_MIN) * rMaxIdx) / (STEPS - 1);
-    const gBpm = BPM_MIN + ((BPM_MAX - BPM_MIN) * gMaxIdx) / (STEPS - 1);
-    // Coincidencia: picos a < 8 BPM de distancia
-    const idxDelta = Math.abs(rMaxIdx - gMaxIdx);
-    const bpmDelta = Math.abs(rBpm - gBpm);
-    const coincide = idxDelta <= 2 && bpmDelta <= 8;
-    if (!coincide) return { bpm: 0, score: 0, rPeak: rBpm, gPeak: gBpm, agreement: 0 };
-
-    // Promedio del pico (dado que coinciden)
-    const bpm = (rBpm + gBpm) / 2;
-    // Prominencia relativa de cada canal (energía pico ± 1 / energía total)
-    const rBand =
-      (rPow[Math.max(0, rMaxIdx - 1)] || 0) +
-      (rPow[rMaxIdx] || 0) +
-      (rPow[Math.min(STEPS - 1, rMaxIdx + 1)] || 0);
-    const gBand =
-      (gPow[Math.max(0, gMaxIdx - 1)] || 0) +
-      (gPow[gMaxIdx] || 0) +
-      (gPow[Math.min(STEPS - 1, gMaxIdx + 1)] || 0);
-    const rCbser = rTotal > 1e-9 ? rBand / rTotal : 0;
-    const gCbser = gTotal > 1e-9 ? gBand / gTotal : 0;
-    // Agreement final: ambas energías concentradas + picos coincidentes
-    const agreement = Math.min(rCbser, gCbser);
-    const score = Math.max(0, Math.min(1, agreement * 4)); // 0.25 -> 1.0
-
-    return { bpm, score, rPeak: rBpm, gPeak: gBpm, agreement };
-  }, []);
+  // (Channel Stability Score y Skewness eliminados: el SignalQualityEngine
+  // ya calcula dominantBpm, spectralDominanceScore y harmonicityScore por
+  // ventana, sobre la señal fusionada. No hace falta repetir el barrido
+  // espectral en Index — era una de las causas de que la app tuviera
+  // varias estimaciones de BPM compitiendo y produjera resultados
+  // erráticos al mezclarlas.)
 
   // ============ HOOKS DE PROCESAMIENTO ============
   const {
@@ -535,9 +394,6 @@ const Index = () => {
     gateFailStreakRef.current = 0;
     gateLastPassedAtRef.current = 0;
     lastBeepAtRef.current = 0;
-    redAcBufferRef.current = [];
-    greenAcBufferRef.current = [];
-    fusedAcBufferRef.current = [];
     chromaOkStreakRef.current = 0;
     chromaFailStreakRef.current = 0;
     chromaEmaRef.current = { meanR: 0, rOverMax: 0, rMinusMax: 0, dcRed: 0, initialized: false };
@@ -648,9 +504,6 @@ const Index = () => {
     gateFailStreakRef.current = 0;
     gateLastPassedAtRef.current = 0;
     lastBeepAtRef.current = 0;
-    redAcBufferRef.current = [];
-    greenAcBufferRef.current = [];
-    fusedAcBufferRef.current = [];
     chromaOkStreakRef.current = 0;
     chromaFailStreakRef.current = 0;
     chromaEmaRef.current = { meanR: 0, rOverMax: 0, rMinusMax: 0, dcRed: 0, initialized: false };
@@ -784,9 +637,6 @@ const Index = () => {
       if (stableHumanSignal) setStableHumanSignal(false);
       gateFailStreakRef.current = GATE_FAIL_INVALIDATE_FRAMES;
       setHeartbeatSignal(0);
-      redAcBufferRef.current = [];
-      greenAcBufferRef.current = [];
-      fusedAcBufferRef.current = [];
       lastValidBpmRef.current = { bpm: 0, ts: 0 };
       if (heartRate !== 0) setHeartRate(0);
       setVitalSigns((prev) =>
@@ -894,32 +744,14 @@ const Index = () => {
     const acDcR = acStats.redDC > 0 ? acStats.redAC / acStats.redDC : 0;
     const acDcG = acStats.greenDC > 0 ? acStats.greenAC / acStats.greenDC : 0;
 
-    // Empujar muestras AC normalizadas a buffers R y G para el Channel Stability Score.
-    // Usamos rawRed/rawGreen sustraídos por su DC en ventana corta (delta normalizado).
-    const rNorm = acStats.redDC > 0 ? (ls.rawRed ?? 0) - acStats.redDC : 0;
-    const gNorm = acStats.greenDC > 0 ? (ls.rawGreen ?? 0) - acStats.greenDC : 0;
-    const redBuf = redAcBufferRef.current;
-    const greenBuf = greenAcBufferRef.current;
-    redBuf.push(rNorm);
-    greenBuf.push(gNorm);
-    if (redBuf.length > RG_BUFFER_SIZE) redBuf.shift();
-    if (greenBuf.length > RG_BUFFER_SIZE) greenBuf.shift();
-
-    // Channel Stability Score: ¿comparten R y G un pico espectral cardíaco?
-    // Sin sangre real esto es matemáticamente imposible.
-    const channelStability = computeChannelStability(redBuf, greenBuf, sampleRate);
-
-    // Coherencia multicanal AMPLITUD (ratio AC/DC similar entre R y G ⇒ pulso compartido)
+    // Coherencia multicanal AMPLITUD (ratio AC/DC similar entre R y G ⇒ pulso compartido).
+    // Es la métrica simple que combinada con dominantBpm del SignalQualityEngine
+    // (calculado upstream una sola vez) basta como evidencia espectral.
     let channelCoherence = 0;
     if (acDcR > 0 && acDcG > 0) {
       const minRatio = Math.min(acDcR, acDcG);
       const maxRatio = Math.max(acDcR, acDcG);
       channelCoherence = minRatio / maxRatio;
-    }
-    // Coherencia FINAL: combina amplitud (AC/DC) y espectral (Channel Stability).
-    // Si la espectral está disponible, pesa el doble (es más discriminativa).
-    if (channelStability.score > 0) {
-      channelCoherence = Math.min(1, 0.35 * channelCoherence + 0.65 * channelStability.score);
     }
 
     // SNR espectral derivado del windowSQI real
@@ -1101,48 +933,45 @@ const Index = () => {
 
     // 5) Pipeline válido: BPM, picos, vitals.
     // ================================================================
-    // VALIDACIÓN MULTI-FÍSICA DE SANGRE PULSÁTIL (papers 2024-2026):
+    // VALIDACIÓN ÚNICA Y LINEAL del BPM (anti-duplicidad):
     //
-    // (A) Channel Stability Score: pico espectral cardíaco compartido
-    //     entre R y G (impossible sin pulsación de hemoglobina real).
-    // (B) Skewness SQI (Elgendi 2017, npj Biosensing 2024): forma de onda
-    //     cardíaca tiene asimetría negativa (-0.30 a -1.5). Ruido y
-    //     AE/AWB tienen skewness ≈ 0.
-    // (C) DC del rojo en rango fisiológico (>= 70): sin tejido sobre el
-    //     flash, el DC del rojo se desploma.
+    // 1) Chromatic Gate ya pasado (con histéresis y EMA) -> hay tejido + flash.
+    // 2) HeartBeatProcessor.fuseBPM ya combina internamente:
+    //    - mediana RR, RR trimmed, autocorrelación, narrowband espectral
+    //    - acuerdo temporal-espectral, suavizado, refractariedad
+    //    Su `bpm` es la única fuente de verdad cardíaca del frame.
+    // 3) Cross-check físico contra dominantBpm del SignalQualityEngine
+    //    (calculado upstream, una sola vez). Si ambos coinciden ≤ 12 BPM
+    //    o ≤ 12% relativo, se acepta. Si no, se rechaza.
+    // 4) DC del rojo (>= 70) confirma reflexión de flash sobre tejido.
     //
-    // Las TRES condiciones son requisitos físicos independientes.
-    // Apuntar a una pared, aire, objeto rojo, mesa — siempre falla
-    // alguna por matemática, no por reglas heurísticas.
+    // SIN duplicidad: una autocorr (la del HBP), una espectral
+    // (la del SignalQualityEngine), un BPM final.
     // ================================================================
     unstableFrameCounter.current = 0;
 
-    // Skewness sobre la señal filtrada del HeartBeatProcessor (últimos ~3 s)
-    const fusedBuf = fusedAcBufferRef.current;
-    fusedBuf.push(signalValue);
-    if (fusedBuf.length > RG_BUFFER_SIZE) fusedBuf.shift();
-    const skewVal = computeSkewness(fusedBuf, 90);
-    // PPG real: skewness ≤ -0.20. Damos un margen para muy débiles: ≤ -0.05.
-    const skewOk = skewVal <= -0.05;
-
-    // DC del canal rojo: sin tejido reflejando flash, cae a < 50.
     const dcRedOk = (acStats.redDC ?? 0) >= 70;
-
     const tempoBpm = heartBeatResult.bpm;
-    const specBpm = channelStability.bpm;
-    const specOk = channelStability.score >= 0.30 && specBpm >= 38 && specBpm <= 195;
     const tempoOk = tempoBpm >= 38 && tempoBpm <= 195;
+    const dominantBpm =
+      (specWin as { dominantBpm?: number } | undefined)?.dominantBpm ?? 0;
+    const dominantOk = dominantBpm >= 38 && dominantBpm <= 195 && (specWin?.spectralDominanceScore ?? 0) >= 0.25;
 
-    // BPM final: requiere las TRES evidencias físicas.
     let bpmFinal = 0;
-    if (specOk && skewOk && dcRedOk) {
-      if (tempoOk) {
-        const delta = Math.abs(tempoBpm - specBpm);
-        const matches = delta <= Math.max(8, specBpm * 0.12);
-        bpmFinal = matches ? tempoBpm * 0.6 + specBpm * 0.4 : specBpm;
-      } else {
-        bpmFinal = specBpm;
+    if (dcRedOk && tempoOk) {
+      if (dominantOk) {
+        const delta = Math.abs(tempoBpm - dominantBpm);
+        const matches = delta <= Math.max(12, dominantBpm * 0.12);
+        // Si concuerdan, fusión ponderada hacia el detector temporal.
+        // Si NO concuerdan, confiar en el espectral (robusto a falsos picos).
+        bpmFinal = matches ? tempoBpm * 0.7 + dominantBpm * 0.3 : dominantBpm;
+      } else if (heartBeatResult.bpmConfidence >= 0.45) {
+        // Sin dominante espectral consolidado pero el HBP tiene alta
+        // confianza interna (acuerdo temporal-espectral, RR estable).
+        bpmFinal = tempoBpm;
       }
+    } else if (dcRedOk && !tempoOk && dominantOk) {
+      bpmFinal = dominantBpm;
     }
     const smoothedBPM = bpmFinal > 0 ? applyEMA(emaRef.current.bpm, bpmFinal) : 0;
     emaRef.current.bpm = smoothedBPM;

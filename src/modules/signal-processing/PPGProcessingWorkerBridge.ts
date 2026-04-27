@@ -101,6 +101,15 @@ export class PPGProcessingWorkerBridge {
     return true;
   }
 
+  applyCaptureContext(ctx: Record<string, unknown>): void {
+    if (!this.worker || !this.ready) return;
+    try {
+      this.worker.postMessage({ type: 'context', ctx });
+    } catch {
+      /* ignored */
+    }
+  }
+
   enqueueFrame(
     det: ImageData,
     ext: ImageData,

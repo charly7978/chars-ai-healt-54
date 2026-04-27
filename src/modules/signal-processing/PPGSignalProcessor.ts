@@ -12,10 +12,6 @@ import { FingerMeasurementStateMachine, shouldGateBpmOutput } from './FingerMeas
 import { buildFingerFrameFeatures, type FingerFrameFeatures } from './FingerFrameFeatures';
 import { FrameTimingTracker } from './FrameTimingTracker';
 import { ProcessingProfiler } from './ProcessingProfiler';
-// Phase 5: Advanced signal processing components
-import { AdaptiveWaveletDenoiser, createAdaptiveWaveletDenoiser } from './WaveletDenoiser';
-import { ExtendedKalmanRGB, createExtendedKalmanRGB } from './ExtendedKalmanRGB';
-import { ThermalCompensator, createThermalCompensator } from './ThermalCompensator';
 import type {
   FingerMeasurementState,
   FusedSignalMeta,
@@ -42,24 +38,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private windowSqiEngine = new SignalQualityEngine(480);
   private frameTiming = new FrameTimingTracker();
   private profiler = new ProcessingProfiler();
-
-  // Phase 5: Advanced signal processing instances
-  private waveletDenoiser = createAdaptiveWaveletDenoiser({
-    levels: 0, // Auto
-    thresholdMode: 'soft',
-    thresholdScale: 1.0,
-    levelDependent: true
-  });
-  private ekfRGB = createExtendedKalmanRGB({
-    qScale: 0.01,
-    rMeasurement: 4.0,
-    adaptationRate: 0.02
-  }, 30);
-  private thermalCompensator = createThermalCompensator({
-    thermalTimeConstant: 10.0,
-    sampleRate: 30,
-    adaptiveTau: true
-  });
 
   private readonly BUF_SIZE = 360;
   private redBuf = new RingBuffer(this.BUF_SIZE);
@@ -173,16 +151,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.reset();
-    // Phase 5: Initialize advanced components
-    this.thermalCompensator.startMeasurement();
-    this.waveletDenoiser.reset();
-    this.ekfRGB.reset();
   }
 
   stop(): void {
     this.isProcessing = false;
-    // Phase 5: Stop thermal compensation
-    this.thermalCompensator.stop();
   }
 
   async calibrate(): Promise<boolean> {
@@ -871,9 +843,5 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastAutocorrPeak = 0;
     this.lastPulseCorr = 0;
     this.bandpassFilter.reset();
-    // Phase 5: Reset advanced components
-    this.waveletDenoiser.reset();
-    this.ekfRGB.reset();
-    this.thermalCompensator.reset();
   }
 }
