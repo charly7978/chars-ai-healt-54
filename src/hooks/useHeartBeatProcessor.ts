@@ -121,14 +121,8 @@ export const useHeartBeatProcessor = () => {
     noContactFramesRef.current = 0;
   }, []);
 
-  const setArrhythmiaState = useCallback((_isArrhythmiaDetected: boolean) => {
-    // Reservado para uso futuro del HeartBeatProcessor; actualmente el
-    // procesador maneja arritmia desde upstreamContext y RR.
-  }, []);
-
   return {
     processSignal,
     reset,
-    setArrhythmiaState,
   };
 };

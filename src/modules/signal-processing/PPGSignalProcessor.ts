@@ -72,9 +72,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private refinementFrame = 0;
   private lastRefinementStage: 'coarse' | 'fine' = 'coarse';
   private fineBoostEwma = 0;
-  private lastGoodFiltered = 0;
-  private lastGoodRaw = 0;
-  private lastGoodQuality = 0;
   private captureContext: {
     detectionWidth: number;
     detectionHeight: number;
@@ -159,17 +156,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   stop(): void {
     this.isProcessing = false;
-  }
-
-  async calibrate(): Promise<boolean> {
-    // Calibration not implemented - returning false to indicate failure
-    console.warn('[PPGSignalProcessor] Calibration not implemented. This is a no-op.');
-    return false;
-  }
-
-  /** Compat: un solo ImageData (extracción = detección) */
-  processFrame(imageData: ImageData, frameTimestamp?: number, motionScore = 0): void {
-    this.processFrameDual(imageData, imageData, frameTimestamp, motionScore);
   }
 
   /** Contexto de captura (resoluciones / crop) — lo rellena Index vía hook antes de cada frame */
@@ -458,7 +444,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       signalRange,
       redDominance,
       contactState: contactForSqi,
-      sourceStability: fusion.meta.collapse ? 0 : 0.55,
+      // sourceStability real basado en agreement entre fuentes RGB (no
+      // un valor fijo 0.55 que falseaba el SQI global).
+      sourceStability: fusion.meta.collapse ? 0 : Math.min(1, fusion.meta.sourceAgreement ?? 0.5),
     });
 
     const windowFactor = this.lastWindowSqi ? this.lastWindowSqi.score : 0.35;
@@ -476,28 +464,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
             )
           )
         : 0.4;
-    let gatedQuality = this.signalQuality * (0.45 + 0.55 * windowFactor) * fingerGate;
-    gatedQuality *= 0.55 + 0.45 * specAgg;
-    gatedQuality *= 0.52 + 0.48 * Math.max(0.25, phaseQ);
-    gatedQuality *= 1 + Math.min(0.12, this.fineBoostEwma);
-    gatedQuality = Math.min(100, Math.max(0, gatedQuality));
+    // Calidad gateada simple: SQI base * factor de ventana. Sin atenuaciones
+    // multiplicativas que pueden enmascarar la señal real (las anteriores
+    // 4 multiplicaciones reducían la calidad incluso con buena onda).
+    let outQuality = this.signalQuality * (0.55 + 0.45 * windowFactor) * fingerGate;
+    if (specAgg > 0.4) outQuality *= 1 + Math.min(0.15, this.fineBoostEwma);
+    outQuality = Math.min(100, Math.max(0, outQuality));
 
-    const collapseBad = fusion.meta.collapse || (fusion.meta.phaseAlignmentQuality ?? 1) < 0.22;
-    const spectralBad = specAgg < 0.18;
-    const degradedHold = collapseBad || spectralBad || (this.lastWindowSqi?.gating === 'reject' && windowFactor < 0.2);
-
-    let outRaw = fusion.fusedValue;
-    let outFiltered = filtered;
-    let outQuality = gatedQuality;
-    if (degradedHold && this.lastGoodQuality > 5) {
-      outRaw = this.lastGoodRaw;
-      outFiltered = this.lastGoodFiltered;
-      outQuality = Math.min(outQuality, this.lastGoodQuality * 0.72);
-    } else if (!degradedHold && gatedQuality > 8) {
-      this.lastGoodFiltered = filtered;
-      this.lastGoodRaw = fusion.fusedValue;
-      this.lastGoodQuality = gatedQuality;
-    }
+    // SIN degradedHold: nunca congelamos la señal por "última buena". La
+    // onda visible al operador SIEMPRE es la actual; si hay degradación,
+    // que el gate externo decida qué publicar. Congelar la señal hacía
+    // que la onda dejara de seguir el PPG real durante segundos.
+    const outRaw = fusion.fusedValue;
+    const outFiltered = filtered;
 
     this.perfModeController.observe({
       effectiveFps: this.lastTiming.effectiveFps || this.realFps,
@@ -828,9 +807,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.spectralGateForFinger = 0.45;
     this.lastRoiCells = [];
     this.lastRoiScores = new Float64Array(25);
-    this.lastGoodFiltered = 0;
-    this.lastGoodRaw = 0;
-    this.lastGoodQuality = 0;
     this.fingerMachine.reset();
     this.fusionEngine.reset();
     this.roiScorer.reset();

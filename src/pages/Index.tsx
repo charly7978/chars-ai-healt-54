@@ -172,7 +172,7 @@ const Index = () => {
     applyCaptureContext,
   } = useSignalProcessor();
 
-  const { processSignal: processHeartBeat, setArrhythmiaState, reset: resetHeartBeat } = useHeartBeatProcessor();
+  const { processSignal: processHeartBeat, reset: resetHeartBeat } = useHeartBeatProcessor();
 
   const {
     processSignal: processVitalSigns,
@@ -904,7 +904,6 @@ const Index = () => {
         setArrhythmiaCount("--");
         if (arrhythmiaDetectedRef.current) {
           arrhythmiaDetectedRef.current = false;
-          setArrhythmiaState(false);
         }
         setVitalSigns((prev) =>
           prev.measurementConfidence === "INVALID" &&
@@ -1143,7 +1142,6 @@ const Index = () => {
         const isArrhythmiaDetected = !NON_ALERT_RHYTHMS.has(rhythmLabel);
         if (isArrhythmiaDetected !== arrhythmiaDetectedRef.current) {
           arrhythmiaDetectedRef.current = isArrhythmiaDetected;
-          setArrhythmiaState(isArrhythmiaDetected);
 
           if (isArrhythmiaDetected) {
             if (passed && navigator.vibrate) navigator.vibrate([200, 100, 200]);
@@ -1162,7 +1160,6 @@ const Index = () => {
     isMonitoring,
     processHeartBeat,
     processVitalSigns,
-    setArrhythmiaState,
     setRGBData,
     setUpstreamContext,
     setHeartRuntime,

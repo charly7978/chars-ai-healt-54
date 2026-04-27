@@ -119,9 +119,11 @@ export interface SignalProcessor {
   initialize: () => Promise<void>;
   start: () => void;
   stop: () => void;
-  calibrate: () => Promise<boolean>;
-  processFrame?: (imageData: ImageData, frameTimestamp?: number) => void;
-  processFrameDual?: (detectionImageData: ImageData, extractionImageData: ImageData, frameTimestamp?: number) => void;
+  processFrameDual?: (
+    detectionImageData: ImageData,
+    extractionImageData: ImageData,
+    frameTimestamp?: number
+  ) => void;
   onSignalReady?: (signal: ProcessedSignal) => void;
   onError?: (error: ProcessingError) => void;
 }

@@ -53,7 +53,13 @@ export class BloodPressureProcessor {
     signalBuffer: number[],
     rrIntervals: number[],
     sampleRate: number = 30,
-    opts?: { systolicOffset?: number; diastolicOffset?: number }
+    opts?: {
+      systolicOffset?: number;
+      diastolicOffset?: number;
+      // Si se pasan, se reusan los ciclos ya detectados upstream (evita
+      // recomputar detectCardiacCycles dos veces por frame de vitales).
+      precomputedCycles?: ReturnType<typeof PPGFeatureExtractor.detectCardiacCycles>;
+    }
   ): BPEstimate {
     const insufficient: BPEstimate = {
       systolic: 0, diastolic: 0, map: 0, pulsePressure: 0,
@@ -62,7 +68,7 @@ export class BloodPressureProcessor {
     };
 
     if (signalBuffer.length < 30 || rrIntervals.length < 2) return insufficient;
-    const cycles = PPGFeatureExtractor.detectCardiacCycles(signalBuffer, sampleRate);
+    const cycles = opts?.precomputedCycles ?? PPGFeatureExtractor.detectCardiacCycles(signalBuffer, sampleRate);
     if (cycles.length < this.MIN_CYCLES) return insufficient;
 
     const validCycles: CycleFeatures[] = [];

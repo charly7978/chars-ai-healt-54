@@ -1,6 +1,5 @@
 import { PPGFeatureExtractor } from './PPGFeatureExtractor';
 import { BloodPressureProcessor } from './BloodPressureProcessor';
-import { ArrhythmiaProcessor, type ArrhythmiaDetection } from './arrhythmia-processor';
 import { RhythmClassifier, type RhythmResult, type RhythmLabel } from './RhythmClassifier';
 import { SpO2Processor, type SpO2Result } from './SpO2Processor';
 import { SpO2Calibrator } from './SpO2Calibrator';
@@ -88,7 +87,6 @@ export interface EvidenceContext {
 export class VitalSignsProcessor {
   private bloodPressureProcessor: BloodPressureProcessor;
   private rhythmClassifier: RhythmClassifier;
-  private arrhythmiaProcessor: ArrhythmiaProcessor;
   private spo2Processor: SpO2Processor;
   private spo2Calibrator: SpO2Calibrator;
   private glucoseProcessor: GlucoseResearchProcessor;
@@ -180,7 +178,6 @@ export class VitalSignsProcessor {
 
     this.bloodPressureProcessor = new BloodPressureProcessor();
     this.rhythmClassifier = new RhythmClassifier();
-    this.arrhythmiaProcessor = new ArrhythmiaProcessor();
     this.glucoseProcessor = new GlucoseResearchProcessor();
     this.lipidProcessor = new LipidResearchProcessor();
   }
@@ -394,6 +391,9 @@ export class VitalSignsProcessor {
       const bpEstimate = this.bloodPressureProcessor.estimate(this.signalHistory, validRR, sampleRate, {
         systolicOffset: bpOff.systolic + devBp.systolic,
         diastolicOffset: bpOff.diastolic + devBp.diastolic,
+        // Reusar los ciclos ya detectados arriba (evita recomputarlos
+        // dentro de BloodPressureProcessor).
+        precomputedCycles: cycles,
       });
       this.lastBPConfidence = bpEstimate.confidence;
       this.lastBPFeatureQuality = bpEstimate.featureQuality;
@@ -648,8 +648,6 @@ export class VitalSignsProcessor {
     this.spo2Processor.reset();
     this.glucoseProcessor.reset();
     this.lipidProcessor.reset();
-    this.arrhythmiaProcessor.reset();
-    this.rhythmClassifier.reset();
     this.rhythmClassifier.reset();
     this.measurements.arrhythmiaCount = 0;
     this.measurements.arrhythmiaStatus = 'NO_VALID_PPG|0';

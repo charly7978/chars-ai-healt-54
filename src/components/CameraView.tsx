@@ -1,12 +1,10 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from "react";
 import { CameraConstraintReport, type ConstraintReport } from "../modules/signal-processing/CameraConstraintReport";
-import { FrameTimingMonitor, type TimingMetrics } from "../modules/signal-processing/FrameTimingMonitor";
 
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
   getDiagnostics: () => CameraDiagnostics;
   getConstraintReport: () => ConstraintReport;
-  getTimingMetrics: () => TimingMetrics;
   isWarmedUp: () => boolean;
 }
 
@@ -59,7 +57,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   const [warmUpStatus, setWarmUpStatus] = useState<'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE' | 'FAILED'>('NOT_STARTED');
   const [warmUpProgress, setWarmUpProgress] = useState(0);
   
-  const timingMonitorRef = useRef<FrameTimingMonitor>(new FrameTimingMonitor(30));
   const constraintReportRef = useRef<CameraConstraintReport>(new CameraConstraintReport());
   
   const diagnosticsRef = useRef<CameraDiagnostics>({
@@ -92,7 +89,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     getVideoElement: () => videoRef.current,
     getDiagnostics: () => ({ ...diagnosticsRef.current, warmUpStatus, warmUpProgress }),
     getConstraintReport: () => constraintReportRef.current.getReport(),
-    getTimingMetrics: () => timingMonitorRef.current.getMetrics(),
     isWarmedUp: () => warmUpStatus === 'COMPLETE',
   }), [warmUpStatus, warmUpProgress]);
 
@@ -116,7 +112,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
       isStartingRef.current = false;
       setWarmUpStatus('NOT_STARTED');
       setWarmUpProgress(0);
-      timingMonitorRef.current.reset();
       constraintReportRef.current.reset();
       luminanceHistoryRef.current = [];
       clipHistoryRef.current = [];
