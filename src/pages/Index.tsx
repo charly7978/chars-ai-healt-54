@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Heart, AlertTriangle, Activity, X, Shield, Clock, CheckCircle2, Brain, Loader2 } from "lucide-react";
-import { playCompletionSound } from "@/utils/soundUtils";
+import { playCompletionSound, playHeartBeep } from "@/utils/soundUtils";
 import VitalSign from "@/components/VitalSign";
 import CameraView, { CameraViewHandle } from "@/components/CameraView";
 import { useSignalProcessor } from "@/hooks/useSignalProcessor";
@@ -92,8 +92,14 @@ const Index = () => {
   const unstableFrameCounter = useRef(0);
   const vitalSignsFrameCounter = useRef(0);
   const hardFailFlatlineSentRef = useRef(false);
+  // Histéresis del gate de evidencia: una vez validado, requiere N frames
+  // consistentes de fallo para invalidar (evita parpadeo por oscilaciones).
+  const gateFailStreakRef = useRef(0);
+  const gateLastPassedAtRef = useRef(0);
+  const lastBeepAtRef = useRef(0);
 
-  const UNSTABLE_ZERO_THRESHOLD = 15;
+  const UNSTABLE_ZERO_THRESHOLD = 30;
+  const GATE_FAIL_INVALIDATE_FRAMES = 18;
   const VITALS_PROCESS_EVERY_N_FRAMES = 3;
 
   // Suavizado EMA para valores publicados a UI
@@ -351,6 +357,9 @@ const Index = () => {
     stableHumanSignalRef.current = false;
     unstableFrameCounter.current = 0;
     vitalSignsFrameCounter.current = 0;
+    gateFailStreakRef.current = 0;
+    gateLastPassedAtRef.current = 0;
+    lastBeepAtRef.current = 0;
     setVitalSigns({ ...DEFAULT_VITALS, arrhythmiaStatus: "SINUS_STABLE|0" });
     startProcessing();
     setIsCameraOn(true);
@@ -453,6 +462,9 @@ const Index = () => {
     vitalSignsFrameCounter.current = 0;
     stableHumanSignalRef.current = false;
     hardFailFlatlineSentRef.current = false;
+    gateFailStreakRef.current = 0;
+    gateLastPassedAtRef.current = 0;
+    lastBeepAtRef.current = 0;
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setRRIntervals([]);
@@ -606,7 +618,28 @@ const Index = () => {
     };
 
     const evidence: LivePpgEvidenceResult = livePpgEvidenceGate.evaluate(evidenceInput);
-    const passed = evidence.passed && evidence.tier === "VALID_LIVE_PPG";
+    const rawPassed = evidence.passed && evidence.tier === "VALID_LIVE_PPG";
+
+    // Histéresis temporal: si ya estábamos en passed, requerir GATE_FAIL_INVALIDATE_FRAMES
+    // consecutivos de no-pass para invalidar. Hard-fail físico (motion >>1, no-contact, clip>=25%)
+    // sí invalida inmediatamente.
+    let passed: boolean;
+    if (rawPassed) {
+      gateFailStreakRef.current = 0;
+      gateLastPassedAtRef.current = ls.timestamp;
+      passed = true;
+    } else if (evidence.hardFail) {
+      gateFailStreakRef.current = GATE_FAIL_INVALIDATE_FRAMES;
+      passed = false;
+    } else {
+      gateFailStreakRef.current++;
+      // Mantener passed si llevábamos poco tiempo en falla y el gate previo
+      // estaba validado (gateLastPassedAtRef > 0).
+      passed =
+        stableHumanSignalRef.current &&
+        gateLastPassedAtRef.current > 0 &&
+        gateFailStreakRef.current < GATE_FAIL_INVALIDATE_FRAMES;
+    }
 
     // Sincronizar ref + state. Usar ref para decisiones del mismo frame.
     stableHumanSignalRef.current = passed;
@@ -619,14 +652,20 @@ const Index = () => {
     const wantWaveform = (ls.quality ?? 0) >= 6 || ls.contactState !== "NO_CONTACT";
     setHeartbeatSignal(wantWaveform ? heartBeatResult.filteredValue : 0);
 
-    // Marcador de pico al monitor (siempre que haya señal viva, para que el
-    // operador vea inmediatamente que el detector está captando latidos,
-    // aunque BPM aún no se publique). Vibración: sólo con gate validado.
+    // Marcador de pico al monitor (siempre que haya señal viva). Beep + vibración
+    // sólo con gate validado. Throttle anti-rebote a 250 ms para evitar dobles.
     if (heartBeatResult.isPeak && wantWaveform) {
       setBeatMarker(1);
       setTimeout(() => setBeatMarker(0), 200);
-      if (passed && navigator.vibrate) {
-        try { navigator.vibrate(18); } catch { /* hot path */ }
+      if (passed) {
+        const nowMs = ls.timestamp;
+        if (nowMs - lastBeepAtRef.current > 250) {
+          lastBeepAtRef.current = nowMs;
+          if (navigator.vibrate) {
+            try { navigator.vibrate(35); } catch { /* hot path */ }
+          }
+          playHeartBeep(vitalSigns.spo2 > 0 ? vitalSigns.spo2 : undefined);
+        }
       }
     }
 

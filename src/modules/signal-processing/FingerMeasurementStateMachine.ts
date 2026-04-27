@@ -16,11 +16,15 @@ export interface FingerStateMachineOutput {
   reason: string;
 }
 
-const WARMUP_MIN_MS = 2600;
-const DEGRADED_RECOVER_SQI = 0.42;
-const DEGRADED_ENTER_WINDOW_SQI = 0.28;
-const MOTION_DEGRADED = 0.95;
-const MOTION_UNSTABLE = 0.65;
+// Tiempos / umbrales relajados para que el contacto sea robusto en uso real:
+// el operador suele tener el dedo correctamente sobre lente+flash pero con
+// pequeñas variaciones de posición y presión. Antes el FSM tardaba >3s en
+// entrar a MEASUREMENT_READY y se caía constantemente.
+const WARMUP_MIN_MS = 1200;
+const DEGRADED_RECOVER_SQI = 0.30;
+const DEGRADED_ENTER_WINDOW_SQI = 0.18;
+const MOTION_DEGRADED = 1.20;
+const MOTION_UNSTABLE = 0.85;
 
 function clamp01(x: number): number {
   if (x <= 0) return 0;
@@ -51,44 +55,47 @@ export class FingerMeasurementStateMachine {
     this.confidenceEwma = this.confidenceEwma * 0.88 + f.contactEvidence * 0.12;
 
     const strongChroma =
-      f.redDominance > 18 &&
-      f.rgRatio > 1.12 &&
-      f.centerCoverage > 0.22 &&
-      f.clippingStress < 0.55;
+      f.redDominance > 12 &&
+      f.rgRatio > 1.06 &&
+      f.centerCoverage > 0.16 &&
+      f.clippingStress < 0.70;
     const partialChroma =
-      f.redDominance > 8 &&
-      f.rgRatio > 1.04 &&
-      f.centerCoverage > 0.1 &&
-      f.clippingStress < 0.75;
+      f.redDominance > 4 &&
+      f.rgRatio > 1.01 &&
+      f.centerCoverage > 0.06 &&
+      f.clippingStress < 0.85;
 
     const stableGeometry =
-      f.spatialUniformity > 0.38 &&
-      f.centerCoverage > 0.28 &&
-      f.uniformityQuality > 0.35 &&
+      f.spatialUniformity > 0.25 &&
+      f.centerCoverage > 0.18 &&
+      f.uniformityQuality > 0.22 &&
       f.motionScore < MOTION_UNSTABLE;
 
     const readyGeometry =
       stableGeometry &&
-      f.clippingStress < 0.35 &&
-      f.motionScore < 0.45 &&
-      f.perfusionProxy > 0.004 &&
-      f.temporalStability > 0.45;
+      f.clippingStress < 0.55 &&
+      f.motionScore < 0.70 &&
+      f.perfusionProxy > 0.0015 &&
+      f.temporalStability > 0.30;
 
     const enterPartial =
-      this.confidenceEwma > 0.22 &&
+      this.confidenceEwma > 0.12 &&
       partialChroma &&
-      f.motionScore < 1.2;
+      f.motionScore < 1.4;
 
     const enterUnstableFromPartial =
-      this.confidenceEwma > 0.38 &&
+      this.confidenceEwma > 0.22 &&
       strongChroma &&
-      f.centerCoverage > 0.18 &&
-      f.motionScore < MOTION_UNSTABLE + 0.15;
+      f.centerCoverage > 0.12 &&
+      f.motionScore < MOTION_UNSTABLE + 0.30;
 
+    // Pérdida de contacto: solo cuando la cámara claramente no ve el dedo.
+    // Antes era demasiado sensible: cualquier cambio leve de posición ya
+    // mataba el contacto y reiniciaba todo el warmup.
     const loseContact =
-      this.confidenceEwma < 0.12 &&
-      f.centerCoverage < 0.08 &&
-      f.redDominance < 4;
+      this.confidenceEwma < 0.06 &&
+      f.centerCoverage < 0.04 &&
+      f.redDominance < 2;
 
     let next = prev;
     let reason = '';
@@ -132,7 +139,7 @@ export class FingerMeasurementStateMachine {
         } else if (f.motionScore > MOTION_DEGRADED || windowSQI < DEGRADED_ENTER_WINDOW_SQI) {
           next = 'MEASUREMENT_DEGRADED';
           reason = 'movimiento o SQI bajo durante warmup';
-        } else if (elapsedWarm >= WARMUP_MIN_MS && readyGeometry && windowSQI >= 0.32) {
+        } else if (elapsedWarm >= WARMUP_MIN_MS && readyGeometry && windowSQI >= 0.20) {
           next = 'MEASUREMENT_READY';
           reason = 'warmup OK + SQI mínimo';
         }
