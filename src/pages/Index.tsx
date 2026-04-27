@@ -135,6 +135,36 @@ const Index = () => {
   }, []);
 
   /**
+   * Skewness SQI (Elgendi 2017, npj Biosensing 2024): la forma de onda
+   * cardíaca real tiene skewness NEGATIVA (subida sistólica abrupta + caída
+   * diastólica más lenta con notch dícroto). El ruido de cámara, AE/AWB,
+   * objetos rojos estáticos, paredes — todos tienen distribución
+   * aproximadamente simétrica (skewness ≈ 0).
+   * Skewness ≤ -0.20 indica forma cardíaca; > -0.05 indica ruido/no-PPG.
+   */
+  const computeSkewness = useCallback((buf: number[], n: number): number => {
+    const len = Math.min(n, buf.length);
+    if (len < 30) return 0;
+    const start = buf.length - len;
+    let mean = 0;
+    for (let i = 0; i < len; i++) mean += buf[start + i];
+    mean /= len;
+    let m2 = 0;
+    let m3 = 0;
+    for (let i = 0; i < len; i++) {
+      const d = buf[start + i] - mean;
+      const d2 = d * d;
+      m2 += d2;
+      m3 += d2 * d;
+    }
+    m2 /= len;
+    m3 /= len;
+    const std = Math.sqrt(m2);
+    if (std < 1e-9) return 0;
+    return m3 / (std * std * std);
+  }, []);
+
+  /**
    * Channel Stability Score (papers 2025-2026): mide si los canales R y G
    * comparten un pico espectral común en banda cardíaca. La hemoglobina
    * pulsátil produce modulación SINCRONIZADA en R y G a la misma frecuencia.
@@ -884,36 +914,50 @@ const Index = () => {
     }
 
     // 5) Pipeline válido: BPM, picos, vitals.
-    // VALIDACIÓN ESPECTRAL CRUZADA (papers MobileAF 2025):
-    // El BPM publicado al UI debe coincidir con el pico espectral común
-    // de los canales R y G. Sin sangre pulsátil esto es imposible:
-    //   - Apuntar a una pared: R y G tienen ruido descorrelacionado.
-    //   - Apuntar a un objeto rojo estático: AC≈0, no hay pico.
-    //   - Auto-exposición oscilando: el "pico" no está en banda cardíaca
-    //     o aparece en R y G a frecuencias distintas.
+    // ================================================================
+    // VALIDACIÓN MULTI-FÍSICA DE SANGRE PULSÁTIL (papers 2024-2026):
+    //
+    // (A) Channel Stability Score: pico espectral cardíaco compartido
+    //     entre R y G (impossible sin pulsación de hemoglobina real).
+    // (B) Skewness SQI (Elgendi 2017, npj Biosensing 2024): forma de onda
+    //     cardíaca tiene asimetría negativa (-0.30 a -1.5). Ruido y
+    //     AE/AWB tienen skewness ≈ 0.
+    // (C) DC del rojo en rango fisiológico (>= 70): sin tejido sobre el
+    //     flash, el DC del rojo se desploma.
+    //
+    // Las TRES condiciones son requisitos físicos independientes.
+    // Apuntar a una pared, aire, objeto rojo, mesa — siempre falla
+    // alguna por matemática, no por reglas heurísticas.
+    // ================================================================
     unstableFrameCounter.current = 0;
+
+    // Skewness sobre la señal filtrada del HeartBeatProcessor (últimos ~3 s)
+    const fusedBuf = fusedAcBufferRef.current;
+    fusedBuf.push(signalValue);
+    if (fusedBuf.length > RG_BUFFER_SIZE) fusedBuf.shift();
+    const skewVal = computeSkewness(fusedBuf, 90);
+    // PPG real: skewness ≤ -0.20. Damos un margen para muy débiles: ≤ -0.05.
+    const skewOk = skewVal <= -0.05;
+
+    // DC del canal rojo: sin tejido reflejando flash, cae a < 50.
+    const dcRedOk = (acStats.redDC ?? 0) >= 70;
+
     const tempoBpm = heartBeatResult.bpm;
     const specBpm = channelStability.bpm;
     const specOk = channelStability.score >= 0.30 && specBpm >= 38 && specBpm <= 195;
     const tempoOk = tempoBpm >= 38 && tempoBpm <= 195;
+
+    // BPM final: requiere las TRES evidencias físicas.
     let bpmFinal = 0;
-    if (specOk && tempoOk) {
-      const delta = Math.abs(tempoBpm - specBpm);
-      const matches = delta <= Math.max(8, specBpm * 0.12);
-      if (matches) {
-        // Ambos detectores de acuerdo: fundir con peso por confianza espectral.
-        bpmFinal = tempoBpm * 0.6 + specBpm * 0.4;
+    if (specOk && skewOk && dcRedOk) {
+      if (tempoOk) {
+        const delta = Math.abs(tempoBpm - specBpm);
+        const matches = delta <= Math.max(8, specBpm * 0.12);
+        bpmFinal = matches ? tempoBpm * 0.6 + specBpm * 0.4 : specBpm;
       } else {
-        // Detectores en desacuerdo: confiar en espectral (el detector temporal
-        // probablemente está captando ruido). Confianza atenuada.
         bpmFinal = specBpm;
       }
-    } else if (specOk) {
-      // Solo espectral disponible: usable porque cumple coincidencia R-G.
-      bpmFinal = specBpm;
     }
-    // Si nada pasa la validación espectral cruzada, BPM = 0.
-    // El detector temporal solo (sin coincidencia espectral R-G) NO se publica.
     const smoothedBPM = bpmFinal > 0 ? applyEMA(emaRef.current.bpm, bpmFinal) : 0;
     emaRef.current.bpm = smoothedBPM;
     setHeartRate(smoothedBPM);
