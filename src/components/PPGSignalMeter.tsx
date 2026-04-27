@@ -571,11 +571,11 @@ const PPGSignalMeter = ({
       const validatedPpg = livePassed === true && q >= 15;
       const provisionalPpg = !validatedPpg && (signalValue !== 0 || q >= 8);
       const hasAnySignal = validatedPpg || provisionalPpg;
-      // Amplificación dependiente del estado: la señal validada se muestra
-      // con más ganancia para que la onda sea visualmente "eléctrica" y
-      // refleje fielmente toda la actividad cardíaca sin aplastarse.
-      const gain = validatedPpg ? 3.2 : 1.8;
-      const scaledValue = hasAnySignal ? signalValue * gain : 0;
+      // Sin ganancia artificial: la señal ya viene normalizada del
+      // HeartBeatProcessor (±60 unidades). El auto-rango EMA se encarga
+      // de que ocupe el viewport sin recortarla. Aplicar gain extra
+      // produciría un "maquillaje" visual y aplastaría picos reales.
+      const scaledValue = hasAnySignal ? signalValue : 0;
 
       // Limpieza de buffers tras 1.5s SIN señal alguna (no solo sin gate)
       if (!hasAnySignal) {

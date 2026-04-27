@@ -32,7 +32,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private roiMaskDet = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
   private fusionEngine = new SignalFusionEngine();
-  private multiRoi = new MultiROIExtractor({ gridRows: 5, gridCols: 5, innerFraction: 0.74, sampleStep: 2 });
+  // sampleStep=1 e innerFraction=0.78 maximizan los píxeles efectivos
+  // que entran en el promediado. En finger-PPG cada píxel adicional
+  // mejora el SNR como sqrt(N) porque el ruido del sensor es independiente
+  // entre píxeles mientras la señal cardíaca es coherente espacialmente.
+  private multiRoi = new MultiROIExtractor({ gridRows: 5, gridCols: 5, innerFraction: 0.78, sampleStep: 1 });
   private roiScorer = new ROIScorer();
   private fingerMachine = new FingerMeasurementStateMachine();
   private windowSqiEngine = new SignalQualityEngine(480);

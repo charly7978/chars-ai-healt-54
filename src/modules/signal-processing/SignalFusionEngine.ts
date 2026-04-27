@@ -114,9 +114,13 @@ export class SignalFusionEngine {
 
     const rNorm = baseR > 10 ? (baseR - rawR) / baseR : 0;
     const gNorm = baseG > 10 ? (baseG - rawG) / baseG : 0;
-    const clamp04 = (v: number) => Math.min(0.04, Math.max(-0.04, v));
-    const rPulse = clamp04(rNorm);
-    const gPulse = clamp04(gNorm);
+    // Clamp protector para outliers extremos por motion, no para señal real.
+    // PPG normal: 0.5-3% de modulación; perfusión alta: 5-8%; clamp ±10%
+    // permite 2σ de la población sin perder potencia. Antes ±4% decapitaba
+    // los picos sistólicos en sujetos con buena perfusión.
+    const clampPct = (v: number) => Math.min(0.10, Math.max(-0.10, v));
+    const rPulse = clampPct(rNorm);
+    const gPulse = clampPct(gNorm);
 
     const piSum = redPI + greenPI;
     let gW = 0.55,

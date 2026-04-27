@@ -15,13 +15,18 @@ export interface MultiROIConfig {
   sampleStep: number;
 }
 
+// PPG con flash: el rojo está saturado-medio porque la hemoglobina lo
+// transmite. Si excluimos píxeles R>=250, descartamos la región MÁS
+// informativa del frame (donde está el AC fisiológico). Subimos el techo
+// a 254 para conservar todo lo que no es saturación dura del sensor.
+// sampleStep=1: muestreo denso, no decimar la señal antes de promediar.
 const DEFAULT: MultiROIConfig = {
   gridRows: 5,
   gridCols: 5,
-  innerFraction: 0.72,
-  clipHigh: 250,
-  clipLow: 5,
-  sampleStep: 2,
+  innerFraction: 0.78,
+  clipHigh: 254,
+  clipLow: 3,
+  sampleStep: 1,
 };
 
 export interface ROICellMetrics {
