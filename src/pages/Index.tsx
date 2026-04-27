@@ -553,10 +553,18 @@ const Index = () => {
       Math.min(20, 12 * spectralDom + 6 * (1 - spectralEntropyPenalty) + 2 * (specWin?.detectorAgreementScore ?? 0))
     );
 
-    // Autocorrelación: usar agreement temporal-espectral del HeartBeatProcessor
+    // Autocorrelación: usar la calculada por el procesador en cada frame
+    // (no requiere latidos aceptados; mide periodicidad de la señal filtrada).
+    // Si todavía no está disponible, caer al agreement temporal-espectral.
+    const autocorrFromProc = (ls.pipelineDebug as { autocorrPeak?: number } | undefined)?.autocorrPeak;
     const autocorrelationScore = Math.max(
       0,
-      Math.min(1, heartBeatResult.debug?.temporalSpectralAgreement ?? 0)
+      Math.min(
+        1,
+        typeof autocorrFromProc === "number" && autocorrFromProc > 0
+          ? autocorrFromProc
+          : heartBeatResult.debug?.temporalSpectralAgreement ?? 0
+      )
     );
 
     // 3) Evaluar gate de evidencia PPG
@@ -603,7 +611,12 @@ const Index = () => {
     stableHumanSignalRef.current = passed;
     if (passed !== stableHumanSignal) setStableHumanSignal(passed);
 
-    setHeartbeatSignal(passed ? heartBeatResult.filteredValue : 0);
+    // El monitor recibe la señal filtrada SIEMPRE que haya algo de calidad,
+    // incluso si el gate aún no validó. Render provisional vs validado se
+    // distingue en el monitor con livePpgEvidencePassed. Sólo se silencia
+    // si la calidad es nula (sin contacto / cámara cubierta totalmente).
+    const wantWaveform = (ls.quality ?? 0) >= 6 || ls.contactState !== "NO_CONTACT";
+    setHeartbeatSignal(wantWaveform ? heartBeatResult.filteredValue : 0);
 
     // 4) Hard fail ⇒ invalidar inmediatamente (una sola vez)
     if (!passed && evidence.hardFail) {

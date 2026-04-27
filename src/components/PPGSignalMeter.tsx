@@ -515,13 +515,20 @@ const PPGSignalMeter = ({
         return;
       }
 
-      const hasValidPpg = livePassed === true && q >= 15;
-      const scaledValue = hasValidPpg ? signalValue * 2 : 0;
+      // Estados de render:
+      //  - validatedPpg: el gate confirmó pulso vivo → onda VERDE intensa.
+      //  - provisionalPpg: hay señal con calidad mínima pero el gate aún
+      //    no validó (calibrando / pocos latidos) → onda ÁMBAR translúcida.
+      //  - sinSenal: sin contacto / cámara cubierta / calidad nula.
+      const validatedPpg = livePassed === true && q >= 15;
+      const provisionalPpg = !validatedPpg && (signalValue !== 0 || q >= 8);
+      const hasAnySignal = validatedPpg || provisionalPpg;
+      const scaledValue = hasAnySignal ? signalValue * 2 : 0;
 
-      // Limpieza de buffers tras 1s sin PPG válida
-      if (!hasValidPpg) {
+      // Limpieza de buffers tras 1.5s SIN señal alguna (no solo sin gate)
+      if (!hasAnySignal) {
         if (invalidSinceRef.current === null) invalidSinceRef.current = now;
-        else if (now - invalidSinceRef.current > 1000) {
+        else if (now - invalidSinceRef.current > 1500) {
           beatHistoryRef.current = [];
           ibiDisplayRef.current = 0;
           hrvDisplayRef.current = { sdnn: 0, rmssd: 0 };
@@ -531,8 +538,9 @@ const PPGSignalMeter = ({
         invalidSinceRef.current = null;
       }
 
-      // Anotar pico en historia
-      if (hasValidPpg && peak) {
+      // Anotar pico en historia (sólo con gate validado para evitar marcar
+      // ruido como latidos en la fase provisional)
+      if (validatedPpg && peak) {
         const currentCount = rhythm.count;
         const shouldMarkArrhythmia = rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current;
         if (shouldMarkArrhythmia)
@@ -543,7 +551,7 @@ const PPGSignalMeter = ({
 
       buffer.push({ time: now, value: scaledValue, isArrhythmia: false });
 
-      if (!hasValidPpg) {
+      if (!hasAnySignal) {
         // Onda plana + mensaje
         ctx.save();
         ctx.strokeStyle = 'rgba(100, 116, 139, 0.35)';
@@ -557,10 +565,10 @@ const PPGSignalMeter = ({
         ctx.font = 'bold 13px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_WARNING;
         ctx.textAlign = 'center';
-        ctx.fillText('SIN PPG VÁLIDA', plot.x + plot.width / 2, plot.centerY - 14);
+        ctx.fillText('SIN SEÑAL', plot.x + plot.width / 2, plot.centerY - 14);
         ctx.font = '10px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_SECONDARY;
-        ctx.fillText('Ajuste posición y presión', plot.x + plot.width / 2, plot.centerY + 14);
+        ctx.fillText('Cubra cámara y flash con la yema del dedo', plot.x + plot.width / 2, plot.centerY + 14);
         ctx.restore();
         animationRef.current = requestAnimationFrame(render);
         return;
@@ -617,23 +625,44 @@ const PPGSignalMeter = ({
         fill.closePath();
       }
 
-      // Relleno del área (degradado vertical)
+      // Relleno del área (degradado vertical) - ámbar provisional / verde validado
       const fillGrad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-      fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
-      fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
-      fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+      if (validatedPpg) {
+        fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
+        fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
+        fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+      } else {
+        fillGrad.addColorStop(0, 'rgba(245, 158, 11, 0.10)');
+        fillGrad.addColorStop(0.5, 'rgba(245, 158, 11, 0.03)');
+        fillGrad.addColorStop(1, 'rgba(245, 158, 11, 0.0)');
+      }
       ctx.fillStyle = fillGrad;
       ctx.fill(fill);
 
       // Onda principal: sombra UNA SOLA VEZ, no por línea
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      ctx.shadowColor = COLORS.SIGNAL_GLOW;
-      ctx.shadowBlur = 8;
-      ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
-      ctx.lineWidth = 2.4;
+      if (validatedPpg) {
+        ctx.shadowColor = COLORS.SIGNAL_GLOW;
+        ctx.shadowBlur = 8;
+        ctx.strokeStyle = COLORS.SIGNAL_NORMAL;
+        ctx.lineWidth = 2.4;
+      } else {
+        ctx.shadowColor = 'rgba(245, 158, 11, 0.35)';
+        ctx.shadowBlur = 6;
+        ctx.strokeStyle = COLORS.TEXT_WARNING;
+        ctx.lineWidth = 1.8;
+      }
       ctx.stroke(wave);
       ctx.shadowBlur = 0;
+
+      // Aviso en modo provisional
+      if (provisionalPpg) {
+        ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_WARNING;
+        ctx.textAlign = 'center';
+        ctx.fillText('VALIDANDO PULSO…', plot.x + plot.width / 2, plot.y + 12);
+      }
 
       // Picos visibles (asociados al historial de latidos)
       const history = beatHistoryRef.current;

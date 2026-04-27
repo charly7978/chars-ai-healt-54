@@ -103,6 +103,10 @@ export interface ProcessedSignal {
     frameTiming?: { intervalMs: number; effectiveFps: number; droppedEstimate: number };
     profiler?: Record<string, number>;
     fingerFeatures?: Record<string, number>;
+    /** Autocorrelación periodicity calculada por el procesador (0..1) */
+    autocorrPeak?: number;
+    /** Self-correlation a lag corto (0..1) */
+    pulseSelfCorr?: number;
   };
 }
 

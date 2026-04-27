@@ -609,6 +609,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
             temporalStability: ff.temporalStability,
           }
         : undefined,
+      // Autocorrelación periodicity calculada por el procesador en cada frame
+      // (no requiere latidos aceptados). Útil para gates que necesitan evidencia
+      // temprana de pulso real.
+      autocorrPeak: this.lastAutocorrPeak,
+      pulseSelfCorr: this.lastPulseCorr,
     };
     this.onSignalReady({
       ...partial,
