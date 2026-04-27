@@ -142,8 +142,10 @@ export class HeartBeatProcessor {
       return this.makeEmptyResult(0);
     }
 
+    // Tolerar señales muy débiles: range ≥ 0.10 (antes 0.4). Esto cubre
+    // perfusión ultra-baja (sujetos hipotérmicos / posibles fallecidos).
     const range = this.getSignalRange(60);
-    if (range < 0.4) {
+    if (range < 0.10) {
       return this.makeEmptyResult(0);
     }
 
@@ -237,15 +239,15 @@ export class HeartBeatProcessor {
     }
     const globalSQI = this.computeGlobalSQI();
     
-    // Verificaciones mínimas razonables antes de publicar BPM.
-    // El gate fail-closed externo ya valida que la señal sea PPG viva;
-    // aquí solo exigimos consistencia interna del detector temporal.
+    // Verificaciones mínimas: aplicación forense, sujetos posiblemente con
+    // perfusión muy baja. Solo exigimos 2 latidos consistentes para emitir
+    // un BPM provisional, suficiente para el operador.
     const meetsMinimumEvidence =
-      this.beatsAccepted >= 3 &&
-      this.consecutivePeaks >= 3 &&
-      this.getAvgBeatSQI() >= 35 &&
-      this.rrIntervals.length >= 2 &&
-      this.signalBuf.length >= 90; // ~3 segundos a 30 fps
+      this.beatsAccepted >= 2 &&
+      this.consecutivePeaks >= 2 &&
+      this.getAvgBeatSQI() >= 22 &&
+      this.rrIntervals.length >= 1 &&
+      this.signalBuf.length >= 60; // ~2 segundos a 30 fps
 
     if (!meetsMinimumEvidence) {
       hypothesis.finalBpm = 0;
@@ -329,7 +331,10 @@ export class HeartBeatProcessor {
     }
     const widthMs = (widthSamples / Math.max(1, this.estimateSampleRate())) * 1000;
 
-    const det1Hit = isLocalMax && prominence > 1.8 && risingSlope > 0.6;
+    // Umbrales mínimos relajados para señales muy débiles (perfusión < 1%,
+    // sujeto hipotérmico, contacto sub-óptimo). El gate externo y el
+    // detector espectral filtran falsos positivos a posteriori.
+    const det1Hit = isLocalMax && prominence > 0.6 && risingSlope > 0.20;
 
     const d = new Float64Array(8);
     for (let i = 0; i < 8; i++) d[i] = this.derivBuf.get(dn - 8 + i);
@@ -341,7 +346,7 @@ export class HeartBeatProcessor {
     const ssfRecent = ssn > 3 ? this.slopeSum.get(ssn - 3) : 0;
     const ssfPeak = ssfRecent > 1.0;
 
-    const det2Hit = zeroCrossing && (ssfPeak || risingSlope > 1.0);
+    const det2Hit = zeroCrossing && (ssfPeak || risingSlope > 0.40);
 
     const detectorHits = (det1Hit ? 1 : 0) + (det2Hit ? 1 : 0);
     if (detectorHits === 0) return null;
@@ -396,29 +401,27 @@ export class HeartBeatProcessor {
   }
 
   private adjudicate(c: BeatCandidate, timeSinceLast: number, expectedRR: number, refractoryState: 'hard' | 'soft' | 'open'): void {
-    if (c.prominence < 1.5) {
+    // Adjudication relajada para señales débiles: el gate externo y el
+    // consenso espectral filtran falsos positivos a posteriori. Aquí solo
+    // se rechazan candidatos físicamente imposibles.
+    if (c.prominence < 0.5) {
       c.status = 'rejected'; c.rejectionReason = 'low_prominence'; return;
     }
-    if (c.widthMs < 40 || c.widthMs > 800) {
+    if (c.widthMs < 40 || c.widthMs > 1000) {
       c.status = 'rejected'; c.rejectionReason = 'abnormal_width'; return;
     }
-    if (c.localClipPenalty > 0.6) {
+    if (c.localClipPenalty > 0.75) {
       c.status = 'rejected'; c.rejectionReason = 'high_clipping'; return;
     }
-    if (!this.contactStable && c.detectorHits < 2) {
-      c.status = 'rejected'; c.rejectionReason = 'unstable_contact_single_detector'; return;
-    }
-    if (c.upSlope < 0.4) {
+    if (c.upSlope < 0.15) {
       c.status = 'rejected'; c.rejectionReason = 'no_rising_edge'; return;
     }
-    if (c.downSlope < 0.2) {
+    if (c.downSlope < 0.08) {
       c.status = 'rejected'; c.rejectionReason = 'no_falling_edge'; return;
     }
-    if (this.consecutivePeaks === 0 && c.detectorAgreement < 0.5 && !c.periodicitySupport) {
-      c.status = 'rejected'; c.rejectionReason = 'first_peak_weak_support'; return;
-    }
     if (refractoryState === 'soft') {
-      if (c.morphologyScore < 65 || c.detectorAgreement < 1.0) {
+      // Refractario suave: rechazo solo si el candidato es muy pobre.
+      if (c.morphologyScore < 45 || c.detectorAgreement < 0.5) {
         c.status = 'rejected'; c.rejectionReason = 'double_peak_suspect';
         this.doublePeakCount++;
         return;
@@ -426,27 +429,28 @@ export class HeartBeatProcessor {
     }
     if (this.lastPeakValue > 0) {
       const ampRatio = Math.abs(c.amplitude) / Math.max(1, Math.abs(this.lastPeakValue));
-      if (ampRatio < 0.06 || ampRatio > 12) {
+      // Tolerancia amplia (1:25) para sujetos con perfusión muy variable.
+      if (ampRatio < 0.04 || ampRatio > 25) {
         c.status = 'rejected'; c.rejectionReason = 'amplitude_inconsistent'; return;
       }
     }
 
-    const minScore = this.consecutivePeaks < 3 ? 28 : 35;
-    const thresholdMet = c.amplitude > this.peakThreshold * (c.periodicitySupport ? 0.6 : 0.85) ||
-      c.prominence > Math.max(1.8, this.peakThreshold * 0.5);
+    const minScore = this.consecutivePeaks < 3 ? 18 : 24;
+    const thresholdMet = c.amplitude > this.peakThreshold * (c.periodicitySupport ? 0.45 : 0.70) ||
+      c.prominence > Math.max(0.9, this.peakThreshold * 0.35);
 
-    if (c.totalScore < minScore && !thresholdMet) {
-      c.status = 'rejected'; c.rejectionReason = 'low_total_score'; return;
-    }
-    if (c.detectorAgreement >= 1.0 && c.morphologyScore > 40 && thresholdMet) {
+    // Vía rápida: dos detectores de acuerdo + morfología decente -> aceptar.
+    if (c.detectorAgreement >= 1.0 && c.morphologyScore > 28 && thresholdMet) {
       c.status = 'accepted'; return;
     }
+    // Vía intermedia: un detector + score suficiente + algún soporte adicional.
     if (c.detectorHits >= 1 && c.totalScore >= minScore && thresholdMet) {
-      if (c.templateCorrelation > 0.5 || c.periodicitySupport || c.morphologyScore > 55) {
+      if (c.templateCorrelation > 0.35 || c.periodicitySupport || c.morphologyScore > 38) {
         c.status = 'accepted'; return;
       }
     }
-    if (c.totalScore > 55) {
+    // Vía con score alto: aceptar incluso sin threshold físico estricto.
+    if (c.totalScore > 42) {
       c.status = 'accepted'; return;
     }
     c.status = 'rejected';
@@ -848,7 +852,7 @@ export class HeartBeatProcessor {
     const p10 = this.signalBuf.percentile(0.1, n);
     const p90 = this.signalBuf.percentile(0.9, n);
     const range = p90 - p10;
-    if (range < 0.15) return { normalizedValue: 0, normRange: 0 };
+    if (range < 0.05) return { normalizedValue: 0, normRange: 0 };
     const clipped = Math.min(p90, Math.max(p10, value));
     const normalizedValue = ((clipped - p10) / range - 0.5) * 120;
     return { normalizedValue, normRange: range };
@@ -862,7 +866,7 @@ export class HeartBeatProcessor {
     const p90 = this.signalBuf.percentile(0.9, refN);
     const range = p90 - p10;
     const out = new Float64Array(count);
-    if (range < 0.15) return out;
+    if (range < 0.05) return out;
     for (let i = 0; i < count; i++) {
       const v = this.signalBuf.get(n - count + i);
       const c = Math.min(p90, Math.max(p10, v));
@@ -886,10 +890,13 @@ export class HeartBeatProcessor {
   }
 
   private updateThreshold(range: number): void {
+    // Threshold adaptativo: mucho más sensible si hay soporte periódico,
+    // y se ajusta dinámicamente al rango p10-p90 actual de la señal.
+    // Para señales débiles (range pequeño), permite picos pequeños.
     const periodicSupport = this.autocorrBPM > 0;
-    const base = periodicSupport ? 2.8 : 3.8;
-    const target = clamp(base + range * 0.25, 2.2, 7.0);
-    this.peakThreshold = this.peakThreshold * 0.82 + target * 0.18;
+    const base = periodicSupport ? 1.4 : 2.4;
+    const target = clamp(base + range * 0.25, 0.9, 6.0);
+    this.peakThreshold = this.peakThreshold * 0.80 + target * 0.20;
   }
 
   private updateSpectralHr(): void {

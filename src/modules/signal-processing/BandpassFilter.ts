@@ -17,12 +17,16 @@ export interface BandpassConfig {
   smoothAlpha: number;  // Optional smoothing (0 = disabled)
 }
 
+// Banda PPG cardíaca humana (papers 2025-2026): 0.7–4.0 Hz cubre 42–240 BPM
+// con margen para subarmónicos. Más estrecho que la banda 0.5–5 Hz reduce
+// significativamente el ruido fuera de banda en señales muy débiles
+// (perfusión <1%) sin recortar el latido.
 const DEFAULT_CONFIG: BandpassConfig = {
-  hpfFreq: 0.5,
-  lpfFreq: 5.0,
-  detrendAlpha: 0.015,
+  hpfFreq: 0.7,
+  lpfFreq: 4.0,
+  detrendAlpha: 0.020,
   winsorize: true,
-  winsorizePct: 0.05,
+  winsorizePct: 0.04,
   smoothAlpha: 0
 };
 

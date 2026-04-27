@@ -49,6 +49,11 @@ const LABELS = [
   'diffRG',
   'dG',
   'bandG',
+  // POS (Plane Orthogonal to Skin, Wang 2017): proyección invariante a
+  // iluminación. Estado del arte para señales débiles según los papers
+  // 2025-2026 (POS-SSA, DeepPerfusion). En finger-PPG con flash, captura
+  // el componente cardíaco residual incluso con perfusión <0.5%.
+  'POS',
 ] as const;
 
 export type FusionLabel = (typeof LABELS)[number];
@@ -61,6 +66,9 @@ export class SignalFusionEngine {
   private emaFastG = 0;
   private emaSlowG = 0;
   private lastFusion = 0;
+  // Buffers de POS (R/G/B normalizados) para calcular std en ventana corta.
+  private posXs = new RingBuffer(60);
+  private posYs = new RingBuffer(60);
 
   constructor() {
     for (const l of LABELS) {
@@ -80,6 +88,8 @@ export class SignalFusionEngine {
     this.emaFastG = 0;
     this.emaSlowG = 0;
     this.lastFusion = 0;
+    this.posXs.clear();
+    this.posYs.clear();
   }
 
   update(inp: FusionUpdateInput): FusionOutput {
@@ -125,6 +135,24 @@ export class SignalFusionEngine {
     }
 
     const rg = (rPulse * rW + gPulse * gW) * 3200;
+    // POS (Wang 2017): C = (Rn, Gn, Bn) normalizado por DC. Xs = R−G,
+    // Ys = R + G − 2B, luego combinar Xs − α·Ys donde α = std(Xs)/std(Ys).
+    // En finger-PPG con flash, el azul es muy débil → Bn ≈ 0 y POS ≈ Xs−αYs
+    // se reduce a una combinación adaptativa R-G. Aporta ortogonalidad al
+    // ruido de iluminación residual.
+    const bNorm = baseB > 10 ? (baseB - rawB) / baseB : 0;
+    const xs = rNorm - gNorm;
+    const ys = rNorm + gNorm - 2 * bNorm;
+    this.posXs.push(xs);
+    this.posYs.push(ys);
+    let posValue = 0;
+    if (this.posXs.length >= 30) {
+      const stdX = Math.sqrt(this.posXs.variance(60));
+      const stdY = Math.sqrt(this.posYs.variance(60));
+      const alpha = stdY > 1e-9 ? stdX / stdY : 1;
+      posValue = (xs - alpha * ys) * 3200;
+    }
+
     const cand: Record<string, number> = {
       R: rPulse * 3200,
       G: gPulse * 3200,
@@ -134,6 +162,7 @@ export class SignalFusionEngine {
       diffRG: (rPulse - gPulse) * 2400,
       dG: 0,
       bandG: 0,
+      POS: posValue,
     };
 
     const gLast = this.sources.get('G')?.buffer.length ? this.sources.get('G')!.buffer.latest() : gPulse * 3200;

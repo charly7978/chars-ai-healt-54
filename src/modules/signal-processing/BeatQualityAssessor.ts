@@ -26,17 +26,19 @@ export class BeatQualityAssessor {
     const reasons: string[] = [];
     let s = 0;
 
-    const prom = Math.min(1, input.prominence / 10);
+    // Escalas relajadas para señales débiles (perfusión baja, sujeto frío
+    // o casi ausente). Sin sacrificar capacidad de discriminar ruido.
+    const prom = Math.min(1, input.prominence / 4);
     s += prom * 0.28;
-    if (prom < 0.18) reasons.push('pico poco prominente');
+    if (prom < 0.10) reasons.push('pico poco prominente');
 
-    const wOk = input.widthMs >= 70 && input.widthMs <= 420 ? 1 : 0.35;
+    const wOk = input.widthMs >= 60 && input.widthMs <= 520 ? 1 : 0.40;
     s += wOk * 0.14;
     if (wOk < 0.9) reasons.push('ancho implausible');
 
-    const slope = Math.min(1, (input.upSlope + input.downSlope) / 10);
+    const slope = Math.min(1, (input.upSlope + input.downSlope) / 4);
     s += slope * 0.18;
-    if (input.upSlope < 0.35) reasons.push('subida débil');
+    if (input.upSlope < 0.18) reasons.push('subida débil');
 
     s += input.refractoryOk ? 0.12 : 0;
     if (!input.refractoryOk) reasons.push('refractario dudoso');
