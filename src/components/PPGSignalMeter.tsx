@@ -538,11 +538,14 @@ const PPGSignalMeter = ({
         invalidSinceRef.current = null;
       }
 
-      // Anotar pico en historia (sólo con gate validado para evitar marcar
-      // ruido como latidos en la fase provisional)
-      if (validatedPpg && peak) {
+      // Anotar pico en historia. Se permite también en modo provisional para
+      // que el operador vea inmediatamente la respuesta del detector temporal;
+      // las arritmias solo se marcan cuando el gate validó (evita falsos
+      // positivos por ruido durante la consolidación).
+      if (hasAnySignal && peak) {
         const currentCount = rhythm.count;
-        const shouldMarkArrhythmia = rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current;
+        const shouldMarkArrhythmia =
+          validatedPpg && (rhythm.isAlert || currentCount > lastArrhythmiaCountRef.current);
         if (shouldMarkArrhythmia)
           lastArrhythmiaCountRef.current = Math.max(lastArrhythmiaCountRef.current, currentCount);
         beatHistoryRef.current.push({ isArrhythmia: shouldMarkArrhythmia, time: now });

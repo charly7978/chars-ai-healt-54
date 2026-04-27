@@ -512,7 +512,8 @@ const Index = () => {
         )
       : 0.45;
 
-    // 1) Procesar heartbeat (puro, sin efectos secundarios)
+    // 1) Procesar heartbeat. Pasamos el flag de evidencia del frame previo
+    //    (stableHumanSignalRef) para que el procesador no se autobloquee.
     const heartBeatResult = processHeartBeat(signalValue, ls.contactState, ls.timestamp, {
       quality: ls.quality,
       contactState: ls.contactState,
@@ -527,7 +528,7 @@ const Index = () => {
       effectiveSampleRate: ls.estimatedSampleRate,
       phaseAlignmentQuality: fusionMeta?.phaseAlignmentQuality ?? 0.55,
       spectralQualityAggregate,
-      // livePpgEvidencePassed se pasa después de evaluar el gate
+      livePpgEvidencePassed: stableHumanSignalRef.current,
     });
 
     // 2) Construir métricas multicanal REALES desde acStats del PPGSignalProcessor
@@ -618,6 +619,17 @@ const Index = () => {
     const wantWaveform = (ls.quality ?? 0) >= 6 || ls.contactState !== "NO_CONTACT";
     setHeartbeatSignal(wantWaveform ? heartBeatResult.filteredValue : 0);
 
+    // Marcador de pico al monitor (siempre que haya señal viva, para que el
+    // operador vea inmediatamente que el detector está captando latidos,
+    // aunque BPM aún no se publique). Vibración: sólo con gate validado.
+    if (heartBeatResult.isPeak && wantWaveform) {
+      setBeatMarker(1);
+      setTimeout(() => setBeatMarker(0), 200);
+      if (passed && navigator.vibrate) {
+        try { navigator.vibrate(18); } catch { /* hot path */ }
+      }
+    }
+
     // 4) Hard fail ⇒ invalidar inmediatamente (una sola vez)
     if (!passed && evidence.hardFail) {
       if (!hardFailFlatlineSentRef.current) {
@@ -683,8 +695,6 @@ const Index = () => {
 
     if (heartBeatResult.isPeak) {
       ingestBeatOpticalRatio();
-      setBeatMarker(1);
-      setTimeout(() => setBeatMarker(0), 300);
       totalBeatsRef.current++;
       const currentArrCount = vitalSigns.arrhythmiaCount ?? 0;
       if (currentArrCount > lastArrhythmiaCountForBeatsRef.current) {

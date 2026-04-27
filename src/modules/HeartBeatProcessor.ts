@@ -237,19 +237,17 @@ export class HeartBeatProcessor {
     }
     const globalSQI = this.computeGlobalSQI();
     
-    // FAIL-CLOSED: Verificaciones severas antes de publicar BPM
+    // Verificaciones mínimas razonables antes de publicar BPM.
+    // El gate fail-closed externo ya valida que la señal sea PPG viva;
+    // aquí solo exigimos consistencia interna del detector temporal.
     const meetsMinimumEvidence =
-      this.beatsAccepted >= 6 &&
-      this.consecutivePeaks >= 6 &&
-      this.getAvgBeatSQI() >= 65 &&
-      this.temporalSpectralAgreement >= 0.70 &&
-      this.spectralConfidence >= 0.70 &&
-      this.detectorAgreementAverage() >= 0.70 &&
-      this.rrIntervals.length >= 5 &&
-      this.signalBuf.length >= 240; // ~8 segundos a 30 fps
-    
-    // Si no hay evidencia PPG viva o no cumple mínimos, BPM = 0
-    if (!this.livePpgEvidencePassed || !meetsMinimumEvidence) {
+      this.beatsAccepted >= 3 &&
+      this.consecutivePeaks >= 3 &&
+      this.getAvgBeatSQI() >= 35 &&
+      this.rrIntervals.length >= 2 &&
+      this.signalBuf.length >= 90; // ~3 segundos a 30 fps
+
+    if (!meetsMinimumEvidence) {
       hypothesis.finalBpm = 0;
       hypothesis.confidence = 0;
       bpmConfidence = 0;

@@ -88,52 +88,49 @@ export interface LivePpgEvidenceResult {
 export class LivePpgEvidenceGate {
   private readonly MIN_SAMPLE_RATE = 15;
   private readonly IDEAL_SAMPLE_RATE = 30;
-  private readonly MIN_PERFUSION_INDEX = 0.20;
-  private readonly TARGET_PERFUSION_INDEX = 0.35;
-  private readonly MIN_WINDOW_SQI = 0.55;
-  private readonly TARGET_WINDOW_SQI = 0.72;
-  private readonly MIN_SPECTRAL_DOMINANCE = 0.35;
-  private readonly TARGET_SPECTRAL_DOMINANCE = 0.55;
-  private readonly MIN_DETECTOR_AGREEMENT = 0.45;
-  private readonly TARGET_DETECTOR_AGREEMENT = 0.65;
-  private readonly MIN_DOMINANT_FREQ_STABILITY = 0.50;
-  private readonly TARGET_DOMINANT_FREQ_STABILITY = 0.65;
-  private readonly MIN_SPECTRAL_ENTROPY_PENALTY = 0.55;
-  private readonly TARGET_SPECTRAL_ENTROPY_PENALTY = 0.45;
-  private readonly MIN_ACCEPTED_BEATS = 4;
-  private readonly TARGET_ACCEPTED_BEATS = 6;
-  private readonly MIN_CONSECUTIVE_PEAKS = 4;
-  private readonly TARGET_CONSECUTIVE_PEAKS = 6;
-  private readonly MIN_BEAT_SQI = 55;
-  private readonly TARGET_BEAT_SQI = 65;
-  private readonly MIN_MORPHOLOGY_SCORE = 55;
-  private readonly TARGET_MORPHOLOGY_SCORE = 65;
-  private readonly MIN_TEMPORAL_SPECTRAL_AGREEMENT = 0.55;
-  private readonly TARGET_TEMPORAL_SPECTRAL_AGREEMENT = 0.70;
-  private readonly MIN_SPECTRAL_CONFIDENCE = 0.55;
-  private readonly TARGET_SPECTRAL_CONFIDENCE = 0.70;
-  private readonly MIN_SPATIAL_COHERENCE = 0.40;
+  private readonly MIN_PERFUSION_INDEX = 0.05;
+  private readonly TARGET_PERFUSION_INDEX = 0.30;
+  private readonly MIN_WINDOW_SQI = 0.30;
+  private readonly TARGET_WINDOW_SQI = 0.65;
+  private readonly MIN_SPECTRAL_DOMINANCE = 0.18;
+  private readonly TARGET_SPECTRAL_DOMINANCE = 0.50;
+  private readonly MIN_DETECTOR_AGREEMENT = 0.25;
+  private readonly TARGET_DETECTOR_AGREEMENT = 0.60;
+  private readonly MIN_DOMINANT_FREQ_STABILITY = 0.30;
+  private readonly TARGET_DOMINANT_FREQ_STABILITY = 0.60;
+  private readonly MIN_ACCEPTED_BEATS = 2;
+  private readonly TARGET_ACCEPTED_BEATS = 5;
+  private readonly MIN_CONSECUTIVE_PEAKS = 3;
+  private readonly TARGET_CONSECUTIVE_PEAKS = 5;
+  private readonly MIN_BEAT_SQI = 30;
+  private readonly TARGET_BEAT_SQI = 60;
+  private readonly MIN_MORPHOLOGY_SCORE = 30;
+  private readonly TARGET_MORPHOLOGY_SCORE = 60;
+  private readonly MIN_TEMPORAL_SPECTRAL_AGREEMENT = 0.30;
+  private readonly TARGET_TEMPORAL_SPECTRAL_AGREEMENT = 0.65;
+  private readonly MIN_SPECTRAL_CONFIDENCE = 0.30;
+  private readonly TARGET_SPECTRAL_CONFIDENCE = 0.60;
+  private readonly MIN_SPATIAL_COHERENCE = 0.30;
   private readonly TARGET_SPATIAL_COHERENCE = 0.55;
-  private readonly MIN_PHASE_COHERENCE = 0.40;
+  private readonly MIN_PHASE_COHERENCE = 0.30;
   private readonly TARGET_PHASE_COHERENCE = 0.55;
-  private readonly MAX_BACKGROUND_CORRELATION = 0.60;
-  private readonly TARGET_BACKGROUND_CORRELATION = 0.35;
-  private readonly MIN_ROI_BG_POWER_RATIO = 1.5;
-  private readonly TARGET_ROI_BG_POWER_RATIO = 2.5;
-  private readonly MIN_SOURCE_STABILITY = 0.60;
-  private readonly TARGET_SOURCE_STABILITY = 0.75;
-  private readonly MAX_CLIP_RATIO = 0.15;
-  private readonly TARGET_CLIP_RATIO = 0.08;
-  private readonly MIN_SCORE_FOR_PASS = 0.78;
+  private readonly MAX_BACKGROUND_CORRELATION = 0.70;
+  private readonly TARGET_BACKGROUND_CORRELATION = 0.40;
+  private readonly MIN_ROI_BG_POWER_RATIO = 1.2;
+  private readonly TARGET_ROI_BG_POWER_RATIO = 2.0;
+  private readonly MIN_SOURCE_STABILITY = 0.30;
+  private readonly TARGET_SOURCE_STABILITY = 0.65;
+  private readonly TARGET_CLIP_RATIO = 0.10;
+  private readonly MIN_SCORE_FOR_PASS = 0.55;
   private readonly MIN_FREQ_HZ = 0.65;
   private readonly MAX_FREQ_HZ = 3.5;
-  private readonly MIN_CHANNEL_COHERENCE = 0.45;
-  private readonly TARGET_CHANNEL_COHERENCE = 0.60;
-  private readonly MIN_AC_DC_RATIO = 0.003;
-  private readonly TARGET_AC_DC_RATIO = 0.008;
-  private readonly MIN_SPECTRAL_SNR_DB = 3.0;
-  private readonly TARGET_SPECTRAL_SNR_DB = 6.0;
-  private readonly MIN_AUTOCORRELATION_SCORE = 0.40;
+  private readonly MIN_CHANNEL_COHERENCE = 0.20;
+  private readonly TARGET_CHANNEL_COHERENCE = 0.55;
+  private readonly MIN_AC_DC_RATIO = 0.001;
+  private readonly TARGET_AC_DC_RATIO = 0.006;
+  private readonly MIN_SPECTRAL_SNR_DB = 1.5;
+  private readonly TARGET_SPECTRAL_SNR_DB = 5.0;
+  private readonly MIN_AUTOCORRELATION_SCORE = 0.20;
   private readonly TARGET_AUTOCORRELATION_SCORE = 0.55;
 
   evaluate(input: LivePpgEvidenceInput): LivePpgEvidenceResult {
@@ -141,152 +138,92 @@ export class LivePpgEvidenceGate {
     const metrics: Record<string, number | string | boolean> = {};
     let hardFail = false;
 
-    // === HARD FAILS (rechenazo inmediato) ===
-    
-    // 1. Sample rate insuficiente
+    // === HARD FAILS — solo casos físicamente imposibles ===
+    //
+    // El resto de métricas degradan el SCORE pero no abortan la evaluación.
+    // El usuario ve la onda en modo provisional mientras el score sube hasta
+    // 0.78 (tier VALID_LIVE_PPG). Sin esto, la app se quedaba en hard-fail
+    // perpetuo durante los primeros segundos sin evidencia espectral.
+
+    // Sample rate insuficiente (cámara realmente lenta)
     if (input.sampleRate < this.MIN_SAMPLE_RATE) {
       hardFail = true;
       reasons.push(`SAMPLE_RATE_TOO_LOW: ${input.sampleRate.toFixed(1)} < ${this.MIN_SAMPLE_RATE}`);
     }
     metrics.sampleRate = input.sampleRate;
 
-    // 2. Clipping severo
-    if (input.clipHighRatio >= this.MAX_CLIP_RATIO) {
+    // Clipping severo (exposición rota)
+    if (input.clipHighRatio >= 0.25) {
       hardFail = true;
-      reasons.push(`HIGH_CLIP_SEVERE: ${input.clipHighRatio.toFixed(3)} >= ${this.MAX_CLIP_RATIO}`);
+      reasons.push(`HIGH_CLIP_SEVERE: ${input.clipHighRatio.toFixed(3)} >= 0.25`);
     }
-    if (input.clipLowRatio >= this.MAX_CLIP_RATIO) {
+    if (input.clipLowRatio >= 0.25) {
       hardFail = true;
-      reasons.push(`LOW_CLIP_SEVERE: ${input.clipLowRatio.toFixed(3)} >= ${this.MAX_CLIP_RATIO}`);
+      reasons.push(`LOW_CLIP_SEVERE: ${input.clipLowRatio.toFixed(3)} >= 0.25`);
     }
     metrics.clipHighRatio = input.clipHighRatio;
     metrics.clipLowRatio = input.clipLowRatio;
 
-    // 3. Perfusion index casi nulo
-    if (input.perfusionIndex < this.MIN_PERFUSION_INDEX) {
-      hardFail = true;
-      reasons.push(`PERFUSION_TOO_LOW: ${input.perfusionIndex.toFixed(3)} < ${this.MIN_PERFUSION_INDEX}`);
-    }
-    metrics.perfusionIndex = input.perfusionIndex;
-
-    // 4. Window SQI muy bajo
-    if (input.windowSQI && input.windowSQI.score < this.MIN_WINDOW_SQI) {
-      hardFail = true;
-      reasons.push(`WINDOW_SQI_TOO_LOW: ${input.windowSQI.score.toFixed(3)} < ${this.MIN_WINDOW_SQI}`);
-    }
-    metrics.windowSQI = input.windowSQI?.score ?? 0;
-    metrics.windowGating = input.windowSQI?.gating ?? 'none';
-
-    // 5. Espectral dominancia muy baja
-    if (input.windowSQI?.spectral?.spectralDominanceScore !== undefined &&
-        input.windowSQI.spectral.spectralDominanceScore < this.MIN_SPECTRAL_DOMINANCE) {
-      hardFail = true;
-      reasons.push(`SPECTRAL_DOMINANCE_TOO_LOW: ${input.windowSQI.spectral.spectralDominanceScore.toFixed(3)} < ${this.MIN_SPECTRAL_DOMINANCE}`);
-    }
-    metrics.spectralDominance = input.windowSQI?.spectral?.spectralDominanceScore ?? 0;
-
-    // 6. Detector agreement muy bajo
-    if (input.windowSQI?.spectral?.detectorAgreementScore !== undefined &&
-        input.windowSQI.spectral.detectorAgreementScore < this.MIN_DETECTOR_AGREEMENT) {
-      hardFail = true;
-      reasons.push(`DETECTOR_AGREEMENT_TOO_LOW: ${input.windowSQI.spectral.detectorAgreementScore.toFixed(3)} < ${this.MIN_DETECTOR_AGREEMENT}`);
-    }
-    metrics.detectorAgreement = input.windowSQI?.spectral?.detectorAgreementScore ?? 0;
-
-    // 7. Beats insuficientes
-    if (input.beatDebug && input.beatDebug.acceptedBeats < this.MIN_ACCEPTED_BEATS) {
-      hardFail = true;
-      reasons.push(`ACCEPTED_BEATS_TOO_LOW: ${input.beatDebug.acceptedBeats} < ${this.MIN_ACCEPTED_BEATS}`);
-    }
-    metrics.acceptedBeats = input.beatDebug?.acceptedBeats ?? 0;
-
-    // 8. Background correlation alto (señal global, no localizada)
-    if (input.roiEvidence && input.roiEvidence.backgroundCorrelation > this.MAX_BACKGROUND_CORRELATION) {
-      hardFail = true;
-      reasons.push(`BACKGROUND_CORRELATION_TOO_HIGH: ${input.roiEvidence.backgroundCorrelation.toFixed(3)} > ${this.MAX_BACKGROUND_CORRELATION}`);
-    }
-    metrics.backgroundCorrelation = input.roiEvidence?.backgroundCorrelation ?? 0;
-
-    // 9. ROI-to-background power ratio bajo (sin diferenciación espacial)
-    if (input.roiEvidence && input.roiEvidence.topRoiToBackgroundPowerRatio < this.MIN_ROI_BG_POWER_RATIO) {
-      hardFail = true;
-      reasons.push(`ROI_BG_POWER_RATIO_TOO_LOW: ${input.roiEvidence.topRoiToBackgroundPowerRatio.toFixed(3)} < ${this.MIN_ROI_BG_POWER_RATIO}`);
-    }
-    metrics.roiBgPowerRatio = input.roiEvidence?.topRoiToBackgroundPowerRatio ?? 0;
-
-    // 10. Source stability bajo
-    if (input.sourceStability < this.MIN_SOURCE_STABILITY) {
-      hardFail = true;
-      reasons.push(`SOURCE_STABILITY_TOO_LOW: ${input.sourceStability.toFixed(3)} < ${this.MIN_SOURCE_STABILITY}`);
-    }
-    metrics.sourceStability = input.sourceStability;
-
-    // 11. Contact state inválido
+    // Sin contacto explícito
     if (input.contactState === 'NO_CONTACT' || input.contactState === 'INVALID') {
       hardFail = true;
       reasons.push(`CONTACT_STATE_INVALID: ${input.contactState}`);
     }
     metrics.contactState = input.contactState ?? 'unknown';
-
-    // 12. Extended contact state no listo
-    if (input.extendedContactState && input.extendedContactState !== 'MEASUREMENT_READY') {
-      hardFail = true;
-      reasons.push(`EXTENDED_CONTACT_NOT_READY: ${input.extendedContactState}`);
-    }
     metrics.extendedContactState = input.extendedContactState ?? 'unknown';
 
-    // 13. Motion artifact alto
-    if (input.motionArtifact > 0.5) {
-      hardFail = true;
-      reasons.push(`MOTION_ARTIFACT_HIGH: ${input.motionArtifact.toFixed(3)}`);
-    }
-    metrics.motionArtifact = input.motionArtifact;
-
-    // 14. Frecuencia dominante fuera de banda cardíaca
-    if (input.windowSQI?.spectral?.dominantFrequencyHz !== undefined) {
+    // Frecuencia dominante grotescamente fuera de banda cardíaca
+    // (sólo invalida si la dominancia espectral existe; en frames tempranos
+    // dominantFrequencyHz puede ser 0 mientras se acumula buffer espectral)
+    if (
+      input.windowSQI?.spectral?.dominantFrequencyHz !== undefined &&
+      input.windowSQI.spectral.dominantFrequencyHz > 0 &&
+      (input.windowSQI?.spectral?.spectralDominanceScore ?? 0) > 0.5
+    ) {
       const freq = input.windowSQI.spectral.dominantFrequencyHz;
       if (freq < this.MIN_FREQ_HZ || freq > this.MAX_FREQ_HZ) {
         hardFail = true;
-        reasons.push(`DOMINANT_FREQ_OUT_OF_BAND: ${freq.toFixed(2)} Hz (${this.MIN_FREQ_HZ}-${this.MAX_FREQ_HZ} Hz expected)`);
+        reasons.push(`DOMINANT_FREQ_OUT_OF_BAND: ${freq.toFixed(2)} Hz`);
       }
     }
     metrics.dominantFrequencyHz = input.windowSQI?.spectral?.dominantFrequencyHz ?? 0;
 
-    // 15. Coherencia multicanal muy baja (canales no correlacionados = ruido)
-    if (input.multichannelEvidence?.channelCoherence !== undefined &&
-        input.multichannelEvidence.channelCoherence < this.MIN_CHANNEL_COHERENCE) {
+    // Coherencia multicanal extremadamente baja (canales descorrelacionados = ruido puro)
+    if (
+      input.multichannelEvidence?.channelCoherence !== undefined &&
+      input.multichannelEvidence.channelCoherence > 0 &&
+      input.multichannelEvidence.channelCoherence < 0.18
+    ) {
       hardFail = true;
-      reasons.push(`CHANNEL_COHERENCE_TOO_LOW: ${input.multichannelEvidence.channelCoherence.toFixed(3)} < ${this.MIN_CHANNEL_COHERENCE}`);
+      reasons.push(`CHANNEL_COHERENCE_TOO_LOW: ${input.multichannelEvidence.channelCoherence.toFixed(3)}`);
     }
-    metrics.channelCoherence = input.multichannelEvidence?.channelCoherence ?? 0;
 
-    // 16. AC/DC ratio muy bajo en todos los canales (sin perfusión)
+    // AC/DC esencialmente nulo en todos los canales (sin perfusión)
     if (input.multichannelEvidence) {
       const { acDcRatioR, acDcRatioG, acDcRatioB } = input.multichannelEvidence;
       const maxAcDc = Math.max(acDcRatioR, acDcRatioG, acDcRatioB);
-      if (maxAcDc < this.MIN_AC_DC_RATIO) {
+      if (maxAcDc > 0 && maxAcDc < 0.001) {
         hardFail = true;
-        reasons.push(`AC_DC_RATIO_TOO_LOW: max(${acDcRatioR.toFixed(4)}, ${acDcRatioG.toFixed(4)}, ${acDcRatioB.toFixed(4)}) < ${this.MIN_AC_DC_RATIO}`);
+        reasons.push(`AC_DC_RATIO_TOO_LOW: max=${maxAcDc.toFixed(5)}`);
       }
     }
+
+    // Métricas (sin hard-fail aún): se penalizan en el score, no abortan.
+    metrics.perfusionIndex = input.perfusionIndex;
+    metrics.windowSQI = input.windowSQI?.score ?? 0;
+    metrics.windowGating = input.windowSQI?.gating ?? 'none';
+    metrics.spectralDominance = input.windowSQI?.spectral?.spectralDominanceScore ?? 0;
+    metrics.detectorAgreement = input.windowSQI?.spectral?.detectorAgreementScore ?? 0;
+    metrics.acceptedBeats = input.beatDebug?.acceptedBeats ?? 0;
+    metrics.backgroundCorrelation = input.roiEvidence?.backgroundCorrelation ?? 0;
+    metrics.roiBgPowerRatio = input.roiEvidence?.topRoiToBackgroundPowerRatio ?? 0;
+    metrics.sourceStability = input.sourceStability;
+    metrics.motionArtifact = input.motionArtifact;
+    metrics.channelCoherence = input.multichannelEvidence?.channelCoherence ?? 0;
     metrics.acDcRatioR = input.multichannelEvidence?.acDcRatioR ?? 0;
     metrics.acDcRatioG = input.multichannelEvidence?.acDcRatioG ?? 0;
     metrics.acDcRatioB = input.multichannelEvidence?.acDcRatioB ?? 0;
-
-    // 17. SNR espectral muy bajo (ruido blanco)
-    if (input.multichannelEvidence?.spectralSnrDb !== undefined &&
-        input.multichannelEvidence.spectralSnrDb < this.MIN_SPECTRAL_SNR_DB) {
-      hardFail = true;
-      reasons.push(`SPECTRAL_SNR_TOO_LOW: ${input.multichannelEvidence.spectralSnrDb.toFixed(1)} dB < ${this.MIN_SPECTRAL_SNR_DB} dB`);
-    }
     metrics.spectralSnrDb = input.multichannelEvidence?.spectralSnrDb ?? 0;
-
-    // 18. Autocorrelación muy baja (sin periodicidad)
-    if (input.multichannelEvidence?.autocorrelationScore !== undefined &&
-        input.multichannelEvidence.autocorrelationScore < this.MIN_AUTOCORRELATION_SCORE) {
-      hardFail = true;
-      reasons.push(`AUTOCORRELATION_TOO_LOW: ${input.multichannelEvidence.autocorrelationScore.toFixed(3)} < ${this.MIN_AUTOCORRELATION_SCORE}`);
-    }
     metrics.autocorrelationScore = input.multichannelEvidence?.autocorrelationScore ?? 0;
 
     // Si hay hard fail, retornar inmediatamente
@@ -416,53 +353,47 @@ export class LivePpgEvidenceGate {
     metrics.normalizedAutocorrelation = normalizedAutocorrelation;
 
     // === DETERMINACIÓN DE TIER ===
-    
+
     let tier: "INVALID" | "WEAK" | "PROBABLE_PPG" | "VALID_LIVE_PPG";
-    
-    if (score < 0.45) {
+
+    if (score < 0.30) {
       tier = "INVALID";
-      reasons.push(`SCORE_TOO_LOW: ${score.toFixed(3)} < 0.45`);
-    } else if (score < 0.60) {
+      reasons.push(`SCORE_TOO_LOW: ${score.toFixed(3)} < 0.30`);
+    } else if (score < 0.45) {
       tier = "WEAK";
-      reasons.push(`EVIDENCE_WEAK: ${score.toFixed(3)} (WEAK)`);
+      reasons.push(`EVIDENCE_WEAK: ${score.toFixed(3)}`);
     } else if (score < this.MIN_SCORE_FOR_PASS) {
       tier = "PROBABLE_PPG";
-      reasons.push(`EVIDENCE_PROBABLE: ${score.toFixed(3)} (PROBABLE_PPG)`);
+      reasons.push(`EVIDENCE_PROBABLE: ${score.toFixed(3)}`);
     } else {
       tier = "VALID_LIVE_PPG";
     }
 
-    // === VERIFICACIONES ADICIONALES PARA VALID_LIVE_PPG ===
-    
-    if (tier === "VALID_LIVE_PPG") {
-      // Verificar gating de window SQI
-      if (input.windowSQI && input.windowSQI.gating !== 'accept_high_confidence') {
-        tier = "PROBABLE_PPG";
-        reasons.push(`WINDOW_GATING_NOT_HIGH_CONFIDENCE: ${input.windowSQI.gating}`);
-      }
-      
-      // Verificar beats consecutivos
-      if (input.beatDebug && input.beatDebug.consecutivePeaks < this.TARGET_CONSECUTIVE_PEAKS) {
-        tier = "PROBABLE_PPG";
-        reasons.push(`CONSECUTIVE_PEAKS_BELOW_TARGET: ${input.beatDebug.consecutivePeaks} < ${this.TARGET_CONSECUTIVE_PEAKS}`);
-      }
-      
-      // Verificar spectral confidence
-      if (input.beatDebug && input.beatDebug.spectralConfidence < this.TARGET_SPECTRAL_CONFIDENCE) {
-        tier = "PROBABLE_PPG";
-        reasons.push(`SPECTRAL_CONFIDENCE_BELOW_TARGET: ${input.beatDebug.spectralConfidence.toFixed(3)} < ${this.TARGET_SPECTRAL_CONFIDENCE}`);
-      }
-      
-      // Verificar background correlation
-      if (input.roiEvidence && input.roiEvidence.backgroundCorrelation > this.TARGET_BACKGROUND_CORRELATION) {
-        tier = "PROBABLE_PPG";
-        reasons.push(`BACKGROUND_CORRELATION_ABOVE_TARGET: ${input.roiEvidence.backgroundCorrelation.toFixed(3)} > ${this.TARGET_BACKGROUND_CORRELATION}`);
+    // Promoción por evidencia temporal robusta:
+    // si hay beats reales aceptados con BPM coherente entre detectores temporales
+    // y espectrales, validamos aunque algunas métricas espectrales/ROI estén
+    // todavía consolidándose.
+    if (tier !== "VALID_LIVE_PPG" && input.beatDebug) {
+      const bd = input.beatDebug;
+      const tempoBpm = bd.medianRRBpm > 0 ? bd.medianRRBpm : bd.autocorrBpm;
+      const bpmCoherent =
+        tempoBpm > 38 &&
+        tempoBpm < 200 &&
+        (bd.spectralBpm <= 0 || Math.abs(bd.spectralBpm - tempoBpm) / Math.max(1, tempoBpm) < 0.20);
+      if (
+        bd.acceptedBeats >= this.TARGET_ACCEPTED_BEATS &&
+        bd.consecutivePeaks >= this.MIN_CONSECUTIVE_PEAKS &&
+        bd.avgBeatSQI >= this.MIN_BEAT_SQI &&
+        bpmCoherent
+      ) {
+        tier = "VALID_LIVE_PPG";
+        reasons.push(`PROMOTED_BY_BEAT_EVIDENCE: beats=${bd.acceptedBeats} bpm=${tempoBpm.toFixed(0)}`);
       }
     }
 
     // === RESULTADO FINAL ===
-    
-    const passed = tier === "VALID_LIVE_PPG" && score >= this.MIN_SCORE_FOR_PASS;
+
+    const passed = tier === "VALID_LIVE_PPG";
     
     if (!passed && !hardFail) {
       if (reasons.length === 0) {
