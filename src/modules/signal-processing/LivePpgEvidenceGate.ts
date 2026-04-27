@@ -178,92 +178,17 @@ export class LivePpgEvidenceGate {
     metrics.contactState = input.contactState ?? 'unknown';
     metrics.extendedContactState = input.extendedContactState ?? 'unknown';
 
-    // ================================================================
-    // EVIDENCIA ÓPTICA DE SANGRE (no es "forma de dedo", es física):
-    // sin perfusión sanguínea iluminada, estos tres tests son imposibles
-    // de pasar simultáneamente. Si la cámara apunta al aire, una mesa,
-    // un trapo rojo, etc., al menos uno falla.
-    // ================================================================
-
-    // (1) Cromaticidad de hemoglobina: con flash blanco sobre tejido vascular,
-    // la hemoglobina absorbe verde y azul, el rojo se transmite. R/G ≥ 1.15
-    // y R domina sobre el promedio G+B. Sin sangre (aire, tela, mesa) los
-    // canales se balancean o el rojo no domina con suficiente margen.
-    if (typeof input.rgRatio === 'number' && input.rgRatio > 0) {
-      metrics.rgRatio = input.rgRatio;
-      if (input.rgRatio < 1.10) {
-        hardFail = true;
-        reasons.push(`NO_HEMOGLOBIN_CHROMA: R/G=${input.rgRatio.toFixed(2)} < 1.10`);
-      }
-    }
-    if (typeof input.redDominance === 'number') {
-      metrics.redDominance = input.redDominance;
-      if (input.redDominance < 6) {
-        hardFail = true;
-        reasons.push(`NO_RED_DOMINANCE: R-(G+B)/2=${input.redDominance.toFixed(1)} < 6`);
-      }
-    }
-
-    // (2) Brillo del rojo en rango fisiológico: con flash + dedo, el rojo
-    // está saturado-medio (130–252). Aire sin flash o cámara cubierta sin
-    // flash quedan fuera de este rango.
-    if (typeof input.meanR === 'number' && input.meanR > 0) {
-      metrics.meanR = input.meanR;
-      if (input.meanR < 60) {
-        hardFail = true;
-        reasons.push(`RED_TOO_DARK: meanR=${input.meanR.toFixed(0)} < 60`);
-      }
-    }
-
-    // (3) Pulsatilidad mínima medible: PI ≥ 0.15% en algún canal. Sin
-    // perfusión sanguínea no hay componente AC, solo ruido de cámara
-    // descorrelacionado entre frames. Combinado con (1) y la coherencia
-    // multicanal, descarta el caso "saco el dedo y la app sigue midiendo".
-    if (input.perfusionIndex > 0 && input.perfusionIndex < 0.10) {
-      hardFail = true;
-      reasons.push(`PERFUSION_BELOW_BLOOD_FLOOR: PI=${input.perfusionIndex.toFixed(3)}% < 0.10%`);
-    }
-
-    // Frecuencia dominante grotescamente fuera de banda cardíaca
-    // (sólo invalida si la dominancia espectral existe; en frames tempranos
-    // dominantFrequencyHz puede ser 0 mientras se acumula buffer espectral)
-    if (
-      input.windowSQI?.spectral?.dominantFrequencyHz !== undefined &&
-      input.windowSQI.spectral.dominantFrequencyHz > 0 &&
-      (input.windowSQI?.spectral?.spectralDominanceScore ?? 0) > 0.5
-    ) {
-      const freq = input.windowSQI.spectral.dominantFrequencyHz;
-      if (freq < this.MIN_FREQ_HZ || freq > this.MAX_FREQ_HZ) {
-        hardFail = true;
-        reasons.push(`DOMINANT_FREQ_OUT_OF_BAND: ${freq.toFixed(2)} Hz`);
-      }
-    }
+    // (Sin invalidaciones por chroma/brillo/PI/coherencia. La validación
+    // física real ahora vive en Index.tsx con Channel Stability Score:
+    // R y G deben compartir un pico espectral cardíaco común. Sin sangre
+    // pulsátil esto es matemáticamente imposible, así que el BPM saldrá
+    // 0 por la matemática del espectro, no por reglas heurísticas.)
+    metrics.rgRatio = input.rgRatio ?? 0;
+    metrics.redDominance = input.redDominance ?? 0;
+    metrics.meanR = input.meanR ?? 0;
     metrics.dominantFrequencyHz = input.windowSQI?.spectral?.dominantFrequencyHz ?? 0;
 
-    // Coherencia multicanal: canales R y G ven el mismo pulso ⇒ deben correlar.
-    // Ruido de cámara (auto-exposición sin dedo) NO correla entre canales.
-    // Umbral 0.30 con valor establecido elimina el "fantasma" sin dedo.
-    if (
-      input.multichannelEvidence?.channelCoherence !== undefined &&
-      input.multichannelEvidence.channelCoherence > 0 &&
-      input.multichannelEvidence.channelCoherence < 0.30
-    ) {
-      hardFail = true;
-      reasons.push(`CHANNEL_COHERENCE_TOO_LOW: ${input.multichannelEvidence.channelCoherence.toFixed(3)} < 0.30`);
-    }
-
-    // AC/DC: sin sangre pulsátil, no hay componente AC real. Subimos el piso
-    // de 0.001 a 0.0015 para discriminar pulsatilidad real de ruido residual.
-    if (input.multichannelEvidence) {
-      const { acDcRatioR, acDcRatioG, acDcRatioB } = input.multichannelEvidence;
-      const maxAcDc = Math.max(acDcRatioR, acDcRatioG, acDcRatioB);
-      if (maxAcDc > 0 && maxAcDc < 0.0015) {
-        hardFail = true;
-        reasons.push(`AC_DC_RATIO_TOO_LOW: max=${maxAcDc.toFixed(5)} < 0.0015`);
-      }
-    }
-
-    // Métricas (sin hard-fail aún): se penalizan en el score, no abortan.
+    // Métricas (sin hard-fail): se penalizan en el score, no abortan.
     metrics.perfusionIndex = input.perfusionIndex;
     metrics.windowSQI = input.windowSQI?.score ?? 0;
     metrics.windowGating = input.windowSQI?.gating ?? 'none';

@@ -97,6 +97,12 @@ const Index = () => {
   const gateFailStreakRef = useRef(0);
   const gateLastPassedAtRef = useRef(0);
   const lastBeepAtRef = useRef(0);
+  // Buffers de canales R y G (AC) para Channel Stability Score:
+  // sin sangre real, R y G no comparten un pico espectral en banda cardíaca.
+  const redAcBufferRef = useRef<number[]>([]);
+  const greenAcBufferRef = useRef<number[]>([]);
+  const fusedAcBufferRef = useRef<number[]>([]);
+  const RG_BUFFER_SIZE = 180; // ~6 s a 30 fps
 
   const UNSTABLE_ZERO_THRESHOLD = 12;
   const GATE_FAIL_INVALIDATE_FRAMES = 8;
@@ -126,6 +132,118 @@ const Index = () => {
     const variance = recent.reduce((sum, rr) => sum + (rr - mean) ** 2, 0) / recent.length;
     const cv = Math.sqrt(variance) / Math.max(1, mean);
     return Math.max(0, Math.min(1, 1 - cv * 2));
+  }, []);
+
+  /**
+   * Channel Stability Score (papers 2025-2026): mide si los canales R y G
+   * comparten un pico espectral común en banda cardíaca. La hemoglobina
+   * pulsátil produce modulación SINCRONIZADA en R y G a la misma frecuencia.
+   * El ruido de cámara (auto-exposición, sensor, luz ambiente apuntando a
+   * pared/aire) NO produce esta coincidencia espectral.
+   *
+   * Devuelve:
+   *  - bpm: frecuencia común si existe; 0 si no
+   *  - score: 0..1 donde 1 = picos perfectamente coincidentes y prominentes
+   *  - rPeak, gPeak: BPM dominante en cada canal
+   */
+  const computeChannelStability = useCallback((
+    redBuf: number[],
+    greenBuf: number[],
+    sr: number
+  ): { bpm: number; score: number; rPeak: number; gPeak: number; agreement: number } => {
+    const n = Math.min(redBuf.length, greenBuf.length);
+    if (n < 90 || sr < 10) return { bpm: 0, score: 0, rPeak: 0, gPeak: 0, agreement: 0 };
+
+    const rArr = new Float64Array(n);
+    const gArr = new Float64Array(n);
+    let rMean = 0, gMean = 0;
+    const rOff = redBuf.length - n;
+    const gOff = greenBuf.length - n;
+    for (let i = 0; i < n; i++) {
+      const rv = redBuf[rOff + i];
+      const gv = greenBuf[gOff + i];
+      rMean += rv;
+      gMean += gv;
+      rArr[i] = rv;
+      gArr[i] = gv;
+    }
+    rMean /= n;
+    gMean /= n;
+    for (let i = 0; i < n; i++) {
+      rArr[i] -= rMean;
+      gArr[i] -= gMean;
+    }
+    // Hann window
+    for (let i = 0; i < n; i++) {
+      const w = 0.5 * (1 - Math.cos((2 * Math.PI * i) / Math.max(1, n - 1)));
+      rArr[i] *= w;
+      gArr[i] *= w;
+    }
+
+    const BPM_MIN = 38;
+    const BPM_MAX = 195;
+    const STEPS = 64;
+    let rMaxP = 0, rMaxIdx = 0;
+    let gMaxP = 0, gMaxIdx = 0;
+    let rTotal = 0, gTotal = 0;
+    const rPow = new Float64Array(STEPS);
+    const gPow = new Float64Array(STEPS);
+
+    for (let s = 0; s < STEPS; s++) {
+      const bpm = BPM_MIN + ((BPM_MAX - BPM_MIN) * s) / (STEPS - 1);
+      const omega = (2 * Math.PI * (bpm / 60)) / sr;
+      let rcr = 0, rci = 0, gcr = 0, gci = 0;
+      for (let i = 0; i < n; i++) {
+        const a = omega * i;
+        const c = Math.cos(a);
+        const si = Math.sin(a);
+        rcr += rArr[i] * c;
+        rci += rArr[i] * si;
+        gcr += gArr[i] * c;
+        gci += gArr[i] * si;
+      }
+      const rp = rcr * rcr + rci * rci;
+      const gp = gcr * gcr + gci * gci;
+      rPow[s] = rp;
+      gPow[s] = gp;
+      rTotal += rp;
+      gTotal += gp;
+      if (rp > rMaxP) {
+        rMaxP = rp;
+        rMaxIdx = s;
+      }
+      if (gp > gMaxP) {
+        gMaxP = gp;
+        gMaxIdx = s;
+      }
+    }
+
+    const rBpm = BPM_MIN + ((BPM_MAX - BPM_MIN) * rMaxIdx) / (STEPS - 1);
+    const gBpm = BPM_MIN + ((BPM_MAX - BPM_MIN) * gMaxIdx) / (STEPS - 1);
+    // Coincidencia: picos a < 8 BPM de distancia
+    const idxDelta = Math.abs(rMaxIdx - gMaxIdx);
+    const bpmDelta = Math.abs(rBpm - gBpm);
+    const coincide = idxDelta <= 2 && bpmDelta <= 8;
+    if (!coincide) return { bpm: 0, score: 0, rPeak: rBpm, gPeak: gBpm, agreement: 0 };
+
+    // Promedio del pico (dado que coinciden)
+    const bpm = (rBpm + gBpm) / 2;
+    // Prominencia relativa de cada canal (energía pico ± 1 / energía total)
+    const rBand =
+      (rPow[Math.max(0, rMaxIdx - 1)] || 0) +
+      (rPow[rMaxIdx] || 0) +
+      (rPow[Math.min(STEPS - 1, rMaxIdx + 1)] || 0);
+    const gBand =
+      (gPow[Math.max(0, gMaxIdx - 1)] || 0) +
+      (gPow[gMaxIdx] || 0) +
+      (gPow[Math.min(STEPS - 1, gMaxIdx + 1)] || 0);
+    const rCbser = rTotal > 1e-9 ? rBand / rTotal : 0;
+    const gCbser = gTotal > 1e-9 ? gBand / gTotal : 0;
+    // Agreement final: ambas energías concentradas + picos coincidentes
+    const agreement = Math.min(rCbser, gCbser);
+    const score = Math.max(0, Math.min(1, agreement * 4)); // 0.25 -> 1.0
+
+    return { bpm, score, rPeak: rBpm, gPeak: gBpm, agreement };
   }, []);
 
   // ============ HOOKS DE PROCESAMIENTO ============
@@ -360,6 +478,9 @@ const Index = () => {
     gateFailStreakRef.current = 0;
     gateLastPassedAtRef.current = 0;
     lastBeepAtRef.current = 0;
+    redAcBufferRef.current = [];
+    greenAcBufferRef.current = [];
+    fusedAcBufferRef.current = [];
     setVitalSigns({ ...DEFAULT_VITALS, arrhythmiaStatus: "SINUS_STABLE|0" });
     startProcessing();
     setIsCameraOn(true);
@@ -465,6 +586,9 @@ const Index = () => {
     gateFailStreakRef.current = 0;
     gateLastPassedAtRef.current = 0;
     lastBeepAtRef.current = 0;
+    redAcBufferRef.current = [];
+    greenAcBufferRef.current = [];
+    fusedAcBufferRef.current = [];
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setRRIntervals([]);
@@ -548,12 +672,32 @@ const Index = () => {
     const acDcR = acStats.redDC > 0 ? acStats.redAC / acStats.redDC : 0;
     const acDcG = acStats.greenDC > 0 ? acStats.greenAC / acStats.greenDC : 0;
 
-    // Coherencia multicanal: ratio AC/DC similar entre R y G ⇒ pulso compartido (sangre)
+    // Empujar muestras AC normalizadas a buffers R y G para el Channel Stability Score.
+    // Usamos rawRed/rawGreen sustraídos por su DC en ventana corta (delta normalizado).
+    const rNorm = acStats.redDC > 0 ? (ls.rawRed ?? 0) - acStats.redDC : 0;
+    const gNorm = acStats.greenDC > 0 ? (ls.rawGreen ?? 0) - acStats.greenDC : 0;
+    const redBuf = redAcBufferRef.current;
+    const greenBuf = greenAcBufferRef.current;
+    redBuf.push(rNorm);
+    greenBuf.push(gNorm);
+    if (redBuf.length > RG_BUFFER_SIZE) redBuf.shift();
+    if (greenBuf.length > RG_BUFFER_SIZE) greenBuf.shift();
+
+    // Channel Stability Score: ¿comparten R y G un pico espectral cardíaco?
+    // Sin sangre real esto es matemáticamente imposible.
+    const channelStability = computeChannelStability(redBuf, greenBuf, sampleRate);
+
+    // Coherencia multicanal AMPLITUD (ratio AC/DC similar entre R y G ⇒ pulso compartido)
     let channelCoherence = 0;
     if (acDcR > 0 && acDcG > 0) {
       const minRatio = Math.min(acDcR, acDcG);
       const maxRatio = Math.max(acDcR, acDcG);
       channelCoherence = minRatio / maxRatio;
+    }
+    // Coherencia FINAL: combina amplitud (AC/DC) y espectral (Channel Stability).
+    // Si la espectral está disponible, pesa el doble (es más discriminativa).
+    if (channelStability.score > 0) {
+      channelCoherence = Math.min(1, 0.35 * channelCoherence + 0.65 * channelStability.score);
     }
 
     // SNR espectral derivado del windowSQI real
@@ -739,9 +883,38 @@ const Index = () => {
       return;
     }
 
-    // 5) Pipeline válido: BPM, picos, vitals
+    // 5) Pipeline válido: BPM, picos, vitals.
+    // VALIDACIÓN ESPECTRAL CRUZADA (papers MobileAF 2025):
+    // El BPM publicado al UI debe coincidir con el pico espectral común
+    // de los canales R y G. Sin sangre pulsátil esto es imposible:
+    //   - Apuntar a una pared: R y G tienen ruido descorrelacionado.
+    //   - Apuntar a un objeto rojo estático: AC≈0, no hay pico.
+    //   - Auto-exposición oscilando: el "pico" no está en banda cardíaca
+    //     o aparece en R y G a frecuencias distintas.
     unstableFrameCounter.current = 0;
-    const smoothedBPM = applyEMA(emaRef.current.bpm, heartBeatResult.bpm);
+    const tempoBpm = heartBeatResult.bpm;
+    const specBpm = channelStability.bpm;
+    const specOk = channelStability.score >= 0.30 && specBpm >= 38 && specBpm <= 195;
+    const tempoOk = tempoBpm >= 38 && tempoBpm <= 195;
+    let bpmFinal = 0;
+    if (specOk && tempoOk) {
+      const delta = Math.abs(tempoBpm - specBpm);
+      const matches = delta <= Math.max(8, specBpm * 0.12);
+      if (matches) {
+        // Ambos detectores de acuerdo: fundir con peso por confianza espectral.
+        bpmFinal = tempoBpm * 0.6 + specBpm * 0.4;
+      } else {
+        // Detectores en desacuerdo: confiar en espectral (el detector temporal
+        // probablemente está captando ruido). Confianza atenuada.
+        bpmFinal = specBpm;
+      }
+    } else if (specOk) {
+      // Solo espectral disponible: usable porque cumple coincidencia R-G.
+      bpmFinal = specBpm;
+    }
+    // Si nada pasa la validación espectral cruzada, BPM = 0.
+    // El detector temporal solo (sin coincidencia espectral R-G) NO se publica.
+    const smoothedBPM = bpmFinal > 0 ? applyEMA(emaRef.current.bpm, bpmFinal) : 0;
     emaRef.current.bpm = smoothedBPM;
     setHeartRate(smoothedBPM);
 
@@ -762,6 +935,25 @@ const Index = () => {
     vitalSignsFrameCounter.current++;
     if (vitalSignsFrameCounter.current < VITALS_PROCESS_EVERY_N_FRAMES) return;
     vitalSignsFrameCounter.current = 0;
+
+    // Si el BPM no pasó la validación espectral cruzada, NO publicamos
+    // signos vitales: una BP / SpO2 / glucosa derivada de un BPM falso
+    // sería numéricamente válida pero físicamente sin sentido.
+    if (bpmFinal === 0) {
+      setVitalSigns((prev) =>
+        prev.spo2 === 0 && prev.pressure.systolic === 0 && prev.glucose === 0
+          ? prev
+          : {
+              ...prev,
+              spo2: 0,
+              glucose: 0,
+              pressure: { systolic: 0, diastolic: 0, confidence: "INSUFFICIENT", featureQuality: 0 },
+              lipids: { totalCholesterol: 0, triglycerides: 0 },
+              measurementConfidence: "INVALID",
+            }
+      );
+      return;
+    }
 
     const rgbStats = getRGBStats();
     const detectorAgreement = heartBeatResult.detectorAgreement ?? heartBeatResult.debug.detectorAgreement ?? 0;

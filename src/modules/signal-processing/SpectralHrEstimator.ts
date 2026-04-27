@@ -56,10 +56,25 @@ export function estimateHrNarrowbank(
     }
   }
 
+  // Q-factor real del pico: prominencia relativa al espectro completo,
+  // no solo a la mediana. La diferencia es crítica con ruido cuasi-blanco.
+  let totalP = 0;
+  for (let i = 0; i < STEPS; i++) totalP += powers[i];
+  const meanP = totalP / STEPS;
   const sorted = Float64Array.from(powers);
   sorted.sort();
   const med = sorted[Math.floor(STEPS / 2)] || 1e-9;
-  const ratio = maxP / (med * STEPS * 0.25 + 1e-9);
+  // Cardiac Band Spectrum Energy Ratio (MobileAF 2025): energía del pico
+  // ± 1 bin sobre energía total de la banda cardíaca.
+  const peakBandEnergy =
+    (powers[Math.max(0, maxIdx - 1)] || 0) +
+    (powers[maxIdx] || 0) +
+    (powers[Math.min(STEPS - 1, maxIdx + 1)] || 0);
+  const cbser = totalP > 1e-9 ? peakBandEnergy / totalP : 0;
+  // Q-factor estricto: pico vs mediana (descarta espectros planos).
+  const qFactor = maxP / (med + 1e-9);
+  // Pico vs media (descarta picos en ruido espectralmente plano).
+  const peakOverMean = maxP / (meanP + 1e-9);
   const peakBpm = BPM_MIN + ((BPM_MAX - BPM_MIN) * maxIdx) / (STEPS - 1);
 
   let harm = 0;
@@ -77,11 +92,30 @@ export function estimateHrNarrowbank(
     harm = (cr * cr + ci * ci) / (maxP + 1e-9);
   }
 
-  const conf = Math.max(0, Math.min(1, (ratio - 1.2) / 4.5 + (harm > 0.12 && harm < 0.95 ? 0.12 : 0)));
+  // Aceptación estricta: el pico debe destacar fuertemente sobre el resto
+  // del espectro. Un espectro plano (ruido de cámara, pared, papel) NO
+  // pasa qFactor>4 ni cbser>0.18 ni peakOverMean>3.5 simultáneamente.
+  const validPeak =
+    qFactor > 4.0 &&
+    cbser > 0.18 &&
+    peakOverMean > 3.5;
+
+  const conf = !validPeak
+    ? 0
+    : Math.max(
+        0,
+        Math.min(
+          1,
+          // Pondera Q, energía relativa y armónica fisiológica
+          0.45 * Math.min(1, (qFactor - 4) / 8) +
+            0.35 * Math.min(1, (cbser - 0.18) / 0.25) +
+            0.20 * (harm > 0.10 && harm < 0.90 ? 1 : 0)
+        )
+      );
 
   return {
-    bpm: ratio > 1.05 ? peakBpm : 0,
+    bpm: validPeak ? peakBpm : 0,
     confidence: conf,
-    peakRatio: Math.min(20, ratio),
+    peakRatio: Math.min(20, qFactor),
   };
 }
