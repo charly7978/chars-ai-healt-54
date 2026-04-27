@@ -98,8 +98,8 @@ const Index = () => {
   const gateLastPassedAtRef = useRef(0);
   const lastBeepAtRef = useRef(0);
 
-  const UNSTABLE_ZERO_THRESHOLD = 30;
-  const GATE_FAIL_INVALIDATE_FRAMES = 18;
+  const UNSTABLE_ZERO_THRESHOLD = 12;
+  const GATE_FAIL_INVALIDATE_FRAMES = 8;
   const VITALS_PROCESS_EVERY_N_FRAMES = 3;
 
   // Suavizado EMA para valores publicados a UI
@@ -581,6 +581,16 @@ const Index = () => {
     );
 
     // 3) Evaluar gate de evidencia PPG
+    // Cromaticidad de hemoglobina y dominancia roja calculadas desde
+    // los promedios RGB del frame: con flash y sangre el rojo domina por
+    // la absorción selectiva de hemoglobina sobre verde/azul.
+    const meanRcurr = ls.rawRed ?? 0;
+    const meanGcurr = ls.rawGreen ?? 0;
+    // El procesador no expone meanB; estimamos dominancia con R/G y la
+    // diferencia R - G (G es proxy del nivel residual sin hemoglobina).
+    const rgRatioCurr = meanGcurr > 1 ? meanRcurr / meanGcurr : 0;
+    const redDomCurr = meanRcurr - meanGcurr;
+
     const evidenceInput: LivePpgEvidenceInput = {
       timestamp: ls.timestamp,
       sampleRate,
@@ -594,6 +604,9 @@ const Index = () => {
         typeof ls.motionArtifact === "boolean" ? (ls.motionArtifact ? 1 : 0) : (ls.motionArtifact as unknown as number) ?? 0,
       sourceStability,
       pressureState: ppgPressure,
+      rgRatio: rgRatioCurr,
+      redDominance: redDomCurr,
+      meanR: meanRcurr,
       windowSQI: win,
       beatDebug: {
         acceptedBeats: heartBeatResult.debug?.beatsAccepted ?? 0,

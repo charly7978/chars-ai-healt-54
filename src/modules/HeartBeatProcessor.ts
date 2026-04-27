@@ -39,6 +39,11 @@ export class HeartBeatProcessor {
   // FAIL-CLOSED: Evidencia PPG obligatoria para publicar BPM
   private livePpgEvidencePassed = false;
   private lastContactState = '';
+  // Streak de frames sin evidencia viva: tras cierto umbral, hard-reset
+  // del estado interno (latidos acumulados, RR, smoothBPM). Evita que la
+  // app siga "midiendo" tras retirar el dedo.
+  private invalidEvidenceStreak = 0;
+  private readonly INVALID_EVIDENCE_HARD_RESET = 30;
 
   private lastPeakTime = 0;
   private lastPeakValue = 0;
@@ -114,7 +119,30 @@ export class HeartBeatProcessor {
       
       // FAIL-CLOSED: Rastrear evidencia PPG
       if (typeof upstreamContext.livePpgEvidencePassed === 'boolean') {
+        const prev = this.livePpgEvidencePassed;
         this.livePpgEvidencePassed = upstreamContext.livePpgEvidencePassed;
+        if (this.livePpgEvidencePassed) {
+          this.invalidEvidenceStreak = 0;
+        } else {
+          this.invalidEvidenceStreak++;
+          // Tras INVALID_EVIDENCE_HARD_RESET frames sin evidencia (~1 s a 30 fps),
+          // resetear todo el estado interno. Esto garantiza que retirar el dedo
+          // ⇒ inmediatamente se borran latidos y BPM, no se "arrastran".
+          if (this.invalidEvidenceStreak >= this.INVALID_EVIDENCE_HARD_RESET) {
+            this.hardReset();
+            this.invalidEvidenceStreak = 0;
+          } else if (prev && !this.livePpgEvidencePassed) {
+            // Borrar latidos antiguos sin tocar buffers de señal: BPM cae
+            // a 0 inmediatamente, pero la onda sigue computándose para
+            // que el operador vea qué entra a la cámara.
+            this.acceptedBeats = [];
+            this.consecutivePeaks = 0;
+            this.smoothBPM = 0;
+            this.medianRRBPM = 0;
+            this.autocorrBPM = 0;
+            this.rrIntervals = [];
+          }
+        }
       }
       
       // FAIL-CLOSED: Hard reset si contactState cambia a inválido
@@ -240,9 +268,11 @@ export class HeartBeatProcessor {
     const globalSQI = this.computeGlobalSQI();
     
     // Verificaciones mínimas: aplicación forense, sujetos posiblemente con
-    // perfusión muy baja. Solo exigimos 2 latidos consistentes para emitir
-    // un BPM provisional, suficiente para el operador.
+    // perfusión muy baja. Pero SIEMPRE se requiere evidencia PPG viva
+    // confirmada por el gate externo (cromaticidad de hemoglobina,
+    // pulsatilidad medible, coherencia multicanal). Sin ella, no hay BPM.
     const meetsMinimumEvidence =
+      this.livePpgEvidencePassed &&
       this.beatsAccepted >= 2 &&
       this.consecutivePeaks >= 2 &&
       this.getAvgBeatSQI() >= 22 &&
@@ -817,6 +847,15 @@ export class HeartBeatProcessor {
     this.acceptedBeats = [];
     this.lastPeakTime = 0;
     this.livePpgEvidencePassed = false;
+    this.invalidEvidenceStreak = 0;
+    // Limpiar también buffers de señal para que el detector no quede
+    // contaminado con muestras del frame anterior (sin dedo).
+    this.signalBuf.clear();
+    this.derivBuf.clear();
+    this.slopeSum.clear();
+    this.timestampBuf.clear();
+    this.templateValid = false;
+    this.templateLen = 0;
   }
 
   private computeDerivative(): number {
