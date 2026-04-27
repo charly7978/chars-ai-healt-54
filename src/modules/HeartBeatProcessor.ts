@@ -198,6 +198,27 @@ export class HeartBeatProcessor {
       candidate = this.detectCandidate(now, timeSinceLastPeak, expectedRR, normRange);
     }
 
+    // Pan-Tompkins SEARCH-BACK (validado IEEE TBME 1985):
+    // Si han pasado 166% del RR promedio sin detectar pico, hacemos una
+    // búsqueda hacia atrás con threshold reducido a 50%. Esto recupera
+    // latidos débiles que el threshold normal pasó por alto, sin riesgo
+    // (estamos buscando un pico que físicamente DEBERÍA estar ahí por
+    // periodicidad cardíaca).
+    if (
+      !candidate &&
+      refractoryState !== 'hard' &&
+      expectedRR > 0 &&
+      timeSinceLastPeak > expectedRR * 1.66
+    ) {
+      const savedThreshold = this.peakThreshold;
+      this.peakThreshold = savedThreshold * 0.5;
+      const sbCandidate = this.detectCandidate(now, timeSinceLastPeak, expectedRR, normRange);
+      this.peakThreshold = savedThreshold;
+      if (sbCandidate) {
+        candidate = sbCandidate;
+      }
+    }
+
     let isPeak = false;
     let currentBeatSQI = 0;
     let currentFlags: BeatFlags | null = null;
@@ -269,15 +290,22 @@ export class HeartBeatProcessor {
 
     const hypothesis = this.fuseBPM();
     this.lastHypothesis = hypothesis;
+    // Confianza con UNA sola atenuación combinada (antes 5 multiplicaciones
+    // en cadena la dejaban en ~0.18 incluso con buena señal). Ahora la
+    // confianza interna del fuseBPM se modula por un único factor de
+    // calidad upstream que es la media geométrica de los componentes.
     let bpmConfidence = this.computeBPMConfidence(hypothesis);
-    bpmConfidence *= 0.35 + 0.65 * this.windowSQIUpstream;
-    bpmConfidence *= 0.4 + 0.6 * phaseAlign;
-    bpmConfidence *= 0.42 + 0.58 * spectralAgg;
-    if (this.fingerMeasurementState && this.fingerMeasurementState !== 'MEASUREMENT_READY') {
-      bpmConfidence *= 0.35;
-    }
-    if (this.temporalSpectralAgreement < 0.35 && this.spectralBPM > 0 && this.medianRRBPM > 0) {
-      bpmConfidence *= 0.55;
+    const upstreamFactor = Math.pow(
+      Math.max(0.2, this.windowSQIUpstream) *
+        Math.max(0.2, phaseAlign) *
+        Math.max(0.2, spectralAgg),
+      1 / 3
+    );
+    bpmConfidence *= 0.5 + 0.5 * upstreamFactor;
+    if (this.temporalSpectralAgreement < 0.30 && this.spectralBPM > 0 && this.medianRRBPM > 0) {
+      // Solo penaliza si los detectores discrepan significativamente, y
+      // de forma menos agresiva que antes (0.75 vs 0.55).
+      bpmConfidence *= 0.75;
     }
     const globalSQI = this.computeGlobalSQI();
     
@@ -400,11 +428,15 @@ export class HeartBeatProcessor {
     const nearExpected = expectedRR > 0 &&
       timeSinceLast >= expectedRR * 0.55 && timeSinceLast <= expectedRR * 1.45;
 
-    const prominenceScore = clamp(prominence / 8, 0, 1) * 30;
-    const slopeScore = clamp(risingSlope / 4, 0, 1) * 15 + clamp(fallingSlope / 3, 0, 1) * 10;
-    const widthScore = (widthMs > 80 && widthMs < 500) ? 10 : 0;
+    // Escalas recalibradas para señales débiles. La señal está normalizada
+    // a ±60, así que prominencia típica en perfusión baja es 5-25 (no 30+).
+    // Antes /8 hacía que solo prominencias >8 sumaran al score; ahora /3
+    // permite que prominencias de 3-9 lleguen al máximo de 30 puntos.
+    const prominenceScore = clamp(prominence / 3, 0, 1) * 30;
+    const slopeScore = clamp(risingSlope / 1.5, 0, 1) * 15 + clamp(fallingSlope / 1.0, 0, 1) * 10;
+    const widthScore = (widthMs > 70 && widthMs < 600) ? 12 : (widthMs > 50 && widthMs < 800) ? 6 : 0;
     const asymmetry = risingSlope > 0 ? fallingSlope / risingSlope : 0;
-    const asymmetryScore = (asymmetry > 0.3 && asymmetry < 2.0) ? 8 : 0;
+    const asymmetryScore = (asymmetry > 0.25 && asymmetry < 2.5) ? 10 : 0;
     const morphologyScore = clamp(prominenceScore + slopeScore + widthScore + asymmetryScore, 0, 100);
 
     let rhythmScore = 0;
@@ -431,7 +463,7 @@ export class HeartBeatProcessor {
       zeroCrossingSupport: zeroCrossing,
       periodicitySupport: nearExpected,
       templateCorrelation,
-      localBandPowerRatio: clamp(normRange / 5, 0, 1),
+      localBandPowerRatio: clamp(normRange / 2, 0, 1),
       localPerfusion: 0,
       localMotionPenalty: this.motionPenalty,
       localPressurePenalty: this.pressurePenalty,

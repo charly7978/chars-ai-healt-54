@@ -978,10 +978,14 @@ const Index = () => {
     //   (a) el temporal no está disponible, o
     //   (b) discrepan mucho — y solo como referencia de confianza,
     //       NO como valor publicado.
+    // Umbral de confianza temporal: 0.18 es suficiente cuando hay
+    // suficientes latidos consistentes (el HBP ya gatea con
+    // meetsMinimumEvidence). Antes 0.30 dejaba sin BPM aún con detección
+    // correcta cuando upstream SQI/phase eran medios.
     let bpmRaw = 0;
-    if (dcRedOk && tempoOk && heartBeatResult.bpmConfidence >= 0.30) {
+    if (dcRedOk && tempoOk && heartBeatResult.bpmConfidence >= 0.18) {
       bpmRaw = tempoBpm;
-    } else if (dcRedOk && dominantOk && (specWin?.spectralDominanceScore ?? 0) >= 0.45) {
+    } else if (dcRedOk && dominantOk && (specWin?.spectralDominanceScore ?? 0) >= 0.40) {
       bpmRaw = dominantBpm;
     }
 
