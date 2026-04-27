@@ -956,33 +956,51 @@ const Index = () => {
       (specWin as { dominantBpm?: number } | undefined)?.dominantBpm ?? 0;
     const dominantOk = dominantBpm >= 38 && dominantBpm <= 195 && (specWin?.spectralDominanceScore ?? 0) >= 0.25;
 
-    let bpmFinal = 0;
-    if (dcRedOk && tempoOk) {
-      if (dominantOk) {
-        const delta = Math.abs(tempoBpm - dominantBpm);
-        const matches = delta <= Math.max(12, dominantBpm * 0.12);
-        // Si concuerdan, fusión ponderada hacia el detector temporal.
-        // Si NO concuerdan, confiar en el espectral (robusto a falsos picos).
-        bpmFinal = matches ? tempoBpm * 0.7 + dominantBpm * 0.3 : dominantBpm;
-      } else if (heartBeatResult.bpmConfidence >= 0.45) {
-        // Sin dominante espectral consolidado pero el HBP tiene alta
-        // confianza interna (acuerdo temporal-espectral, RR estable).
-        bpmFinal = tempoBpm;
-      }
-    } else if (dcRedOk && !tempoOk && dominantOk) {
-      bpmFinal = dominantBpm;
+    // Selección preferente del detector temporal (RR real) sobre el
+    // espectral (que tiene resolución de ~3 BPM por bin y suele oscilar
+    // entre picos vecinos). El espectral solo se usa si:
+    //   (a) el temporal no está disponible, o
+    //   (b) discrepan mucho — y solo como referencia de confianza,
+    //       NO como valor publicado.
+    let bpmRaw = 0;
+    if (dcRedOk && tempoOk && heartBeatResult.bpmConfidence >= 0.30) {
+      bpmRaw = tempoBpm;
+    } else if (dcRedOk && dominantOk && (specWin?.spectralDominanceScore ?? 0) >= 0.45) {
+      bpmRaw = dominantBpm;
     }
-    const smoothedBPM = bpmFinal > 0 ? applyEMA(emaRef.current.bpm, bpmFinal) : 0;
+
+    // Anti-saltos no fisiológicos: el corazón humano NO cambia >25 BPM/s.
+    // Si el nuevo BPM dista mucho del último publicado y la confianza no
+    // es muy alta, lo limitamos a un cambio máximo por segundo.
+    const lv = lastValidBpmRef.current;
+    const nowMs = Date.now();
+    const dtSec = lv.bpm > 0 ? Math.max(0.05, (nowMs - lv.ts) / 1000) : 1;
+    const MAX_BPM_RATE = 25; // BPM por segundo — límite fisiológico
+    let bpmConstrained = bpmRaw;
+    if (lv.bpm > 0 && bpmRaw > 0) {
+      const maxDelta = MAX_BPM_RATE * dtSec;
+      const diff = bpmRaw - lv.bpm;
+      if (Math.abs(diff) > maxDelta) {
+        // Salto excesivo: solo permitir si el detector temporal tiene
+        // confianza muy alta y RR estables (cambio fisiológico real
+        // como reacción al esfuerzo).
+        const trusted = tempoOk && heartBeatResult.bpmConfidence >= 0.60;
+        bpmConstrained = trusted
+          ? lv.bpm + Math.sign(diff) * maxDelta * 1.5
+          : lv.bpm + Math.sign(diff) * maxDelta;
+      }
+    }
+
+    // EMA suave al BPM constrained — sin saltos visibles aun si la
+    // estimación oscila entre frames.
+    const smoothedBPM = bpmConstrained > 0 ? applyEMA(emaRef.current.bpm, bpmConstrained) : 0;
     emaRef.current.bpm = smoothedBPM;
     if (smoothedBPM > 0) {
-      lastValidBpmRef.current = { bpm: smoothedBPM, ts: Date.now() };
+      lastValidBpmRef.current = { bpm: smoothedBPM, ts: nowMs };
       setHeartRate(smoothedBPM);
     } else {
-      // Hold del último BPM válido durante BPM_HOLD_MS para evitar parpadeo
-      // ante valles fisiológicos breves o pequeñas pérdidas momentáneas
-      // de coherencia espectral. Comportamiento estándar de monitor clínico.
-      const lv = lastValidBpmRef.current;
-      const heldFresh = lv.bpm > 0 && Date.now() - lv.ts < BPM_HOLD_MS;
+      // Hold breve del último BPM válido (parpadeo evitado).
+      const heldFresh = lv.bpm > 0 && nowMs - lv.ts < BPM_HOLD_MS;
       if (!heldFresh && heartRate !== 0) setHeartRate(0);
     }
 
@@ -1007,7 +1025,7 @@ const Index = () => {
     // Si el BPM no pasó la validación espectral cruzada, NO publicamos
     // signos vitales: una BP / SpO2 / glucosa derivada de un BPM falso
     // sería numéricamente válida pero físicamente sin sentido.
-    if (bpmFinal === 0) {
+    if (smoothedBPM === 0) {
       setVitalSigns((prev) =>
         prev.spo2 === 0 && prev.pressure.systolic === 0 && prev.glucose === 0
           ? prev

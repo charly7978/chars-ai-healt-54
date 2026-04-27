@@ -46,10 +46,11 @@ const CONFIG = {
   // de signos vitales secundarios flota encima del canvas).
   PLOT_AREA: { LEFT: 38, RIGHT: 14, TOP: 86, BOTTOM: 86 },
   COLORS: {
-    BG: '#0a0f1a',
-    GRID_MAJOR: 'rgba(34, 197, 94, 0.22)',
-    GRID_MINOR: 'rgba(34, 197, 94, 0.08)',
-    BASELINE: 'rgba(34, 197, 94, 0.4)',
+    // Fondo y rejilla neutros, no de "saturación de videojuego".
+    BG: '#070b14',
+    GRID_MAJOR: 'rgba(148, 163, 184, 0.10)',
+    GRID_MINOR: 'rgba(148, 163, 184, 0.04)',
+    BASELINE: 'rgba(148, 163, 184, 0.22)',
     SIGNAL_NORMAL: '#22c55e',
     SIGNAL_GLOW: 'rgba(34, 197, 94, 0.45)',
     SIGNAL_ARRHYTHMIA: '#ef4444',
@@ -248,7 +249,8 @@ const PPGSignalMeter = ({
       const plot = getPlotArea();
       ctx.fillStyle = COLORS.BG;
       ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = 'rgba(0, 20, 10, 0.3)';
+      // Sin tinte verde dentro del plot — fondo plano, sobrio.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.012)';
       ctx.fillRect(plot.x, plot.y, plot.width, plot.height);
 
       // Minor grid (10 px steps)
@@ -291,8 +293,8 @@ const PPGSignalMeter = ({
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Border
-      ctx.strokeStyle = 'rgba(34, 197, 94, 0.3)';
+      // Border discreto neutro.
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
       ctx.lineWidth = 1;
       ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
     };
@@ -669,9 +671,8 @@ const PPGSignalMeter = ({
       stats.min = tgtMin < stats.min ? stats.min + (tgtMin - stats.min) * attack : stats.min + (tgtMin - stats.min) * release;
       stats.range = Math.max(30, stats.max - stats.min);
 
-      // Construir Path2D una sola vez
+      // Construir Path2D una sola vez (solo trazo, sin relleno)
       const wave = new Path2D();
-      const fill = new Path2D();
       const visibleCoords: Array<{ x: number; y: number; t: number; v: number }> = [];
       let started = false;
       const cutoff = now - WINDOW_MS;
@@ -684,66 +685,36 @@ const PPGSignalMeter = ({
         const y = plot.y + ny * plot.height;
         if (!started) {
           wave.moveTo(x, y);
-          fill.moveTo(x, plot.centerY);
-          fill.lineTo(x, y);
           started = true;
         } else {
           wave.lineTo(x, y);
-          fill.lineTo(x, y);
         }
         visibleCoords.push({ x, y, t: pt.time, v: pt.value });
       }
-      if (visibleCoords.length > 0) {
-        const last = visibleCoords[visibleCoords.length - 1];
-        fill.lineTo(last.x, plot.centerY);
-        fill.closePath();
-      }
 
-      // Relleno verde fijo bajo la onda. Sin alternancia ámbar/verde:
-      // un solo color estable que corresponde a "PPG en pantalla".
-      const fillGrad = ctx.createLinearGradient(0, plot.y, 0, plot.y + plot.height);
-      fillGrad.addColorStop(0, 'rgba(34, 197, 94, 0.12)');
-      fillGrad.addColorStop(0.5, 'rgba(34, 197, 94, 0.04)');
-      fillGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
-      ctx.fillStyle = fillGrad;
-      ctx.fill(fill);
-
-      // Onda principal SIEMPRE verde (3 capas de fosforescencia clínica).
-      // Solo los SEGMENTOS adyacentes a un latido arrítmico se redibujan
-      // encima en rojo: el resto del trazo permanece verde.
+      // Trazo único, fino, sobrio. Sin neón, sin glow exagerado, sin
+      // múltiples capas. Estilo monitor clínico real: una línea limpia
+      // con micro-resplandor sutil que aporta definición sin ser arcade.
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
-      ctx.shadowColor = 'rgba(74, 222, 128, 0.85)';
-      ctx.shadowBlur = 14;
-      ctx.strokeStyle = 'rgba(74, 222, 128, 0.55)';
-      ctx.lineWidth = 4.8;
-      ctx.stroke(wave);
       ctx.shadowBlur = 0;
-      ctx.strokeStyle = '#86efac';
-      ctx.lineWidth = 2.0;
-      ctx.stroke(wave);
-      ctx.strokeStyle = 'rgba(240, 253, 244, 0.85)';
-      ctx.lineWidth = 0.9;
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 1.6;
       ctx.stroke(wave);
 
-      // Aviso en modo provisional (texto pequeño, no toca el color de onda)
+      // Aviso en modo provisional, discreto.
       if (provisionalPpg) {
-        ctx.font = '10px "SF Mono", Consolas, monospace';
-        ctx.fillStyle = COLORS.TEXT_SECONDARY;
+        ctx.font = '9px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
         ctx.textAlign = 'center';
-        ctx.fillText('VALIDANDO PULSO…', plot.x + plot.width / 2, plot.y + 12);
+        ctx.fillText('VALIDANDO PULSO', plot.x + plot.width / 2, plot.y + 11);
       }
 
-      // ============================================================
       // SEGMENTOS ARRÍTMICOS — solo el latido específico se redibuja
-      // en rojo, sobre la onda verde ya pintada. El operador identifica
-      // exactamente cuál latido fue anómalo, no toda la traza.
-      // ============================================================
+      // en rojo, sobre la onda verde ya pintada. Trazo sobrio igualmente.
       const arrhythmiaBeats = beatHistoryRef.current.filter((b) => b.isArrhythmia);
       if (arrhythmiaBeats.length > 0 && visibleCoords.length > 2) {
-        // Para cada beat arrítmico, redibujar el sub-tramo de la onda
-        // en una ventana de ±SEGMENT_MS alrededor del pico.
-        const SEGMENT_MS = 250; // ~250 ms cubre la sístole y parte de la diástole
+        const SEGMENT_MS = 220;
         for (const beat of arrhythmiaBeats) {
           if (beat.time < cutoff || beat.time > now) continue;
           const tStart = beat.time - SEGMENT_MS;
@@ -760,25 +731,19 @@ const PPGSignalMeter = ({
             }
           }
           if (!segStarted) continue;
-          // Mismo render trifásico, en rojo.
-          ctx.shadowColor = 'rgba(239, 68, 68, 0.85)';
-          ctx.shadowBlur = 14;
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
-          ctx.lineWidth = 4.8;
-          ctx.stroke(seg);
-          ctx.shadowBlur = 0;
-          ctx.strokeStyle = '#fca5a5';
-          ctx.lineWidth = 2.2;
-          ctx.stroke(seg);
-          ctx.strokeStyle = 'rgba(254, 242, 242, 0.95)';
-          ctx.lineWidth = 0.9;
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 1.8;
           ctx.stroke(seg);
         }
       }
 
-      // Marcadores de pico: punto en el ápex + etiqueta clínica clara.
+      // Marcadores de pico discretos. Los normales (N) NO se etiquetan
+      // para no saturar la pantalla — solo se destaca la anomalía. Los
+      // arrítmicos y los fuera de rango (B/T) sí muestran etiqueta.
       const history = beatHistoryRef.current;
       if (history.length > 0 && visibleCoords.length > 0) {
+        ctx.font = '9px "SF Mono", Consolas, monospace';
+        ctx.textAlign = 'center';
         for (const beat of history) {
           if (beat.time < cutoff || beat.time > now) continue;
           let bestIdx = 0;
@@ -793,37 +758,28 @@ const PPGSignalMeter = ({
           }
           if (bestDist > 200) continue;
           const c = visibleCoords[bestIdx];
-          // Color del marcador coherente con el segmento:
-          //  - N (normal sinusal):     azul
-          //  - B (bradicardia):        ámbar
-          //  - T (taquicardia):        ámbar
-          //  - PVC / AF (arrítmico):   rojo
-          let pColor: string;
-          let pLabelColor: string;
           if (beat.isArrhythmia) {
-            pColor = '#ef4444';
-            pLabelColor = '#fca5a5';
+            // Punto rojo + etiqueta
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#fca5a5';
+            ctx.fillText(beat.label, c.x, c.y - 9);
           } else if (beat.label === 'B' || beat.label === 'T') {
-            pColor = '#f59e0b';
-            pLabelColor = '#fcd34d';
+            ctx.fillStyle = '#f59e0b';
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 2.4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#fcd34d';
+            ctx.fillText(beat.label, c.x, c.y - 8);
           } else {
-            pColor = '#3b82f6';
-            pLabelColor = '#93c5fd';
+            // Latido sinusal normal: solo un punto verde fino, sin etiqueta.
+            ctx.fillStyle = 'rgba(34, 197, 94, 0.95)';
+            ctx.beginPath();
+            ctx.arc(c.x, c.y, 1.8, 0, Math.PI * 2);
+            ctx.fill();
           }
-          // Punto del marcador
-          ctx.beginPath();
-          ctx.arc(c.x, c.y, beat.isArrhythmia ? 6 : 4.5, 0, Math.PI * 2);
-          ctx.fillStyle = pColor;
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(c.x, c.y, 1.5, 0, Math.PI * 2);
-          ctx.fillStyle = '#fff';
-          ctx.fill();
-          // Etiqueta encima del marcador
-          ctx.font = 'bold 10px "SF Mono", Consolas, monospace';
-          ctx.fillStyle = pLabelColor;
-          ctx.textAlign = 'center';
-          ctx.fillText(beat.label, c.x, c.y - 10);
         }
       }
 
