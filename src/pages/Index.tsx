@@ -1084,22 +1084,16 @@ const Index = () => {
             />
           </div>
 
-          <div className="absolute inset-x-0 top-[55%] bottom-[60px] bg-black/10 px-4 py-6">
-            <div className="grid grid-cols-3 gap-4 place-items-center">
+          {/* Tira inferior compacta de signos vitales secundarios.
+              El monitor PPG ocupa el 100% de la pantalla; este overlay flota
+              sobre él, translúcido, sin robarle alto. */}
+          <div
+            className="absolute inset-x-0 z-20 px-2 pointer-events-none"
+            style={{ bottom: "52px" }}
+          >
+            <div className="grid grid-cols-4 gap-1.5 px-1.5 py-1.5 bg-slate-950/65 backdrop-blur-md border border-slate-700/40 rounded-lg pointer-events-auto">
               <VitalSign
-                label="FRECUENCIA CARDÍACA"
-                value={heartRate > 0 ? Math.round(heartRate) : "--"}
-                unit="BPM"
-                highlighted={showResults}
-              />
-              <VitalSign
-                label="SPO2"
-                value={vitalSigns.spo2 > 0 ? vitalSigns.spo2 : "--"}
-                unit="%"
-                highlighted={showResults}
-              />
-              <VitalSign
-                label="PRESIÓN ARTERIAL"
+                label="PRESIÓN"
                 value={
                   vitalSigns.pressure && vitalSigns.pressure.systolic > 0
                     ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}`
@@ -1111,14 +1105,14 @@ const Index = () => {
                 featureQuality={vitalSigns.pressure?.featureQuality}
               />
               <VitalSign
-                label="GLUCOSA (EST.)"
+                label="GLUCOSA"
                 value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
                 unit="mg/dL"
                 highlighted={showResults}
                 isResearch={true}
               />
               <VitalSign
-                label="COLEST./TRIGL. (EST.)"
+                label="COL./TRG."
                 value={
                   vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
                     ? `${vitalSigns.lipids?.totalCholesterol ?? "--"}/${vitalSigns.lipids?.triglycerides ?? "--"}`
@@ -1129,7 +1123,7 @@ const Index = () => {
                 isResearch={true}
               />
               <VitalSign
-                label="ARRITMIAS"
+                label="RITMO"
                 value={vitalSigns.arrhythmiaStatus ?? "SIN ARRITMIAS|0"}
                 highlighted={showResults}
               />
