@@ -83,10 +83,10 @@ export class BloodPressureProcessor {
     let sbp = this.estimateSBP(mf, hr);
     let dbp = this.estimateDBP(mf, hr, rrVar.rmssd);
 
-    if (dbp >= sbp) dbp = sbp * 0.62;
+    // Validación física pulso-presión: rango plausible 25–80 mmHg.
+    // Si el modelo produce una combinación inverosímil, no se publica (valor real o cero).
     const pp = sbp - dbp;
-    if (pp < 15) dbp = sbp - 25;
-    if (pp > 100) dbp = sbp - 55;
+    if (dbp >= sbp || pp < 20 || pp > 90) return insufficient;
 
     if (this.lastSBP > 0) {
       sbp = this.lastSBP * (1 - this.EMA_ALPHA) + sbp * this.EMA_ALPHA;

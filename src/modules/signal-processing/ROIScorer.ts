@@ -4,6 +4,7 @@
 
 import { MultiROIExtractor } from './MultiROIExtractor';
 import type { ROICellMetrics } from './MultiROIExtractor';
+import type { ROIQualityRow } from './pipeline-types';
 const TOP_K = 6;
 
 export class ROIScorer {

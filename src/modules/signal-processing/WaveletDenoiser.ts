@@ -182,8 +182,12 @@ export class AdaptiveWaveletDenoiser {
       }
       
       const { approx, detail } = this.haar.forward(current);
-      details.push(detail);
-      current = approx;
+      const detailCopy = new Float64Array(detail.length);
+      detailCopy.set(detail);
+      details.push(detailCopy);
+      const approxCopy = new Float64Array(approx.length);
+      approxCopy.set(approx);
+      current = approxCopy;
     }
     
     return {
@@ -200,7 +204,10 @@ export class AdaptiveWaveletDenoiser {
     
     // Reconstruct from coarsest to finest
     for (let i = details.length - 1; i >= 0; i--) {
-      current = this.haar.inverse(current, details[i]);
+      const recon = this.haar.inverse(current, details[i]);
+      const reconCopy = new Float64Array(recon.length);
+      reconCopy.set(recon);
+      current = reconCopy;
     }
     
     return current;
