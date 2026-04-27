@@ -103,6 +103,11 @@ const Index = () => {
   const greenAcBufferRef = useRef<number[]>([]);
   const fusedAcBufferRef = useRef<number[]>([]);
   const RG_BUFFER_SIZE = 180; // ~6 s a 30 fps
+  // Streak de frames consecutivos con firma cromática válida. Evita que un
+  // destello/parpadeo active el detector. Se exigen 4 frames consecutivos
+  // (~130 ms a 30 fps) antes de procesar el heartbeat al primer contacto.
+  const chromaOkStreakRef = useRef(0);
+  const CHROMA_CONFIRM_FRAMES = 4;
 
   const UNSTABLE_ZERO_THRESHOLD = 12;
   const GATE_FAIL_INVALIDATE_FRAMES = 8;
@@ -511,6 +516,7 @@ const Index = () => {
     redAcBufferRef.current = [];
     greenAcBufferRef.current = [];
     fusedAcBufferRef.current = [];
+    chromaOkStreakRef.current = 0;
     setVitalSigns({ ...DEFAULT_VITALS, arrhythmiaStatus: "SINUS_STABLE|0" });
     startProcessing();
     setIsCameraOn(true);
@@ -619,6 +625,7 @@ const Index = () => {
     redAcBufferRef.current = [];
     greenAcBufferRef.current = [];
     fusedAcBufferRef.current = [];
+    chromaOkStreakRef.current = 0;
     setHeartbeatSignal(0);
     setBeatMarker(0);
     setRRIntervals([]);
@@ -641,6 +648,109 @@ const Index = () => {
       estimatedSampleRate?: number;
       sourceStability?: number;
     };
+
+    // ================================================================
+    // CHROMATIC GATE — firma física inviolable del flash sobre tejido
+    // perfundido. Sin esta firma NO HAY procesamiento alguno: ni
+    // heartbeat, ni picos, ni vitales. Solo onda gris plana en el monitor.
+    //
+    // Con flash blanco apuntando a un dedo:
+    //  - hemoglobina absorbe verde y azul → R domina ENORMEMENTE.
+    //  - DC del rojo > 100 (saturado por reflexión del tejido).
+    //  - R / max(G, B) >= 1.6 (típicamente 2-4).
+    //  - R - max(G, B) >= 25.
+    //
+    // Sin dedo (pared, aire, sábana, ropa, papel, mesa, objetos):
+    //  - Los tres canales se balancean (R/max(G,B) ≈ 1.0-1.3).
+    //  - O dominan G/B según el color del objeto.
+    //  - El DC del rojo cae < 100 si no hay reflexión directa.
+    //
+    // Este test es MATEMÁTICAMENTE imposible de pasar sin tejido
+    // perfundido bajo flash. No es una heurística de "forma de dedo".
+    // ================================================================
+    const acStatsEarly = ls.acStats ?? { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0, ratioOfRatios: 0 };
+    const meanRcurr = ls.rawRed ?? 0;
+    const meanGcurr = ls.rawGreen ?? 0;
+    // El procesador no expone meanB, pero podemos inferir un techo: si la
+    // luminancia es Y y R, G están cerca, el azul también lo está.
+    // Aproximación segura: max(G, B) ≥ G (B suele ser ≤ G en flash blanco
+    // sobre tejido). Por tanto R / max(G, B) ≤ R / G.
+    const maxNonRed = Math.max(meanGcurr, 1);
+    const rOverMax = meanRcurr / maxNonRed;
+    const rMinusMax = meanRcurr - maxNonRed;
+    // Umbral DC: con flash hay reflexión inmediata, redDC tarda ~30 frames
+    // en consolidarse; aceptamos meanR como proxy si DC aún no maduró.
+    const dcRedRef = (acStatsEarly.redDC ?? 0) > 30 ? acStatsEarly.redDC : meanRcurr;
+    const dcRedPhysiologic = dcRedRef >= 90;
+    // Umbrales calibrados para incluir piel oscura y perfusión baja, pero
+    // excluir cualquier escena sin tejido + flash (paredes, aire, papel,
+    // sábanas, ropa). Con flash reflejándose en tejido, R domina por la
+    // absorción selectiva de hemoglobina (banda verde/azul) sobre el rojo.
+    const chromaOk =
+      meanRcurr >= 100 &&             // R saturado-medio (con flash)
+      rOverMax >= 1.45 &&             // R / max(G,B) — incluye piel oscura
+      rMinusMax >= 18 &&              // dominancia absoluta R sobre G
+      dcRedPhysiologic;               // tejido reflejando flash
+
+    if (!chromaOk) {
+      chromaOkStreakRef.current = 0;
+      // Sin firma cromática de tejido + flash: la app NO procesa nada.
+      // Todos los buffers transitorios se limpian para que no quede memoria
+      // del estado anterior (eso era lo que generaba "valores fantasma" en
+      // los primeros segundos al retirar el dedo).
+      stableHumanSignalRef.current = false;
+      if (stableHumanSignal) setStableHumanSignal(false);
+      gateFailStreakRef.current = GATE_FAIL_INVALIDATE_FRAMES;
+      // Onda plana al monitor: la señal AC visible reflejaría ruido sin
+      // significado fisiológico, por eso se silencia.
+      setHeartbeatSignal(0);
+      // Buffers de canales y señal fusionada: limpiar para no contaminar
+      // futuras evaluaciones espectrales.
+      redAcBufferRef.current = [];
+      greenAcBufferRef.current = [];
+      fusedAcBufferRef.current = [];
+      // Vitales y BPM a cero (con guard de igualdad para no re-renderizar).
+      if (heartRate !== 0) setHeartRate(0);
+      setVitalSigns((prev) =>
+        prev.spo2 === 0 &&
+        prev.glucose === 0 &&
+        prev.pressure.systolic === 0 &&
+        prev.pressure.diastolic === 0 &&
+        prev.measurementConfidence === "INVALID"
+          ? prev
+          : {
+              ...prev,
+              spo2: 0,
+              glucose: 0,
+              pressure: { systolic: 0, diastolic: 0, confidence: "INSUFFICIENT", featureQuality: 0 },
+              arrhythmiaCount: 0,
+              arrhythmiaStatus: "SINUS_STABLE|0",
+              lipids: { totalCholesterol: 0, triglycerides: 0 },
+              lastArrhythmiaData: undefined,
+              signalQuality: 0,
+              measurementConfidence: "INVALID",
+            }
+      );
+      setArrhythmiaCount("--");
+      lastArrhythmiaData.current = null;
+      setRRIntervals([]);
+      setBeatMarker(0);
+      // Reset duro del HeartBeatProcessor cada ~30 frames sin dedo,
+      // para que no acumule picos de ruido ni memoria de plantilla.
+      unstableFrameCounter.current++;
+      if (unstableFrameCounter.current === 30) {
+        resetHeartBeat();
+      }
+      return;
+    }
+    chromaOkStreakRef.current++;
+    if (chromaOkStreakRef.current < CHROMA_CONFIRM_FRAMES) {
+      // Firma cromática presente pero no confirmada: silenciar onda y
+      // no avanzar al heartbeat. Esto evita disparos por destellos.
+      setHeartbeatSignal(0);
+      return;
+    }
+    unstableFrameCounter.current = 0;
 
     const signalValue = ls.filteredValue;
     const positionQuality = getPositionQuality();
@@ -698,7 +808,8 @@ const Index = () => {
     });
 
     // 2) Construir métricas multicanal REALES desde acStats del PPGSignalProcessor
-    const acStats = ls.acStats ?? { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0, ratioOfRatios: 0 };
+    // (acStats reusado del chromatic gate de la sección anterior)
+    const acStats = acStatsEarly;
     const acDcR = acStats.redDC > 0 ? acStats.redAC / acStats.redDC : 0;
     const acDcG = acStats.greenDC > 0 ? acStats.greenAC / acStats.greenDC : 0;
 
@@ -755,13 +866,7 @@ const Index = () => {
     );
 
     // 3) Evaluar gate de evidencia PPG
-    // Cromaticidad de hemoglobina y dominancia roja calculadas desde
-    // los promedios RGB del frame: con flash y sangre el rojo domina por
-    // la absorción selectiva de hemoglobina sobre verde/azul.
-    const meanRcurr = ls.rawRed ?? 0;
-    const meanGcurr = ls.rawGreen ?? 0;
-    // El procesador no expone meanB; estimamos dominancia con R/G y la
-    // diferencia R - G (G es proxy del nivel residual sin hemoglobina).
+    // Cromaticidad ya validada por el chromatic gate al inicio.
     const rgRatioCurr = meanGcurr > 1 ? meanRcurr / meanGcurr : 0;
     const redDomCurr = meanRcurr - meanGcurr;
 
