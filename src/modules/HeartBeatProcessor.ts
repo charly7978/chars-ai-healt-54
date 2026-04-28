@@ -4,6 +4,7 @@
 import { RingBuffer } from './signal-processing/RingBuffer';
 import { estimateHrNarrowbank } from './signal-processing/SpectralHrEstimator';
 import { BeatQualityAssessor } from './signal-processing/BeatQualityAssessor';
+import { ElgendiPeakDetector } from './signal-processing/ElgendiPeakDetector';
 import type {
   BeatCandidate, AcceptedBeat, BeatFlags, BPMHypothesis,
   HeartBeatResult, HeartBeatDebug
@@ -50,6 +51,12 @@ export class HeartBeatProcessor {
   private consecutivePeaks = 0;
   private frameCount = 0;
   private peakThreshold = 4.0;
+  // Elgendi 2013 — detector estado del arte para PPG, validado por
+  // NeuroKit2/PPG-BEATS/pyPPG. Corre en paralelo con el detector
+  // dual-criterio interno; cuando Elgendi confirma un pico, lo aceptamos
+  // de inmediato (sensibilidad ~99.9% en bases de datos clínicas).
+  private elgendi = new ElgendiPeakDetector({ sampleRate: 30 });
+  private lastElgendiPeakTs = 0;
   // Pan-Tompkins adaptado para PPG (Pan & Tompkins 1985, IEEE TBME):
   //   SignalLevel = 0.125·PEAK + 0.875·SignalLevel
   //   NoiseLevel  = 0.125·NOISE + 0.875·NoiseLevel
@@ -186,6 +193,17 @@ export class HeartBeatProcessor {
     }
 
     const { normalizedValue, normRange } = this.normalizeSignal(filteredValue);
+
+    // Sample rate efectivo para todos los detectores que dependen de él.
+    const effectiveSr = this.estimateSampleRate();
+    this.elgendi.setSampleRate(effectiveSr);
+
+    // Elgendi 2013 — detector primario PPG (estado del arte clínico).
+    // Recibe la señal NORMALIZADA (±60) que ya está limpia y centrada.
+    const elgendiResult = this.elgendi.process(normalizedValue, now);
+    const elgendiHit = elgendiResult.isPeak;
+    if (elgendiHit) this.lastElgendiPeakTs = elgendiResult.peakTime;
+
     if (this.frameCount % 22 === 0) this.updateSpectralHr();
     this.updateThreshold(normRange);
 
@@ -224,8 +242,50 @@ export class HeartBeatProcessor {
     let currentFlags: BeatFlags | null = null;
     let rejectionReason = '';
 
+    // Si Elgendi 2013 confirma un pico y el detector dual NO produjo
+    // candidato, sintetizamos un candidato a partir del estado del frame
+    // y lo aceptamos. Elgendi es validado clínicamente con sensibilidad
+    // ~99.9%; ignorarlo equivale a perder latidos reales.
+    if (elgendiHit && !candidate && refractoryState !== 'hard' && timeSinceLastPeak >= 280) {
+      candidate = {
+        timestamp: now,
+        sampleIndex: this.frameCount,
+        amplitude: normalizedValue,
+        prominence: Math.max(2, range * 0.4),
+        widthMs: 250,
+        upSlope: Math.max(0.3, deriv),
+        downSlope: 0.3,
+        localBaseline: 0,
+        detectorHits: 1,
+        detectorAgreement: 0.7,
+        zeroCrossingSupport: false,
+        periodicitySupport: expectedRR > 0 && timeSinceLastPeak >= expectedRR * 0.55 && timeSinceLastPeak <= expectedRR * 1.55,
+        templateCorrelation: this.templateValid ? this.correlateWithTemplate() : 0,
+        localBandPowerRatio: clamp(normRange / 2, 0, 1),
+        localPerfusion: 0,
+        localMotionPenalty: this.motionPenalty,
+        localPressurePenalty: this.pressurePenalty,
+        localClipPenalty: this.clipPenalty,
+        status: 'accepted',
+        rejectionReason: '',
+        morphologyScore: 60,
+        rhythmScore: 50,
+        totalScore: 65,
+      };
+    }
+
     if (candidate) {
-      this.adjudicate(candidate, timeSinceLastPeak, expectedRR, refractoryState);
+      // Si Elgendi también confirmó este pico (dentro de ±150 ms), forzar
+      // aceptación: dos detectores ortogonales coinciden, es prácticamente
+      // imposible que sea un falso positivo.
+      const elgendiCorroborates = elgendiHit && Math.abs(elgendiResult.peakTime - now) <= 150;
+      if (elgendiCorroborates) {
+        candidate.status = 'accepted';
+        candidate.detectorAgreement = Math.max(candidate.detectorAgreement, 1.0);
+        candidate.totalScore = Math.max(candidate.totalScore, 65);
+      } else {
+        this.adjudicate(candidate, timeSinceLastPeak, expectedRR, refractoryState);
+      }
 
       if (candidate.status === 'accepted') {
         isPeak = true;
@@ -907,6 +967,8 @@ export class HeartBeatProcessor {
     this.ptSignalLevel = 0;
     this.ptNoiseLevel = 0;
     this.peakThreshold = 4.0;
+    this.elgendi.reset();
+    this.lastElgendiPeakTs = 0;
   }
 
   private computeDerivative(): number {
@@ -1070,6 +1132,8 @@ export class HeartBeatProcessor {
     this.peakThreshold = 4.0;
     this.ptSignalLevel = 0;
     this.ptNoiseLevel = 0;
+    this.elgendi.reset();
+    this.lastElgendiPeakTs = 0;
     this.frameCount = 0;
     this.beatsAccepted = 0;
     this.beatsRejected = 0;
