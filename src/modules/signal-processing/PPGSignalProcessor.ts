@@ -1,12 +1,11 @@
 import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface, ContactState } from '../../types/signal';
-import { BandpassFilter } from './BandpassFilter';
 import { RingBuffer } from './RingBuffer';
 import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
 import { computeGlobalSQI } from './SignalQualityEstimator';
 import { MultiROIExtractor, type ROICellMetrics } from './MultiROIExtractor';
 import { ROIScorer } from './ROIScorer';
-import { SignalFusionEngine } from './SignalFusionEngine';
+import { GreenChannelTriad } from './GreenChannelTriad';
 import { SignalQualityEngine } from './SignalQualityEngine';
 import { FingerMeasurementStateMachine, shouldGateBpmOutput } from './FingerMeasurementStateMachine';
 import { buildFingerFrameFeatures, type FingerFrameFeatures } from './FingerFrameFeatures';
@@ -14,7 +13,6 @@ import { FrameTimingTracker } from './FrameTimingTracker';
 import { ProcessingProfiler } from './ProcessingProfiler';
 import type {
   FingerMeasurementState,
-  FusedSignalMeta,
   ROIQualityRow,
   WindowSQIMetrics,
 } from './pipeline-types';
@@ -28,10 +26,9 @@ import { PerformanceModeController } from './PerformanceModeController';
 export class PPGSignalProcessor implements SignalProcessorInterface {
   public isProcessing = false;
 
-  private bandpassFilter: BandpassFilter;
+  private greenTriad: GreenChannelTriad;
   private roiMaskDet = new AdaptiveROIMask();
   private pressureEstimator = new PressureProxyEstimator();
-  private fusionEngine = new SignalFusionEngine();
   // innerFraction 0.95: cuando el dedo cubre la cámara, cubre TODO el
   // frame. ROI casi completo + sampleStep=1 maximizan los píxeles
   // efectivos. Mejora SNR como sqrt(N) porque el ruido del sensor es
@@ -95,7 +92,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private luminanceRing = new RingBuffer(36);
   private lastAutocorrPeak = 0;
   private lastPulseCorr = 0;
-  private lastFusionValue = 0;
+  // Estado de la triada de canales verdes (G1/G2/G3) y selección.
+  private lastSelectedGreenId: 'G1' | 'G2' | 'G3' = 'G2';
+  private lastTriadSqi = { g1: 0, g2: 0, g3: 0 };
 
   private fingerMeasurementState: FingerMeasurementState = 'NO_CONTACT';
   private exportedContactState: ContactState = 'NO_CONTACT';
@@ -130,7 +129,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
   private lastRoiDet: ROIMaskResult | null = null;
   private lastTopRois: ROIQualityRow[] = [];
-  private lastFusionMeta: FusedSignalMeta | null = null;
   private lastWindowSqi: WindowSQIMetrics | null = null;
   private lastFingerFeatures: FingerFrameFeatures | null = null;
   private lastTiming = { intervalMs: 0, effectiveFps: 0, droppedEstimate: 0 };
@@ -141,7 +139,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    this.bandpassFilter = new BandpassFilter(this.estimatedSampleRate);
+    this.greenTriad = new GreenChannelTriad(this.estimatedSampleRate);
   }
 
   async initialize(): Promise<void> {
@@ -379,27 +377,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
           )
         : undefined;
 
-    const fusion = this.fusionEngine.update({
-      rawR: fusedRgb.r,
-      rawG: fusedRgb.g,
-      rawB: fusedRgb.b,
-      baseR: this.redBaseline,
-      baseG: this.greenBaseline,
-      baseB: this.blueBaseline,
-      redPI,
-      greenPI,
-      clipHigh: this.clipHighRatio,
-      motionArtifact,
-      pressureState: this.pressureState,
-      spatialCoherence: Math.max(0, 1 - cvS),
-      prevFused: this.lastFusionValue,
-      spectralQuality01: spectralQ01,
+    // ============================================================
+    // GreenChannelTriad: G1, G2, G3 ortogonales + bandpass por canal +
+    // selector por SQI con histéresis. Reemplaza al SignalFusionEngine
+    // (9 streams + softmax) por una triada canónica auditable.
+    // ============================================================
+    this.greenTriad.setSampleRate(this.estimatedSampleRate);
+    const triad = this.greenTriad.process({
+      meanR: fusedRgb.r,
+      meanG: fusedRgb.g,
+      dcR: this.redDC,
+      dcG: this.greenDC,
     });
+    this.lastSelectedGreenId = triad.selectedId;
+    this.lastTriadSqi = triad.sqi;
     this.profiler.mark('fusion', performance.now() - tFus);
-    this.lastFusionMeta = fusion.meta;
-    this.lastFusionValue = fusion.fusedValue;
+    void redPI;
+    void greenPI;
+    void cvS;
+    void spectralQ01;
 
-    const filtered = this.bandpassFilter.filter(fusion.fusedValue);
+    const filtered = triad.selectedFiltered;
+    const fusedValue = triad.selectedFiltered;
     this.filteredBuf.push(filtered);
 
     this.lastAutocorrPeak = this.estimatePeriodicityFromFiltered();
@@ -444,14 +443,13 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       signalRange,
       redDominance,
       contactState: contactForSqi,
-      // sourceStability real basado en agreement entre fuentes RGB (no
-      // un valor fijo 0.55 que falseaba el SQI global).
-      sourceStability: fusion.meta.collapse ? 0 : Math.min(1, fusion.meta.sourceAgreement ?? 0.5),
+      // sourceStability real basado en SQI máximo de la triada (0-1).
+      sourceStability: Math.max(this.lastTriadSqi.g1, this.lastTriadSqi.g2, this.lastTriadSqi.g3),
     });
 
     const windowFactor = this.lastWindowSqi ? this.lastWindowSqi.score : 0.35;
     const fingerGate = shouldGateBpmOutput(this.fingerMeasurementState) ? 1 : 0.4;
-    const phaseQ = this.lastFusionMeta?.phaseAlignmentQuality ?? 0.55;
+    const phaseQ = 0.55;
     const specAgg =
       this.lastWindowSqi?.spectral != null
         ? Math.max(
@@ -471,11 +469,8 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     if (specAgg > 0.4) outQuality *= 1 + Math.min(0.15, this.fineBoostEwma);
     outQuality = Math.min(100, Math.max(0, outQuality));
 
-    // SIN degradedHold: nunca congelamos la señal por "última buena". La
-    // onda visible al operador SIEMPRE es la actual; si hay degradación,
-    // que el gate externo decida qué publicar. Congelar la señal hacía
-    // que la onda dejara de seguir el PPG real durante segundos.
-    const outRaw = fusion.fusedValue;
+    // SIN degradedHold: la onda publicada es siempre la del frame actual.
+    const outRaw = fusedValue;
     const outFiltered = filtered;
 
     this.perfModeController.observe({
@@ -503,16 +498,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       clipLowRatio: this.clipLowRatio,
       roiCoverage: this.smoothedCoverage,
       pressureState: this.pressureState,
-      activeSource: fusion.primaryLabel,
-      sourceStability: fusion.meta.collapse ? 0 : Math.min(1, fusion.meta.sourceAgreement ?? 0.55),
-      sqiBySource: fusion.allSQI,
+      activeSource: this.lastSelectedGreenId,
+      sourceStability: Math.max(this.lastTriadSqi.g1, this.lastTriadSqi.g2, this.lastTriadSqi.g3),
+      sqiBySource: {
+        G1: this.lastTriadSqi.g1,
+        G2: this.lastTriadSqi.g2,
+        G3: this.lastTriadSqi.g3,
+      },
       estimatedSampleRate: this.estimatedSampleRate,
       realFps: this.lastTiming.effectiveFps || this.realFps,
       processingDurationMs: performance.now() - tAll,
       diagnostics: {
         message:
           `${this.fingerMeasurementState} | W:${(windowFactor * 100).toFixed(0)}% | ` +
-          `${fusion.primaryLabel} | P:${this.pressureState.charAt(0)}`,
+          `${this.lastSelectedGreenId} | P:${this.pressureState.charAt(0)}`,
         hasPulsatility: perfusionIndex > 0.05 && windowFactor > 0.4,
         pulsatilityValue: perfusionIndex,
       },
@@ -527,18 +526,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const pipelineDebug = {
       fingerMeasurementState: this.fingerMeasurementState,
       topRois: this.lastTopRois,
-      fusionWeights: this.lastFusionMeta?.weights ?? {},
-      fusionCollapse: this.lastFusionMeta?.collapse ?? true,
-      fusionMeta: this.lastFusionMeta
-        ? {
-            phaseAlignmentQuality: this.lastFusionMeta.phaseAlignmentQuality,
-            sourceAgreement: this.lastFusionMeta.sourceAgreement,
-            dominantSource: this.lastFusionMeta.dominantSource,
-            fusionCollapseReason: this.lastFusionMeta.fusionCollapseReason,
-            pairwiseLagSamples: this.lastFusionMeta.pairwiseLagSamples,
-            coherenceBySource: this.lastFusionMeta.coherenceBySource,
-          }
-        : undefined,
+      // FusionWeights → SQI por canal de la triada (compat con tipo).
+      fusionWeights: {
+        G1: this.lastTriadSqi.g1,
+        G2: this.lastTriadSqi.g2,
+        G3: this.lastTriadSqi.g3,
+      },
+      fusionCollapse: false,
+      fusionMeta: {
+        dominantSource: this.lastSelectedGreenId,
+        sourceAgreement: Math.min(this.lastTriadSqi.g1, this.lastTriadSqi.g2, this.lastTriadSqi.g3),
+      },
       windowSQI: this.lastWindowSqi
         ? {
             score: this.lastWindowSqi.score,
@@ -649,7 +647,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.realFps = fps;
     if (Math.abs(fps - this.estimatedSampleRate) > 2) {
       this.estimatedSampleRate = fps;
-      this.bandpassFilter.setSampleRate(fps);
+      this.greenTriad.setSampleRate(fps);
     }
   }
 
@@ -768,7 +766,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       fingerState: this.fingerMeasurementState,
       exportedState: this.exportedContactState,
       pressureState: this.pressureState,
-      activeSource: this.lastFusionMeta ? Object.keys(this.lastFusionMeta.weights).sort().slice(0, 4) : [],
+      activeSource: [this.lastSelectedGreenId],
       realFps: this.lastTiming.effectiveFps,
       processingTimeMs: this.processingTimeMs,
       sqiGlobal: this.signalQuality,
@@ -808,7 +806,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.lastRoiCells = [];
     this.lastRoiScores = new Float64Array(25);
     this.fingerMachine.reset();
-    this.fusionEngine.reset();
+    this.greenTriad.reset();
     this.roiScorer.reset();
     this.windowSqiEngine.reset();
     this.frameTiming.reset();
@@ -819,9 +817,9 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.exportedContactState = 'NO_CONTACT';
     this.fingerDetected = false;
     this.signalQuality = 0;
-    this.lastFusionValue = 0;
+    this.lastSelectedGreenId = 'G2';
+    this.lastTriadSqi = { g1: 0, g2: 0, g3: 0 };
     this.lastAutocorrPeak = 0;
     this.lastPulseCorr = 0;
-    this.bandpassFilter.reset();
   }
 }

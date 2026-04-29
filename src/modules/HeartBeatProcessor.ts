@@ -35,7 +35,6 @@ export class HeartBeatProcessor {
   private lastHypothesis: BPMHypothesis | null = null;
   private temporalSpectralAgreement = 0;
   private windowSQIUpstream = 0.45;
-  private fingerMeasurementState = '';
   
   // FAIL-CLOSED: Evidencia PPG obligatoria para publicar BPM
   private livePpgEvidencePassed = false;
@@ -128,9 +127,8 @@ export class HeartBeatProcessor {
       if (typeof upstreamContext.windowSQI === 'number') {
         this.windowSQIUpstream = Math.max(0, Math.min(1, upstreamContext.windowSQI));
       }
-      if (upstreamContext.fingerMeasurementState) {
-        this.fingerMeasurementState = upstreamContext.fingerMeasurementState;
-      }
+      // (fingerMeasurementState ya no se almacena: el HBP no lo consume
+      // internamente; el contexto va directo al gate externo.)
       
       // FAIL-CLOSED: Rastrear evidencia PPG
       if (typeof upstreamContext.livePpgEvidencePassed === 'boolean') {
@@ -1123,7 +1121,6 @@ export class HeartBeatProcessor {
     this.spectralPeakRatio = 0;
     this.temporalSpectralAgreement = 0;
     this.windowSQIUpstream = 0.45;
-    this.fingerMeasurementState = '';
     this.autocorrBPM = 0;
     this.medianRRBPM = 0;
     this.lastPeakTime = 0;

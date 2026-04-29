@@ -1389,53 +1389,15 @@ const Index = () => {
               bpm={heartRate}
               spo2={vitalSigns.spo2}
               rrIntervals={rrIntervals}
+              bp={
+                vitalSigns.pressure && vitalSigns.pressure.systolic > 0
+                  ? { systolic: vitalSigns.pressure.systolic, diastolic: vitalSigns.pressure.diastolic }
+                  : undefined
+              }
+              glucose={vitalSigns.glucose}
+              lipids={vitalSigns.lipids}
+              rhythmLabel={vitalSigns.arrhythmiaStatus?.split('|')[0] ?? 'SINUS_STABLE'}
             />
-          </div>
-
-          {/* Tira inferior de signos vitales secundarios.
-              El monitor PPG ocupa el 100% de la pantalla; este overlay flota
-              sobre él, translúcido. Tipografía agrandada para legibilidad. */}
-          <div
-            className="absolute inset-x-0 z-20 px-2 pointer-events-none"
-            style={{ bottom: "56px" }}
-          >
-            <div className="grid grid-cols-4 gap-2 px-2 py-2 bg-slate-950/75 backdrop-blur-md border border-slate-700/50 rounded-xl pointer-events-auto">
-              <VitalSign
-                label="PRESIÓN"
-                value={
-                  vitalSigns.pressure && vitalSigns.pressure.systolic > 0
-                    ? `${vitalSigns.pressure.systolic}/${vitalSigns.pressure.diastolic}`
-                    : "--/--"
-                }
-                unit="mmHg"
-                highlighted={showResults}
-                confidenceLevel={vitalSigns.pressure?.confidence}
-                featureQuality={vitalSigns.pressure?.featureQuality}
-              />
-              <VitalSign
-                label="GLUCOSA"
-                value={vitalSigns.glucose > 0 ? vitalSigns.glucose : "--"}
-                unit="mg/dL"
-                highlighted={showResults}
-                isResearch={true}
-              />
-              <VitalSign
-                label="COL./TRG."
-                value={
-                  vitalSigns.lipids?.totalCholesterol > 0 || vitalSigns.lipids?.triglycerides > 0
-                    ? `${vitalSigns.lipids?.totalCholesterol ?? "--"}/${vitalSigns.lipids?.triglycerides ?? "--"}`
-                    : "--/--"
-                }
-                unit="mg/dL"
-                highlighted={showResults}
-                isResearch={true}
-              />
-              <VitalSign
-                label="RITMO"
-                value={vitalSigns.arrhythmiaStatus ?? "SIN ARRITMIAS|0"}
-                highlighted={showResults}
-              />
-            </div>
           </div>
 
           {showResults &&

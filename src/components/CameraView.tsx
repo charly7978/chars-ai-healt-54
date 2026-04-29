@@ -84,6 +84,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   const warmUpStartTimeRef = useRef<number>(0);
   const luminanceHistoryRef = useRef<number[]>([]);
   const clipHistoryRef = useRef<{ high: number; low: number }[]>([]);
+  const torchWatchdogRef = useRef<number | null>(null);
 
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current,
@@ -96,6 +97,10 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
     let mounted = true;
 
     const stopCamera = async () => {
+      if (torchWatchdogRef.current !== null) {
+        clearInterval(torchWatchdogRef.current);
+        torchWatchdogRef.current = null;
+      }
       if (streamRef.current) {
         for (const track of streamRef.current.getVideoTracks()) {
           try {
@@ -445,6 +450,24 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             '| ISO:', diagnosticsRef.current.isoValue,
             '| Quality:', report.overallQuality,
             '| Summary:', report.summary);
+
+          // Watchdog de torch: verifica cada 2 s que sigue activo. Si la
+          // cámara o el SO lo apagaron (poweroff por temperatura, cambio
+          // de constraints, etc.), reaplicar inmediatamente.
+          if (caps?.torch && torchWatchdogRef.current === null) {
+            torchWatchdogRef.current = window.setInterval(async () => {
+              try {
+                const settings = track.getSettings() as { torch?: boolean };
+                if (settings.torch !== true) {
+                  await track.applyConstraints({ advanced: [{ torch: true } as MediaTrackConstraintSet] });
+                  const after = track.getSettings() as { torch?: boolean };
+                  diagnosticsRef.current.torchActive = after.torch === true;
+                }
+              } catch {
+                /* el track puede haberse detenido durante el reset */
+              }
+            }, 2000);
+          }
 
           onStreamReady?.(stream);
           isStartingRef.current = false;

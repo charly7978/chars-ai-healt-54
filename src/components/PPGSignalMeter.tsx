@@ -23,6 +23,12 @@ interface PPGSignalMeterProps {
   bpm?: number;
   spo2?: number;
   rrIntervals?: number[];
+  /** Signos vitales secundarios — se dibujan dentro del canvas para
+   *  evitar overlays React solapando la onda. */
+  bp?: { systolic: number; diastolic: number };
+  glucose?: number;
+  lipids?: { totalCholesterol: number; triglycerides: number };
+  rhythmLabel?: string;
 }
 
 /**
@@ -42,10 +48,12 @@ const CONFIG = {
   WINDOW_MS: 2200,
   TARGET_FPS: 60,
   BUFFER_SIZE: 420,
-  // HUD más generoso: TOP=130 deja sitio para 3 paneles de 110 px de
-  // altura con tipografía cómoda. BOTTOM=110 reserva espacio para la
-  // barra de signos vitales secundarios que flota encima del canvas.
-  PLOT_AREA: { LEFT: 50, RIGHT: 18, TOP: 130, BOTTOM: 110 },
+  // HUD generoso: TOP=130 (3 paneles de 110 px). BOTTOM=170 reserva
+  // espacio para la barra de signos vitales secundarios DENTRO del canvas
+  // (presión / glucosa / lípidos / ritmo). Antes era un overlay React
+  // que solapaba la onda; ahora es nativo del canvas y no compite por
+  // re-renders ni z-index.
+  PLOT_AREA: { LEFT: 50, RIGHT: 18, TOP: 130, BOTTOM: 170 },
   COLORS: {
     // Fondo y rejilla neutros, no de "saturación de videojuego".
     BG: '#070b14',
@@ -109,6 +117,10 @@ const PPGSignalMeter = ({
   spo2 = 0,
   rrIntervals = [],
   livePpgEvidencePassed = false,
+  bp,
+  glucose = 0,
+  lipids,
+  rhythmLabel,
 }: PPGSignalMeterProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationRef = useRef<number | null>(null);
@@ -126,6 +138,10 @@ const PPGSignalMeter = ({
     rawArrhythmiaData,
     livePpgEvidencePassed,
     getValue,
+    bp,
+    glucose,
+    lipids,
+    rhythmLabel,
   });
   const lastPeakTimeRef = useRef(0);
 
@@ -162,6 +178,10 @@ const PPGSignalMeter = ({
       rawArrhythmiaData,
       livePpgEvidencePassed,
       getValue,
+      bp,
+      glucose,
+      lipids,
+      rhythmLabel,
     };
     if (rrIntervals && rrIntervals.length >= 2) {
       const last = rrIntervals[rrIntervals.length - 1];
@@ -176,7 +196,7 @@ const PPGSignalMeter = ({
         sumSqDiffs += (rrIntervals[i] - rrIntervals[i - 1]) ** 2;
       hrvDisplayRef.current.rmssd = Math.round(Math.sqrt(sumSqDiffs / (rrIntervals.length - 1)));
     }
-  }, [getValue, quality, isFingerDetected, arrhythmiaStatus, preserveResults, bpm, spo2, rrIntervals, rawArrhythmiaData, livePpgEvidencePassed]);
+  }, [getValue, quality, isFingerDetected, arrhythmiaStatus, preserveResults, bpm, spo2, rrIntervals, rawArrhythmiaData, livePpgEvidencePassed, bp, glucose, lipids, rhythmLabel]);
 
   // (Flash del corazón eliminado: producía 2 setStates por latido, lo que
   // forzaba reconciliación de React 120-200 veces/min y generaba los
@@ -338,6 +358,91 @@ const PPGSignalMeter = ({
       ctx.fillStyle = COLORS.TEXT_PRIMARY;
       ctx.font = 'bold 12px "SF Mono", Consolas, monospace';
       ctx.fillText('25 mm/s', plot.x + plot.width, plot.y + plot.height + 38);
+    };
+
+    /** Tira inferior de signos vitales secundarios DENTRO del canvas:
+     *  presión / glucosa / lípidos / ritmo. 4 paneles uniformes. */
+    const drawSecondaryVitals = (ctx: CanvasRenderingContext2D) => {
+      const { COLORS } = CONFIG;
+      const { w, h } = canvasSizeRef.current;
+      const plot = getPlotArea();
+      const stripY = plot.y + plot.height + 56;
+      const stripH = h - stripY - 60; // deja 60 px para los 2 botones nativos
+      if (stripH < 50) return;
+      const stripX = 6;
+      const stripW = w - 12;
+      const cellW = stripW / 4;
+      const padBox = 4;
+      const { bp: bpVal, glucose: glu, lipids: lip, rhythmLabel: rhy } = propsRef.current;
+
+      // Fondo translúcido común
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillRect(stripX, stripY, stripW, stripH);
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(stripX + 0.5, stripY + 0.5, stripW - 1, stripH - 1);
+
+      const cells: Array<{
+        title: string;
+        value: string;
+        unit: string;
+        color: string;
+      }> = [
+        {
+          title: 'PRESIÓN',
+          value:
+            bpVal && bpVal.systolic > 0 ? `${bpVal.systolic}/${bpVal.diastolic}` : '--/--',
+          unit: 'mmHg',
+          color: bpVal && bpVal.systolic > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY,
+        },
+        {
+          title: 'GLUCOSA',
+          value: glu > 0 ? String(Math.round(glu)) : '--',
+          unit: 'mg/dL',
+          color: glu > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY,
+        },
+        {
+          title: 'COL./TRG.',
+          value:
+            lip && (lip.totalCholesterol > 0 || lip.triglycerides > 0)
+              ? `${lip.totalCholesterol || '--'}/${lip.triglycerides || '--'}`
+              : '--/--',
+          unit: 'mg/dL',
+          color: lip && lip.totalCholesterol > 0 ? COLORS.TEXT_PRIMARY : COLORS.TEXT_SECONDARY,
+        },
+        {
+          title: 'RITMO',
+          value: rhy ? rhy.split('_').join(' ').slice(0, 14) : '--',
+          unit: '',
+          color: COLORS.TEXT_PRIMARY,
+        },
+      ];
+      ctx.textAlign = 'left';
+      for (let i = 0; i < cells.length; i++) {
+        const c = cells[i];
+        const cx = stripX + i * cellW + padBox;
+        const cy = stripY + padBox;
+        // Separador interno
+        if (i > 0) {
+          ctx.strokeStyle = 'rgba(148, 163, 184, 0.10)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(stripX + i * cellW, stripY + 6);
+          ctx.lineTo(stripX + i * cellW, stripY + stripH - 6);
+          ctx.stroke();
+        }
+        ctx.font = 'bold 11px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = COLORS.TEXT_SECONDARY;
+        ctx.fillText(c.title, cx, cy + 14);
+        ctx.font = 'bold 22px "SF Mono", Consolas, monospace';
+        ctx.fillStyle = c.color;
+        ctx.fillText(c.value, cx, cy + 42);
+        if (c.unit) {
+          ctx.font = '10px "SF Mono", Consolas, monospace';
+          ctx.fillStyle = COLORS.TEXT_SECONDARY;
+          ctx.fillText(c.unit, cx, cy + 56);
+        }
+      }
     };
 
     const drawVitalInfo = (ctx: CanvasRenderingContext2D) => {
@@ -582,6 +687,7 @@ const PPGSignalMeter = ({
       drawAmplitudeScale(ctx);
       drawTimeScale(ctx);
       drawVitalInfo(ctx);
+      drawSecondaryVitals(ctx);
 
       if (preserve && !detected) {
         animationRef.current = requestAnimationFrame(render);
