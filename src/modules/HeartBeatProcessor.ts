@@ -31,6 +31,8 @@ import {
   // Sampling
   DEFAULT_SAMPLE_RATE,
   OVERSAMPLE_FACTOR,
+  MIN_SAMPLES_CANDIDATE,
+  MIN_DERIVATIVE_SAMPLES,
   // Thresholds
   PEAK_THRESHOLD_INITIAL,
   MIN_SIGNAL_RANGE,
@@ -189,6 +191,51 @@ import {
   // Validation
   TEMPLATE_MIN_RANGE,
   CORR_MIN_RANGE,
+  // Detection candidate
+  NORMALIZE_WINDOW_INITIAL,
+  NORMALIZE_CENTER_INDEX,
+  WINDOW_LEN_SHORT_PEAKS,
+  WINDOW_LEN_LONG_PEAKS,
+  CONSECUTIVE_PEAKS_WINDOW_THRESHOLD,
+  SLOPE_LEFT_OFFSET,
+  SLOPE_RIGHT_OFFSET,
+  DERIVATIVE_ZERO_CROSSING_SIZE,
+  ZERO_CROSSING_OFFSET_1,
+  ZERO_CROSSING_OFFSET_2,
+  ZERO_CROSSING_OFFSET_3,
+  ZERO_CROSSING_OFFSET_4,
+  MIN_SLOPE_SUM_SAMPLES,
+  SLOPE_SUM_OFFSET,
+  // Beat SQI
+  BEAT_SQI_MOTION_FACTOR,
+  BEAT_SQI_MAX_CONSECUTIVE,
+  BEAT_SQI_MOTION_PENALTY,
+  BEAT_SQI_RR_INCONSISTENCY_WEIGHT,
+  BEAT_SQI_CLIPPING_WEIGHT,
+  BEAT_SQI_DEGRADED_MORPHOLOGY_WEIGHT,
+  BEAT_SQI_LOW_PROMINENCE_WEIGHT,
+  BEAT_SQI_PRESSURE_PENALTY,
+  BEAT_SQI_CONTACT_QUALITY_WEIGHT,
+  BEAT_SQI_SIGNAL_STABILITY_WEIGHT,
+  BEAT_SQI_DETECTOR_AGREEMENT_WEIGHT,
+  BEAT_SQI_PREMATURE_BONUS,
+  BEAT_SQI_QUALITY_BONUS_FACTOR,
+  BEAT_SQI_BASE_FACTOR,
+  // Confidence thresholds
+  CONFIDENCE_RR_INCONSISTENCY_FACTOR,
+  CONFIDENCE_RR_DECREMENT,
+  CONFIDENCE_DETECTOR_AGREEMENT_BOOST,
+  MIN_CONFIDENCE_THRESHOLD,
+  BASE_CONFIDENCE_VALUE,
+  MAX_MISSED_BEAT_CONFIDENCE_REDUCTION,
+  MISSED_BEAT_CONFIDENCE_PENALTY,
+  // Peak analysis
+  MIN_CONSECUTIVE_PEAKS_ANALYSIS,
+  PEAK_DOMAIN_SQI_FACTOR_MIN,
+  MIN_RR_FOR_ANALYSIS,
+  MAX_RECENT_RR_INTERVALS,
+  MAX_RR_FOR_TRIMMED_MEAN,
+  TRIMMED_MEAN_FACTOR,
   // Utils
   clamp,
   bpmToRrMs,
@@ -638,11 +685,11 @@ export class HeartBeatProcessor {
   private detectCandidate(now: number, timeSinceLast: number, expectedRR: number, normRange: number): BeatCandidate | null {
     const n = this.signalBuf.length;
     const dn = this.derivBuf.length;
-    if (n < 15 || dn < 8) return null;
+    if (n < MIN_SAMPLES_CANDIDATE || dn < MIN_DERIVATIVE_SAMPLES) return null;
 
-    const windowLen = this.consecutivePeaks < 4 ? 90 : 150;
-    const normalized = this.normalizeWindow(11, windowLen);
-    const ci = 5;
+    const windowLen = this.consecutivePeaks < CONSECUTIVE_PEAKS_WINDOW_THRESHOLD ? WINDOW_LEN_SHORT_PEAKS : WINDOW_LEN_LONG_PEAKS;
+    const normalized = this.normalizeWindow(NORMALIZE_WINDOW_INITIAL, windowLen);
+    const ci = NORMALIZE_CENTER_INDEX;
     const center = normalized[ci];
 
     const isLocalMax =
@@ -651,8 +698,8 @@ export class HeartBeatProcessor {
 
     const neighborhoodMin = Math.min(...normalized);
     const prominence = center - neighborhoodMin;
-    const risingSlope = center - normalized[ci - 3];
-    const fallingSlope = center - normalized[ci + 3];
+    const risingSlope = center - normalized[ci - SLOPE_LEFT_OFFSET];
+    const fallingSlope = center - normalized[ci + SLOPE_RIGHT_OFFSET];
 
     const halfProm = neighborhoodMin + prominence / 2;
     let widthSamples = 0;
@@ -664,19 +711,21 @@ export class HeartBeatProcessor {
     // Umbrales mínimos relajados para señales muy débiles (perfusión < 1%,
     // sujeto hipotérmico, contacto sub-óptimo). El gate externo y el
     // detector espectral filtran falsos positivos a posteriori.
-    const det1Hit = isLocalMax && prominence > 0.6 && risingSlope > 0.20;
+    const det1Hit = isLocalMax && prominence > DET1_PROMINENCE_THRESHOLD && risingSlope > DET1_RISING_SLOPE_THRESHOLD;
 
-    const d = new Float64Array(8);
-    for (let i = 0; i < 8; i++) d[i] = this.derivBuf.get(dn - 8 + i);
+    const d = new Float64Array(DERIVATIVE_ZERO_CROSSING_SIZE);
+    for (let i = 0; i < DERIVATIVE_ZERO_CROSSING_SIZE; i++) d[i] = this.derivBuf.get(dn - DERIVATIVE_ZERO_CROSSING_SIZE + i);
 
     const zeroCrossing =
-      (d[4] > 0 && d[5] <= 0) || (d[5] > 0 && d[6] <= 0) || (d[3] > 0 && d[4] <= 0);
+      (d[ZERO_CROSSING_OFFSET_2] > 0 && d[ZERO_CROSSING_OFFSET_3] <= 0) || 
+      (d[ZERO_CROSSING_OFFSET_3] > 0 && d[ZERO_CROSSING_OFFSET_4] <= 0) || 
+      (d[ZERO_CROSSING_OFFSET_1] > 0 && d[ZERO_CROSSING_OFFSET_2] <= 0);
 
     const ssn = this.slopeSum.length;
-    const ssfRecent = ssn > 3 ? this.slopeSum.get(ssn - 3) : 0;
-    const ssfPeak = ssfRecent > 1.0;
+    const ssfRecent = ssn > MIN_SLOPE_SUM_SAMPLES ? this.slopeSum.get(ssn - SLOPE_SUM_OFFSET) : 0;
+    const ssfPeak = ssfRecent > DET2_SSF_THRESHOLD;
 
-    const det2Hit = zeroCrossing && (ssfPeak || risingSlope > 0.40);
+    const det2Hit = zeroCrossing && (ssfPeak || risingSlope > DET2_RISING_SLOPE_THRESHOLD);
 
     const detectorHits = (det1Hit ? 1 : 0) + (det2Hit ? 1 : 0);
     if (detectorHits === 0) return null;

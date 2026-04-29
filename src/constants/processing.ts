@@ -547,6 +547,361 @@ export const BPM_CONFIDENCE_BASE = 0.5;
 export const BPM_CONFIDENCE_UPSTREAM_FACTOR = 0.5;
 
 // ═════════════════════════════════════════════════════════════════════════════
+// DETECCIÓN DE CANDIDATOS
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Tamaño de ventana de normalización inicial */
+export const NORMALIZE_WINDOW_INITIAL = 11;
+
+/** Centro de ventana de normalización */
+export const NORMALIZE_CENTER_INDEX = 5;
+
+/** Longitud de ventana para pocos picos consecutivos (frames) */
+export const WINDOW_LEN_SHORT_PEAKS = 90;
+
+/** Longitud de ventana para muchos picos consecutivos (frames) */
+export const WINDOW_LEN_LONG_PEAKS = 150;
+
+/** Umbral de picos consecutivos para ventana larga */
+export const CONSECUTIVE_PEAKS_WINDOW_THRESHOLD = 4;
+
+/** Offset izquierdo para análisis de pendiente */
+export const SLOPE_LEFT_OFFSET = 3;
+
+/** Offset derecho para análisis de pendiente */
+export const SLOPE_RIGHT_OFFSET = 3;
+
+/** Tamaño de buffer de derivada para zero-crossing */
+export const DERIVATIVE_ZERO_CROSSING_SIZE = 8;
+
+/** Offset de zero-crossing para análisis */
+export const ZERO_CROSSING_OFFSET_1 = 3;
+export const ZERO_CROSSING_OFFSET_2 = 4;
+export const ZERO_CROSSING_OFFSET_3 = 5;
+export const ZERO_CROSSING_OFFSET_4 = 6;
+
+/** Mínimo de samples de slope sum para análisis */
+export const MIN_SLOPE_SUM_SAMPLES = 3;
+
+/** Offset de slope sum para análisis */
+export const SLOPE_SUM_OFFSET = 3;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SQI Y CONFIANZA DE LATIDOS
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Factor de penalidad por movimiento en SQI */
+export const BEAT_SQI_MOTION_FACTOR = 0.3;
+
+/** Máximo de latidos consecutivos para SQI */
+export const BEAT_SQI_MAX_CONSECUTIVE = 30;
+
+/** Peso de penalidad por movimiento en SQI */
+export const BEAT_SQI_MOTION_PENALTY = 20;
+
+/** Peso de inconsistencia RR en SQI */
+export const BEAT_SQI_RR_INCONSISTENCY_WEIGHT = 15;
+
+/** Peso de clipping en SQI */
+export const BEAT_SQI_CLIPPING_WEIGHT = 15;
+
+/** Peso de morphología degradada en SQI */
+export const BEAT_SQI_DEGRADED_MORPHOLOGY_WEIGHT = 8;
+
+/** Peso de baja prominencia en SQI */
+export const BEAT_SQI_LOW_PROMINENCE_WEIGHT = 7;
+
+/** Peso de penalidad por presión en SQI */
+export const BEAT_SQI_PRESSURE_PENALTY = 5;
+
+/** Peso de calidad de contacto en SQI */
+export const BEAT_SQI_CONTACT_QUALITY_WEIGHT = 15;
+
+/** Peso de estabilidad de señal en SQI */
+export const BEAT_SQI_SIGNAL_STABILITY_WEIGHT = 12;
+
+/** Peso de acuerdo detector en SQI */
+export const BEAT_SQI_DETECTOR_AGREEMENT_WEIGHT = 10;
+
+/** Bonus de latido temprano en SQI */
+export const BEAT_SQI_PREMATURE_BONUS = 5;
+
+/** Factor de bonus por calidad en SQI */
+export const BEAT_SQI_QUALITY_BONUS_FACTOR = 0.58;
+
+/** Factor base de SQI */
+export const BEAT_SQI_BASE_FACTOR = 0.42;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// UMBRALES DE CONFIANZA
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Factor de confianza para inconsistencia RR */
+export const CONFIDENCE_RR_INCONSISTENCY_FACTOR = 0.75;
+
+/** Factor de decremento por inconsistencia RR */
+export const CONFIDENCE_RR_DECREMENT = 0.15;
+
+/** Factor de mejora por acuerdo detector */
+export const CONFIDENCE_DETECTOR_AGREEMENT_BOOST = 0.1;
+
+/** Mínima confianza permitida */
+export const MIN_CONFIDENCE_THRESHOLD = 0.3;
+
+/** Confianza base mínima */
+export const BASE_CONFIDENCE_VALUE = 0.5;
+
+/** Máxima reducción de confianza por latido perdido */
+export const MAX_MISSED_BEAT_CONFIDENCE_REDUCTION = 0.35;
+
+/** Reducción de confianza por latido perdido */
+export const MISSED_BEAT_CONFIDENCE_PENALTY = 0.2;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// UMBRALES DE PICOS Y ANÁLISIS
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Mínimo de picos consecutivos para análisis confiable */
+export const MIN_CONSECUTIVE_PEAKS_ANALYSIS = 3;
+
+/** Factor mínimo de SQI para dominio de picos */
+export const PEAK_DOMAIN_SQI_FACTOR_MIN = 35;
+
+/** Mínimo de intervalos RR para análisis */
+export const MIN_RR_FOR_ANALYSIS = 2;
+
+/** Máximo de intervalos RR recientes para análisis */
+export const MAX_RECENT_RR_INTERVALS = 10;
+
+/** Máximo de intervalos RR para trimmed mean */
+export const MAX_RR_FOR_TRIMMED_MEAN = 12;
+
+/** Factor de trim para trimmed mean */
+export const TRIMMED_MEAN_FACTOR = 0.2;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// EMA Y SUAVIZADO
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Alpha por defecto para EMA de BPM */
+export const BPM_EMA_ALPHA_DEFAULT = 0.25;
+
+/** Alpha lento para EMA (cambios grandes) */
+export const BPM_EMA_ALPHA_SLOW = 0.06;
+
+/** Alpha medio para EMA (cambios moderados) */
+export const BPM_EMA_ALPHA_MED = 0.12;
+
+/** Umbral de diferencia relativa para EMA lento */
+export const BPM_EMA_DIFF_SLOW_THRESHOLD = 0.30;
+
+/** Umbral de diferencia relativa para EMA medio */
+export const BPM_EMA_DIFF_MED_THRESHOLD = 0.18;
+
+/** Alpha mínimo para EMA con pocos picos */
+export const BPM_EMA_ALPHA_MIN = 0.05;
+
+/** Decremento de alpha con pocos picos */
+export const BPM_EMA_ALPHA_DECREMENT = 0.06;
+
+/** Umbral de picos consecutivos para EMA normal */
+export const BPM_EMA_CONSECUTIVE_PEAKS_THRESHOLD = 5;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// AUTO-CORRELACIÓN BPM
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Lag mínimo para auto-correlación (5 samples) */
+export const AUTOCORR_MIN_LAG_SAMPLES = 5;
+
+/** BPM máximo para auto-correlación (200 BPM) */
+export const AUTOCORR_MAX_BPM = 200;
+
+/** BPM mínimo para auto-correlación (38 BPM) */
+export const AUTOCORR_MIN_BPM = 38;
+
+/** Buffer offset para auto-correlación */
+export const AUTOCORR_BUFFER_OFFSET = 10;
+
+/** Máximo bias de ritmo */
+export const AUTOCORR_RHYTHM_BIAS_MAX = 0.15;
+
+/** Factor de bias de ritmo */
+export const AUTOCORR_RHYTHM_BIAS_FACTOR = 0.1;
+
+/** Score mínimo para aceptar lag */
+export const AUTOCORR_MIN_SCORE = 0.2;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SQI GLOBAL
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Frames mínimos para SQI global */
+export const GLOBAL_SQI_MIN_FRAMES = 30;
+
+/** Window length para SQI de rango */
+export const GLOBAL_SQI_RANGE_WINDOW = 60;
+
+/** Divisor para factor de rango */
+export const GLOBAL_SQI_RANGE_DIVISOR = 5;
+
+/** Peso de factor de rango */
+export const GLOBAL_SQI_RANGE_WEIGHT = 22;
+
+/** Divisor para factor de picos */
+export const GLOBAL_SQI_PEAK_DIVISOR = 5;
+
+/** Peso de factor de picos */
+export const GLOBAL_SQI_PEAK_WEIGHT = 20;
+
+/** Window length para SQI de derivada */
+export const GLOBAL_SQI_DERIV_WINDOW = 60;
+
+/** Divisor para factor de pendiente */
+export const GLOBAL_SQI_SLOPE_DIVISOR = 1.0;
+
+/** Peso de factor de pendiente */
+export const GLOBAL_SQI_SLOPE_WEIGHT = 14;
+
+/** Factor de variación para SQI RR */
+export const GLOBAL_SQI_RR_CV_FACTOR = 2;
+
+/** Peso de factor RR */
+export const GLOBAL_SQI_RR_WEIGHT = 22;
+
+/** Factor de periodicidad */
+export const GLOBAL_SQI_PERIODICITY_FACTOR = 0.6;
+
+/** Peso de factor de periodicidad */
+export const GLOBAL_SQI_PERIODICITY_WEIGHT = 22;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PAN-TOMPKINS
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Alpha para SignalLevel (0.125 = 1/8) */
+export const PT_SIGNAL_LEVEL_ALPHA = 0.875;
+
+/** Alpha para actualización de SignalLevel */
+export const PT_SIGNAL_UPDATE_ALPHA = 0.125;
+
+/** Factor de threshold adaptativo */
+export const PT_THRESHOLD_FACTOR = 0.25;
+
+/** Smooth factor para threshold */
+export const PT_THRESHOLD_SMOOTH_FACTOR = 0.75;
+
+/** Alpha para actualización de threshold */
+export const PT_THRESHOLD_UPDATE_ALPHA = 0.25;
+
+/** Smooth factor para threshold fallback */
+export const PT_FALLBACK_SMOOTH_FACTOR = 0.80;
+
+/** Alpha para actualización fallback */
+export const PT_FALLBACK_UPDATE_ALPHA = 0.20;
+
+/** Threshold base con autocorrelación */
+export const PT_BASE_THRESHOLD_WITH_AUTOCORR = 1.4;
+
+/** Threshold base sin autocorrelación */
+export const PT_BASE_THRESHOLD_NO_AUTOCORR = 2.4;
+
+/** Factor de rango para threshold */
+export const PT_THRESHOLD_RANGE_FACTOR = 0.25;
+
+/** Mínimo threshold */
+export const PT_THRESHOLD_MIN = 0.9;
+
+/** Máximo threshold */
+export const PT_THRESHOLD_MAX = 6.0;
+
+/** Default peak threshold para hardReset */
+export const DEFAULT_PEAK_THRESHOLD = 4.0;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ESTIMACIÓN DE SAMPLE RATE
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Frames mínimos para estimar sample rate */
+export const SAMPLE_RATE_MIN_FRAMES = 10;
+
+/** Default sample rate (fps) */
+export const SAMPLE_RATE_DEFAULT_FPS = 30;
+
+/** Máximo de intervalos a considerar */
+export const SAMPLE_RATE_MAX_INTERVALS = 50;
+
+/** Intervalo mínimo válido (ms) */
+export const SAMPLE_RATE_MIN_INTERVAL_MS = 8;
+
+/** Intervalo máximo válido (ms) */
+export const SAMPLE_RATE_MAX_INTERVAL_MS = 120;
+
+/** Intervalos mínimos para confianza */
+export const SAMPLE_RATE_MIN_INTERVALS = 6;
+
+/** Sample rate mínimo válido (fps) */
+export const SAMPLE_RATE_MIN_FPS = 15;
+
+/** Sample rate máximo válido (fps) */
+export const SAMPLE_RATE_MAX_FPS = 60;
+
+/** Factor de conversión a ms */
+export const MS_PER_SECOND = 1000;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SPECTRAL HR
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Frames mínimos para estimación spectral */
+export const SPECTRAL_MIN_FRAMES = 90;
+
+/** Tamaño máximo de buffer spectral */
+export const SPECTRAL_MAX_BUFFER_SIZE = 128;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SLOPE SUM
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Window size para slope sum */
+export const SLOPE_SUM_WINDOW_SIZE = 5;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SIGNAL RANGE
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Frames mínimos para signal range */
+export const SIGNAL_RANGE_MIN_FRAMES = 10;
+
+/** Percentil inferior para rango */
+export const SIGNAL_RANGE_LOW_PERCENTILE = 0.1;
+
+/** Percentil superior para rango */
+export const SIGNAL_RANGE_HIGH_PERCENTILE = 0.9;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NORMALIZACIÓN
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Factor de escalado para normalización */
+export const NORMALIZATION_SCALE_FACTOR = 120;
+
+/** Offset para normalización */
+export const NORMALIZATION_OFFSET = 0.5;
+
+/** Rango mínimo para normalización válida */
+export const NORMALIZATION_MIN_RANGE = 0.05;
+
+/** Window length corta para normalización */
+export const NORMALIZATION_WINDOW_SHORT = 90;
+
+/** Window length larga para normalización */
+export const NORMALIZATION_WINDOW_LONG = 150;
+
+/** Umbral de picos para window larga */
+export const NORMALIZATION_PEAK_THRESHOLD = 4;
+
+// ═════════════════════════════════════════════════════════════════════════════
 // FUNCIONES AUXILIARES
 // ═════════════════════════════════════════════════════════════════════════════
 
