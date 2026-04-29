@@ -1,11 +1,12 @@
 /**
  * PRESSURE PROXY ESTIMATOR
  * Classifies finger pressure from PPG signal characteristics.
- * Uses: coverage, saturation, pulsatility collapse, uniformity, baseline drift.
+ * Estimador proxy de presión basado en análisis de señal PPG.
+ * Combina múltiples características de la onda para inferir estado de presión.
  * NO simulation — pure signal analysis.
  */
 
-export type PressureState = 'LOW_PRESSURE' | 'OPTIMAL_PRESSURE' | 'HIGH_PRESSURE';
+import type { PressureState } from '../../types/signal';
 
 export interface PressureEstimate {
   state: PressureState;

@@ -1,7 +1,7 @@
-import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface, ContactState } from '../../types/signal';
+import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcessorInterface, ContactState, PressureState } from '../../types/signal';
 import { RingBuffer } from './RingBuffer';
 import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
-import { PressureProxyEstimator, type PressureState, type PressureEstimate } from './PressureProxyEstimator';
+import { PressureProxyEstimator, type PressureEstimate } from './PressureProxyEstimator';
 import { computeGlobalSQI } from './SignalQualityEstimator';
 import { MultiROIExtractor, type ROICellMetrics } from './MultiROIExtractor';
 import { ROIScorer } from './ROIScorer';

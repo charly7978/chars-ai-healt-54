@@ -146,7 +146,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
-        console.log('📷 Cameras found:', videoDevices.length);
 
         if (videoDevices.length === 0) return null;
         if (videoDevices.length === 1) {
@@ -170,8 +169,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         diagnosticsRef.current.deviceId = chosen.deviceId;
         constraintReportRef.current.setDeviceInfo(chosen.deviceId, chosen.label);
         return chosen.deviceId;
-      } catch (e) {
-        console.error('❌ Camera enumeration failed:', e);
+      } catch {
         return null;
       }
     };
@@ -205,7 +203,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         try {
           stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: baseConstraints });
         } catch {
-          console.warn('Fallback to simple constraints');
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
             video: { facingMode: { ideal: 'environment' }, width: { ideal: 640 }, height: { ideal: 480 } }
@@ -266,15 +263,12 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
                 diagnosticsRef.current.torchActive = true;
                 diagnosticsRef.current.torchEffective = true;
                 constraintReportRef.current.setTorchInfo(true, true, true);
-                console.log('🔦 Torch ON (verified)');
               }
-            } catch (e) {
-              console.warn('Torch attempt', attempt, 'failed:', e);
+            } catch {
               await new Promise(r => setTimeout(r, 200));
             }
           }
           if (!torchOk) {
-            console.warn('⚠️ Torch failed after 5 attempts');
             constraintReportRef.current.addFailedConstraint('torch');
           }
         } else {
@@ -314,10 +308,8 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           diagnosticsRef.current.stabilizationScore = stabilizationScore;
           
           if (stabilizationScore < 0.3) {
-            console.warn('⚠️ Warm-up stabilization score low:', stabilizationScore.toFixed(2));
             setWarmUpStatus('FAILED');
           } else {
-            console.log('✅ Warm-up complete, stabilization score:', stabilizationScore.toFixed(2));
             setWarmUpStatus('COMPLETE');
             onWarmUpComplete?.();
           }
@@ -450,15 +442,6 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           diagnosticsRef.current.overallQuality = report.overallQuality;
           diagnosticsRef.current.constraintSummary = report.summary;
           
-          console.log('📹 Camera ready:', finalSettings.width, 'x', finalSettings.height,
-            '@', finalSettings.frameRate, 'fps',
-            '| Torch:', diagnosticsRef.current.torchEffective,
-            '| Exp:', diagnosticsRef.current.exposureLocked,
-            '| WB:', diagnosticsRef.current.wbLocked,
-            '| Focus:', diagnosticsRef.current.focusLocked,
-            '| ISO:', diagnosticsRef.current.isoValue,
-            '| Quality:', report.overallQuality,
-            '| Summary:', report.summary);
 
           // Watchdog de torch: verifica cada 2 s que sigue activo. Si la
           // cámara o el SO lo apagaron (poweroff por temperatura, cambio
@@ -521,8 +504,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           }
         }, warmUpInterval);
 
-      } catch (err) {
-        console.error('❌ Camera error:', err);
+      } catch {
         isStartingRef.current = false;
       }
     };

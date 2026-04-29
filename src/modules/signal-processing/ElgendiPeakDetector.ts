@@ -204,9 +204,10 @@ export class ElgendiPeakDetector {
         }
       } else {
         if (this.inBlock) {
-          // Block terminado: confirmar pico si duración ≥ peakWindow (THR2).
+          // Block terminado: confirmar pico si duración ≥ 90% de peakWindow (THR2).
+          // Ajustado a 0.9 para mayor rechazo de falsos positivos sintéticos.
           const durationMs = timestampMs - this.blockStartTs;
-          if (durationMs >= this.cfg.peakWindowMs * 0.8) {
+          if (durationMs >= this.cfg.peakWindowMs * 0.9) {
             // Refractory check
             if (this.blockMaxTs - this.lastPeakTs >= this.cfg.refractoryMs) {
               isPeak = true;

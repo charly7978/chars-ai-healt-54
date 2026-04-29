@@ -3,7 +3,7 @@
  * Comprehensive SQI from multiple dimensions.
  * No simulation — pure signal analysis.
  */
-import type { PressureState } from './PressureProxyEstimator';
+import type { PressureState } from '../../types/signal';
 
 export interface SQIReport {
   sqiGlobal: number;           // 0-100

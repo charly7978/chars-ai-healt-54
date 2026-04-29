@@ -240,36 +240,52 @@ export class HeartBeatProcessor {
     let currentFlags: BeatFlags | null = null;
     let rejectionReason = '';
 
-    // Si Elgendi 2013 confirma un pico y el detector dual NO produjo
-    // candidato, sintetizamos un candidato a partir del estado del frame
-    // y lo aceptamos. Elgendi es validado clínicamente con sensibilidad
-    // ~99.9%; ignorarlo equivale a perder latidos reales.
-    if (elgendiHit && !candidate && refractoryState !== 'hard' && timeSinceLastPeak >= 280) {
-      candidate = {
-        timestamp: now,
-        sampleIndex: this.frameCount,
-        amplitude: normalizedValue,
-        prominence: Math.max(2, range * 0.4),
-        widthMs: 250,
-        upSlope: Math.max(0.3, deriv),
-        downSlope: 0.3,
-        localBaseline: 0,
-        detectorHits: 1,
-        detectorAgreement: 0.7,
-        zeroCrossingSupport: false,
-        periodicitySupport: expectedRR > 0 && timeSinceLastPeak >= expectedRR * 0.55 && timeSinceLastPeak <= expectedRR * 1.55,
-        templateCorrelation: this.templateValid ? this.correlateWithTemplate() : 0,
-        localBandPowerRatio: clamp(normRange / 2, 0, 1),
-        localPerfusion: 0,
-        localMotionPenalty: this.motionPenalty,
-        localPressurePenalty: this.pressurePenalty,
-        localClipPenalty: this.clipPenalty,
-        status: 'accepted',
-        rejectionReason: '',
-        morphologyScore: 60,
-        rhythmScore: 50,
-        totalScore: 65,
-      };
+    // Elgendi synthesization: SOLO cuando hay evidencia PPG viva confirmada
+    // y contexto de ritmo establecido. Evita falsos positivos cuando Elgendi
+    // detecta ruido como pico.
+    const canSynthesizeElgendi =
+      elgendiHit &&
+      !candidate &&
+      refractoryState !== 'hard' &&
+      timeSinceLastPeak >= 280 &&
+      this.livePpgEvidencePassed && // REQUERIR: evidencia PPG viva
+      this.acceptedBeats.length >= 1 && // REQUERIR: al menos un latido previo
+      expectedRR > 0 && // REQUERIR: contexto de ritmo conocido
+      timeSinceLastPeak >= expectedRR * 0.65 &&
+      timeSinceLastPeak <= expectedRR * 1.35; // Rango más estricto que antes
+
+    if (canSynthesizeElgendi) {
+      // Verificación adicional: el valor debe estar cerca del valor esperado del template
+      const templateScore = this.templateValid ? this.correlateWithTemplate() : 0;
+      const nearTemplate = !this.templateValid || templateScore >= 0.35;
+
+      if (nearTemplate) {
+        candidate = {
+          timestamp: now,
+          sampleIndex: this.frameCount,
+          amplitude: normalizedValue,
+          prominence: Math.max(2, range * 0.4),
+          widthMs: 250,
+          upSlope: Math.max(0.3, deriv),
+          downSlope: 0.3,
+          localBaseline: 0,
+          detectorHits: 1,
+          detectorAgreement: 0.7, // Solo Elgendi, no el dual
+          zeroCrossingSupport: false,
+          periodicitySupport: true, // Ya verificado arriba
+          templateCorrelation: templateScore,
+          localBandPowerRatio: clamp(normRange / 2, 0, 1),
+          localPerfusion: 0,
+          localMotionPenalty: this.motionPenalty,
+          localPressurePenalty: this.pressurePenalty,
+          localClipPenalty: this.clipPenalty,
+          status: 'accepted',
+          rejectionReason: '',
+          morphologyScore: 55, // Ligeramente menor que latido dual-detectado
+          rhythmScore: 45,
+          totalScore: 58, // Justo por encima del umbral mínimo
+        };
+      }
     }
 
     if (candidate) {

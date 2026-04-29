@@ -18,6 +18,20 @@ import PPGSignalMeter from "@/components/PPGSignalMeter";
 import { VitalSignsResult } from "@/modules/vital-signs/VitalSignsProcessor";
 import { toast } from "@/hooks/use-toast";
 import type { ProcessedSignal } from "@/types/signal";
+import {
+  CHROMA_CONFIRM_FRAMES as PHYSICS_CHROMA_CONFIRM,
+  CHROMA_PERSIST_FAIL_FRAMES as PHYSICS_CHROMA_PERSIST,
+  BPM_HOLD_MS as PHYSICS_BPM_HOLD,
+  GATE_FAIL_INVALIDATE_FRAMES as PHYSICS_GATE_FAIL,
+  UNSTABLE_ZERO_THRESHOLD as PHYSICS_UNSTABLE_THRESH,
+  VITALS_PROCESS_EVERY_N_FRAMES as PHYSICS_VITALS_EVERY,
+  EMA_ALPHA_UI,
+} from "@/constants/physics";
+import {
+  processChromaticFrame,
+  createChromaEma,
+  type ChromaEmaState,
+} from "@/modules/signal-processing/ChromaticGate";
 
 const NON_ALERT_RHYTHMS = new Set([
   "SIN ARRITMIAS",
@@ -106,18 +120,18 @@ const Index = () => {
   // destello/parpadeo active el detector. Se exigen 4 frames consecutivos
   // (~130 ms a 30 fps) antes de procesar el heartbeat al primer contacto.
   const chromaOkStreakRef = useRef(0);
-  const CHROMA_CONFIRM_FRAMES = 4;
+  const CHROMA_CONFIRM_FRAMES = PHYSICS_CHROMA_CONFIRM;
   // Streak de frames consecutivos SIN firma cromática. Solo tras 36 frames
   // (~1.2 s a 30 fps) se borran buffers y se resetea el procesador.
   // Tolera valles fisiológicos largos, pequeños movimientos del dedo, y
   // microtransiciones de auto-exposición. Un dedo retirado cae bajo
   // umbral permanentemente y supera fácilmente este margen.
   const chromaFailStreakRef = useRef(0);
-  const CHROMA_PERSIST_FAIL_FRAMES = 36;
+  const CHROMA_PERSIST_FAIL_FRAMES = PHYSICS_CHROMA_PERSIST;
   // EMAs de los descriptores cromáticos para amortiguar el ruido frame-a-frame
   // y los micro-valles de la propia pulsación. La validación se hace contra
   // estas medias suavizadas.
-  const chromaEmaRef = useRef({ meanR: 0, rOverMax: 0, rMinusMax: 0, dcRed: 0, initialized: false });
+  const chromaEmaRef = useRef<ChromaEmaState>(createChromaEma());
   // Bandera de "engaged": una vez que el chroma se valida y el operador
   // tiene dedo, mantenemos histéresis: salir del estado engaged exige
   // umbrales más bajos (release) que entrar (attack).
@@ -126,14 +140,14 @@ const Index = () => {
   // el monitor mantiene el último BPM real (comportamiento de monitor
   // clínico estándar; evita parpadeo numérico durante valles transitorios).
   const lastValidBpmRef = useRef({ bpm: 0, ts: 0 });
-  const BPM_HOLD_MS = 2500;
+  const BPM_HOLD_MS = PHYSICS_BPM_HOLD;
 
-  const UNSTABLE_ZERO_THRESHOLD = 12;
-  const GATE_FAIL_INVALIDATE_FRAMES = 8;
-  const VITALS_PROCESS_EVERY_N_FRAMES = 3;
+  const UNSTABLE_ZERO_THRESHOLD = PHYSICS_UNSTABLE_THRESH;
+  const GATE_FAIL_INVALIDATE_FRAMES = PHYSICS_GATE_FAIL;
+  const VITALS_PROCESS_EVERY_N_FRAMES = PHYSICS_VITALS_EVERY;
 
   // Suavizado EMA para valores publicados a UI
-  const EMA_ALPHA = 0.3;
+  const EMA_ALPHA = EMA_ALPHA_UI;
   const emaRef = useRef({
     bpm: 0,
     spo2: 0,
@@ -534,104 +548,28 @@ const Index = () => {
       sourceStability?: number;
     };
 
-    // ================================================================
-    // CHROMATIC GATE — firma física inviolable del flash sobre tejido
-    // perfundido. Sin esta firma NO HAY procesamiento alguno: ni
-    // heartbeat, ni picos, ni vitales. Solo onda gris plana en el monitor.
-    //
-    // Con flash blanco apuntando a un dedo:
-    //  - hemoglobina absorbe verde y azul → R domina ENORMEMENTE.
-    //  - DC del rojo > 100 (saturado por reflexión del tejido).
-    //  - R / max(G, B) >= 1.6 (típicamente 2-4).
-    //  - R - max(G, B) >= 25.
-    //
-    // Sin dedo (pared, aire, sábana, ropa, papel, mesa, objetos):
-    //  - Los tres canales se balancean (R/max(G,B) ≈ 1.0-1.3).
-    //  - O dominan G/B según el color del objeto.
-    //  - El DC del rojo cae < 100 si no hay reflexión directa.
-    //
-    // Este test es MATEMÁTICAMENTE imposible de pasar sin tejido
-    // perfundido bajo flash. No es una heurística de "forma de dedo".
-    // ================================================================
+    // ============================================================
+    // GATE CROMÁTICO - Anti-spoofing: solo tejido perfundido pasa.
+    // Basado en: Lovisotto 2020, Coppetti 2017, Pereira 2020.
+    // Firma: R dominante (130-240), R/G >= 1.55, R-G >= 25 (attack)
+    // Histéresis: release con umbrales más permisivos tolera valles PPG.
+    // ============================================================
     const acStatsEarly = ls.acStats ?? { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0, rgRatio: 0, ratioOfRatios: 0 };
     const meanRcurr = ls.rawRed ?? 0;
     const meanGcurr = ls.rawGreen ?? 0;
-    // El procesador no expone meanB, pero podemos inferir un techo: si la
-    // luminancia es Y y R, G están cerca, el azul también lo está.
-    // Aproximación segura: max(G, B) ≥ G (B suele ser ≤ G en flash blanco
-    // sobre tejido). Por tanto R / max(G, B) ≤ R / G.
-    const maxNonRed = Math.max(meanGcurr, 1);
-    const rOverMax = meanRcurr / maxNonRed;
-    const rMinusMax = meanRcurr - maxNonRed;
-    // ============================================================
-    // EMA cromática para amortiguar valles fisiológicos de la pulsación
-    // (que también modulan meanR / rOverMax) y ruido por frame, sin
-    // perder reactividad ante una retirada real del dedo.
-    // Tau efectivo ~500 ms a 30 fps con alpha=0.10. Mantiene la señal
-    // estable durante valles cardíacos (que duran ~150-300 ms).
-    // ============================================================
-    const ema = chromaEmaRef.current;
-    if (!ema.initialized) {
-      ema.meanR = meanRcurr;
-      ema.rOverMax = rOverMax;
-      ema.rMinusMax = rMinusMax;
-      ema.dcRed = (acStatsEarly.redDC ?? 0) > 30 ? acStatsEarly.redDC : meanRcurr;
-      ema.initialized = true;
-    } else {
-      const a = 0.10;
-      ema.meanR = ema.meanR * (1 - a) + meanRcurr * a;
-      ema.rOverMax = ema.rOverMax * (1 - a) + rOverMax * a;
-      ema.rMinusMax = ema.rMinusMax * (1 - a) + rMinusMax * a;
-      const dcRaw = (acStatsEarly.redDC ?? 0) > 30 ? acStatsEarly.redDC : meanRcurr;
-      ema.dcRed = ema.dcRed * (1 - a) + dcRaw * a;
-    }
 
-    // Umbrales VALIDADOS por literatura (Lovisotto 2020 "Seeing Red" CVPRW;
-    // Coppetti 2017 fingertip PPG validation; Pereira 2020 npj Digital Med):
-    //   - meanR >= 150 con flash: tejido perfundido reflejando luz blanca.
-    //     Con piel normal y flash el rojo está saturado a 180-240/255.
-    //     Cualquier escena sin tejido (pared, papel, mesa, dedo retirado)
-    //     queda muy por debajo (típico 30-90).
-    //   - R/G >= 1.6: la hemoglobina absorbe verde y azul ~10× más que rojo.
-    //     Con tejido perfundido la ratio R/G está entre 1.8-3.5. Sin tejido
-    //     los canales se balancean (R/G ≈ 1.0).
-    //   - R-G >= 30: margen absoluto que excluye cualquier color rojizo
-    //     no perfundido (papel rojo, tela, etc.).
-    //
-    // RELEASE más permisivo para mantener el contacto durante valles
-    // fisiológicos del PPG (la propia pulsación modula meanR ±2-4%).
-    // Calibrados para incluir piel oscura (Fitzpatrick V-VI) sin perder
-    // discriminación contra escenas no-tejido. Lovisotto 2020 cita
-    // meanR>150 como baseline; Pereira 2020 valida 130 mínimo en piel V-VI.
-    const ATK_MEAN_R = 130;
-    const ATK_R_OVER_MAX = 1.55;
-    const ATK_R_MINUS_MAX = 25;
-    const ATK_DC_RED = 110;
-    // RELEASE generoso para tolerar valles fisiológicos del PPG
-    const REL_MEAN_R = 95;
-    const REL_R_OVER_MAX = 1.20;
-    const REL_R_MINUS_MAX = 14;
-    const REL_DC_RED = 80;
-
-    const attackOk =
-      ema.meanR >= ATK_MEAN_R &&
-      ema.rOverMax >= ATK_R_OVER_MAX &&
-      ema.rMinusMax >= ATK_R_MINUS_MAX &&
-      ema.dcRed >= ATK_DC_RED;
-    const releaseOk =
-      ema.meanR >= REL_MEAN_R &&
-      ema.rOverMax >= REL_R_OVER_MAX &&
-      ema.rMinusMax >= REL_R_MINUS_MAX &&
-      ema.dcRed >= REL_DC_RED;
-
-    let chromaOk: boolean;
-    if (chromaEngagedRef.current) {
-      chromaOk = releaseOk;
-      if (!releaseOk) chromaEngagedRef.current = false;
-    } else {
-      chromaOk = attackOk;
-      if (attackOk) chromaEngagedRef.current = true;
-    }
+    const chromaResult = processChromaticFrame(
+      chromaEmaRef.current,
+      chromaEngagedRef.current,
+      {
+        meanR: meanRcurr,
+        meanG: meanGcurr,
+        redDC: acStatsEarly.redDC ?? 0,
+      }
+    );
+    chromaEmaRef.current = chromaResult.ema;
+    chromaEngagedRef.current = chromaResult.engaged;
+    const chromaOk = chromaResult.ok;
 
     if (!chromaOk) {
       chromaOkStreakRef.current = 0;
@@ -683,7 +621,7 @@ const Index = () => {
         resetHeartBeat();
         // Después invalidamos también la EMA cromática para que el próximo
         // contacto entre por attack-thresholds.
-        ema.initialized = false;
+        chromaEmaRef.current = createChromaEma();
       }
       unstableFrameCounter.current = chromaFailStreakRef.current - CHROMA_PERSIST_FAIL_FRAMES;
       return;
@@ -946,22 +884,7 @@ const Index = () => {
     }
 
     // 5) Pipeline válido: BPM, picos, vitals.
-    // ================================================================
-    // VALIDACIÓN ÚNICA Y LINEAL del BPM (anti-duplicidad):
-    //
-    // 1) Chromatic Gate ya pasado (con histéresis y EMA) -> hay tejido + flash.
-    // 2) HeartBeatProcessor.fuseBPM ya combina internamente:
-    //    - mediana RR, RR trimmed, autocorrelación, narrowband espectral
-    //    - acuerdo temporal-espectral, suavizado, refractariedad
-    //    Su `bpm` es la única fuente de verdad cardíaca del frame.
-    // 3) Cross-check físico contra dominantBpm del SignalQualityEngine
-    //    (calculado upstream, una sola vez). Si ambos coinciden ≤ 12 BPM
-    //    o ≤ 12% relativo, se acepta. Si no, se rechaza.
-    // 4) DC del rojo (>= 70) confirma reflexión de flash sobre tejido.
-    //
-    // SIN duplicidad: una autocorr (la del HBP), una espectral
-    // (la del SignalQualityEngine), un BPM final.
-    // ================================================================
+    // CHROMATIC GATE — firma física de hemoglobina (Lovisotto 2020, Coppetti 2017)
     unstableFrameCounter.current = 0;
 
     const dcRedOk = (acStats.redDC ?? 0) >= 70;
