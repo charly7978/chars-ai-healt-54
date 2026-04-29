@@ -10,6 +10,9 @@
  * - PWV and SI correlate with atherosclerosis/dyslipidemia
  */
 
+import { LIPID_BASE, LIPID_FACTORS, isPhysiologicallyPlausible } from '@/constants/model-coefficients';
+import { EMA_ALPHA_RESEARCH_LIPID } from '@/constants/physics';
+
 export interface LipidResult {
   totalCholesterol: number;
   triglycerides: number;
@@ -39,7 +42,7 @@ export class LipidResearchProcessor {
   private readonly HISTORY_SIZE = 15;
   private lastChol = 0;
   private lastTrig = 0;
-  private readonly EMA_ALPHA = 0.18;
+  private readonly EMA_ALPHA = EMA_ALPHA_RESEARCH_LIPID;
   private isCalibrated = false;
   private cholOffset = 0;
   private trigOffset = 0;
@@ -80,24 +83,26 @@ export class LipidResearchProcessor {
     if (featureCount < 4) return withheld;
 
     // ── Cholesterol model ──
-    let chol = 150.0;
-    chol += (f.stiffnessIndex - 6) * 8.0;
-    chol += (f.augmentationIndex - 50) * 0.45;
-    if (f.areaRatio > 0) chol += (f.areaRatio - 1.5) * 12.0;
-    chol += (0.3 - f.dicroticDepth) * 25;
-    if (f.pwvProxy > 0) chol += (f.pwvProxy - 7) * 4.0;
-    if (f.pw50Ms > 0) chol += (300 - f.pw50Ms) * 0.08;
-    if (f.pw25Ms > 0 && f.pw75Ms > 0) chol += (0.5 - f.pw75Ms / f.pw25Ms) * 15;
-    chol += (input.hr - 72) * 0.3;
-    if (input.rrVar.sdnn > 0) chol += Math.max(0, (50 - input.rrVar.sdnn)) * 0.35;
+    // FAIL-CLOSED: Base = 0, requiere calibración para valores válidos
+    let chol = LIPID_BASE.cholesterol;
+    chol += (f.stiffnessIndex - 6) * LIPID_FACTORS.stiffnessIndex;
+    chol += (f.augmentationIndex - 50) * LIPID_FACTORS.augmentationIndex;
+    if (f.areaRatio > 0) chol += (f.areaRatio - 1.5) * LIPID_FACTORS.areaRatio;
+    chol += (0.3 - f.dicroticDepth) * LIPID_FACTORS.dicroticDepth;
+    if (f.pwvProxy > 0) chol += (f.pwvProxy - 7) * LIPID_FACTORS.pwvProxy;
+    if (f.pw50Ms > 0) chol += (300 - f.pw50Ms) * LIPID_FACTORS.pw50Ms;
+    if (f.pw25Ms > 0 && f.pw75Ms > 0) chol += (0.5 - f.pw75Ms / f.pw25Ms) * LIPID_FACTORS.pw75_25Ratio;
+    chol += (input.hr - 72) * LIPID_FACTORS.hr;
+    if (input.rrVar.sdnn > 0) chol += Math.max(0, (50 - input.rrVar.sdnn)) * LIPID_FACTORS.sdnn;
     chol += this.cholOffset;
 
     // ── Triglycerides model ──
-    let trig = 120.0;
-    if (f.pw50Ms > 0) trig += (f.pw50Ms - 300) * 0.15;
-    if (f.diastolicTimeMs > 0) trig += (f.diastolicTimeMs - 400) * 0.06;
-    if (input.piGreen > 0) trig += (2 - input.piGreen) * 8;
-    trig += (input.hr - 72) * 0.4;
+    // FAIL-CLOSED: Base = 0, requiere calibración para valores válidos
+    let trig = LIPID_BASE.triglycerides;
+    if (f.pw50Ms > 0) trig += (f.pw50Ms - 300) * LIPID_FACTORS.trigPw50Ms;
+    if (f.diastolicTimeMs > 0) trig += (f.diastolicTimeMs - 400) * LIPID_FACTORS.trigDiastolicTimeMs;
+    if (input.piGreen > 0) trig += (2 - input.piGreen) * LIPID_FACTORS.trigPiGreen;
+    trig += (input.hr - 72) * LIPID_FACTORS.trigHr;
     trig += (f.stiffnessIndex - 6) * 3.5;
     if (input.rrVar.sdnn > 0 && input.rrVar.sdnn < 40) trig += (40 - input.rrVar.sdnn) * 0.5;
     trig += this.trigOffset;

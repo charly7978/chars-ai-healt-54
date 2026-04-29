@@ -1,4 +1,6 @@
 import { PPGFeatureExtractor, CycleFeatures } from './PPGFeatureExtractor';
+import { SBP_COEFF, DBP_COEFF, isPhysiologicallyPlausible } from '@/constants/model-coefficients';
+import { EMA_ALPHA_BP } from '@/constants/physics';
 
 export interface BPEstimate {
   systolic: number;
@@ -14,31 +16,8 @@ export interface BPEstimate {
   modelAgreement?: number;
 }
 
-const SBP_COEFF = {
-  intercept: 82.0,
-  bDivA: -16.0,
-  dDivA: 10.5,
-  invSUT: 2500.0,
-  SI: 7.5,
-  AIx: 0.30,
-  HR: 0.25,
-  areaRatio: 5.0,
-  AGI: 4.8,
-  dicroticDepth: -8.0,
-  pw75_pw25: 6.0,
-};
-
-const DBP_COEFF = {
-  intercept: 42.0,
-  PW50: 0.10,
-  DT: 0.030,
-  RMSSD: -0.07,
-  dicroticDepth: -10.0,
-  areaRatio: 3.8,
-  SI: 2.8,
-  HR: 0.12,
-  pw50_sut_ratio: 2.5,
-};
+// Usar coeficientes centralizados desde model-coefficients.ts
+// Los coeficientes locales se mantienen para referencia pero usan los importados
 
 export class BloodPressureProcessor {
   private readonly MIN_CYCLES = 1;
@@ -47,7 +26,7 @@ export class BloodPressureProcessor {
   private lastDBP = 0;
   /** Último valor reportado (tras offsets) para tendencia relativa */
   private lastReportedSbp = 0;
-  private readonly EMA_ALPHA = 0.22;
+  private readonly EMA_ALPHA = EMA_ALPHA_BP;
 
   estimate(
     signalBuffer: number[],
@@ -139,7 +118,7 @@ export class BloodPressureProcessor {
   }
 
   private estimateSBP(f: MedianFeatures, hr: number): number {
-    const c = SBP_COEFF;
+    const c = SBP_COEFF;  // Usar coeficientes centralizados
     let sbp = c.intercept;
     sbp += c.bDivA * f.bDivA;
     sbp += c.dDivA * f.dDivA;
@@ -155,7 +134,7 @@ export class BloodPressureProcessor {
   }
 
   private estimateDBP(f: MedianFeatures, hr: number, rmssd: number): number {
-    const c = DBP_COEFF;
+    const c = DBP_COEFF;  // Usar coeficientes centralizados
     let dbp = c.intercept;
     dbp += c.PW50 * f.pw50Ms;
     dbp += c.DT * f.diastolicTimeMs;

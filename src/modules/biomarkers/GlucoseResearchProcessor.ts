@@ -22,6 +22,9 @@
  * blood viscosity changes. The model uses weighted combination of features.
  */
 
+import { GLUCOSE_COEFF, isPhysiologicallyPlausible } from '@/constants/model-coefficients';
+import { EMA_ALPHA_RESEARCH_GLUCOSE } from '@/constants/physics';
+
 export interface GlucoseResult {
   value: number;           // mg/dL, 0 = unavailable
   confidence: number;      // 0-1
@@ -55,22 +58,8 @@ interface CalibrationPoint {
   features: FeatureVector;
 }
 
-// Population baseline coefficients (from literature meta-analysis)
-const POP_COEFF = {
-  intercept: 95.0,
-  sutMs: 0.12,           // viscosity proxy
-  pw50Ms: 0.04,          // morphology
-  augIndex: 0.10,        // vascular stiffness
-  stiffness: 1.8,        // arterial rigidity
-  dicroticDepth: -10.0,  // peripheral resistance
-  areaRatio: 4.0,        // vascular compliance
-  hr: 0.22,              // metabolic demand
-  sdnn: -0.25,           // autonomic dysfunction
-  rmssd: -0.15,          // parasympathetic tone
-  piGreen: -3.0,         // perfusion
-  rgACRatio: 6.0,        // optical absorption
-  pw75_25Ratio: 12.0,    // waveform shape = viscosity
-};
+// Usar coeficientes centralizados desde model-coefficients.ts
+const POP_COEFF = GLUCOSE_COEFF;
 
 export class GlucoseResearchProcessor {
   private history: number[] = [];
@@ -81,7 +70,7 @@ export class GlucoseResearchProcessor {
   private subjectScale = 1.0;
   private isCalibrated = false;
   private lastValue = 0;
-  private readonly EMA_ALPHA = 0.20;
+  private readonly EMA_ALPHA = EMA_ALPHA_RESEARCH_GLUCOSE;
 
   process(input: {
     cycleFeatures: {

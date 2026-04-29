@@ -193,6 +193,19 @@ export const RGB_ALPHA = 0.05;
 /** Alpha para coverage suavizado */
 export const COV_ALPHA = 0.06;
 
+/** Alpha EMA lento para calibración (respuesta lenta) */
+export const EMA_ALPHA_SLOW = 0.10;
+
+/** Alpha EMA para biomarcadores (glucosa, lípidos) */
+export const EMA_ALPHA_BIOMARKER = 0.12;
+
+/** Alpha EMA para presión arterial */
+export const EMA_ALPHA_BP = 0.22;
+
+/** Alpha EMA para research processors */
+export const EMA_ALPHA_RESEARCH_GLUCOSE = 0.20;
+export const EMA_ALPHA_RESEARCH_LIPID = 0.18;
+
 // ═════════════════════════════════════════════════════════════════════════════
 // FRECUENCIAS ESPECTRALES
 // ═════════════════════════════════════════════════════════════════════════════
