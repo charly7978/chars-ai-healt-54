@@ -51,6 +51,10 @@ export const MIN_SAMPLE_RATE = 15;
 /** Sample rate máximo */
 export const MAX_SAMPLE_RATE = 60;
 
+// Alias para compatibilidad con processing.ts
+export const SAMPLE_RATE_MIN = MIN_SAMPLE_RATE;
+export const SAMPLE_RATE_MAX = MAX_SAMPLE_RATE;
+
 /** Tamaño de buffer circular estándar (2 segundos a 30fps) */
 export const STANDARD_BUFFER_SIZE = 360;
 
