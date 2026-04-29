@@ -1,6 +1,7 @@
 import { PPGFeatureExtractor, CycleFeatures } from './PPGFeatureExtractor';
 import { SBP_COEFF, DBP_COEFF, isPhysiologicallyPlausible } from '@/constants/model-coefficients';
 import { EMA_ALPHA_BP } from '@/constants/physics';
+import { median } from '@/utils/mathUtils';
 
 export interface BPEstimate {
   systolic: number;
@@ -148,11 +149,6 @@ export class BloodPressureProcessor {
   }
 
   private medianFeatures(cycles: CycleFeatures[]): MedianFeatures {
-    const median = (arr: number[]) => {
-      const sorted = [...arr].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-    };
     return {
       bDivA: median(cycles.map(c => c.apg.bDivA)),
       dDivA: median(cycles.map(c => c.apg.dDivA)),

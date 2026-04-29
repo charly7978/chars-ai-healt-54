@@ -11,6 +11,7 @@ import { DeviceCalibrationEngine } from '../calibration/DeviceCalibrationEngine'
 import { BPCalibrationManager } from './BPCalibrationManager';
 import { UserBaselineEngine } from '../personalization/UserBaselineEngine';
 import { LongitudinalDatasetStore } from '../personalization/LongitudinalDatasetStore';
+import { median } from '@/utils/mathUtils';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -565,11 +566,6 @@ export class VitalSignsProcessor {
   }
 
   private medianCycleFeatures(cycles: import('./PPGFeatureExtractor').CycleFeatures[]) {
-    const median = (arr: number[]) => {
-      const sorted = [...arr].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-    };
     return {
       sutMs: median(cycles.map(c => c.sutMs)),
       diastolicTimeMs: median(cycles.map(c => c.diastolicTimeMs)),

@@ -4,6 +4,7 @@
 
 import { SpO2Calibrator } from './SpO2Calibrator';
 import { ratioOfRatios, trimmedMedian } from './OpticalRatioEngine';
+import { median } from '@/utils/mathUtils';
 
 export interface SpO2Result {
   value: number;
@@ -91,8 +92,7 @@ export class SpO2Processor {
       return { ...withheld, rawR: R, piRed, piGreen, calibrationState: calState };
     }
 
-    const sorted = [...this.rBuffer].sort((a, b) => a - b);
-    let medianR = sorted[Math.floor(sorted.length / 2)];
+    let medianR = median(this.rBuffer);
 
     if (this.beatRatios.length >= 3) {
       const br = trimmedMedian(this.beatRatios, 0.12);

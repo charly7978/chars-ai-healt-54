@@ -17,6 +17,8 @@
  * - Bashar et al. 2019: Smartphone PPG arrhythmia detection
  */
 
+import { median, stdDev } from '@/utils/mathUtils';
+
 export type RhythmLabel =
   | 'SINUS_STABLE'
   | 'SINUS_VARIABLE'
@@ -286,7 +288,7 @@ export class RhythmClassifier {
       (sd1 > 0 && sd2 > 0 ? Math.min(1, sd1 / sd2) * 0.1 : 0)
     );
 
-    const medianHR = 60000 / this.median(ibis);
+    const medianHR = 60000 / median(ibis);
 
     return {
       rmssd, sdnn, pnn50, shannonEntropy, sampleEntropy,
@@ -304,7 +306,7 @@ export class RhythmClassifier {
     for (let i = 1; i < ibis.length; i++) {
       diffs.push(Math.abs(ibis[i] - ibis[i - 1]));
     }
-    const med = this.median(ibis);
+    const med = median(ibis);
     const outliers = diffs.filter(d => d > med * 0.15).length;
     return Math.min(1, outliers / diffs.length);
   }
@@ -343,7 +345,7 @@ export class RhythmClassifier {
   private computeSampleEntropy(data: number[]): number {
     if (data.length < 5) return 0;
     const m = 2;
-    const r = 0.2 * this.std(data);
+    const r = 0.2 * stdDev(data);
     const count = (template: number) => {
       let matches = 0;
       for (let i = 0; i < data.length - template; i++) {
@@ -410,15 +412,6 @@ export class RhythmClassifier {
     if (this.events.length > this.MAX_EVENTS) this.events.shift();
   }
 
-  private median(arr: number[]): number {
-    const s = [...arr].sort((a, b) => a - b);
-    return s[Math.floor(s.length / 2)];
-  }
-
-  private std(arr: number[]): number {
-    const m = arr.reduce((a, b) => a + b, 0) / arr.length;
-    return Math.sqrt(arr.reduce((s, v) => s + (v - m) ** 2, 0) / arr.length);
-  }
 
   private emptyFeatures(): RhythmFeatures {
     return {
