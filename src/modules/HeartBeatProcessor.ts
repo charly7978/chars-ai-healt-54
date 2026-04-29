@@ -1,5 +1,13 @@
 /**
  * HEARTBEAT PROCESSOR V2 — LAYERED ARCHITECTURE
+ * 
+ * USO FORENSE: Todos los parámetros algorítmicos están centralizados
+ * en src/constants/processing.ts para trazabilidad y validación.
+ * 
+ * Referencias:
+ * - Elgendi 2013: PPG peak detection (NeuroKit2/PPG-BEATS/pyPPG)
+ * - Pan & Tompkins 1985: QRS detection (IEEE TBME)
+ * - Adaptaciones para PPG: 300ms refractario (vs 200ms ECG)
  */
 import { RingBuffer } from './signal-processing/RingBuffer';
 import { estimateHrNarrowbank } from './signal-processing/SpectralHrEstimator';
@@ -9,22 +17,198 @@ import type {
   BeatCandidate, AcceptedBeat, BeatFlags, BPMHypothesis,
   HeartBeatResult, HeartBeatDebug
 } from '../types/beat';
+import {
+  // Buffers
+  PPG_BUFFER_SIZE,
+  DERIVATIVE_BUFFER_SIZE,
+  SLOPE_SUM_BUFFER_SIZE,
+  TIMESTAMP_BUFFER_SIZE,
+  TEMPLATE_SIZE,
+  TEMPLATE_WINDOW,
+  MAX_RR_INTERVALS,
+  MAX_ACCEPTED_BEATS,
+  MIN_FRAMES_FOR_PROCESSING,
+  // Sampling
+  DEFAULT_SAMPLE_RATE,
+  OVERSAMPLE_FACTOR,
+  // Thresholds
+  PEAK_THRESHOLD_INITIAL,
+  MIN_SIGNAL_RANGE,
+  // Detection
+  DET1_PROMINENCE_THRESHOLD,
+  DET1_RISING_SLOPE_THRESHOLD,
+  DET2_RISING_SLOPE_THRESHOLD,
+  DET2_SSF_THRESHOLD,
+  // Periodicity
+  MIN_RR_MS,
+  MAX_RR_MS,
+  SEARCH_BACK_FACTOR,
+  SEARCH_BACK_THRESHOLD_FACTOR,
+  ELGENDI_SYNTHESIS_MIN_TIME,
+  ELGENDI_SYNTHESIS_MIN_FACTOR,
+  ELGENDI_SYNTHESIS_MAX_FACTOR,
+  TEMPLATE_SCORE_THRESHOLD,
+  ELGENDI_CORROBORATION_MS,
+  ELGENDI_CORROBORATION_SCORE,
+  ELGENDI_SYNTHESIS_PROMINENCE_BASE,
+  ELGENDI_SYNTHESIS_PROMINENCE_FACTOR,
+  ELGENDI_SYNTHESIS_WIDTH_MS,
+  ELGENDI_SYNTHESIS_RISING_SLOPE_MIN,
+  ELGENDI_SYNTHESIS_FALLING_SLOPE,
+  ELGENDI_SYNTHESIS_BAND_POWER_DIVISOR,
+  // IBI and timing
+  DEFAULT_IBI_MS,
+  // Source switch
+  SOURCE_SWITCH_PENALTY,
+  SOURCE_SWITCH_NORMAL,
+  // SQI thresholds
+  BEAT_SQI_UPDATE_THRESHOLD,
+  // Missed beat
+  MISSED_BEAT_FACTOR_MIN,
+  MISSED_BEAT_FACTOR_MAX,
+  MAX_MISSED_BEAT_RR,
+  // Scoring
+  PROMINENCE_SCORE_MAX,
+  PROMINENCE_SCORE_DIVISOR,
+  SLOPE_SCORE_MAX,
+  RISING_SLOPE_DIVISOR,
+  FALLING_SLOPE_DIVISOR,
+  WIDTH_SCORE_OPTIMAL,
+  WIDTH_SCORE_ACCEPTABLE,
+  WIDTH_OPTIMAL_MIN_MS,
+  WIDTH_OPTIMAL_MAX_MS,
+  WIDTH_ACCEPTABLE_MIN_MS,
+  WIDTH_ACCEPTABLE_MAX_MS,
+  ASYMMETRY_SCORE,
+  ASYMMETRY_RATIO_MIN,
+  ASYMMETRY_RATIO_MAX,
+  RHYTHM_SCORE_NEAR,
+  RHYTHM_SCORE_AUTOCORR,
+  RHYTHM_SCORE_CONSECUTIVE,
+  RHYTHM_MIN_CONSECUTIVE_PEAKS,
+  MORPHOLOGY_WEIGHT,
+  RHYTHM_WEIGHT,
+  DETECTOR_AGREEMENT_WEIGHT,
+  TEMPLATE_CORRELATION_WEIGHT,
+  CONTACT_STABLE_BONUS,
+  FAST_PATH_MIN_SCORE,
+  MIDDLE_PATH_MIN_SCORE_INITIAL,
+  MIDDLE_PATH_MIN_SCORE_ESTABLISHED,
+  HIGH_SCORE_MIN,
+  ELGENDI_SYNTHESIS_MORPHOLOGY,
+  ELGENDI_SYNTHESIS_RHYTHM,
+  ELGENDI_SYNTHESIS_TOTAL,
+  ELGENDI_SYNTHESIS_DETECTOR_AGREEMENT,
+  // Adjudication
+  MIN_PROMINENCE,
+  WIDTH_REJECT_MIN_MS,
+  WIDTH_REJECT_MAX_MS,
+  CLIP_PENALTY_REJECT_THRESHOLD,
+  MIN_RISING_SLOPE,
+  MIN_FALLING_SLOPE,
+  SOFT_REFRACTORY_MIN_MORPHOLOGY,
+  SOFT_REFRACTORY_MIN_AGREEMENT,
+  THRESHOLD_FACTOR_PERIODIC,
+  THRESHOLD_FACTOR_NON_PERIODIC,
+  PROMINENCE_THRESHOLD_MIN,
+  PROMINENCE_THRESHOLD_FACTOR,
+  TEMPLATE_CORR_MIDDLE_PATH,
+  MORPHOLOGY_SCORE_MIDDLE_ALT,
+  // Amplitude
+  AMPLITUDE_RATIO_MIN,
+  AMPLITUDE_RATIO_MAX,
+  // Refractory
+  PT_REFRACTORY_MS,
+  SOFT_REFRACTORY_FACTOR,
+  SOFT_REFRACTORY_DEFAULT_MS,
+  // Confidence
+  PEAK_DOMAIN_MIN_PEAKS,
+  PEAK_DOMAIN_MIN_SQI,
+  PEAK_DOMAIN_BASE_CONF,
+  PEAK_DOMAIN_CONF_PER_PEAK,
+  PEAK_DOMAIN_CONF_PER_SQI,
+  PEAK_AUTOCRR_FUSION_WEIGHT,
+  AUTOCRR_PEAK_FUSION_WEIGHT,
+  AUTOCRR_BASE_CONF,
+  AUTOCRR_CONF_PER_PEAK,
+  AUTOCRR_MAX_CONF,
+  MEDIAN_BASE_CONF,
+  MEDIAN_CONF_PER_PEAK,
+  MEDIAN_MAX_CONF,
+  SPECTRAL_CONFIDENCE_MIN,
+  SPECTRAL_CONFIDENCE_MIN_FUSE,
+  SPECTRAL_CONFIDENCE_HIGH,
+  AGREEMENT_MIN_BPM,
+  TEMP_SPEC_AGREEMENT_LOW,
+  TEMP_SPEC_AGREEMENT_HIGH,
+  TEMP_SPEC_LOW_BPM_WEIGHT,
+  TEMP_SPEC_LOW_SPEC_WEIGHT,
+  TEMP_SPEC_HIGH_BPM_WEIGHT,
+  TEMP_SPEC_HIGH_SPEC_WEIGHT,
+  TEMP_SPEC_AGREEMENT_DEFAULT,
+  TEMP_SPEC_WITH_AUTOCRR,
+  PEAK_AUTOCRR_MAX_DIFF,
+  PEAK_AUTOCRR_FUSION_PEAK_WEIGHT,
+  PEAK_AUTOCRR_FUSION_AUTO_WEIGHT,
+  AUTOCRR_MEDIAN_FUSION_WEIGHT,
+  // EMA
+  EMA_AGREEMENT_LOW,
+  EMA_DIFF_HIGH,
+  EMA_DIFF_MED,
+  TEMPLATE_EMA_ALPHA,
+  EMA_DIFF_THRESHOLD_SLOW,
+  EMA_ALPHA_SLOW,
+  EMA_DIFF_THRESHOLD_MED,
+  EMA_ALPHA_MED,
+  EMA_ALPHA_FAST,
+  // Evidence
+  INVALID_EVIDENCE_HARD_RESET,
+  WINDOW_SQI_UPSTREAM_DEFAULT,
+  PHASE_ALIGN_DEFAULT,
+  SPECTRAL_AGG_DEFAULT,
+  MOTION_PENALTY,
+  CLIP_PENALTY_FACTOR,
+  HIGH_PRESSURE_PENALTY,
+  LOW_PRESSURE_PENALTY,
+  UPSTREAM_SQI_DEFAULT,
+  // Forensic evidence
+  MIN_ACCEPTED_BEATS_EVIDENCE,
+  MIN_CONSECUTIVE_PEAKS_EVIDENCE,
+  MIN_AVG_BEAT_SQI_EVIDENCE,
+  MIN_RR_INTERVALS_EVIDENCE,
+  MIN_SIGNAL_BUFFER_EVIDENCE,
+  // Factors
+  WINDOW_SQI_MIN,
+  PHASE_ALIGN_MIN,
+  SPECTRAL_AGG_MIN,
+  UPSTREAM_FACTOR_EXPONENT,
+  DETECTOR_DISAGREEMENT_PENALTY,
+  DETECTOR_DISAGREEMENT_THRESHOLD,
+  BPM_CONFIDENCE_BASE,
+  BPM_CONFIDENCE_UPSTREAM_FACTOR,
+  // Validation
+  TEMPLATE_MIN_RANGE,
+  CORR_MIN_RANGE,
+  // Utils
+  clamp,
+  bpmToRrMs,
+} from '@/constants/processing';
 
 export class HeartBeatProcessor {
-  private signalBuf = new RingBuffer(360);
-  private derivBuf = new RingBuffer(360);
-  private slopeSum = new RingBuffer(360);
-  private timestampBuf = new RingBuffer(360);
+  private signalBuf = new RingBuffer(PPG_BUFFER_SIZE);
+  private derivBuf = new RingBuffer(DERIVATIVE_BUFFER_SIZE);
+  private slopeSum = new RingBuffer(SLOPE_SUM_BUFFER_SIZE);
+  private timestampBuf = new RingBuffer(TIMESTAMP_BUFFER_SIZE);
 
   private rrIntervals: number[] = [];
-  private readonly MAX_RR = 40;
+  private readonly MAX_RR = MAX_RR_INTERVALS;
   private acceptedBeats: AcceptedBeat[] = [];
-  private readonly MAX_ACCEPTED = 60;
+  private readonly MAX_ACCEPTED = MAX_ACCEPTED_BEATS;
 
-  private templateBuf: Float64Array = new Float64Array(30);
+  private templateBuf: Float64Array = new Float64Array(TEMPLATE_SIZE);
   private templateLen = 0;
   private templateValid = false;
-  private readonly TEMPLATE_WINDOW = 25;
+  // Usa constante TEMPLATE_WINDOW importada de processing.ts
 
   private smoothBPM = 0;
   private spectralBPM = 0;
@@ -34,7 +218,7 @@ export class HeartBeatProcessor {
   private medianRRBPM = 0;
   private lastHypothesis: BPMHypothesis | null = null;
   private temporalSpectralAgreement = 0;
-  private windowSQIUpstream = 0.45;
+  private windowSQIUpstream = WINDOW_SQI_UPSTREAM_DEFAULT;
   
   // FAIL-CLOSED: Evidencia PPG obligatoria para publicar BPM
   private livePpgEvidencePassed = false;
@@ -49,12 +233,12 @@ export class HeartBeatProcessor {
   private lastPeakValue = 0;
   private consecutivePeaks = 0;
   private frameCount = 0;
-  private peakThreshold = 4.0;
+  private peakThreshold = PEAK_THRESHOLD_INITIAL;
   // Elgendi 2013 — detector estado del arte para PPG, validado por
   // NeuroKit2/PPG-BEATS/pyPPG. Corre en paralelo con el detector
   // dual-criterio interno; cuando Elgendi confirma un pico, lo aceptamos
   // de inmediato (sensibilidad ~99.9% en bases de datos clínicas).
-  private elgendi = new ElgendiPeakDetector({ sampleRate: 30 });
+  private elgendi = new ElgendiPeakDetector({ sampleRate: DEFAULT_SAMPLE_RATE });
   private lastElgendiPeakTs = 0;
   // Pan-Tompkins adaptado para PPG (Pan & Tompkins 1985, IEEE TBME):
   //   SignalLevel = 0.125·PEAK + 0.875·SignalLevel
@@ -72,7 +256,7 @@ export class HeartBeatProcessor {
   private suspiciousCount = 0;
   private lastRejectionReason = '';
 
-  private upstreamSQI = 50;
+  private upstreamSQI = UPSTREAM_SQI_DEFAULT;
   private motionPenalty = 0;
   private clipPenalty = 0;
   private pressurePenalty = 0;
@@ -108,20 +292,20 @@ export class HeartBeatProcessor {
     this.frameCount++;
     const now = timestamp ?? performance.now();
 
-    let phaseAlign = 0.55;
-    let spectralAgg = 0.45;
+    let phaseAlign = PHASE_ALIGN_DEFAULT;
+    let spectralAgg = SPECTRAL_AGG_DEFAULT;
     if (upstreamContext) {
-      this.upstreamSQI = upstreamContext.quality ?? 50;
+      this.upstreamSQI = upstreamContext.quality ?? UPSTREAM_SQI_DEFAULT;
       if (typeof upstreamContext.phaseAlignmentQuality === 'number') {
         phaseAlign = Math.max(0, Math.min(1, upstreamContext.phaseAlignmentQuality));
       }
       if (typeof upstreamContext.spectralQualityAggregate === 'number') {
         spectralAgg = Math.max(0, Math.min(1, upstreamContext.spectralQualityAggregate));
       }
-      this.motionPenalty = upstreamContext.motionArtifact ? 0.3 : 0;
-      this.clipPenalty = Math.min(1, (upstreamContext.clipHigh ?? 0) + (upstreamContext.clipLow ?? 0)) * 0.5;
-      this.pressurePenalty = upstreamContext.pressureState === 'HIGH_PRESSURE' ? 0.4 :
-        upstreamContext.pressureState === 'LOW_PRESSURE' ? 0.15 : 0;
+      this.motionPenalty = upstreamContext.motionArtifact ? MOTION_PENALTY : 0;
+      this.clipPenalty = Math.min(1, (upstreamContext.clipHigh ?? 0) + (upstreamContext.clipLow ?? 0)) * CLIP_PENALTY_FACTOR;
+      this.pressurePenalty = upstreamContext.pressureState === 'HIGH_PRESSURE' ? HIGH_PRESSURE_PENALTY :
+        upstreamContext.pressureState === 'LOW_PRESSURE' ? LOW_PRESSURE_PENALTY : 0;
       this.contactStable = upstreamContext.contactState === 'STABLE_CONTACT';
       this.sourceSwitchRecent = false;
       if (typeof upstreamContext.windowSQI === 'number') {
@@ -179,14 +363,14 @@ export class HeartBeatProcessor {
     const ssf = this.computeSlopeSum();
     this.slopeSum.push(ssf);
 
-    if (this.signalBuf.length < 25) {
+    if (this.signalBuf.length < MIN_FRAMES_FOR_PROCESSING) {
       return this.makeEmptyResult(0);
     }
 
-    // Tolerar señales muy débiles: range ≥ 0.10 (antes 0.4). Esto cubre
+    // Tolerar señales muy débiles: range ≥ MIN_SIGNAL_RANGE. Esto cubre
     // perfusión ultra-baja (sujetos hipotérmicos / posibles fallecidos).
     const range = this.getSignalRange(60);
-    if (range < 0.10) {
+    if (range < MIN_SIGNAL_RANGE) {
       return this.makeEmptyResult(0);
     }
 
@@ -202,7 +386,7 @@ export class HeartBeatProcessor {
     const elgendiHit = elgendiResult.isPeak;
     if (elgendiHit) this.lastElgendiPeakTs = elgendiResult.peakTime;
 
-    if (this.frameCount % 22 === 0) this.updateSpectralHr();
+    if (this.frameCount % OVERSAMPLE_FACTOR === 0) this.updateSpectralHr();
     this.updateThreshold(normRange);
 
     const timeSinceLastPeak = this.lastPeakTime > 0 ? now - this.lastPeakTime : 1e9;
@@ -224,10 +408,10 @@ export class HeartBeatProcessor {
       !candidate &&
       refractoryState !== 'hard' &&
       expectedRR > 0 &&
-      timeSinceLastPeak > expectedRR * 1.66
+      timeSinceLastPeak > expectedRR * SEARCH_BACK_FACTOR
     ) {
       const savedThreshold = this.peakThreshold;
-      this.peakThreshold = savedThreshold * 0.5;
+      this.peakThreshold = savedThreshold * SEARCH_BACK_THRESHOLD_FACTOR;
       const sbCandidate = this.detectCandidate(now, timeSinceLastPeak, expectedRR, normRange);
       this.peakThreshold = savedThreshold;
       if (sbCandidate) {
@@ -247,43 +431,43 @@ export class HeartBeatProcessor {
       elgendiHit &&
       !candidate &&
       refractoryState !== 'hard' &&
-      timeSinceLastPeak >= 280 &&
+      timeSinceLastPeak >= ELGENDI_SYNTHESIS_MIN_TIME &&
       this.livePpgEvidencePassed && // REQUERIR: evidencia PPG viva
       this.acceptedBeats.length >= 1 && // REQUERIR: al menos un latido previo
       expectedRR > 0 && // REQUERIR: contexto de ritmo conocido
-      timeSinceLastPeak >= expectedRR * 0.65 &&
-      timeSinceLastPeak <= expectedRR * 1.35; // Rango más estricto que antes
+      timeSinceLastPeak >= expectedRR * ELGENDI_SYNTHESIS_MIN_FACTOR &&
+      timeSinceLastPeak <= expectedRR * ELGENDI_SYNTHESIS_MAX_FACTOR; // Rango más estricto que antes
 
     if (canSynthesizeElgendi) {
       // Verificación adicional: el valor debe estar cerca del valor esperado del template
       const templateScore = this.templateValid ? this.correlateWithTemplate() : 0;
-      const nearTemplate = !this.templateValid || templateScore >= 0.35;
+      const nearTemplate = !this.templateValid || templateScore >= TEMPLATE_SCORE_THRESHOLD;
 
       if (nearTemplate) {
         candidate = {
           timestamp: now,
           sampleIndex: this.frameCount,
           amplitude: normalizedValue,
-          prominence: Math.max(2, range * 0.4),
-          widthMs: 250,
-          upSlope: Math.max(0.3, deriv),
-          downSlope: 0.3,
+          prominence: Math.max(ELGENDI_SYNTHESIS_PROMINENCE_BASE, range * ELGENDI_SYNTHESIS_PROMINENCE_FACTOR),
+          widthMs: ELGENDI_SYNTHESIS_WIDTH_MS,
+          upSlope: Math.max(ELGENDI_SYNTHESIS_RISING_SLOPE_MIN, deriv),
+          downSlope: ELGENDI_SYNTHESIS_FALLING_SLOPE,
           localBaseline: 0,
           detectorHits: 1,
-          detectorAgreement: 0.7, // Solo Elgendi, no el dual
+          detectorAgreement: ELGENDI_SYNTHESIS_DETECTOR_AGREEMENT, // Solo Elgendi, no el dual
           zeroCrossingSupport: false,
           periodicitySupport: true, // Ya verificado arriba
           templateCorrelation: templateScore,
-          localBandPowerRatio: clamp(normRange / 2, 0, 1),
+          localBandPowerRatio: clamp(normRange / ELGENDI_SYNTHESIS_BAND_POWER_DIVISOR, 0, 1),
           localPerfusion: 0,
           localMotionPenalty: this.motionPenalty,
           localPressurePenalty: this.pressurePenalty,
           localClipPenalty: this.clipPenalty,
           status: 'accepted',
           rejectionReason: '',
-          morphologyScore: 55, // Ligeramente menor que latido dual-detectado
-          rhythmScore: 45,
-          totalScore: 58, // Justo por encima del umbral mínimo
+          morphologyScore: ELGENDI_SYNTHESIS_MORPHOLOGY, // Ligeramente menor que latido dual-detectado
+          rhythmScore: ELGENDI_SYNTHESIS_RHYTHM,
+          totalScore: ELGENDI_SYNTHESIS_TOTAL, // Justo por encima del umbral mínimo
         };
       }
     }
@@ -292,11 +476,11 @@ export class HeartBeatProcessor {
       // Si Elgendi también confirmó este pico (dentro de ±150 ms), forzar
       // aceptación: dos detectores ortogonales coinciden, es prácticamente
       // imposible que sea un falso positivo.
-      const elgendiCorroborates = elgendiHit && Math.abs(elgendiResult.peakTime - now) <= 150;
+      const elgendiCorroborates = elgendiHit && Math.abs(elgendiResult.peakTime - now) <= ELGENDI_CORROBORATION_MS;
       if (elgendiCorroborates) {
         candidate.status = 'accepted';
         candidate.detectorAgreement = Math.max(candidate.detectorAgreement, 1.0);
-        candidate.totalScore = Math.max(candidate.totalScore, 65);
+        candidate.totalScore = Math.max(candidate.totalScore, ELGENDI_CORROBORATION_SCORE);
       } else {
         this.adjudicate(candidate, timeSinceLastPeak, expectedRR, refractoryState);
       }
@@ -306,12 +490,12 @@ export class HeartBeatProcessor {
         // Pan-Tompkins: actualizar SignalLevel cada vez que se acepta un pico.
         this.updatePTSignalLevel(candidate.amplitude);
 
-        if (this.lastPeakTime > 0 && timeSinceLastPeak >= 280 && timeSinceLastPeak <= 2200) {
+        if (this.lastPeakTime > 0 && timeSinceLastPeak >= MIN_RR_MS && timeSinceLastPeak <= MAX_RR_MS) {
           this.rrIntervals.push(timeSinceLastPeak);
           if (this.rrIntervals.length > this.MAX_RR) this.rrIntervals.shift();
 
           const instantBPM = 60000 / timeSinceLastPeak;
-          if (expectedRR > 0 && timeSinceLastPeak > expectedRR * 1.7) {
+          if (expectedRR > 0 && timeSinceLastPeak > expectedRR * MISSED_BEAT_FACTOR_MIN) {
             this.handleMissedBeat(timeSinceLastPeak, expectedRR, now);
           }
           this.updateSmoothBPM(instantBPM);
@@ -321,7 +505,7 @@ export class HeartBeatProcessor {
         this.lastPeakTime = now;
         this.lastPeakValue = candidate.amplitude;
 
-        currentBeatSQI = this.computeBeatSQI(candidate, this.lastPeakTime > 0 ? timeSinceLastPeak : 650);
+        currentBeatSQI = this.computeBeatSQI(candidate, this.lastPeakTime > 0 ? timeSinceLastPeak : DEFAULT_IBI_MS);
         currentFlags = this.computeFlags(candidate, timeSinceLastPeak, expectedRR);
 
         const accepted: AcceptedBeat = {
@@ -333,7 +517,7 @@ export class HeartBeatProcessor {
           rhythmScore: candidate.rhythmScore,
           detectorAgreementScore: candidate.detectorAgreement,
           templateScore: candidate.templateCorrelation,
-          sourceConsistencyScore: this.sourceSwitchRecent ? 0.3 : 1.0,
+          sourceConsistencyScore: this.sourceSwitchRecent ? SOURCE_SWITCH_PENALTY : SOURCE_SWITCH_NORMAL,
           flags: currentFlags,
         };
 
@@ -341,7 +525,7 @@ export class HeartBeatProcessor {
         if (this.acceptedBeats.length > this.MAX_ACCEPTED) this.acceptedBeats.shift();
         this.beatsAccepted++;
 
-        if (currentBeatSQI > 50) {
+        if (currentBeatSQI > BEAT_SQI_UPDATE_THRESHOLD) {
           this.updateTemplate();
         }
 
@@ -358,7 +542,7 @@ export class HeartBeatProcessor {
       }
     }
 
-    if (!isPeak && this.lastPeakTime > 0 && timeSinceLastPeak > 2200) {
+    if (!isPeak && this.lastPeakTime > 0 && timeSinceLastPeak > MAX_RR_MS) {
       this.consecutivePeaks = Math.max(0, this.consecutivePeaks - 1);
     }
 
@@ -370,16 +554,16 @@ export class HeartBeatProcessor {
     // calidad upstream que es la media geométrica de los componentes.
     let bpmConfidence = this.computeBPMConfidence(hypothesis);
     const upstreamFactor = Math.pow(
-      Math.max(0.2, this.windowSQIUpstream) *
-        Math.max(0.2, phaseAlign) *
-        Math.max(0.2, spectralAgg),
-      1 / 3
+      Math.max(WINDOW_SQI_MIN, this.windowSQIUpstream) *
+        Math.max(PHASE_ALIGN_MIN, phaseAlign) *
+        Math.max(SPECTRAL_AGG_MIN, spectralAgg),
+      UPSTREAM_FACTOR_EXPONENT
     );
-    bpmConfidence *= 0.5 + 0.5 * upstreamFactor;
-    if (this.temporalSpectralAgreement < 0.30 && this.spectralBPM > 0 && this.medianRRBPM > 0) {
+    bpmConfidence *= BPM_CONFIDENCE_BASE + BPM_CONFIDENCE_UPSTREAM_FACTOR * upstreamFactor;
+    if (this.temporalSpectralAgreement < DETECTOR_DISAGREEMENT_THRESHOLD && this.spectralBPM > 0 && this.medianRRBPM > 0) {
       // Solo penaliza si los detectores discrepan significativamente, y
-      // de forma menos agresiva que antes (0.75 vs 0.55).
-      bpmConfidence *= 0.75;
+      // de forma menos agresiva que antes.
+      bpmConfidence *= DETECTOR_DISAGREEMENT_PENALTY;
     }
     const globalSQI = this.computeGlobalSQI();
     
@@ -389,11 +573,11 @@ export class HeartBeatProcessor {
     // pulsatilidad medible, coherencia multicanal). Sin ella, no hay BPM.
     const meetsMinimumEvidence =
       this.livePpgEvidencePassed &&
-      this.beatsAccepted >= 2 &&
-      this.consecutivePeaks >= 2 &&
-      this.getAvgBeatSQI() >= 22 &&
-      this.rrIntervals.length >= 1 &&
-      this.signalBuf.length >= 60; // ~2 segundos a 30 fps
+      this.beatsAccepted >= MIN_ACCEPTED_BEATS_EVIDENCE &&
+      this.consecutivePeaks >= MIN_CONSECUTIVE_PEAKS_EVIDENCE &&
+      this.getAvgBeatSQI() >= MIN_AVG_BEAT_SQI_EVIDENCE &&
+      this.rrIntervals.length >= MIN_RR_INTERVALS_EVIDENCE &&
+      this.signalBuf.length >= MIN_SIGNAL_BUFFER_EVIDENCE; // ~2 segundos a 30 fps
 
     if (!meetsMinimumEvidence) {
       hypothesis.finalBpm = 0;
@@ -500,28 +684,28 @@ export class HeartBeatProcessor {
     const detectorAgreement = detectorHits / 2;
     const templateCorrelation = this.templateValid ? this.correlateWithTemplate() : 0;
     const nearExpected = expectedRR > 0 &&
-      timeSinceLast >= expectedRR * 0.55 && timeSinceLast <= expectedRR * 1.45;
+      timeSinceLast >= expectedRR * SOFT_REFRACTORY_FACTOR && timeSinceLast <= expectedRR * (2 - SOFT_REFRACTORY_FACTOR);
 
     // Escalas recalibradas para señales débiles. La señal está normalizada
     // a ±60, así que prominencia típica en perfusión baja es 5-25 (no 30+).
     // Antes /8 hacía que solo prominencias >8 sumaran al score; ahora /3
     // permite que prominencias de 3-9 lleguen al máximo de 30 puntos.
-    const prominenceScore = clamp(prominence / 3, 0, 1) * 30;
-    const slopeScore = clamp(risingSlope / 1.5, 0, 1) * 15 + clamp(fallingSlope / 1.0, 0, 1) * 10;
-    const widthScore = (widthMs > 70 && widthMs < 600) ? 12 : (widthMs > 50 && widthMs < 800) ? 6 : 0;
+    const prominenceScore = clamp(prominence / PROMINENCE_SCORE_DIVISOR, 0, 1) * PROMINENCE_SCORE_MAX;
+    const slopeScore = clamp(risingSlope / RISING_SLOPE_DIVISOR, 0, 1) * 15 + clamp(fallingSlope / FALLING_SLOPE_DIVISOR, 0, 1) * 10;
+    const widthScore = (widthMs > WIDTH_OPTIMAL_MIN_MS && widthMs < WIDTH_OPTIMAL_MAX_MS) ? WIDTH_SCORE_OPTIMAL : (widthMs > WIDTH_ACCEPTABLE_MIN_MS && widthMs < WIDTH_ACCEPTABLE_MAX_MS) ? WIDTH_SCORE_ACCEPTABLE : 0;
     const asymmetry = risingSlope > 0 ? fallingSlope / risingSlope : 0;
-    const asymmetryScore = (asymmetry > 0.25 && asymmetry < 2.5) ? 10 : 0;
+    const asymmetryScore = (asymmetry > ASYMMETRY_RATIO_MIN && asymmetry < ASYMMETRY_RATIO_MAX) ? ASYMMETRY_SCORE : 0;
     const morphologyScore = clamp(prominenceScore + slopeScore + widthScore + asymmetryScore, 0, 100);
 
     let rhythmScore = 0;
-    if (nearExpected) rhythmScore += 40;
-    if (this.autocorrBPM > 0) rhythmScore += 15;
-    if (this.consecutivePeaks >= 3) rhythmScore += 15;
+    if (nearExpected) rhythmScore += RHYTHM_SCORE_NEAR;
+    if (this.autocorrBPM > 0) rhythmScore += RHYTHM_SCORE_AUTOCORR;
+    if (this.consecutivePeaks >= RHYTHM_MIN_CONSECUTIVE_PEAKS) rhythmScore += RHYTHM_SCORE_CONSECUTIVE;
     rhythmScore = clamp(rhythmScore, 0, 100);
 
-    const totalScore = morphologyScore * 0.45 + rhythmScore * 0.25 +
-      detectorAgreement * 30 + templateCorrelation * 15 +
-      (this.contactStable ? 5 : 0);
+    const totalScore = morphologyScore * MORPHOLOGY_WEIGHT + rhythmScore * RHYTHM_WEIGHT +
+      detectorAgreement * DETECTOR_AGREEMENT_WEIGHT + templateCorrelation * TEMPLATE_CORRELATION_WEIGHT +
+      (this.contactStable ? CONTACT_STABLE_BONUS : 0);
 
     return {
       timestamp: now,
@@ -537,7 +721,7 @@ export class HeartBeatProcessor {
       zeroCrossingSupport: zeroCrossing,
       periodicitySupport: nearExpected,
       templateCorrelation,
-      localBandPowerRatio: clamp(normRange / 2, 0, 1),
+      localBandPowerRatio: clamp(normRange / ELGENDI_SYNTHESIS_BAND_POWER_DIVISOR, 0, 1),
       localPerfusion: 0,
       localMotionPenalty: this.motionPenalty,
       localPressurePenalty: this.pressurePenalty,
@@ -554,24 +738,24 @@ export class HeartBeatProcessor {
     // Adjudication relajada para señales débiles: el gate externo y el
     // consenso espectral filtran falsos positivos a posteriori. Aquí solo
     // se rechazan candidatos físicamente imposibles.
-    if (c.prominence < 0.5) {
+    if (c.prominence < MIN_PROMINENCE) {
       c.status = 'rejected'; c.rejectionReason = 'low_prominence'; return;
     }
-    if (c.widthMs < 40 || c.widthMs > 1000) {
+    if (c.widthMs < WIDTH_REJECT_MIN_MS || c.widthMs > WIDTH_REJECT_MAX_MS) {
       c.status = 'rejected'; c.rejectionReason = 'abnormal_width'; return;
     }
-    if (c.localClipPenalty > 0.75) {
+    if (c.localClipPenalty > CLIP_PENALTY_REJECT_THRESHOLD) {
       c.status = 'rejected'; c.rejectionReason = 'high_clipping'; return;
     }
-    if (c.upSlope < 0.15) {
+    if (c.upSlope < MIN_RISING_SLOPE) {
       c.status = 'rejected'; c.rejectionReason = 'no_rising_edge'; return;
     }
-    if (c.downSlope < 0.08) {
+    if (c.downSlope < MIN_FALLING_SLOPE) {
       c.status = 'rejected'; c.rejectionReason = 'no_falling_edge'; return;
     }
     if (refractoryState === 'soft') {
       // Refractario suave: rechazo solo si el candidato es muy pobre.
-      if (c.morphologyScore < 45 || c.detectorAgreement < 0.5) {
+      if (c.morphologyScore < SOFT_REFRACTORY_MIN_MORPHOLOGY || c.detectorAgreement < SOFT_REFRACTORY_MIN_AGREEMENT) {
         c.status = 'rejected'; c.rejectionReason = 'double_peak_suspect';
         this.doublePeakCount++;
         return;
@@ -579,28 +763,28 @@ export class HeartBeatProcessor {
     }
     if (this.lastPeakValue > 0) {
       const ampRatio = Math.abs(c.amplitude) / Math.max(1, Math.abs(this.lastPeakValue));
-      // Tolerancia amplia (1:25) para sujetos con perfusión muy variable.
-      if (ampRatio < 0.04 || ampRatio > 25) {
+      // Tolerancia amplia para sujetos con perfusión muy variable.
+      if (ampRatio < AMPLITUDE_RATIO_MIN || ampRatio > AMPLITUDE_RATIO_MAX) {
         c.status = 'rejected'; c.rejectionReason = 'amplitude_inconsistent'; return;
       }
     }
 
-    const minScore = this.consecutivePeaks < 3 ? 18 : 24;
-    const thresholdMet = c.amplitude > this.peakThreshold * (c.periodicitySupport ? 0.45 : 0.70) ||
-      c.prominence > Math.max(0.9, this.peakThreshold * 0.35);
+    const minScore = this.consecutivePeaks < RHYTHM_MIN_CONSECUTIVE_PEAKS ? MIDDLE_PATH_MIN_SCORE_INITIAL : MIDDLE_PATH_MIN_SCORE_ESTABLISHED;
+    const thresholdMet = c.amplitude > this.peakThreshold * (c.periodicitySupport ? THRESHOLD_FACTOR_PERIODIC : THRESHOLD_FACTOR_NON_PERIODIC) ||
+      c.prominence > Math.max(PROMINENCE_THRESHOLD_MIN, this.peakThreshold * PROMINENCE_THRESHOLD_FACTOR);
 
     // Vía rápida: dos detectores de acuerdo + morfología decente -> aceptar.
-    if (c.detectorAgreement >= 1.0 && c.morphologyScore > 28 && thresholdMet) {
+    if (c.detectorAgreement >= 1.0 && c.morphologyScore > FAST_PATH_MIN_SCORE && thresholdMet) {
       c.status = 'accepted'; return;
     }
     // Vía intermedia: un detector + score suficiente + algún soporte adicional.
     if (c.detectorHits >= 1 && c.totalScore >= minScore && thresholdMet) {
-      if (c.templateCorrelation > 0.35 || c.periodicitySupport || c.morphologyScore > 38) {
+      if (c.templateCorrelation > TEMPLATE_CORR_MIDDLE_PATH || c.periodicitySupport || c.morphologyScore > MORPHOLOGY_SCORE_MIDDLE_ALT) {
         c.status = 'accepted'; return;
       }
     }
     // Vía con score alto: aceptar incluso sin threshold físico estricto.
-    if (c.totalScore > 42) {
+    if (c.totalScore > HIGH_SCORE_MIN) {
       c.status = 'accepted'; return;
     }
     c.status = 'rejected';
@@ -613,9 +797,9 @@ export class HeartBeatProcessor {
     const hardLimit = this.PT_REFRACTORY_MS;
     if (timeSinceLast < hardLimit) return 'hard';
     if (expectedRR > 0) {
-      const softLimit = expectedRR * 0.55;
+      const softLimit = expectedRR * SOFT_REFRACTORY_FACTOR;
       if (timeSinceLast < softLimit) return 'soft';
-    } else if (timeSinceLast < 380) {
+    } else if (timeSinceLast < SOFT_REFRACTORY_DEFAULT_MS) {
       return 'soft';
     }
     return 'open';
@@ -627,17 +811,17 @@ export class HeartBeatProcessor {
       const sorted = [...recent].sort((a, b) => a - b);
       return sorted[Math.floor(sorted.length / 2)];
     }
-    if (this.autocorrBPM > 0) return 60000 / this.autocorrBPM;
-    if (this.spectralBPM > 0) return 60000 / this.spectralBPM;
+    if (this.autocorrBPM > 0) return bpmToRrMs(this.autocorrBPM);
+    if (this.spectralBPM > 0) return bpmToRrMs(this.spectralBPM);
     return 0;
   }
 
   private handleMissedBeat(longRR: number, expectedRR: number, now: number): void {
     if (expectedRR <= 0) return;
     const ratio = longRR / expectedRR;
-    if (ratio >= 1.7 && ratio <= 2.5) {
+    if (ratio >= MISSED_BEAT_FACTOR_MIN && ratio <= MISSED_BEAT_FACTOR_MAX) {
       const halfRR = longRR / 2;
-      if (halfRR >= 300 && halfRR <= 1800) {
+      if (halfRR >= MIN_RR_MS && halfRR <= MAX_MISSED_BEAT_RR) {
         if (this.rrIntervals.length > 0) {
           this.rrIntervals[this.rrIntervals.length - 1] = halfRR;
           this.rrIntervals.push(halfRR);
@@ -650,13 +834,13 @@ export class HeartBeatProcessor {
 
   private updateTemplate(): void {
     const n = this.signalBuf.length;
-    if (n < this.TEMPLATE_WINDOW * 2) return;
-    const half = Math.floor(this.TEMPLATE_WINDOW / 2);
+    if (n < TEMPLATE_WINDOW * 2) return;
+    const half = Math.floor(TEMPLATE_WINDOW / 2);
     const start = n - half - 5;
     if (start < 0) return;
 
-    const segment = new Float64Array(this.TEMPLATE_WINDOW);
-    for (let i = 0; i < this.TEMPLATE_WINDOW; i++) {
+    const segment = new Float64Array(TEMPLATE_WINDOW);
+    for (let i = 0; i < TEMPLATE_WINDOW; i++) {
       segment[i] = this.signalBuf.get(start + i);
     }
 
@@ -666,15 +850,15 @@ export class HeartBeatProcessor {
       if (segment[i] > max) max = segment[i];
     }
     const range = max - min;
-    if (range < 0.1) return;
+    if (range < TEMPLATE_MIN_RANGE) return;
     for (let i = 0; i < segment.length; i++) segment[i] = (segment[i] - min) / range;
 
     if (!this.templateValid) {
       this.templateBuf = segment;
-      this.templateLen = this.TEMPLATE_WINDOW;
+      this.templateLen = TEMPLATE_WINDOW;
       this.templateValid = true;
     } else {
-      const alpha = 0.15;
+      const alpha = TEMPLATE_EMA_ALPHA;
       for (let i = 0; i < Math.min(this.templateLen, segment.length); i++) {
         this.templateBuf[i] = this.templateBuf[i] * (1 - alpha) + segment[i] * alpha;
       }
@@ -682,14 +866,14 @@ export class HeartBeatProcessor {
   }
 
   private correlateWithTemplate(): number {
-    if (!this.templateValid || this.signalBuf.length < this.TEMPLATE_WINDOW * 2) return 0;
+    if (!this.templateValid || this.signalBuf.length < TEMPLATE_WINDOW * 2) return 0;
     const n = this.signalBuf.length;
-    const half = Math.floor(this.TEMPLATE_WINDOW / 2);
+    const half = Math.floor(TEMPLATE_WINDOW / 2);
     const start = n - half - 5;
     if (start < 0) return 0;
 
-    const seg = new Float64Array(this.TEMPLATE_WINDOW);
-    for (let i = 0; i < this.TEMPLATE_WINDOW; i++) seg[i] = this.signalBuf.get(start + i);
+    const seg = new Float64Array(TEMPLATE_WINDOW);
+    for (let i = 0; i < TEMPLATE_WINDOW; i++) seg[i] = this.signalBuf.get(start + i);
 
     let sMin = Infinity, sMax = -Infinity;
     for (let i = 0; i < seg.length; i++) {
@@ -712,7 +896,7 @@ export class HeartBeatProcessor {
   }
 
   private fuseBPM(): BPMHypothesis {
-    const fromLastIBI = this.rrIntervals.length > 0 ? 60000 / this.rrIntervals[this.rrIntervals.length - 1] : 0;
+    const fromLastIBI = this.rrIntervals.length > 0 ? bpmToRrMs(this.rrIntervals[this.rrIntervals.length - 1]) : 0;
     const fromMedianIBI = this.computeMedianRRBPM();
     this.medianRRBPM = fromMedianIBI;
     const fromTrimmedIBI = this.computeTrimmedMeanBPM();
@@ -721,18 +905,18 @@ export class HeartBeatProcessor {
     const fromSpectral = this.spectralBPM;
 
     const tempoMid = fromMedianIBI > 0 ? fromMedianIBI : fromTrimmedIBI > 0 ? fromTrimmedIBI : fromAutocorrelation;
-    if (tempoMid > 0 && fromSpectral > 0 && this.spectralConfidence > 0.12) {
-      this.temporalSpectralAgreement = 1 - Math.min(1, Math.abs(tempoMid - fromSpectral) / Math.max(15, tempoMid));
-    } else if (fromSpectral > 0 && this.spectralConfidence > 0.42) {
-      this.temporalSpectralAgreement = 0.45;
+    if (tempoMid > 0 && fromSpectral > 0 && this.spectralConfidence > SPECTRAL_CONFIDENCE_MIN_FUSE) {
+      this.temporalSpectralAgreement = 1 - Math.min(1, Math.abs(tempoMid - fromSpectral) / Math.max(AGREEMENT_MIN_BPM, tempoMid));
+    } else if (fromSpectral > 0 && this.spectralConfidence > SPECTRAL_CONFIDENCE_HIGH) {
+      this.temporalSpectralAgreement = TEMP_SPEC_AGREEMENT_DEFAULT;
     } else {
       this.temporalSpectralAgreement = tempoMid > 0 && fromAutocorrelation > 0
-        ? 1 - Math.min(1, Math.abs(tempoMid - fromAutocorrelation) / Math.max(15, tempoMid))
-        : 0;
+        ? 1 - Math.min(1, Math.abs(tempoMid - fromAutocorrelation) / Math.max(AGREEMENT_MIN_BPM, tempoMid))
+        : TEMP_SPEC_WITH_AUTOCRR;
     }
 
-    const hasEnoughPeaks = this.consecutivePeaks >= 3;
-    const peakDomainReliable = hasEnoughPeaks && this.getAvgBeatSQI() > 35;
+    const hasEnoughPeaks = this.consecutivePeaks >= PEAK_DOMAIN_MIN_PEAKS;
+    const peakDomainReliable = hasEnoughPeaks && this.getAvgBeatSQI() > PEAK_DOMAIN_MIN_SQI;
 
     let finalBpm: number;
     let dominantSource: 'peak' | 'spectral' | 'autocorr' | 'median';
@@ -740,31 +924,31 @@ export class HeartBeatProcessor {
 
     if (peakDomainReliable && fromMedianIBI > 0) {
       const peakBpm = fromTrimmedIBI > 0 ? fromTrimmedIBI : fromMedianIBI;
-      finalBpm = fromAutocorrelation > 0 && Math.abs(peakBpm - fromAutocorrelation) < peakBpm * 0.2
-        ? peakBpm * 0.8 + fromAutocorrelation * 0.2
+      finalBpm = fromAutocorrelation > 0 && Math.abs(peakBpm - fromAutocorrelation) < peakBpm * PEAK_AUTOCRR_MAX_DIFF
+        ? peakBpm * PEAK_AUTOCRR_FUSION_PEAK_WEIGHT + fromAutocorrelation * PEAK_AUTOCRR_FUSION_AUTO_WEIGHT
         : peakBpm;
       dominantSource = 'median';
-      confidence = clamp(0.5 + this.consecutivePeaks * 0.06 + this.getAvgBeatSQI() * 0.003, 0, 1);
+      confidence = clamp(PEAK_DOMAIN_BASE_CONF + this.consecutivePeaks * PEAK_DOMAIN_CONF_PER_PEAK + this.getAvgBeatSQI() * PEAK_DOMAIN_CONF_PER_SQI, 0, 1);
     } else if (fromAutocorrelation > 0) {
-      finalBpm = fromMedianIBI > 0 ? fromMedianIBI * 0.5 + fromAutocorrelation * 0.5 : fromAutocorrelation;
+      finalBpm = fromMedianIBI > 0 ? fromMedianIBI * AUTOCRR_MEDIAN_FUSION_WEIGHT + fromAutocorrelation * AUTOCRR_MEDIAN_FUSION_WEIGHT : fromAutocorrelation;
       dominantSource = 'autocorr';
-      confidence = clamp(0.2 + this.consecutivePeaks * 0.04, 0, 0.7);
+      confidence = clamp(AUTOCRR_BASE_CONF + this.consecutivePeaks * AUTOCRR_CONF_PER_PEAK, 0, AUTOCRR_MAX_CONF);
     } else if (fromMedianIBI > 0) {
       finalBpm = fromMedianIBI;
       dominantSource = 'median';
-      confidence = clamp(0.15 + this.consecutivePeaks * 0.05, 0, 0.6);
+      confidence = clamp(MEDIAN_BASE_CONF + this.consecutivePeaks * MEDIAN_CONF_PER_PEAK, 0, MEDIAN_MAX_CONF);
     } else {
       finalBpm = 0;
       dominantSource = 'peak';
       confidence = 0;
     }
 
-    if (finalBpm > 0 && fromSpectral > 0 && this.spectralConfidence > 0.2) {
-      if (this.temporalSpectralAgreement < 0.18) {
-        finalBpm = finalBpm * 0.35 + fromSpectral * 0.65;
+    if (finalBpm > 0 && fromSpectral > 0 && this.spectralConfidence > SPECTRAL_CONFIDENCE_MIN) {
+      if (this.temporalSpectralAgreement < TEMP_SPEC_AGREEMENT_LOW) {
+        finalBpm = finalBpm * TEMP_SPEC_LOW_BPM_WEIGHT + fromSpectral * TEMP_SPEC_LOW_SPEC_WEIGHT;
         dominantSource = 'spectral';
-      } else if (this.temporalSpectralAgreement > 0.72) {
-        finalBpm = finalBpm * 0.9 + fromSpectral * 0.1;
+      } else if (this.temporalSpectralAgreement > TEMP_SPEC_AGREEMENT_HIGH) {
+        finalBpm = finalBpm * TEMP_SPEC_HIGH_BPM_WEIGHT + fromSpectral * TEMP_SPEC_HIGH_SPEC_WEIGHT;
       }
     }
 
@@ -773,7 +957,7 @@ export class HeartBeatProcessor {
       else {
         const diff = Math.abs(finalBpm - this.smoothBPM) / Math.max(1, this.smoothBPM);
         const alpha =
-          this.temporalSpectralAgreement < 0.25 ? Math.min(0.12, diff > 0.25 ? 0.08 : 0.12) : diff > 0.25 ? 0.08 : diff > 0.12 ? 0.18 : 0.28;
+          this.temporalSpectralAgreement < EMA_AGREEMENT_LOW ? Math.min(EMA_ALPHA_MED, diff > EMA_DIFF_HIGH ? EMA_ALPHA_SLOW : EMA_ALPHA_MED) : diff > EMA_DIFF_HIGH ? EMA_ALPHA_SLOW : diff > EMA_DIFF_MED ? 0.18 : EMA_ALPHA_FAST;
         this.smoothBPM = this.smoothBPM * (1 - alpha) + finalBpm * alpha;
       }
     }
@@ -796,7 +980,7 @@ export class HeartBeatProcessor {
     const recent = this.rrIntervals.slice(-10);
     const sorted = [...recent].sort((a, b) => a - b);
     const median = sorted[Math.floor(sorted.length / 2)];
-    return median > 0 ? 60000 / median : 0;
+    return median > 0 ? bpmToRrMs(median) : 0;
   }
 
   private computeTrimmedMeanBPM(): number {
@@ -1162,8 +1346,4 @@ export class HeartBeatProcessor {
   dispose(): void {
     // FAIL-CLOSED: Sin efectos secundarios, nada que limpiar
   }
-}
-
-function clamp(v: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, v));
 }
