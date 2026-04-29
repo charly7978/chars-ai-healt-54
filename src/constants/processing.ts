@@ -1261,24 +1261,6 @@ export const EMA_MULTIPLIER_MED = 0.5;
 /** Multiplicador EMA para cambio bajo */
 export const EMA_MULTIPLIER_LOW = 1.5;
 
-/** Alpha EMA máximo */
-export const EMA_ALPHA_MAX = 0.4;
-
-/** BPM mínimo para HR válido */
-export const HR_MIN_BPM = 35;
-
-/** BPM máximo para HR válido */
-export const HR_MAX_BPM = 200;
-
-/** Calidad mínima para procesamiento de glucosa */
-export const GLUCOSE_QUALITY_THRESHOLD = 10;
-
-/** Latidos mínimos para análisis de arritmia */
-export const ARRHYTHMIA_MIN_BEATS = 8;
-
-/** SQI mínimo para análisis de arritmia */
-export const ARRHYTHMIA_MIN_SQI = 20;
-
 // ═════════════════════════════════════════════════════════════════════════════
 // FUNCIONES AUXILIARES
 // ═════════════════════════════════════════════════════════════════════════════
