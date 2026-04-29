@@ -15,6 +15,46 @@
  * - Arguello-Prada et al. 2025 - Cholesterol from PPG
  */
 
+import {
+  CYCLE_MIN_DURATION_MS,
+  CYCLE_MAX_DURATION_MS,
+  DIACROTIC_NOTCH_ESTIMATE_FACTOR,
+  DIACROTIC_NOTCH_SEARCH_OFFSET,
+  CYCLE_END_SEARCH_OFFSET,
+  PULSE_WIDTH_LEVEL_10,
+  PULSE_WIDTH_LEVEL_25,
+  PULSE_WIDTH_LEVEL_50,
+  PULSE_WIDTH_LEVEL_75,
+  DIASTOLIC_AMPLITUDE_FACTOR,
+  MS_PER_SECOND,
+  PWV_SCALE_FACTOR,
+  PWV_STIFFNESS_FACTOR,
+  PWV_BASE,
+  APG_MIN_SAMPLES,
+  APG_MIN_DERIVATIVE_LENGTH,
+  MIN_VALLEY_DISTANCE_FACTOR,
+  QUALITY_AMPLITUDE_LOW,
+  QUALITY_WEIGHT_AMPLITUDE_LOW,
+  QUALITY_AMPLITUDE_MED,
+  QUALITY_WEIGHT_AMPLITUDE_MED,
+  QUALITY_AMPLITUDE_HIGH,
+  QUALITY_WEIGHT_AMPLITUDE_HIGH,
+  QUALITY_SUT_MIN_MS,
+  QUALITY_SUT_MAX_MS,
+  QUALITY_WEIGHT_SUT,
+  QUALITY_DIASTOLIC_TIME_FACTOR,
+  QUALITY_WEIGHT_DIASTOLIC_TIME,
+  QUALITY_PW50_MIN_MS,
+  QUALITY_PW50_MAX_MS,
+  QUALITY_WEIGHT_PW50,
+  QUALITY_WEIGHT_NOTCH,
+  AC_DC_MIN_SAMPLES,
+  AC_DC_WINDOW_SAMPLES,
+  RR_VAR_MIN_INTERVALS,
+  RR_VALID_MIN_MS,
+  RR_VALID_MAX_MS,
+} from '../../constants/processing';
+
 // ═══════════════════════════════════════════
 // TYPES
 // ═══════════════════════════════════════════
@@ -100,8 +140,8 @@ export class PPGFeatureExtractor {
       const cycleLength = nextOnset - onset;
 
       // Validate cycle length (350ms - 1800ms → ~33-171 BPM) to reject non-human noise
-      const cycleLengthMs = (cycleLength / sampleRate) * 1000;
-      if (cycleLengthMs < 350 || cycleLengthMs > 1800) continue;
+      const cycleLengthMs = (cycleLength / sampleRate) * MS_PER_SECOND;
+      if (cycleLengthMs < CYCLE_MIN_DURATION_MS || cycleLengthMs > CYCLE_MAX_DURATION_MS) continue;
 
       // 2. Find systolic peak within cycle
       const systolicPeak = this.findSystolicPeak(buffer, onset, nextOnset);
@@ -137,7 +177,7 @@ export class PPGFeatureExtractor {
     // Validate indices
     if (onset < 0 || nextOnset >= buffer.length || systolicPeak <= onset) return null;
 
-    const msPerSample = 1000 / sampleRate;
+    const msPerSample = MS_PER_SECOND / sampleRate;
     const onsetVal = buffer[onset];
     const peakVal = buffer[systolicPeak];
     const amplitude = peakVal - onsetVal;
@@ -152,10 +192,10 @@ export class PPGFeatureExtractor {
       : diastolicTimeMs * 0.6; // estimate
 
     // Pulse widths at multiple amplitude levels
-    const pw10Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, 0.10) * msPerSample;
-    const pw25Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, 0.25) * msPerSample;
-    const pw50Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, 0.50) * msPerSample;
-    const pw75Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, 0.75) * msPerSample;
+    const pw10Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, PULSE_WIDTH_LEVEL_10) * msPerSample;
+    const pw25Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, PULSE_WIDTH_LEVEL_25) * msPerSample;
+    const pw50Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, PULSE_WIDTH_LEVEL_50) * msPerSample;
+    const pw75Ms = this.pulseWidthAtLevel(buffer, onset, nextOnset, onsetVal, amplitude, PULSE_WIDTH_LEVEL_75) * msPerSample;
 
     // ── Amplitude features ──
     const systolicAmplitude = amplitude;
@@ -180,7 +220,7 @@ export class PPGFeatureExtractor {
     let stiffnessIndex = 0;
     if (diastolicPeak >= 0 && diastolicPeak > systolicPeak) {
       const deltaT = (diastolicPeak - systolicPeak) * msPerSample;
-      stiffnessIndex = deltaT > 0 ? 1000 / deltaT : 0;
+      stiffnessIndex = deltaT > 0 ? MS_PER_SECOND / deltaT : 0;
     }
 
     // ── Augmentation Index ──
@@ -195,8 +235,8 @@ export class PPGFeatureExtractor {
     // From systolic upstroke slope + stiffness
     let pwvProxy = 0;
     if (sutMs > 0) {
-      const slopeNorm = amplitude / (sutMs / 1000); // amplitude per second
-      pwvProxy = 4.0 + slopeNorm * 0.01 + stiffnessIndex * 0.5;
+      const slopeNorm = amplitude / (sutMs / MS_PER_SECOND);
+      pwvProxy = PWV_BASE + slopeNorm * PWV_SCALE_FACTOR + stiffnessIndex * PWV_STIFFNESS_FACTOR;
     }
 
     // ── APG features ──
@@ -246,7 +286,7 @@ export class PPGFeatureExtractor {
   private static findValleys(
     buffer: number[], vpg: number[], sampleRate: number
   ): number[] {
-    const minCycleLen = Math.round(sampleRate * 0.3); // min 300ms between valleys
+    const minCycleLen = Math.round(sampleRate * MIN_VALLEY_DISTANCE_FACTOR); // min 300ms between valleys
     const valleys: number[] = [];
 
     for (let i = 2; i < buffer.length - 2; i++) {
@@ -272,7 +312,7 @@ export class PPGFeatureExtractor {
 
   private static findSystolicPeak(buffer: number[], onset: number, nextOnset: number): number {
     // Peak must be in first 60% of cycle
-    const searchEnd = onset + Math.round((nextOnset - onset) * 0.6);
+    const searchEnd = onset + Math.round((nextOnset - onset) * DIACROTIC_NOTCH_ESTIMATE_FACTOR);
     let maxIdx = onset;
     let maxVal = buffer[onset];
 
@@ -290,8 +330,8 @@ export class PPGFeatureExtractor {
     buffer: number[], vpg: number[], systolicPeak: number, nextOnset: number
   ): { notch: number; diastolicPeak: number } {
     // Search for dicrotic notch: local minimum after systolic peak
-    const searchStart = systolicPeak + 2;
-    const searchEnd = nextOnset - 1;
+    const searchStart = systolicPeak + DIACROTIC_NOTCH_SEARCH_OFFSET;
+    const searchEnd = nextOnset - CYCLE_END_SEARCH_OFFSET;
 
     if (searchStart >= searchEnd) {
       return { notch: -1, diastolicPeak: -1 };
@@ -380,10 +420,10 @@ export class PPGFeatureExtractor {
       bDivA: 0, cDivA: 0, dDivA: 0, eDivA: 0, agi: 0 
     };
 
-    if (segment.length < 10) return defaults;
+    if (segment.length < APG_MIN_SAMPLES) return defaults;
 
     const apg = this.secondDerivative(segment);
-    if (apg.length < 8) return defaults;
+    if (apg.length < APG_MIN_DERIVATIVE_LENGTH) return defaults;
 
     // Find peaks and valleys in APG ordered by temporal position
     const extrema: { idx: number; val: number; type: 'peak' | 'valley' }[] = [];
@@ -432,22 +472,22 @@ export class PPGFeatureExtractor {
   ): number {
     let q = 0;
 
-    // Amplitude — lower threshold for weak but real signals
-    if (amplitude > 0.3) q += 0.15;
-    if (amplitude > 1.0) q += 0.1;
-    if (amplitude > 2.5) q += 0.05;
+    // Base quality from amplitude
+    if (amplitude > QUALITY_AMPLITUDE_LOW) q += QUALITY_WEIGHT_AMPLITUDE_LOW;
+    if (amplitude > QUALITY_AMPLITUDE_MED) q += QUALITY_WEIGHT_AMPLITUDE_MED;
+    if (amplitude > QUALITY_AMPLITUDE_HIGH) q += QUALITY_WEIGHT_AMPLITUDE_HIGH;
 
     // SUT in physiological range (wider)
-    if (sutMs > 40 && sutMs < 350) q += 0.2;
+    if (sutMs > QUALITY_SUT_MIN_MS && sutMs < QUALITY_SUT_MAX_MS) q += QUALITY_WEIGHT_SUT;
 
     // Diastolic time
-    if (diastolicTimeMs > sutMs * 0.7) q += 0.15;
+    if (diastolicTimeMs > sutMs * QUALITY_DIASTOLIC_TIME_FACTOR) q += QUALITY_WEIGHT_DIASTOLIC_TIME;
 
-    // PW50 in range (wider)
-    if (pw50Ms > 80 && pw50Ms < 800) q += 0.1;
+    // PW50 in physiological range (wider)
+    if (pw50Ms > QUALITY_PW50_MIN_MS && pw50Ms < QUALITY_PW50_MAX_MS) q += QUALITY_WEIGHT_PW50;
 
-    // Dicrotic notch bonus
-    if (hasDicroticNotch) q += 0.25;
+    // Dicrotic notch detected
+    if (hasDicroticNotch) q += QUALITY_WEIGHT_NOTCH;
 
     return Math.min(1, q);
   }
@@ -457,8 +497,8 @@ export class PPGFeatureExtractor {
   // ─────────────────────────────────────────
 
   static extractACDCRatio(buffer: number[]): { ac: number; dc: number; ratio: number } {
-    if (buffer.length < 10) return { ac: 0, dc: 0, ratio: 0 };
-    const recent = buffer.slice(-30);
+    if (buffer.length < AC_DC_MIN_SAMPLES) return { ac: 0, dc: 0, ratio: 0 };
+    const recent = buffer.slice(-AC_DC_WINDOW_SAMPLES);
     const dc = recent.reduce((a, b) => a + b, 0) / recent.length;
     const max = Math.max(...recent);
     const min = Math.min(...recent);
@@ -468,8 +508,8 @@ export class PPGFeatureExtractor {
   }
 
   static extractRRVariability(intervals: number[]): { sdnn: number; rmssd: number; cv: number } {
-    if (intervals.length < 2) return { sdnn: 0, rmssd: 0, cv: 0 };
-    const valid = intervals.filter(i => i > 100 && i < 5000);
+    if (intervals.length < RR_VAR_MIN_INTERVALS) return { sdnn: 0, rmssd: 0, cv: 0 };
+    const valid = intervals.filter(i => i > RR_VALID_MIN_MS && i < RR_VALID_MAX_MS);
     if (valid.length < 2) return { sdnn: 0, rmssd: 0, cv: 0 };
     
     const mean = valid.reduce((a, b) => a + b, 0) / valid.length;

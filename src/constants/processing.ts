@@ -1026,6 +1026,118 @@ export const SPEC_CONC_PULSE_WEIGHT = 0.45;
 export const MOTION_THRESH_EPSILON = 0.01;
 
 // ═════════════════════════════════════════════════════════════════════════════
+// PPG FEATURE EXTRACTOR - Constantes para extracción de características
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Duración mínima de ciclo cardíaco (ms) - ~171 BPM máximo */
+export const CYCLE_MIN_DURATION_MS = 350;
+
+/** Duración máxima de ciclo cardíaco (ms) - ~33 BPM mínimo */
+export const CYCLE_MAX_DURATION_MS = 1800;
+
+/** Factor para estimar posición de dicrotic notch (60% del ciclo) */
+export const DIACROTIC_NOTCH_ESTIMATE_FACTOR = 0.6;
+
+/** Offset de búsqueda para dicrotic notch */
+export const DIACROTIC_NOTCH_SEARCH_OFFSET = 2;
+
+/** Offset de búsqueda para fin de ciclo */
+export const CYCLE_END_SEARCH_OFFSET = 1;
+
+/** Nivel de amplitud para PW10 (10%) */
+export const PULSE_WIDTH_LEVEL_10 = 0.10;
+
+/** Nivel de amplitud para PW25 (25%) */
+export const PULSE_WIDTH_LEVEL_25 = 0.25;
+
+/** Nivel de amplitud para PW50 (50%) */
+export const PULSE_WIDTH_LEVEL_50 = 0.50;
+
+/** Nivel de amplitud para PW75 (75%) */
+export const PULSE_WIDTH_LEVEL_75 = 0.75;
+
+/** Factor para estimar amplitud diastólica */
+export const DIASTOLIC_AMPLITUDE_FACTOR = 0.5;
+
+/** Factor de escala para PWV proxy */
+export const PWV_SCALE_FACTOR = 0.01;
+
+/** Factor de stiffness para PWV proxy */
+export const PWV_STIFFNESS_FACTOR = 0.5;
+
+/** Base para cálculo de PWV proxy */
+export const PWV_BASE = 4.0;
+
+/** Muestras mínimas para segmento APG */
+export const APG_MIN_SAMPLES = 10;
+
+/** Longitud mínima de derivada para APG */
+export const APG_MIN_DERIVATIVE_LENGTH = 8;
+
+/** Distancia mínima entre valles (factor de sample rate) - 300ms */
+export const MIN_VALLEY_DISTANCE_FACTOR = 0.3;
+
+/** Umbral de amplitud para calidad - nivel bajo */
+export const QUALITY_AMPLITUDE_LOW = 0.3;
+
+/** Peso calidad - amplitud baja */
+export const QUALITY_WEIGHT_AMPLITUDE_LOW = 0.15;
+
+/** Umbral de amplitud para calidad - nivel medio */
+export const QUALITY_AMPLITUDE_MED = 1.0;
+
+/** Peso calidad - amplitud media */
+export const QUALITY_WEIGHT_AMPLITUDE_MED = 0.1;
+
+/** Umbral de amplitud para calidad - nivel alto */
+export const QUALITY_AMPLITUDE_HIGH = 2.5;
+
+/** Peso calidad - amplitud alta */
+export const QUALITY_WEIGHT_AMPLITUDE_HIGH = 0.05;
+
+/** SUT mínimo para calidad (ms) */
+export const QUALITY_SUT_MIN_MS = 40;
+
+/** SUT máximo para calidad (ms) */
+export const QUALITY_SUT_MAX_MS = 350;
+
+/** Peso calidad - SUT */
+export const QUALITY_WEIGHT_SUT = 0.2;
+
+/** Factor de tiempo diastólico mínimo */
+export const QUALITY_DIASTOLIC_TIME_FACTOR = 0.7;
+
+/** Peso calidad - tiempo diastólico */
+export const QUALITY_WEIGHT_DIASTOLIC_TIME = 0.15;
+
+/** PW50 mínimo para calidad (ms) */
+export const QUALITY_PW50_MIN_MS = 80;
+
+/** PW50 máximo para calidad (ms) */
+export const QUALITY_PW50_MAX_MS = 800;
+
+/** Peso calidad - PW50 */
+export const QUALITY_WEIGHT_PW50 = 0.1;
+
+/** Peso calidad - dicrotic notch */
+export const QUALITY_WEIGHT_NOTCH = 0.25;
+
+/** Muestras mínimas para buffer AC/DC */
+export const AC_DC_MIN_SAMPLES = 10;
+
+/** Ventana de muestras para cálculo AC/DC */
+export const AC_DC_WINDOW_SAMPLES = 30;
+
+/** Intervalos mínimos para variabilidad RR */
+export const RR_VAR_MIN_INTERVALS = 2;
+
+/** Intervalo RR válido mínimo (ms) */
+export const RR_VALID_MIN_MS = 100;
+
+/** Intervalo RR válido máximo (ms) */
+export const RR_VALID_MAX_MS = 5000;
+
+// ═════════════════════════════════════════════════════════════════════════════
 // FUNCIONES AUXILIARES
 // ═════════════════════════════════════════════════════════════════════════════
 
