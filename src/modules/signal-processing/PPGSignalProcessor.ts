@@ -19,16 +19,16 @@ import type {
 import { ROIReputationModel } from './ROIReputationModel';
 import { PerformanceModeController } from './PerformanceModeController';
 import {
-  PPG_BUF_SIZE,
-  FRAME_TIME_BUF_SIZE,
-  LUMINANCE_RING_SIZE,
+  PPG_BUFFER_SIZE,
+  FRAME_TIME_BUFFER_SIZE,
+  LUMINANCE_BUFFER_SIZE,
   MULTI_ROI_GRID_ROWS,
   MULTI_ROI_GRID_COLS,
   MULTI_ROI_INNER_FRACTION,
   MULTI_ROI_SAMPLE_STEP,
   ROI_REPUTATION_SIZE,
   SIGNAL_QUALITY_ENGINE_WINDOW,
-  ESTIMATED_SAMPLE_RATE,
+  DEFAULT_SAMPLE_RATE,
   MOTION_THRESHOLD,
   SPECTRAL_GATE_FOR_FINGER,
   DETECTION_WIDTH,
@@ -82,11 +82,11 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private frameTiming = new FrameTimingTracker();
   private profiler = new ProcessingProfiler();
 
-  private redBuf = new RingBuffer(PPG_BUF_SIZE);
-  private greenBuf = new RingBuffer(PPG_BUF_SIZE);
-  private blueBuf = new RingBuffer(PPG_BUF_SIZE);
-  private filteredBuf = new RingBuffer(PPG_BUF_SIZE);
-  private frameTimeBuf = new RingBuffer(FRAME_TIME_BUF_SIZE);
+  private redBuf = new RingBuffer(PPG_BUFFER_SIZE);
+  private greenBuf = new RingBuffer(PPG_BUFFER_SIZE);
+  private blueBuf = new RingBuffer(PPG_BUFFER_SIZE);
+  private filteredBuf = new RingBuffer(PPG_BUFFER_SIZE);
+  private frameTimeBuf = new RingBuffer(FRAME_TIME_BUFFER_SIZE);
 
   private redDC = 0;
   private redAC = 0;
@@ -98,7 +98,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private redBaseline = 0;
   private greenBaseline = 0;
   private blueBaseline = 0;
-  private estimatedSampleRate = ESTIMATED_SAMPLE_RATE;
+  private estimatedSampleRate = DEFAULT_SAMPLE_RATE;
   private lastFrameTime = 0;
 
   /** Movimiento inyectado por frame (sensor en hook principal o worker relay) */
@@ -129,7 +129,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     extractionMode: EXTRACTION_MODE_DEFAULT,
   };
 
-  private luminanceRing = new RingBuffer(LUMINANCE_RING_SIZE);
+  private luminanceRing = new RingBuffer(LUMINANCE_BUFFER_SIZE);
   private lastAutocorrPeak = 0;
   private lastPulseCorr = 0;
   // Estado de la triada de canales verdes (G1/G2/G3) y selección.
