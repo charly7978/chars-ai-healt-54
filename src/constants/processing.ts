@@ -61,9 +61,6 @@ export const MIN_SIGNAL_RANGE = 0.10;
 // MUESTRAS Y FRECUENCIA
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** Frecuencia de muestreo por defecto (fps) */
-export const DEFAULT_SAMPLE_RATE = 30;
-
 /** Factor de sobremuestreo para análisis */
 export const OVERSAMPLE_FACTOR = 22;
 
@@ -1136,6 +1133,106 @@ export const RR_VALID_MIN_MS = 100;
 
 /** Intervalo RR válido máximo (ms) */
 export const RR_VALID_MAX_MS = 5000;
+
+// ═════════════════════════════════════════════════════════════════════════════
+// VITAL SIGNS PROCESSOR - Constantes para procesamiento de signos vitales
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Muestras mínimas para calibración */
+export const CALIBRATION_REQUIRED_SAMPLES = 25;
+
+/** Tamaño del historial de señal */
+export const SIGNAL_HISTORY_SIZE = 90;
+
+/** Sample rate por defecto (Hz) */
+export const DEFAULT_SAMPLE_RATE = 30;
+
+/** Sample rate mínimo (Hz) */
+export const SAMPLE_RATE_MIN = 15;
+
+/** Sample rate máximo (Hz) */
+export const SAMPLE_RATE_MAX = 60;
+
+/** Muestras mínimas para procesamiento de señal */
+export const SIGNAL_MIN_SAMPLES = 20;
+
+/** Tamaño de ventana para cálculo de calidad */
+export const QUALITY_WINDOW_SIZE = 60;
+
+/** Percentil 10 para cálculo de rango */
+export const PERCENTILE_10 = 0.1;
+
+/** Percentil 90 para cálculo de rango */
+export const PERCENTILE_90 = 0.9;
+
+/** Rango mínimo de señal */
+export const SIGNAL_RANGE_MIN = 0.2;
+
+/** Valor de calidad por defecto para rango bajo */
+export const QUALITY_LOW_VALUE = 2;
+
+/** Epsilon para evitar división por cero en SNR */
+export const SNR_EPSILON = 0.05;
+
+/** Factor de escala para SNR */
+export const SNR_SCALE_FACTOR = 16;
+
+/** Calidad mínima para confianza ALTA */
+export const CONFIDENCE_HIGH_QUALITY = 45;
+
+/** Pulso válido mínimo para confianza ALTA */
+export const CONFIDENCE_HIGH_PULSES = 4;
+
+/** Calidad mínima para confianza MEDIA */
+export const CONFIDENCE_MEDIUM_QUALITY = 24;
+
+/** Pulso válido mínimo para confianza MEDIA */
+export const CONFIDENCE_MEDIUM_PULSES = 3;
+
+/** Calidad mínima para confianza BAJA */
+export const CONFIDENCE_LOW_QUALITY = 10;
+
+/** Pulso válido mínimo para confianza BAJA */
+export const CONFIDENCE_LOW_PULSES = 2;
+
+/** Intervalo RR válido mínimo para vital signs (ms) */
+export const VITALS_RR_MIN_MS = 270;
+
+/** Intervalo RR válido máximo para vital signs (ms) */
+export const VITALS_RR_MAX_MS = 2200;
+
+/** Milisegundos por minuto */
+export const MS_PER_MINUTE = 60000;
+
+/** Muestras mínimas para SpO₂ */
+export const SPO2_MIN_SAMPLES = 2;
+
+/** Umbral mínimo de medianR para calibración SpO₂ */
+export const SPO2_MEDIANR_MIN = 0;
+
+/** Factor de varianza para calibración */
+export const CALIBRATION_VARIANCE_FACTOR = 0.05;
+
+/** Umbral ACDC mínimo para ratio estable */
+export const ACDC_RATIO_MIN = 0.01;
+
+/** Ratio de clipping máximo aceptable */
+export const CLIPPING_RATIO_MAX = 0.08;
+
+/** Índice de perfusión mínimo para SpO₂ */
+export const PERFUSION_INDEX_MIN = 0.35;
+
+/** Calidad mínima para ciclos cardíacos */
+export const CYCLE_QUALITY_MIN = 0.2;
+
+/** Muestras mínimas para media */
+export const MIN_SAMPLES_FOR_MEAN = 1;
+
+/** Tiempo máximo desde último pico (ms) */
+export const MAX_TIME_SINCE_PEAK_MS = 4000;
+
+/** Timestamp límite para detección de clock (1e12 = 1 trillón) */
+export const TIMESTAMP_CLOCK_THRESHOLD = 1e12;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FUNCIONES AUXILIARES

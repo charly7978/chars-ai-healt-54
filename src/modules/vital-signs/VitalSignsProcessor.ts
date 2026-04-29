@@ -12,6 +12,45 @@ import { BPCalibrationManager } from './BPCalibrationManager';
 import { UserBaselineEngine } from '../personalization/UserBaselineEngine';
 import { LongitudinalDatasetStore } from '../personalization/LongitudinalDatasetStore';
 import { median } from '@/utils/mathUtils';
+import {
+  CALIBRATION_REQUIRED_SAMPLES,
+  SIGNAL_HISTORY_SIZE,
+  DEFAULT_SAMPLE_RATE,
+  SAMPLE_RATE_MIN,
+  SAMPLE_RATE_MAX,
+  SIGNAL_MIN_SAMPLES,
+  QUALITY_WINDOW_SIZE,
+  PERCENTILE_10,
+  PERCENTILE_90,
+  SIGNAL_RANGE_MIN,
+  QUALITY_LOW_VALUE,
+  SNR_EPSILON,
+  SNR_SCALE_FACTOR,
+  CONFIDENCE_HIGH_QUALITY,
+  CONFIDENCE_HIGH_PULSES,
+  CONFIDENCE_MEDIUM_QUALITY,
+  CONFIDENCE_MEDIUM_PULSES,
+  CONFIDENCE_LOW_QUALITY,
+  CONFIDENCE_LOW_PULSES,
+  VITALS_RR_MIN_MS,
+  VITALS_RR_MAX_MS,
+  MS_PER_MINUTE,
+  SPO2_MIN_SAMPLES,
+  SPO2_MEDIANR_MIN,
+  CALIBRATION_VARIANCE_FACTOR,
+  ACDC_RATIO_MIN,
+  CLIPPING_RATIO_MAX,
+  PERFUSION_INDEX_MIN,
+  CYCLE_QUALITY_MIN,
+  MIN_SAMPLES_FOR_MEAN,
+  MAX_TIME_SINCE_PEAK_MS,
+  TIMESTAMP_CLOCK_THRESHOLD,
+  AC_DC_MIN_SAMPLES,
+  AC_DC_WINDOW_SAMPLES,
+  EMA_ALPHA_FAST,
+  EMA_ALPHA_SLOW,
+  EMA_ALPHA_MED,
+} from '../../constants/processing';
 
 export interface VitalSignsResult {
   spo2: number;
@@ -94,7 +133,7 @@ export class VitalSignsProcessor {
   private lastBpTrendFirst = false;
   private lastBpTrendLabel: 'UP' | 'DOWN' | 'STABLE' | undefined;
   private calibrationSamples = 0;
-  private readonly CALIBRATION_REQUIRED = 25;
+  private readonly CALIBRATION_REQUIRED = CALIBRATION_REQUIRED_SAMPLES;
   private isCalibrating = false;
 
   private measurements = {
@@ -107,7 +146,7 @@ export class VitalSignsProcessor {
   };
 
   private signalHistory: number[] = [];
-  private readonly HISTORY_SIZE = 90;
+  private readonly HISTORY_SIZE = SIGNAL_HISTORY_SIZE;
   private rgbData: RGBData = { redAC: 0, redDC: 0, greenAC: 0, greenDC: 0 };
   private validPulseCount = 0;
 
@@ -119,7 +158,7 @@ export class VitalSignsProcessor {
     sourceStability: 0,
     avgBeatSQI: 0,
     beatCount: 0,
-    sampleRate: 30,
+    sampleRate: DEFAULT_SAMPLE_RATE,
     detectorAgreement: 0,
     rrStability: 0,
   };
@@ -148,8 +187,9 @@ export class VitalSignsProcessor {
   private lastGlucose: GlucoseResult | null = null;
   private lastLipids: LipidResult | null = null;
 
-  private readonly EMA_ALPHA_STABLE = 0.20;
-  private readonly EMA_ALPHA_DYNAMIC = 0.30;
+  private readonly EMA_ALPHA_FAST = EMA_ALPHA_FAST;
+  private readonly EMA_ALPHA_STABLE = EMA_ALPHA_SLOW;
+  private readonly EMA_ALPHA_DYNAMIC = EMA_ALPHA_MED;
 
   constructor() {
     const fp = deviceFingerprint();
@@ -225,7 +265,7 @@ export class VitalSignsProcessor {
     if (ctx.sourceStability !== undefined) this.upstreamContext.sourceStability = ctx.sourceStability;
     if (ctx.avgBeatSQI !== undefined) this.upstreamContext.avgBeatSQI = ctx.avgBeatSQI;
     if (ctx.beatCount !== undefined) this.upstreamContext.beatCount = ctx.beatCount;
-    if (ctx.sampleRate !== undefined && isFinite(ctx.sampleRate)) this.upstreamContext.sampleRate = Math.max(15, Math.min(60, ctx.sampleRate));
+    if (ctx.sampleRate !== undefined && isFinite(ctx.sampleRate)) this.upstreamContext.sampleRate = Math.max(SAMPLE_RATE_MIN, Math.min(SAMPLE_RATE_MAX, ctx.sampleRate));
     if (ctx.detectorAgreement !== undefined) this.upstreamContext.detectorAgreement = ctx.detectorAgreement;
     if (ctx.rrStability !== undefined) this.upstreamContext.rrStability = ctx.rrStability;
   }
@@ -257,7 +297,7 @@ export class VitalSignsProcessor {
     const hasRealPulse = this.validateRealPulse(rrData);
     if (!hasRealPulse) return this.getInvalidResult();
 
-    if (this.signalHistory.length >= 20 && rrData && rrData.intervals.length >= 2) {
+    if (this.signalHistory.length >= SIGNAL_MIN_SAMPLES && rrData && rrData.intervals.length >= 2) {
       this.calculateVitalSigns(signalValue, rrData, beatInputs);
     }
 
@@ -270,7 +310,7 @@ export class VitalSignsProcessor {
       return false;
     }
 
-    const validIntervals = rrData.intervals.filter(i => i >= 270 && i <= 2200);
+    const validIntervals = rrData.intervals.filter(i => i >= VITALS_RR_MIN_MS && i <= VITALS_RR_MAX_MS);
     if (validIntervals.length < 2) {
       this.validPulseCount = 0;
       return false;
@@ -280,8 +320,8 @@ export class VitalSignsProcessor {
       const nowPerf = performance.now();
       const nowEpoch = Date.now();
       const lastPeak = rrData.lastPeakTime;
-      const sameClockDelta = lastPeak < 1e12 ? nowPerf - lastPeak : nowEpoch - lastPeak;
-      if (sameClockDelta > 4000) {
+      const sameClockDelta = lastPeak < TIMESTAMP_CLOCK_THRESHOLD ? nowPerf - lastPeak : nowEpoch - lastPeak;
+      if (sameClockDelta > MAX_TIME_SINCE_PEAK_MS) {
         this.validPulseCount = 0;
         return false;
       }
@@ -292,25 +332,25 @@ export class VitalSignsProcessor {
   }
 
   private calculateSignalQuality(): number {
-    if (this.signalHistory.length < 20) return 0;
-    const recent = this.signalHistory.slice(-60);
+    if (this.signalHistory.length < SIGNAL_MIN_SAMPLES) return 0;
+    const recent = this.signalHistory.slice(-QUALITY_WINDOW_SIZE);
     const sorted = [...recent].sort((a, b) => a - b);
-    const p10 = sorted[Math.floor((sorted.length - 1) * 0.1)] ?? 0;
-    const p90 = sorted[Math.floor((sorted.length - 1) * 0.9)] ?? 0;
+    const p10 = sorted[Math.floor((sorted.length - 1) * PERCENTILE_10)] ?? 0;
+    const p90 = sorted[Math.floor((sorted.length - 1) * PERCENTILE_90)] ?? 0;
     const range = p90 - p10;
-    if (range < 0.2) return 2;
+    if (range < SIGNAL_RANGE_MIN) return QUALITY_LOW_VALUE;
     const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
     const variance = recent.reduce((acc, val) => acc + (val - mean) ** 2, 0) / recent.length;
     const stdDev = Math.sqrt(variance);
-    const snr = range / (stdDev + 0.05);
-    return Math.min(100, Math.max(0, snr * 16));
+    const snr = range / (stdDev + SNR_EPSILON);
+    return Math.min(100, Math.max(0, snr * SNR_SCALE_FACTOR));
   }
 
   private getMeasurementConfidence(): 'HIGH' | 'MEDIUM' | 'LOW' | 'INVALID' {
     const sq = this.measurements.signalQuality;
-    if (sq >= 45 && this.validPulseCount >= 4) return 'HIGH';
-    if (sq >= 24 && this.validPulseCount >= 3) return 'MEDIUM';
-    if (sq >= 10 && this.validPulseCount >= 2) return 'LOW';
+    if (sq >= CONFIDENCE_HIGH_QUALITY && this.validPulseCount >= CONFIDENCE_HIGH_PULSES) return 'HIGH';
+    if (sq >= CONFIDENCE_MEDIUM_QUALITY && this.validPulseCount >= CONFIDENCE_MEDIUM_PULSES) return 'MEDIUM';
+    if (sq >= CONFIDENCE_LOW_QUALITY && this.validPulseCount >= CONFIDENCE_LOW_PULSES) return 'LOW';
     return 'INVALID';
   }
 
