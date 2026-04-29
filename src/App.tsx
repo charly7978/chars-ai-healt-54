@@ -2,6 +2,7 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
+import { Toaster } from "./components/ui/toaster";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -54,6 +55,7 @@ const App = () => {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Router>
+      <Toaster />
     </ErrorBoundary>
   );
 };

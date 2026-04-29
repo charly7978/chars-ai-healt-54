@@ -13,6 +13,12 @@ export interface BPCalibrationRecord {
 export class BPCalibrationManager {
   private record: BPCalibrationRecord | null = null;
 
+  /**
+   * API de calibración BP por sujeto (mmHg offsets). Reservada para Fase 2
+   * (UI de calibración + persistencia). Sin record, getOffsets devuelve
+   * (0,0) y `getRecord()===null` actúa como gate fail-closed: BP no se
+   * publica hasta que haya una calibración real del sujeto.
+   */
   setCalibration(systolicOffset: number, diastolicOffset: number, quality: number): void {
     this.record = {
       systolicOffset,

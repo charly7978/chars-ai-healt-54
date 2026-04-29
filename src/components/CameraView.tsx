@@ -1,14 +1,18 @@
-import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from "react";
-import { CameraConstraintReport, type ConstraintReport } from "../modules/signal-processing/CameraConstraintReport";
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
+import { CameraConstraintReport } from "../modules/signal-processing/CameraConstraintReport";
 
+/**
+ * API mínima expuesta a Index. El resto del estado interno
+ * (diagnósticos, constraint report, warm-up flag) se mantiene dentro
+ * del componente para que las decisiones de cámara (torch, locks,
+ * watchdog) sigan funcionando, pero NO se exponen porque ningún
+ * consumidor los lee.
+ */
 export interface CameraViewHandle {
   getVideoElement: () => HTMLVideoElement | null;
-  getDiagnostics: () => CameraDiagnostics;
-  getConstraintReport: () => ConstraintReport;
-  isWarmedUp: () => boolean;
 }
 
-export interface CameraDiagnostics {
+interface CameraDiagnostics {
   deviceLabel: string;
   deviceId: string;
   hasTorch: boolean;
@@ -54,8 +58,16 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const isStartingRef = useRef(false);
-  const [warmUpStatus, setWarmUpStatus] = useState<'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE' | 'FAILED'>('NOT_STARTED');
-  const [warmUpProgress, setWarmUpProgress] = useState(0);
+  // El warm-up es totalmente interno; ya no se expone fuera. Refs en lugar
+  // de useState para no provocar re-renders del padre durante el arranque.
+  const warmUpStatusRef = useRef<'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE' | 'FAILED'>('NOT_STARTED');
+  const warmUpProgressRef = useRef(0);
+  const setWarmUpStatus = (s: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE' | 'FAILED') => {
+    warmUpStatusRef.current = s;
+  };
+  const setWarmUpProgress = (p: number) => {
+    warmUpProgressRef.current = p;
+  };
   
   const constraintReportRef = useRef<CameraConstraintReport>(new CameraConstraintReport());
   
@@ -88,10 +100,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
 
   useImperativeHandle(ref, () => ({
     getVideoElement: () => videoRef.current,
-    getDiagnostics: () => ({ ...diagnosticsRef.current, warmUpStatus, warmUpProgress }),
-    getConstraintReport: () => constraintReportRef.current.getReport(),
-    isWarmedUp: () => warmUpStatus === 'COMPLETE',
-  }), [warmUpStatus, warmUpProgress]);
+  }), []);
 
   useEffect(() => {
     let mounted = true;

@@ -6,8 +6,6 @@ import { SpO2Calibrator } from './SpO2Calibrator';
 import { ratioOfRatios } from './OpticalRatioEngine';
 import { GlucoseResearchProcessor, type GlucoseResult } from '../biomarkers/GlucoseResearchProcessor';
 import { LipidResearchProcessor, type LipidResult } from '../biomarkers/LipidResearchProcessor';
-import type { OutputState } from '../core/MeasurementGate';
-import { UncertaintyRouter } from '../core/UncertaintyRouter';
 import { DeviceProfileManager, deviceFingerprint } from '../calibration/DeviceProfileManager';
 import { DeviceCalibrationEngine } from '../calibration/DeviceCalibrationEngine';
 import { BPCalibrationManager } from './BPCalibrationManager';
@@ -50,14 +48,6 @@ export interface VitalSignsResult {
   spo2Detail?: SpO2Result;
   glucoseDetail?: GlucoseResult;
   lipidsDetail?: LipidResult;
-  outputStates?: {
-    bpm: OutputState;
-    spo2: OutputState;
-    bp: OutputState;
-    glucose: OutputState;
-    lipids: OutputState;
-    rhythm: OutputState;
-  };
 }
 
 export interface RGBData {
@@ -527,23 +517,6 @@ export class VitalSignsProcessor {
   }
 
   private getFormattedResult(): VitalSignsResult {
-    const routed = UncertaintyRouter.route({
-      spo2Detail: this.lastSpo2,
-      glucoseDetail: this.lastGlucose,
-      lipidsDetail: this.lastLipids,
-      rhythm: this.lastRhythm,
-      bpSystolic: this.measurements.systolicPressure,
-      bpDiastolic: this.measurements.diastolicPressure,
-      bpConfidence: this.lastBPConfidence,
-      bpFeatureQuality: this.lastBPFeatureQuality,
-      bpCycles: this.lastBpCycles,
-      bpm: this.heartRuntime.bpm,
-      bpmConfidence: this.heartRuntime.bpmConfidence,
-      beatCount: this.heartRuntime.beatCount || this.upstreamContext.beatCount,
-      signalQuality: this.measurements.signalQuality,
-      bpTrendOnly: this.lastBpTrendFirst,
-    });
-
     return {
       spo2: Math.round(this.measurements.spo2),
       glucose: Math.round(this.measurements.glucose),
@@ -575,7 +548,6 @@ export class VitalSignsProcessor {
       spo2Detail: this.lastSpo2 ?? undefined,
       glucoseDetail: this.lastGlucose ?? undefined,
       lipidsDetail: this.lastLipids ?? undefined,
-      outputStates: routed,
     };
   }
 
