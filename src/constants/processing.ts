@@ -1213,6 +1213,9 @@ export const SPO2_MEDIANR_MIN = 0;
 /** Factor de varianza para calibración */
 export const CALIBRATION_VARIANCE_FACTOR = 0.05;
 
+/** Divisor para convertir porcentaje (100) */
+export const PERCENTAGE_DIVISOR = 100;
+
 /** Umbral ACDC mínimo para ratio estable */
 export const ACDC_RATIO_MIN = 0.01;
 
@@ -1233,6 +1236,48 @@ export const MAX_TIME_SINCE_PEAK_MS = 4000;
 
 /** Timestamp límite para detección de clock (1e12 = 1 trillón) */
 export const TIMESTAMP_CLOCK_THRESHOLD = 1e12;
+
+/** Calidad mínima de señal para cálculo de signos vitales */
+export const VITALS_QUALITY_THRESHOLD = 8;
+
+/** Epsilon para evitar división por cero en smoothValue */
+export const SMOOTH_VALUE_EPSILON = 0.01;
+
+/** Factor de cambio relativo alto para EMA */
+export const EMA_REL_CHANGE_HIGH = 0.5;
+
+/** Factor de cambio relativo medio para EMA */
+export const EMA_REL_CHANGE_MED = 0.3;
+
+/** Factor de cambio relativo bajo para EMA */
+export const EMA_REL_CHANGE_LOW = 0.1;
+
+/** Multiplicador EMA para cambio alto */
+export const EMA_MULTIPLIER_HIGH = 0.3;
+
+/** Multiplicador EMA para cambio medio */
+export const EMA_MULTIPLIER_MED = 0.5;
+
+/** Multiplicador EMA para cambio bajo */
+export const EMA_MULTIPLIER_LOW = 1.5;
+
+/** Alpha EMA máximo */
+export const EMA_ALPHA_MAX = 0.4;
+
+/** BPM mínimo para HR válido */
+export const HR_MIN_BPM = 35;
+
+/** BPM máximo para HR válido */
+export const HR_MAX_BPM = 200;
+
+/** Calidad mínima para procesamiento de glucosa */
+export const GLUCOSE_QUALITY_THRESHOLD = 10;
+
+/** Latidos mínimos para análisis de arritmia */
+export const ARRHYTHMIA_MIN_BEATS = 8;
+
+/** SQI mínimo para análisis de arritmia */
+export const ARRHYTHMIA_MIN_SQI = 20;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FUNCIONES AUXILIARES

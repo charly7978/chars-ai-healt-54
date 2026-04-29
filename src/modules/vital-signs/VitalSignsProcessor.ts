@@ -38,6 +38,7 @@ import {
   SPO2_MIN_SAMPLES,
   SPO2_MEDIANR_MIN,
   CALIBRATION_VARIANCE_FACTOR,
+  PERCENTAGE_DIVISOR,
   ACDC_RATIO_MIN,
   CLIPPING_RATIO_MAX,
   PERFUSION_INDEX_MIN,
@@ -50,6 +51,21 @@ import {
   EMA_ALPHA_FAST,
   EMA_ALPHA_SLOW,
   EMA_ALPHA_MED,
+  EMA_ALPHA_MIN,
+  EMA_ALPHA_MAX,
+  SMOOTH_VALUE_EPSILON,
+  EMA_REL_CHANGE_HIGH,
+  EMA_REL_CHANGE_MED,
+  EMA_REL_CHANGE_LOW,
+  EMA_MULTIPLIER_HIGH,
+  EMA_MULTIPLIER_MED,
+  EMA_MULTIPLIER_LOW,
+  VITALS_QUALITY_THRESHOLD,
+  HR_MIN_BPM,
+  HR_MAX_BPM,
+  GLUCOSE_QUALITY_THRESHOLD,
+  ARRHYTHMIA_MIN_BEATS,
+  ARRHYTHMIA_MIN_SQI,
 } from '../../constants/processing';
 
 export interface VitalSignsResult {
@@ -359,13 +375,13 @@ export class VitalSignsProcessor {
     rrData: { intervals: number[], lastPeakTime: number | null },
     beatInputs?: Array<any>
   ): void {
-    if (this.measurements.signalQuality < 8) return;
+    if (this.measurements.signalQuality < VITALS_QUALITY_THRESHOLD) return;
 
-    const validRR = rrData.intervals.filter(i => i >= 270 && i <= 2200);
+    const validRR = rrData.intervals.filter(i => i >= VITALS_RR_MIN_MS && i <= VITALS_RR_MAX_MS);
     const avgRR = validRR.length > 0 ? validRR.reduce((a, b) => a + b, 0) / validRR.length : 0;
-    const hr = avgRR > 0 ? 60000 / avgRR : 0;
+    const hr = avgRR > 0 ? MS_PER_MINUTE / avgRR : 0;
     const rrVar = PPGFeatureExtractor.extractRRVariability(validRR);
-    const sampleRate = this.upstreamContext.sampleRate || 30;
+    const sampleRate = this.upstreamContext.sampleRate || DEFAULT_SAMPLE_RATE;
 
     const spo2Result = this.spo2Processor.process({
       redAC: this.rgbData.redAC, redDC: this.rgbData.redDC,
@@ -382,7 +398,7 @@ export class VitalSignsProcessor {
     if (spo2Result.medianR > 0) {
       this.deviceCalibrationEngine.ingestFrameStats({
         medianR: spo2Result.medianR,
-        rVariance: Math.max(0, 1 - (spo2Result.quality / 100)) * 0.05,
+        rVariance: Math.max(0, 1 - (spo2Result.quality / PERCENTAGE_DIVISOR)) * CALIBRATION_VARIANCE_FACTOR,
         clipHighEma: this.upstreamContext.clipHighRatio,
         frameIntervalMs: 1000 / sampleRate,
         sourceLabel: 'RG',
@@ -395,9 +411,9 @@ export class VitalSignsProcessor {
       // Verificaciones adicionales para SpO₂
       const redACDC = this.rgbData.redDC > 0 ? this.rgbData.redAC / this.rgbData.redDC : 0;
       const greenACDC = this.rgbData.greenDC > 0 ? this.rgbData.greenAC / this.rgbData.greenDC : 0;
-      const ratioStable = redACDC > 0.01 && greenACDC > 0.01;
-      const clippingAcceptable = this.upstreamContext.clipHighRatio < 0.08 && this.upstreamContext.clipLowRatio < 0.08;
-      const piSufficient = this.evidenceContext.perfusionIndex >= 0.35;
+      const ratioStable = redACDC > ACDC_RATIO_MIN && greenACDC > ACDC_RATIO_MIN;
+      const clippingAcceptable = this.upstreamContext.clipHighRatio < CLIPPING_RATIO_MAX && this.upstreamContext.clipLowRatio < CLIPPING_RATIO_MAX;
+      const piSufficient = this.evidenceContext.perfusionIndex >= PERFUSION_INDEX_MIN;
       
       if (ratioStable && clippingAcceptable && piSufficient && this.evidenceContext.livePpgPassed) {
         this.measurements.spo2 = this.smoothValue(this.measurements.spo2, spo2Result.value, 'stable');
@@ -410,10 +426,10 @@ export class VitalSignsProcessor {
     const validCycleFeatures: import('./PPGFeatureExtractor').CycleFeatures[] = [];
     for (const cycle of cycles) {
       const features = PPGFeatureExtractor.extractCycleFeatures(this.signalHistory, cycle, sampleRate);
-      if (features && features.quality >= 0.2) validCycleFeatures.push(features);
+      if (features && features.quality >= CYCLE_QUALITY_MIN) validCycleFeatures.push(features);
     }
 
-    const medianF = validCycleFeatures.length >= 1 ? this.medianCycleFeatures(validCycleFeatures) : null;
+    const medianF = validCycleFeatures.length >= MIN_SAMPLES_FOR_MEAN ? this.medianCycleFeatures(validCycleFeatures) : null;
 
     const bpOff = this.bpCalibrationManager.getOffsets();
     const devBp = this.deviceCalibrationEngine.getBpOffset();
@@ -452,7 +468,7 @@ export class VitalSignsProcessor {
 
     const base = this.userBaseline.get();
 
-    if (medianF && hr >= 35 && hr <= 200 && this.measurements.signalQuality >= 10) {
+    if (medianF && hr >= HR_MIN_BPM && hr <= HR_MAX_BPM && this.measurements.signalQuality >= GLUCOSE_QUALITY_THRESHOLD) {
       const glucoseResult = this.glucoseProcessor.process({
         cycleFeatures: {
           sutMs: medianF.sutMs, pw50Ms: medianF.pw50Ms,
@@ -596,12 +612,12 @@ export class VitalSignsProcessor {
     if (current === 0 || !isFinite(current)) return newVal;
     if (!isFinite(newVal)) return current;
     const baseAlpha = type === 'stable' ? this.EMA_ALPHA_STABLE : this.EMA_ALPHA_DYNAMIC;
-    const relChange = Math.abs(newVal - current) / (Math.abs(current) + 0.01);
+    const relChange = Math.abs(newVal - current) / (Math.abs(current) + SMOOTH_VALUE_EPSILON);
     let alpha = baseAlpha;
-    if (relChange > 0.5) alpha = baseAlpha * 0.3;
-    else if (relChange > 0.3) alpha = baseAlpha * 0.5;
-    else if (relChange < 0.1) alpha = baseAlpha * 1.5;
-    alpha = Math.max(0.05, Math.min(0.4, alpha));
+    if (relChange > EMA_REL_CHANGE_HIGH) alpha = baseAlpha * EMA_MULTIPLIER_HIGH;
+    else if (relChange > EMA_REL_CHANGE_MED) alpha = baseAlpha * EMA_MULTIPLIER_MED;
+    else if (relChange < EMA_REL_CHANGE_LOW) alpha = baseAlpha * EMA_MULTIPLIER_LOW;
+    alpha = Math.max(EMA_ALPHA_MIN, Math.min(EMA_ALPHA_MAX, alpha));
     return current * (1 - alpha) + newVal * alpha;
   }
 
