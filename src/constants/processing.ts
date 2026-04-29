@@ -902,15 +902,6 @@ export const NORMALIZATION_PEAK_THRESHOLD = 4;
 // PPG SIGNAL PROCESSOR - Constantes específicas
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** Tamaño del buffer principal para señales RGB */
-export const PPG_BUF_SIZE = 360;
-
-/** Tamaño del buffer de tiempos de frame */
-export const FRAME_TIME_BUF_SIZE = 120;
-
-/** Tamaño del buffer de luminancia */
-export const LUMINANCE_RING_SIZE = 36;
-
 /** Grid de extracción multi-ROI (filas) */
 export const MULTI_ROI_GRID_ROWS = 5;
 
@@ -930,7 +921,7 @@ export const ROI_REPUTATION_SIZE = 25;
 export const SIGNAL_QUALITY_ENGINE_WINDOW = 480;
 
 /** Sample rate estimado por defecto (fps) */
-export const ESTIMATED_SAMPLE_RATE = 30;
+export const DEFAULT_SAMPLE_RATE = 30;
 
 /** Umbral de movimiento */
 export const MOTION_THRESHOLD = 0.6;
@@ -1144,9 +1135,6 @@ export const CALIBRATION_REQUIRED_SAMPLES = 25;
 /** Tamaño del historial de señal */
 export const SIGNAL_HISTORY_SIZE = 90;
 
-/** Sample rate por defecto (Hz) */
-export const DEFAULT_SAMPLE_RATE = 30;
-
 /** Sample rate mínimo (Hz) */
 export const SAMPLE_RATE_MIN = 15;
 
@@ -1239,6 +1227,21 @@ export const TIMESTAMP_CLOCK_THRESHOLD = 1e12;
 
 /** Calidad mínima de señal para cálculo de signos vitales */
 export const VITALS_QUALITY_THRESHOLD = 8;
+
+/** BPM mínimo para HR válido */
+export const HR_MIN_BPM = 35;
+
+/** BPM máximo para HR válido */
+export const HR_MAX_BPM = 200;
+
+/** Calidad mínima para procesamiento de glucosa */
+export const GLUCOSE_QUALITY_THRESHOLD = 10;
+
+/** Latidos mínimos para análisis de arritmia */
+export const ARRHYTHMIA_MIN_BEATS = 8;
+
+/** SQI mínimo para análisis de arritmia */
+export const ARRHYTHMIA_MIN_SQI = 20;
 
 /** Epsilon para evitar división por cero en smoothValue */
 export const SMOOTH_VALUE_EPSILON = 0.01;
