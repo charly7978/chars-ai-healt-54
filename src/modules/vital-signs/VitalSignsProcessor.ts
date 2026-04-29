@@ -13,11 +13,8 @@ import { UserBaselineEngine } from '../personalization/UserBaselineEngine';
 import { LongitudinalDatasetStore } from '../personalization/LongitudinalDatasetStore';
 import { median } from '@/utils/mathUtils';
 import {
-  CALIBRATION_REQUIRED_SAMPLES,
   SIGNAL_HISTORY_SIZE,
   DEFAULT_SAMPLE_RATE,
-  SAMPLE_RATE_MIN,
-  SAMPLE_RATE_MAX,
   SIGNAL_MIN_SAMPLES,
   QUALITY_WINDOW_SIZE,
   PERCENTILE_10,
@@ -34,7 +31,6 @@ import {
   CONFIDENCE_LOW_PULSES,
   VITALS_RR_MIN_MS,
   VITALS_RR_MAX_MS,
-  MS_PER_MINUTE,
   SPO2_MIN_SAMPLES,
   SPO2_MEDIANR_MIN,
   CALIBRATION_VARIANCE_FACTOR,
@@ -67,6 +63,7 @@ import {
   ARRHYTHMIA_MIN_BEATS,
   ARRHYTHMIA_MIN_SQI,
 } from '../../constants/processing';
+import { CALIBRATION_REQUIRED_SAMPLES, SAMPLE_RATE_MIN, SAMPLE_RATE_MAX, MS_PER_MINUTE } from '../../constants/physics';
 
 export interface VitalSignsResult {
   spo2: number;

@@ -96,11 +96,8 @@ export const DET2_SSF_THRESHOLD = 1.0;
 // PERIODICIDAD Y RITMO
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** Mínimo intervalo RR válido (ms) - 250ms = 240 BPM */
-export const MIN_RR_MS = 250;
-
-/** Máximo intervalo RR válido (ms) - 2200ms = 27 BPM */
-export const MAX_RR_MS = 2200;
+// MIN_RR_MS and MAX_RR_MS moved to physics.ts (more physiologically accurate)
+// Import from @/constants/physics instead
 
 /** Factor de búsqueda search-back (166% del RR esperado) */
 export const SEARCH_BACK_FACTOR = 1.66;
@@ -929,17 +926,8 @@ export const MOTION_THRESHOLD = 0.6;
 /** Gate espectral para dedo */
 export const SPECTRAL_GATE_FOR_FINGER = 0.45;
 
-/** Resolución de detección: ancho */
-export const DETECTION_WIDTH = 160;
-
-/** Resolución de detección: alto */
-export const DETECTION_HEIGHT = 120;
-
-/** Resolución de extracción: ancho */
-export const EXTRACTION_WIDTH = 320;
-
-/** Resolución de extracción: alto */
-export const EXTRACTION_HEIGHT = 240;
+// DETECTION_WIDTH, DETECTION_HEIGHT, EXTRACTION_WIDTH, EXTRACTION_HEIGHT moved to physics.ts
+// Import from @/constants/physics instead
 
 /** ID del tier de extracción por defecto */
 export const EXTRACTION_TIER_ID = 'M';
@@ -953,11 +941,8 @@ export const POS_LOCK_FRAMES = 60;
 /** Tolerancia de deriva de posición */
 export const POS_DRIFT_TOLERANCE = 0.12;
 
-/** Alpha para suavizado RGB */
-export const RGB_ALPHA = 0.05;
-
-/** Alpha para suavizado de cobertura */
-export const COV_ALPHA = 0.06;
+// RGB_ALPHA and COV_ALPHA moved to physics.ts
+// Import from @/constants/physics instead
 
 /** Frames mínimos para estabilidad temporal */
 export const TEMPORAL_STABILITY_MIN_FRAMES = 12;
@@ -1129,17 +1114,14 @@ export const RR_VALID_MAX_MS = 5000;
 // VITAL SIGNS PROCESSOR - Constantes para procesamiento de signos vitales
 // ═════════════════════════════════════════════════════════════════════════════
 
-/** Muestras mínimas para calibración */
-export const CALIBRATION_REQUIRED_SAMPLES = 25;
+// CALIBRATION_REQUIRED_SAMPLES moved to physics.ts
+// Import from @/constants/physics instead
 
 /** Tamaño del historial de señal */
 export const SIGNAL_HISTORY_SIZE = 90;
 
-/** Sample rate mínimo (Hz) */
-export const SAMPLE_RATE_MIN = 15;
-
-/** Sample rate máximo (Hz) */
-export const SAMPLE_RATE_MAX = 60;
+// SAMPLE_RATE_MIN and SAMPLE_RATE_MAX moved to physics.ts
+// Import from @/constants/physics instead
 
 /** Muestras mínimas para procesamiento de señal */
 export const SIGNAL_MIN_SAMPLES = 20;
@@ -1183,14 +1165,14 @@ export const CONFIDENCE_LOW_QUALITY = 10;
 /** Pulso válido mínimo para confianza BAJA */
 export const CONFIDENCE_LOW_PULSES = 2;
 
+// MS_PER_MINUTE moved to physics.ts
+// Import from @/constants/physics instead
+
 /** Intervalo RR válido mínimo para vital signs (ms) */
 export const VITALS_RR_MIN_MS = 270;
 
 /** Intervalo RR válido máximo para vital signs (ms) */
 export const VITALS_RR_MAX_MS = 2200;
-
-/** Milisegundos por minuto */
-export const MS_PER_MINUTE = 60000;
 
 /** Muestras mínimas para SpO₂ */
 export const SPO2_MIN_SAMPLES = 2;
@@ -1264,23 +1246,6 @@ export const EMA_MULTIPLIER_MED = 0.5;
 /** Multiplicador EMA para cambio bajo */
 export const EMA_MULTIPLIER_LOW = 1.5;
 
- main
-/** BPM mínimo para HR válido */
-export const HR_MIN_BPM = 35;
-
-/** BPM máximo para HR válido */
-export const HR_MAX_BPM = 200;
-
-/** Calidad mínima para procesamiento de glucosa */
-export const GLUCOSE_QUALITY_THRESHOLD = 10;
-
-/** Latidos mínimos para análisis de arritmia */
-export const ARRHYTHMIA_MIN_BEATS = 8;
-
-/** SQI mínimo para análisis de arritmia */
-export const ARRHYTHMIA_MIN_SQI = 20;
-
- codex/unify-branches
 // ═════════════════════════════════════════════════════════════════════════════
 // FUNCIONES AUXILIARES
 // ═════════════════════════════════════════════════════════════════════════════

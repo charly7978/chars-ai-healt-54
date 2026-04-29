@@ -42,8 +42,6 @@ import {
   DET2_RISING_SLOPE_THRESHOLD,
   DET2_SSF_THRESHOLD,
   // Periodicity
-  MIN_RR_MS,
-  MAX_RR_MS,
   SEARCH_BACK_FACTOR,
   SEARCH_BACK_THRESHOLD_FACTOR,
   ELGENDI_SYNTHESIS_MIN_TIME,
@@ -239,7 +237,8 @@ import {
   // Utils
   clamp,
   bpmToRrMs,
-} from '@/constants/processing';
+} from '../constants/processing';
+import { MIN_RR_MS, MAX_RR_MS } from '../constants/physics';
 
 export class HeartBeatProcessor {
   private signalBuf = new RingBuffer(PPG_BUFFER_SIZE);
