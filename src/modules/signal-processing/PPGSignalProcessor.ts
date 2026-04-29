@@ -18,6 +18,48 @@ import type {
 } from './pipeline-types';
 import { ROIReputationModel } from './ROIReputationModel';
 import { PerformanceModeController } from './PerformanceModeController';
+import {
+  PPG_BUF_SIZE,
+  FRAME_TIME_BUF_SIZE,
+  LUMINANCE_RING_SIZE,
+  MULTI_ROI_GRID_ROWS,
+  MULTI_ROI_GRID_COLS,
+  MULTI_ROI_INNER_FRACTION,
+  MULTI_ROI_SAMPLE_STEP,
+  ROI_REPUTATION_SIZE,
+  SIGNAL_QUALITY_ENGINE_WINDOW,
+  ESTIMATED_SAMPLE_RATE,
+  MOTION_THRESHOLD,
+  SPECTRAL_GATE_FOR_FINGER,
+  DETECTION_WIDTH,
+  DETECTION_HEIGHT,
+  EXTRACTION_WIDTH,
+  EXTRACTION_HEIGHT,
+  EXTRACTION_TIER_ID,
+  EXTRACTION_MODE_DEFAULT,
+  POS_LOCK_FRAMES,
+  POS_DRIFT_TOLERANCE,
+  RGB_ALPHA,
+  COV_ALPHA,
+  TEMPORAL_STABILITY_MIN_FRAMES,
+  LUMINANCE_MEAN_WINDOW,
+  LUMINANCE_VAR_WINDOW,
+  TEMPORAL_STABILITY_CV_FACTOR,
+  CENTER_CELL_VALID_FRACTION,
+  CENTER_CELL_MIN_R,
+  CV_EPSILON,
+  MIN_FRAMES_ACDC,
+  COVERAGE_DIVISOR,
+  FINE_BOOST_EMA_ALPHA,
+  FINE_BOOST_EMA_BASE,
+  CELL_REFINEMENT_DIM,
+  LUM_R_COEFF,
+  LUM_G_COEFF,
+  LUM_B_COEFF,
+  SPEC_CONC_AUTOCORR_WEIGHT,
+  SPEC_CONC_PULSE_WEIGHT,
+  MOTION_THRESH_EPSILON,
+} from '../../constants/processing';
 
 /**
  * Motor cPPG: doble canvas, multi-ROI, fusión ponderada, SQI ventana, FSM de contacto,
@@ -33,19 +75,18 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   // frame. ROI casi completo + sampleStep=1 maximizan los píxeles
   // efectivos. Mejora SNR como sqrt(N) porque el ruido del sensor es
   // independiente entre píxeles mientras la señal cardíaca es coherente.
-  private multiRoi = new MultiROIExtractor({ gridRows: 5, gridCols: 5, innerFraction: 0.95, sampleStep: 1 });
+  private multiRoi = new MultiROIExtractor({ gridRows: MULTI_ROI_GRID_ROWS, gridCols: MULTI_ROI_GRID_COLS, innerFraction: MULTI_ROI_INNER_FRACTION, sampleStep: MULTI_ROI_SAMPLE_STEP });
   private roiScorer = new ROIScorer();
   private fingerMachine = new FingerMeasurementStateMachine();
-  private windowSqiEngine = new SignalQualityEngine(480);
+  private windowSqiEngine = new SignalQualityEngine(SIGNAL_QUALITY_ENGINE_WINDOW);
   private frameTiming = new FrameTimingTracker();
   private profiler = new ProcessingProfiler();
 
-  private readonly BUF_SIZE = 360;
-  private redBuf = new RingBuffer(this.BUF_SIZE);
-  private greenBuf = new RingBuffer(this.BUF_SIZE);
-  private blueBuf = new RingBuffer(this.BUF_SIZE);
-  private filteredBuf = new RingBuffer(this.BUF_SIZE);
-  private frameTimeBuf = new RingBuffer(120);
+  private redBuf = new RingBuffer(PPG_BUF_SIZE);
+  private greenBuf = new RingBuffer(PPG_BUF_SIZE);
+  private blueBuf = new RingBuffer(PPG_BUF_SIZE);
+  private filteredBuf = new RingBuffer(PPG_BUF_SIZE);
+  private frameTimeBuf = new RingBuffer(FRAME_TIME_BUF_SIZE);
 
   private redDC = 0;
   private redAC = 0;
@@ -57,15 +98,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private redBaseline = 0;
   private greenBaseline = 0;
   private blueBaseline = 0;
-  private estimatedSampleRate = 30;
+  private estimatedSampleRate = ESTIMATED_SAMPLE_RATE;
   private lastFrameTime = 0;
 
   /** Movimiento inyectado por frame (sensor en hook principal o worker relay) */
   private motionScore = 0;
-  private readonly MOTION_THRESH = 0.6;
   private perfModeController = new PerformanceModeController();
-  private roiReputation = new ROIReputationModel(25);
-  private spectralGateForFinger = 0.45;
+  private roiReputation = new ROIReputationModel(ROI_REPUTATION_SIZE);
+  private spectralGateForFinger = SPECTRAL_GATE_FOR_FINGER;
   private refinementFrame = 0;
   private lastRefinementStage: 'coarse' | 'fine' = 'coarse';
   private fineBoostEwma = 0;
@@ -79,17 +119,17 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     upscaleFromDetection: number;
     extractionMode: string;
   } = {
-    detectionWidth: 160,
-    detectionHeight: 120,
-    extractionWidth: 320,
-    extractionHeight: 240,
+    detectionWidth: DETECTION_WIDTH,
+    detectionHeight: DETECTION_HEIGHT,
+    extractionWidth: EXTRACTION_WIDTH,
+    extractionHeight: EXTRACTION_HEIGHT,
     cropSource: { sx: 0, sy: 0, sw: 1, sh: 1 },
-    extractionTierId: 'M',
+    extractionTierId: EXTRACTION_TIER_ID,
     upscaleFromDetection: 1,
-    extractionMode: 'BALANCED',
+    extractionMode: EXTRACTION_MODE_DEFAULT,
   };
 
-  private luminanceRing = new RingBuffer(36);
+  private luminanceRing = new RingBuffer(LUMINANCE_RING_SIZE);
   private lastAutocorrPeak = 0;
   private lastPulseCorr = 0;
   // Estado de la triada de canales verdes (G1/G2/G3) y selección.
@@ -112,8 +152,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lockedGreenBase = 0;
   private lockedCoverage = 0;
   private positionStabilityCount = 0;
-  private readonly POS_LOCK_FRAMES = 60;
-  private readonly POS_DRIFT_TOL = 0.12;
   private positionDrifting = false;
   private positionDrift = 0;
   private positionGuidance = 'COLOQUE SU DEDO SOBRE LA CÁMARA Y EL FLASH';
@@ -124,8 +162,6 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private smoothedRed = 0;
   private smoothedGreen = 0;
   private smoothedBlue = 0;
-  private readonly RGB_ALPHA = 0.05;
-  private readonly COV_ALPHA = 0.06;
 
   private lastRoiDet: ROIMaskResult | null = null;
   private lastTopRois: ROIQualityRow[] = [];
@@ -189,10 +225,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
 
     const tRoi = performance.now();
     const multi = this.multiRoi.process(extractionImageData);
-    const motionLocal = this.motionScore / (this.MOTION_THRESH + 0.01);
+    const motionLocal = this.motionScore / (MOTION_THRESHOLD + MOTION_THRESH_EPSILON);
     const specConc =
       this.lastWindowSqi?.spectral?.spectralDominanceScore ??
-      this.lastAutocorrPeak * 0.55 + this.lastPulseCorr * 0.45;
+      this.lastAutocorrPeak * SPEC_CONC_AUTOCORR_WEIGHT + this.lastPulseCorr * SPEC_CONC_PULSE_WEIGHT;
     const preScored = this.roiScorer.scoreFrame(
       multi.cells,
       motionLocal,
@@ -232,47 +268,47 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.smoothedRed = fusedRgb.r;
       this.smoothedGreen = fusedRgb.g;
       this.smoothedBlue = fusedRgb.b;
-      this.smoothedCoverage = scored.topIndices.length / 25;
+      this.smoothedCoverage = scored.topIndices.length / COVERAGE_DIVISOR;
     } else {
-      this.smoothedRed += (fusedRgb.r - this.smoothedRed) * this.RGB_ALPHA;
-      this.smoothedGreen += (fusedRgb.g - this.smoothedGreen) * this.RGB_ALPHA;
-      this.smoothedBlue += (fusedRgb.b - this.smoothedBlue) * this.RGB_ALPHA;
-      const covEst = scored.topIndices.length / 25;
-      this.smoothedCoverage += (covEst - this.smoothedCoverage) * this.COV_ALPHA;
+      this.smoothedRed += (fusedRgb.r - this.smoothedRed) * RGB_ALPHA;
+      this.smoothedGreen += (fusedRgb.g - this.smoothedGreen) * RGB_ALPHA;
+      this.smoothedBlue += (fusedRgb.b - this.smoothedBlue) * RGB_ALPHA;
+      const covEst = scored.topIndices.length / COVERAGE_DIVISOR;
+      this.smoothedCoverage += (covEst - this.smoothedCoverage) * COV_ALPHA;
     }
 
-    const lum = 0.299 * fusedRgb.r + 0.587 * fusedRgb.g + 0.114 * fusedRgb.b;
+    const lum = LUM_R_COEFF * fusedRgb.r + LUM_G_COEFF * fusedRgb.g + LUM_B_COEFF * fusedRgb.b;
     this.luminanceRing.push(lum);
     let temporalStability = 0;
-    if (this.luminanceRing.length >= 12) {
-      const m = this.luminanceRing.mean(24);
-      const v = this.luminanceRing.variance(24);
+    if (this.luminanceRing.length >= TEMPORAL_STABILITY_MIN_FRAMES) {
+      const m = this.luminanceRing.mean(LUMINANCE_MEAN_WINDOW);
+      const v = this.luminanceRing.variance(LUMINANCE_VAR_WINDOW);
       const cv = Math.sqrt(v) / (Math.abs(m) + 1);
-      temporalStability = Math.max(0, Math.min(1, 1 - cv * 8));
+      temporalStability = Math.max(0, Math.min(1, 1 - cv * TEMPORAL_STABILITY_CV_FACTOR));
     }
 
     const centerCells = multi.cells.filter((c) => c.row >= 1 && c.row <= 3 && c.col >= 1 && c.col <= 3);
     const centerCov =
       centerCells.length > 0
-        ? centerCells.reduce((a, c) => a + (c.validFraction > 0.2 && c.meanR > 30 ? 1 : 0), 0) / centerCells.length
+        ? centerCells.reduce((a, c) => a + (c.validFraction > CENTER_CELL_VALID_FRACTION && c.meanR > CENTER_CELL_MIN_R ? 1 : 0), 0) / centerCells.length
         : 0;
     this.centerCoverage = centerCov;
 
     const scoresArr = Array.from(scored.scores);
     const meanS = scoresArr.reduce((a, b) => a + b, 0) / Math.max(1, scoresArr.length);
     const varS = scoresArr.reduce((a, b) => a + (b - meanS) ** 2, 0) / Math.max(1, scoresArr.length);
-    const cvS = meanS > 1e-6 ? Math.sqrt(varS) / meanS : 1;
+    const cvS = meanS > CV_EPSILON ? Math.sqrt(varS) / meanS : 1;
     this.spatialUniformity = Math.max(0, Math.min(1, 1 - cvS));
 
     const redDom = fusedRgb.r - (fusedRgb.g + fusedRgb.b) / 2;
     const rgRat = fusedRgb.g > 1e-3 ? fusedRgb.r / fusedRgb.g : 0;
     const greenUse = fusedRgb.g / (fusedRgb.r + fusedRgb.g + fusedRgb.b + 1);
 
-    this.updateBaselines(fusedRgb.r, fusedRgb.g, fusedRgb.b, this.motionScore > this.MOTION_THRESH);
+    this.updateBaselines(fusedRgb.r, fusedRgb.g, fusedRgb.b, this.motionScore > MOTION_THRESHOLD);
     this.redBuf.push(fusedRgb.r);
     this.greenBuf.push(fusedRgb.g);
     this.blueBuf.push(fusedRgb.b);
-    if (this.redBuf.length >= 40) this.calculateACDC();
+    if (this.redBuf.length >= MIN_FRAMES_ACDC) this.calculateACDC();
 
     const perfusionProxy = this.greenDC > 0 ? this.greenAC / this.greenDC : this.redDC > 0 ? this.redAC / this.redDC : 0;
 
@@ -324,7 +360,7 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       .slice(0, 6);
     this.lastTopRois = topRows;
 
-    const motionArtifact = this.motionScore > this.MOTION_THRESH;
+    const motionArtifact = this.motionScore > MOTION_THRESHOLD;
 
     if (this.exportedContactState === 'NO_CONTACT' && this.fingerMeasurementState === 'NO_CONTACT') {
       this.signalQuality = 0;
@@ -583,10 +619,10 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       const greenDrift = this.lockedGreenBase > 0 ? Math.abs(curG - this.lockedGreenBase) / this.lockedGreenBase : 0;
       const covDrift = this.lockedCoverage > 0 ? Math.abs(roi.coverageRatio - this.lockedCoverage) / this.lockedCoverage : 0;
       this.positionDrift = (redDrift + greenDrift + covDrift) / 3;
-      if (this.positionDrift > this.POS_DRIFT_TOL) {
+      if (this.positionDrift > POS_DRIFT_TOLERANCE) {
         this.positionDrifting = true;
         this.positionGuidance = '⚠️ DEDO MOVIDO — VUELVA A LA POSICIÓN';
-        if (this.positionDrift > this.POS_DRIFT_TOL * 2.5) {
+        if (this.positionDrift > POS_DRIFT_TOLERANCE * 2.5) {
           this.positionLocked = false;
           this.positionStabilityCount = 0;
           this.positionDrifting = false;
@@ -604,14 +640,14 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
       this.positionDrifting = false;
       if (this.positionQualityScore > 0.55 && roi.coverageRatio > 0.35 && roi.spatialUniformity > 0.35 && this.pressureState !== 'HIGH_PRESSURE') {
         this.positionStabilityCount++;
-        if (this.positionStabilityCount >= this.POS_LOCK_FRAMES) {
+        if (this.positionStabilityCount >= POS_LOCK_FRAMES) {
           this.positionLocked = true;
           this.lockedRedBase = curR;
           this.lockedGreenBase = curG;
           this.lockedCoverage = roi.coverageRatio;
           this.positionGuidance = 'POSICIÓN BLOQUEADA — MANTENGA ASÍ';
         } else {
-          this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / this.POS_LOCK_FRAMES) * 100)}%`;
+          this.positionGuidance = `ESTABILIZANDO... ${Math.round((this.positionStabilityCount / POS_LOCK_FRAMES) * 100)}%;`
         }
       } else {
         this.positionStabilityCount = Math.max(0, this.positionStabilityCount - 3);

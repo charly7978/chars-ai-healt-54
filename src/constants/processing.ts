@@ -902,6 +902,130 @@ export const NORMALIZATION_WINDOW_LONG = 150;
 export const NORMALIZATION_PEAK_THRESHOLD = 4;
 
 // ═════════════════════════════════════════════════════════════════════════════
+// PPG SIGNAL PROCESSOR - Constantes específicas
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** Tamaño del buffer principal para señales RGB */
+export const PPG_BUF_SIZE = 360;
+
+/** Tamaño del buffer de tiempos de frame */
+export const FRAME_TIME_BUF_SIZE = 120;
+
+/** Tamaño del buffer de luminancia */
+export const LUMINANCE_RING_SIZE = 36;
+
+/** Grid de extracción multi-ROI (filas) */
+export const MULTI_ROI_GRID_ROWS = 5;
+
+/** Grid de extracción multi-ROI (columnas) */
+export const MULTI_ROI_GRID_COLS = 5;
+
+/** Fracción interna del ROI (cubre casi todo el frame cuando hay dedo) */
+export const MULTI_ROI_INNER_FRACTION = 0.95;
+
+/** Sample step para extracción multi-ROI */
+export const MULTI_ROI_SAMPLE_STEP = 1;
+
+/** Tamaño del modelo de reputación ROI */
+export const ROI_REPUTATION_SIZE = 25;
+
+/** Window size para SignalQualityEngine */
+export const SIGNAL_QUALITY_ENGINE_WINDOW = 480;
+
+/** Sample rate estimado por defecto (fps) */
+export const ESTIMATED_SAMPLE_RATE = 30;
+
+/** Umbral de movimiento */
+export const MOTION_THRESHOLD = 0.6;
+
+/** Gate espectral para dedo */
+export const SPECTRAL_GATE_FOR_FINGER = 0.45;
+
+/** Resolución de detección: ancho */
+export const DETECTION_WIDTH = 160;
+
+/** Resolución de detección: alto */
+export const DETECTION_HEIGHT = 120;
+
+/** Resolución de extracción: ancho */
+export const EXTRACTION_WIDTH = 320;
+
+/** Resolución de extracción: alto */
+export const EXTRACTION_HEIGHT = 240;
+
+/** ID del tier de extracción por defecto */
+export const EXTRACTION_TIER_ID = 'M';
+
+/** Modo de extracción por defecto */
+export const EXTRACTION_MODE_DEFAULT = 'BALANCED';
+
+/** Frames para bloqueo de posición */
+export const POS_LOCK_FRAMES = 60;
+
+/** Tolerancia de deriva de posición */
+export const POS_DRIFT_TOLERANCE = 0.12;
+
+/** Alpha para suavizado RGB */
+export const RGB_ALPHA = 0.05;
+
+/** Alpha para suavizado de cobertura */
+export const COV_ALPHA = 0.06;
+
+/** Frames mínimos para estabilidad temporal */
+export const TEMPORAL_STABILITY_MIN_FRAMES = 12;
+
+/** Window para media de luminancia */
+export const LUMINANCE_MEAN_WINDOW = 24;
+
+/** Window para varianza de luminancia */
+export const LUMINANCE_VAR_WINDOW = 24;
+
+/** Factor CV para estabilidad temporal */
+export const TEMPORAL_STABILITY_CV_FACTOR = 8;
+
+/** Fracción válida mínima para celdas centrales */
+export const CENTER_CELL_VALID_FRACTION = 0.2;
+
+/** Valor R mínimo para celdas centrales */
+export const CENTER_CELL_MIN_R = 30;
+
+/** Epsilon para evitar división por cero en coeficiente de variación */
+export const CV_EPSILON = 1e-6;
+
+/** Frames mínimos para calcular AC/DC */
+export const MIN_FRAMES_ACDC = 40;
+
+/** Divisor para calcular cobertura suavizada */
+export const COVERAGE_DIVISOR = 25;
+
+/** EMA alpha para fine boost */
+export const FINE_BOOST_EMA_ALPHA = 0.18;
+
+/** EMA (1-alpha) para fine boost */
+export const FINE_BOOST_EMA_BASE = 0.82;
+
+/** Dimensiones de refinamiento de celda */
+export const CELL_REFINEMENT_DIM = 5;
+
+/** Coeficiente R para luminancia (ITU-R BT.601) */
+export const LUM_R_COEFF = 0.299;
+
+/** Coeficiente G para luminancia (ITU-R BT.601) */
+export const LUM_G_COEFF = 0.587;
+
+/** Coeficiente B para luminancia (ITU-R BT.601) */
+export const LUM_B_COEFF = 0.114;
+
+/** Peso para autocorr peak en concentración espectral */
+export const SPEC_CONC_AUTOCORR_WEIGHT = 0.55;
+
+/** Peso para pulse corr en concentración espectral */
+export const SPEC_CONC_PULSE_WEIGHT = 0.45;
+
+/** Factor para evitar división por cero en umbral de movimiento */
+export const MOTION_THRESH_EPSILON = 0.01;
+
+// ═════════════════════════════════════════════════════════════════════════════
 // FUNCIONES AUXILIARES
 // ═════════════════════════════════════════════════════════════════════════════
 
