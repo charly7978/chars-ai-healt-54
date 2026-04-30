@@ -61,6 +61,7 @@ const Index = () => {
   // ============ ESTADO UI ============
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [useFlash, setUseFlashUI] = useState(true); // true = modo con flash (default), false = modo sin flash
   const [vitalSigns, setVitalSigns] = useState<VitalSignsResult>(DEFAULT_VITALS);
   const [heartRate, setHeartRate] = useState(0);
   // heartbeatSignal vivía en useState y se actualizaba 60 veces/segundo
@@ -189,6 +190,7 @@ const Index = () => {
     getPositionQuality,
     getPPGDebugInfo,
     applyCaptureContext,
+    setUseFlash,
   } = useSignalProcessor();
 
   const { processSignal: processHeartBeat, reset: resetHeartBeat } = useHeartBeatProcessor();
@@ -1186,7 +1188,7 @@ const Index = () => {
 
       <div className="flex-1 relative">
         <div className="absolute inset-0">
-          <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isCameraOn} />
+          <CameraView ref={cameraRef} onStreamReady={handleStreamReady} isMonitoring={isCameraOn} useFlash={useFlash} />
         </div>
 
         {isMonitoring &&
@@ -1225,6 +1227,19 @@ const Index = () => {
 
         <div className="relative z-10 h-full">
           <div className="flex-1 h-full">
+            <button
+              type="button"
+              onClick={() => {
+                const newUseFlash = !useFlash;
+                setUseFlashUI(newUseFlash);
+                setUseFlash(newUseFlash);
+              }}
+              disabled={isMonitoring}
+              className="fixed bottom-[72px] right-16 z-30 px-2 py-1 text-[10px] bg-slate-900/95 text-amber-200 rounded border border-slate-600 font-mono disabled:opacity-50"
+              title={useFlash ? "Modo con flash activado (clic para desactivar)" : "Modo sin flash activado (clic para activar)"}
+            >
+              {useFlash ? "FLASH ON" : "FLASH OFF"}
+            </button>
             <button
               type="button"
               onClick={() => setShowPpgDebug((v) => !v)}

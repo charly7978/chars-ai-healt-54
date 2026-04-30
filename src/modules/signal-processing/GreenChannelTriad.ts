@@ -17,10 +17,14 @@
  * Cada canal se filtra independientemente con su propio BandpassFilter.
  * El motor selecciona el canal de mayor SQI con histéresis (no flicker
  * frame-a-frame).
+ *
+ * MODO SIN FLASH: Usa configuración de filtro adaptativa para señal débil,
+ * prioriza G3 (cromática) por robustez a iluminación variable.
  */
 
 import { BandpassFilter } from './BandpassFilter';
 import { RingBuffer } from './RingBuffer';
+import { NO_FLASH_GREEN_NORMALIZATION_FACTOR } from '@/constants/processing';
 
 export type GreenChannelId = 'G1' | 'G2' | 'G3';
 
@@ -131,14 +135,22 @@ export class GreenChannelTriad {
   private selectorStreak: Record<GreenChannelId, number> = { G1: 0, G2: 0, G3: 0 };
   private readonly HYSTERESIS_MARGIN = 0.10;
   private readonly HYSTERESIS_FRAMES = 30;
+  private useFlash: boolean;
 
-  constructor(sampleRate = 30) {
-    this.bpG1 = new BandpassFilter(sampleRate);
-    this.bpG2 = new BandpassFilter(sampleRate);
-    this.bpG3 = new BandpassFilter(sampleRate);
+  constructor(sampleRate = 30, useFlash = true) {
+    this.useFlash = useFlash;
+    const filterConfig = BandpassFilter.getConfig(useFlash);
+    this.bpG1 = new BandpassFilter(sampleRate, filterConfig);
+    this.bpG2 = new BandpassFilter(sampleRate, filterConfig);
+    this.bpG3 = new BandpassFilter(sampleRate, filterConfig);
     this.sqiG1 = new ChannelSQI(sampleRate);
     this.sqiG2 = new ChannelSQI(sampleRate);
     this.sqiG3 = new ChannelSQI(sampleRate);
+    
+    // MODO SIN FLASH: priorizar G3 (cromática) por robustez a iluminación variable
+    if (!useFlash) {
+      this.selectedId = 'G3';
+    }
   }
 
   setSampleRate(sr: number): void {

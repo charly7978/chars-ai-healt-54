@@ -198,12 +198,21 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   } = { skewness: 0, kurtosis: 0, zeroCrossingRate: 0, morphologyScore: 0 };
   private lastRoiCells: ROICellMetrics[] = [];
   private lastRoiScores: Float64Array<ArrayBufferLike> = new Float64Array(25);
+  private useFlash: boolean = true; // true = modo con flash (default), false = modo sin flash
 
   constructor(
     public onSignalReady?: (signal: ProcessedSignal) => void,
     public onError?: (error: ProcessingError) => void
   ) {
-    this.greenTriad = new GreenChannelTriad(this.estimatedSampleRate);
+    this.greenTriad = new GreenChannelTriad(this.estimatedSampleRate, this.useFlash);
+  }
+
+  /** Cambia el modo con/sin flash y reinicia el procesador */
+  setUseFlash(useFlash: boolean): void {
+    if (this.useFlash === useFlash) return;
+    this.useFlash = useFlash;
+    this.greenTriad = new GreenChannelTriad(this.estimatedSampleRate, useFlash);
+    this.reset();
   }
 
   async initialize(): Promise<void> {

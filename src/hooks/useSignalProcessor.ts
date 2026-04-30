@@ -116,6 +116,10 @@ export const useSignalProcessor = () => {
     setLastSignal(null);
   }, []);
 
+  const setUseFlash = useCallback((useFlash: boolean) => {
+    processorRef.current?.setUseFlash(useFlash);
+  }, []);
+
   const processFrameDual = useCallback(
     (detectionImageData: ImageData, extractionImageData: ImageData, frameTimestamp?: number) => {
       if (initializationState.current !== 'READY' || !isProcessingRef.current) return;
@@ -173,6 +177,7 @@ export const useSignalProcessor = () => {
     stopProcessing,
     processFrameDual,
     applyCaptureContext,
+    setUseFlash,
     getRGBStats,
     getPositionQuality,
     getPPGDebugInfo,
