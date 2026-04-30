@@ -17,17 +17,17 @@ export interface BandpassConfig {
   smoothAlpha: number;  // Optional smoothing (0 = disabled)
 }
 
-// Banda PPG VALIDADA en literatura clínica (Coppetti 2017, Pereira 2020,
-// Kasthurirathna 2024 IEEE EMBS): 0.5–4.0 Hz cubre 30–240 BPM con margen
-// completo para bradicardias graves y taquicardias.
-// Butterworth orden 2 cascadeado HPF + LPF (4 polos efectivos) =
-// equivalente al orden 4 referenciado en papers de smartphone PPG.
-// winsorize DESACTIVADO: recortaba percentiles donde está el pico sistólico.
+// Banda PPG OPTIMIZADA según especificaciones forenses y literatura:
+// - HPF 0.6 Hz: elimina deriva DC y baseline wander sin distorsionar onda PPG
+// - LPF 5.0 Hz: cubre hasta 300 BPM (5 Hz × 60) con margen para taquicardias
+// - Butterworth 2° orden (4 polos efectivos cascadeados)
+// - detrendAlpha 0.01: EWMA suave para deriva lenta (~100s constante de tiempo)
+// Referencias: van Gastel 2023, ISO 80601-2-61, Elgendi 2013
 const DEFAULT_CONFIG: BandpassConfig = {
-  hpfFreq: 0.5,
-  lpfFreq: 4.0,
-  detrendAlpha: 0.025,
-  winsorize: false,
+  hpfFreq: 0.6,        // Optimizado: 0.6 Hz mejor rechazo de deriva
+  lpfFreq: 5.0,        // Optimizado: 5 Hz cubre rango cardíaco completo
+  detrendAlpha: 0.01,  // Suavizado: 0.01 para eliminación gradual de baseline
+  winsorize: false,    // Desactivado: preserva picos sistólicos
   winsorizePct: 0.04,
   smoothAlpha: 0
 };
@@ -46,7 +46,7 @@ export class BandpassFilter {
   private baselineEWMA = 0;
   private baselineInitialized = false;
   private medianBuffer: number[] = [];
-  private readonly MEDIAN_WINDOW = 60;
+  private readonly MEDIAN_WINDOW = 90;  // Aumentado: 3s a 30 FPS para mejor estimación de mediana
 
   // Outlier rejection state
   private historyBuffer: number[] = [];
