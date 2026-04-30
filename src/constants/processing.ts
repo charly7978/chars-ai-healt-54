@@ -1261,9 +1261,6 @@ export const EMA_MULTIPLIER_MED = 0.5;
 /** Multiplicador EMA para cambio bajo */
 export const EMA_MULTIPLIER_LOW = 1.5;
 
-/** Alpha EMA máximo */
-export const EMA_ALPHA_MAX = 0.4;
-
 /** BPM mínimo para HR válido */
 export const HR_MIN_BPM = 35;
 
