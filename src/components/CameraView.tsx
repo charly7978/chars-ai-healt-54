@@ -332,12 +332,22 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           const frResult = await tryConstraint('frameRate', 30);
           if (!frResult.success) constraintReportRef.current.addFailedConstraint('frameRate');
 
-          // Exposure
+          // Exposure: Fijar modo manual y exposure time específico
+          // Según Xuan et al. 2023: fijar exposure time asegura señal consistente
+          // 33ms @ 30fps es ideal para PPG (captura ciclo cardíaco completo)
           if (caps?.exposureMode?.includes('manual')) {
             const expResult = await tryConstraint('exposureMode', 'manual');
             diagnosticsRef.current.exposureLocked = expResult.success;
             if (expResult.success) {
               constraintReportRef.current.setLocks(true, diagnosticsRef.current.wbLocked, diagnosticsRef.current.focusLocked);
+              
+              // Intentar fijar exposure time específico si el navegador lo soporta
+              if (caps?.exposureTime) {
+                const minExp = caps.exposureTime.min ?? 0.001;
+                const maxExp = caps.exposureTime.max ?? 0.1;
+                const targetExp = Math.max(minExp, Math.min(maxExp, 0.033)); // 33ms @ 30fps
+                await tryConstraint('exposureTime', targetExp);
+              }
             } else {
               constraintReportRef.current.addFailedConstraint('exposureMode');
             }
@@ -348,14 +358,14 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             constraintReportRef.current.addIgnoredConstraint('exposureMode');
           }
 
-          // ExposureCompensation: NO subexponer artificialmente. Antes se
-          // forzaba -0.35 EV, lo que oscurecía el frame y reducía la señal
-          // del rojo bajo el dedo. Dejamos en 0 (neutro) o ligeramente
-          // positivo para mejor SNR cuando el flash satura sólo el centro.
+          // ExposureCompensation: Optimizado según Xuan et al. 2023
+          // +0.4 EV mejora la señal PPG capturando más luz del flash
+          // sin saturar excesivamente. El paper recomienda fijar exposure
+          // para mantener la señal en la fuerza deseada.
           if (caps?.exposureCompensation) {
             const min = caps.exposureCompensation.min ?? -2;
             const max = caps.exposureCompensation.max ?? 2;
-            const target = Math.max(min, Math.min(max, 0));
+            const target = Math.max(min, Math.min(max, 0.4)); // +0.4 EV para mejor SNR
             await tryConstraint('exposureCompensation', target);
           }
 
@@ -375,11 +385,14 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             constraintReportRef.current.addIgnoredConstraint('whiteBalanceMode');
           }
 
-          // ISO
+          // ISO: Optimizado según Xuan et al. 2023
+          // ISO 100 reduce ruido significativamente vs ISO 140
+          // El +0.4 EV de exposure compensation compensa la menor sensibilidad
+          // Mejor SNR = mejor calidad de señal PPG
           if (caps?.iso) {
             const minISO = caps.iso.min ?? 50;
             const maxISO = caps.iso.max ?? 400;
-            const targetISO = Math.max(minISO, Math.min(maxISO, 140));
+            const targetISO = Math.max(minISO, Math.min(maxISO, 100)); // ISO 100 para menos ruido
             const isoResult = await tryConstraint('iso', targetISO);
             if (isoResult.success) {
               diagnosticsRef.current.isoValue = targetISO;
