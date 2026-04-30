@@ -144,8 +144,8 @@ export const ELGENDI_SYNTHESIS_BAND_POWER_DIVISOR = 2;
 /** Score mínimo para corroboración Elgendi */
 export const ELGENDI_CORROBORATION_SCORE = 65;
 
-/** IBI por defecto (ms) */
-export const DEFAULT_IBI_MS = 650;
+// DEFAULT_IBI_MS eliminado - no usar valores inventados para IBI
+// El primer latido debe usar ibiMs=0 (sin dato previo), no un valor ficticio de 650ms (~92 BPM)
 
 /** Penalty por source switch */
 export const SOURCE_SWITCH_PENALTY = 0.3;
@@ -420,8 +420,8 @@ export const MEDIAN_MAX_CONF = 0.6;
 /** Confianza mínima spectral para fusión */
 export const SPECTRAL_CONFIDENCE_MIN = 0.2;
 
-/** Agreement temporal-spectral por defecto cuando hay spectral */
-export const TEMP_SPEC_AGREEMENT_DEFAULT = 0.45;
+/** Agreement temporal-spectral inicial - 0 sin datos reales de comparación (fail-closed) */
+export const TEMP_SPEC_AGREEMENT_DEFAULT = 0;
 
 /** Agreement temporal-spectral con autocorr */
 export const TEMP_SPEC_WITH_AUTOCRR = 0;
