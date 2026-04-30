@@ -1194,6 +1194,58 @@ export const TEMPLATE_CORRELATION_THRESHOLD = 0.9;
 /** Factor de decaimiento de frecuencia dominante (0.92) - SignalQualityEngine */
 export const DOMINANT_FREQ_DECAY_FACTOR = 0.92;
 
+// ═════════════════════════════════════════════════════════════════════════════
+// CONSTANTES PARA MODO SIN FLASH (rPPG/ambiental)
+// Basadas en: Sun et al. 2012, Poh et al. 2010, Verkruysse et al. 2008,
+// de Haan 2013 (CHROM), Wang 2017 (POS), Boccignone et al.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** FPS objetivo para modo sin flash (30 Hz según Sun et al. 2012) */
+export const NO_FLASH_TARGET_FPS = 30;
+
+/** FPS mínimo aceptable para modo sin flash (15 Hz para latencia aceptable) */
+export const NO_FLASH_MIN_FPS = 15;
+
+/** Tiempo de exposición máximo para modo sin flash (1/15s = 66.7ms) */
+export const NO_FLASH_MAX_EXPOSURE_MS = 66.7;
+
+/** ISO objetivo para modo sin flash (800 para ganar luz sin ruido excesivo) */
+export const NO_FLASH_TARGET_ISO = 800;
+
+/** ISO máximo para modo sin flash (1600 máximo para evitar ruido extremo) */
+export const NO_FLASH_MAX_ISO = 1600;
+
+/** Banda de frecuencia cardíaca para modo sin flash (0.5-4 Hz = 30-240 BPM) */
+export const NO_FLASH_HPF_HZ = 0.5;
+export const NO_FLASH_LPF_HZ = 4.0;
+
+/** Orden del filtro bandpass para modo sin flash (6º orden para rechazo robusto de ruido) */
+export const NO_FLASH_BANDPASS_ORDER = 6;
+
+/** Perfusion Index mínimo para modo sin flash (2% según Cannesson et al. 2008) */
+export const NO_FLASH_MIN_PERFUSION_INDEX = 2.0;
+
+/** SNR espectral mínimo para modo sin flash (3 dB según literatura rPPG) */
+export const NO_FLASH_MIN_SNR_DB = 3.0;
+
+/** SQI mínimo para modo sin flash (0.3 vs 0.85 con flash - más permisivo) */
+export const NO_FLASH_MIN_SQI = 0.3;
+
+/** Factor de amplificación de señal para modo sin flash (1.5x para compensar luz débil) */
+export const NO_FLASH_SIGNAL_GAIN = 1.5;
+
+/** Factor de decaimiento EWMA para modo sin flash (0.95 más lento para estabilidad) */
+export const NO_FLASH_EWMA_DECAY = 0.95;
+
+/** Umbral de movimiento para modo sin flash (1.5 más permisivo por señal débil) */
+export const NO_FLASH_MOTION_THRESHOLD = 1.5;
+
+/** Ventana de detrending para modo sin flash (2s para seguir iluminación ambiente) */
+export const NO_FLASH_DETREND_WINDOW_MS = 2000;
+
+/** Factor de normalización de canal verde para modo sin flash */
+export const NO_FLASH_GREEN_NORMALIZATION_FACTOR = 1.0;
+
 /** Rango mínimo de señal */
 export const SIGNAL_RANGE_MIN = 0.2;
 

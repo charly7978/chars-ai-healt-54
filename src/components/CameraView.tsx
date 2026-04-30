@@ -1,5 +1,12 @@
-import React, { useRef, useEffect, forwardRef, useImperativeHandle } from "react";
-import { CameraConstraintReport } from "../modules/signal-processing/CameraConstraintReport";
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
+import {
+  NO_FLASH_TARGET_FPS,
+  NO_FLASH_MIN_FPS,
+  NO_FLASH_MAX_EXPOSURE_MS,
+  NO_FLASH_TARGET_ISO,
+  NO_FLASH_MAX_ISO,
+} from '@/constants/processing';
+import { CameraConstraintReport } from '../modules/signal-processing/CameraConstraintReport';
 
 /**
  * API mínima expuesta a Index. El resto del estado interno
@@ -38,6 +45,7 @@ interface CameraViewProps {
   onStreamReady?: (stream: MediaStream) => void;
   onWarmUpComplete?: () => void;
   isMonitoring: boolean;
+  useFlash?: boolean; // true = modo con flash (default), false = modo sin flash
 }
 
 /**
@@ -54,6 +62,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
   onStreamReady,
   onWarmUpComplete,
   isMonitoring,
+  useFlash = true, // default: modo con flash
 }, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -185,18 +194,23 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         const cameraId = await findMainBackCamera();
 
         // PHASE 2: Open stream with stable base
+        // Ajustar constraints según modo (con/sin flash)
+        const frameRateConfig = useFlash
+          ? { ideal: 30, min: 24, max: 30 }
+          : { ideal: NO_FLASH_TARGET_FPS, min: NO_FLASH_MIN_FPS, max: NO_FLASH_TARGET_FPS };
+
         const baseConstraints: MediaTrackConstraints = cameraId
           ? {
               deviceId: { exact: cameraId },
               width: { ideal: 640, max: 960 },
               height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              frameRate: frameRateConfig
             }
           : {
               facingMode: { ideal: 'environment' },
               width: { ideal: 640, max: 960 },
               height: { ideal: 480, max: 720 },
-              frameRate: { ideal: 30, min: 24, max: 30 }
+              frameRate: frameRateConfig
             };
 
         let stream: MediaStream;
@@ -240,7 +254,7 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         };
         diagnosticsRef.current.realFrameRate = initialSettings.frameRate || 30;
         
-        // PHASE 3: Warm-up with torch activation
+        // PHASE 3: Warm-up with torch activation (solo si useFlash=true)
         setWarmUpStatus('IN_PROGRESS');
         setWarmUpProgress(0);
         warmUpStartTimeRef.current = performance.now();
@@ -248,30 +262,38 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
         clipHistoryRef.current = [];
         
         const caps = track.getCapabilities?.() as any;
-        constraintReportRef.current.setTorchInfo(caps?.torch === true, true, false);
         
-        // Activate torch with retries
-        let torchOk = false;
-        if (caps?.torch) {
-          for (let attempt = 0; attempt < 5 && !torchOk; attempt++) {
-            try {
-              await track.applyConstraints({ advanced: [{ torch: true } as any] });
-              // Verify torch is actually on
-              const newSettings = track.getSettings() as any;
-              torchOk = (newSettings as any).torch === true;
-              if (torchOk) {
-                diagnosticsRef.current.torchActive = true;
-                diagnosticsRef.current.torchEffective = true;
-                constraintReportRef.current.setTorchInfo(true, true, true);
+        // Solo activar torch si useFlash=true
+        if (useFlash) {
+          constraintReportRef.current.setTorchInfo(caps?.torch === true, true, false);
+          
+          // Activate torch with retries
+          let torchOk = false;
+          if (caps?.torch) {
+            for (let attempt = 0; attempt < 5 && !torchOk; attempt++) {
+              try {
+                await track.applyConstraints({ advanced: [{ torch: true } as any] });
+                // Verify torch is actually on
+                const newSettings = track.getSettings() as any;
+                torchOk = (newSettings as any).torch === true;
+                if (torchOk) {
+                  diagnosticsRef.current.torchActive = true;
+                  diagnosticsRef.current.torchEffective = true;
+                  constraintReportRef.current.setTorchInfo(true, true, true);
+                }
+              } catch {
+                await new Promise(r => setTimeout(r, 200));
               }
-            } catch {
-              await new Promise(r => setTimeout(r, 200));
             }
-          }
-          if (!torchOk) {
-            constraintReportRef.current.addFailedConstraint('torch');
+            if (!torchOk) {
+              constraintReportRef.current.addFailedConstraint('torch');
+            }
+          } else {
+            constraintReportRef.current.addIgnoredConstraint('torch');
           }
         } else {
+          // Modo sin flash: marcar torch como ignorado
+          constraintReportRef.current.setTorchInfo(caps?.torch === true, false, false);
           constraintReportRef.current.addIgnoredConstraint('torch');
         }
 
@@ -329,16 +351,25 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           };
 
           // Frame rate lock
-          const frResult = await tryConstraint('frameRate', 30);
+          const targetFps = useFlash ? 30 : NO_FLASH_TARGET_FPS;
+          const frResult = await tryConstraint('frameRate', targetFps);
           if (!frResult.success) constraintReportRef.current.addFailedConstraint('frameRate');
 
           // Exposure: Fijar modo manual si está disponible
-          // NOTA: exposureTime específico removido - causa incompatibilidades en algunos navegadores
+          // MODO SIN FLASH: exposición larga para captar más luz ambiente
           if (caps?.exposureMode?.includes('manual')) {
             const expResult = await tryConstraint('exposureMode', 'manual');
             diagnosticsRef.current.exposureLocked = expResult.success;
             if (expResult.success) {
               constraintReportRef.current.setLocks(true, diagnosticsRef.current.wbLocked, diagnosticsRef.current.focusLocked);
+              
+              // Intentar fijar exposureTime específico para modo sin flash
+              if (!useFlash && caps?.exposureTime) {
+                const minExp = caps.exposureTime.min ?? 0.001;
+                const maxExp = caps.exposureTime.max ?? 0.1;
+                const targetExp = Math.max(minExp, Math.min(maxExp, NO_FLASH_MAX_EXPOSURE_MS / 1000));
+                await tryConstraint('exposureTime', targetExp);
+              }
             } else {
               constraintReportRef.current.addFailedConstraint('exposureMode');
             }
@@ -349,13 +380,35 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
             constraintReportRef.current.addIgnoredConstraint('exposureMode');
           }
 
-          // ExposureCompensation: Neutro (0 EV)
-          // Valores positivos pueden causar sobreexposición en algunos dispositivos
+          // ExposureCompensation: Ajustar según modo
+          // MODO CON FLASH: neutro (0 EV)
+          // MODO SIN FLASH: positivo (+0.4 EV) para ganar luz ambiente
           if (caps?.exposureCompensation) {
             const min = caps.exposureCompensation.min ?? -2;
             const max = caps.exposureCompensation.max ?? 2;
-            const target = Math.max(min, Math.min(max, 0)); // 0 EV - neutro
+            const target = useFlash
+              ? Math.max(min, Math.min(max, 0)) // 0 EV - neutro
+              : Math.max(min, Math.min(max, 0.4)); // +0.4 EV para ganar luz
             await tryConstraint('exposureCompensation', target);
+          }
+
+          // ISO: Ajustar según modo
+          // MODO CON FLASH: ISO 100 para reducir ruido
+          // MODO SIN FLASH: ISO alto (800-1600) para ganar luz
+          if (caps?.iso) {
+            const minISO = caps.iso.min ?? 50;
+            const maxISO = caps.iso.max ?? 400;
+            const targetISO = useFlash
+              ? Math.max(minISO, Math.min(maxISO, 100)) // ISO 100 para menos ruido
+              : Math.max(minISO, Math.min(maxISO, NO_FLASH_TARGET_ISO)); // ISO 800 para luz ambiente
+            const isoResult = await tryConstraint('iso', targetISO);
+            if (isoResult.success) {
+              diagnosticsRef.current.isoValue = targetISO;
+            } else {
+              constraintReportRef.current.addFailedConstraint('iso');
+            }
+          } else {
+            constraintReportRef.current.addIgnoredConstraint('iso');
           }
 
           // White balance
@@ -446,7 +499,8 @@ const CameraView = forwardRef<CameraViewHandle, CameraViewProps>(({
           // Watchdog de torch: verifica cada 2 s que sigue activo. Si la
           // cámara o el SO lo apagaron (poweroff por temperatura, cambio
           // de constraints, etc.), reaplicar inmediatamente.
-          if (caps?.torch && torchWatchdogRef.current === null) {
+          // Solo activar watchdog si useFlash=true
+          if (useFlash && caps?.torch && torchWatchdogRef.current === null) {
             torchWatchdogRef.current = window.setInterval(async () => {
               try {
                 const settings = track.getSettings() as { torch?: boolean };

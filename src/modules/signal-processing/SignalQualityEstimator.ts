@@ -9,6 +9,11 @@
  * - ChatPPG: Best practices for PPG signal quality assessment
  */
 import type { PressureState } from '../../types/signal';
+import {
+  NO_FLASH_MIN_PERFUSION_INDEX,
+  NO_FLASH_MIN_SQI,
+  NO_FLASH_MIN_SNR_DB,
+} from '@/constants/processing';
 
 export interface SQIReport {
   sqiGlobal: number;           // 0-100
@@ -46,12 +51,14 @@ export function computeGlobalSQI(params: {
   redDominance: number;
   contactState: string;
   sourceStability: number;
+  useFlash?: boolean; // true = modo con flash (default), false = modo sin flash
 }): number {
   const {
     perfusionIndex, periodicityScore, coverageRatio,
     spatialUniformity, pressurePenalty, motionScore,
     clipHighRatio, clipLowRatio, positionDrift,
-    signalRange, redDominance, contactState, sourceStability
+    signalRange, redDominance, contactState, sourceStability,
+    useFlash = true
   } = params;
 
   if (contactState === 'NO_CONTACT') return 0;
@@ -62,8 +69,9 @@ export function computeGlobalSQI(params: {
   // Gate: no perfusion = no signal
   // Threshold según Cannesson et al. 2008: PI < 0.4% = mediciones no confiables
   // Sensibilidad 0.91, especificidad 0.82 para detectar SpO2 degradada
-  // Optimizado: permitir hasta 25 puntos (antes 15) para mejor calidad con perfusion moderada
-  if (perfusionIndex < 0.4) {
+  // MODO SIN FLASH: usar PI mínimo más permisivo (2% según NO_FLASH_MIN_PERFUSION_INDEX)
+  const minPerfusion = useFlash ? 0.4 : NO_FLASH_MIN_PERFUSION_INDEX;
+  if (perfusionIndex < minPerfusion) {
     // Señal extremadamente débil pero con algún contacto
     return Math.min(25, coverageRatio * 25 + perfusionIndex * 15);
   }
@@ -278,7 +286,7 @@ export function getAdvancedSQIGuidance(
   
   // Perfusion Index check (Carnesson et al. 2008: threshold 0.4%)
   if (perfusionIndex < 0.4) {
-    reasons.push('Presión insuficiente: aumentar contacto con flash');
+    reasons.push('Presión insuficiente: aumentar contacto con la cámara');
   }
   
   // Template correlation check (Li & Bhatt 2014: r > TEMPLATE_CORRELATION_THRESHOLD es óptimo)

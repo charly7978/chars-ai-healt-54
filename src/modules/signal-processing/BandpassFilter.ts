@@ -8,6 +8,13 @@
  * - Optional light smoothing
  * - Adaptive sample rate
  */
+import {
+  NO_FLASH_HPF_HZ,
+  NO_FLASH_LPF_HZ,
+  NO_FLASH_BANDPASS_ORDER,
+  NO_FLASH_DETREND_WINDOW_MS,
+} from '@/constants/processing';
+
 export interface BandpassConfig {
   hpfFreq: number;      // High-pass cutoff (Hz)
   lpfFreq: number;      // Low-pass cutoff (Hz)
@@ -30,6 +37,20 @@ const DEFAULT_CONFIG: BandpassConfig = {
   winsorize: false,    // Desactivado: preserva picos sistólicos
   winsorizePct: 0.04,
   smoothAlpha: 0
+};
+
+// Configuración para MODO SIN FLASH (rPPG/ambiental)
+// - HPF 0.5 Hz, LPF 4.0 Hz: banda más estrecha para rechazar ruido
+// - detrendAlpha más agresivo (0.02): para seguir iluminación ambiente cambiante
+// - winsorize activado: rechazar outliers por señal débil
+// Referencias: Sun et al. 2012, Poh et al. 2010, de Haan 2013 (CHROM)
+const NO_FLASH_CONFIG: BandpassConfig = {
+  hpfFreq: NO_FLASH_HPF_HZ,        // 0.5 Hz
+  lpfFreq: NO_FLASH_LPF_HZ,        // 4.0 Hz (más estrecho para rechazar ruido)
+  detrendAlpha: 0.02,              // Más agresivo para iluminación ambiente
+  winsorize: true,                // Activado para rechazar outliers
+  winsorizePct: 0.05,
+  smoothAlpha: 0.05               // Suavizado ligero para señal débil
 };
 
 export class BandpassFilter {
@@ -63,6 +84,11 @@ export class BandpassFilter {
     this.sampleRate = sampleRate;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.computeCoefficients();
+  }
+
+  /** Obtiene configuración según modo (con/sin flash) */
+  static getConfig(useFlash: boolean = true): BandpassConfig {
+    return useFlash ? DEFAULT_CONFIG : NO_FLASH_CONFIG;
   }
 
   private computeCoefficients(): void {

@@ -767,7 +767,7 @@ const PPGSignalMeter = ({
         ctx.fillText('SIN SEÑAL', plot.x + plot.width / 2, plot.centerY - 14);
         ctx.font = '10px "SF Mono", Consolas, monospace';
         ctx.fillStyle = COLORS.TEXT_SECONDARY;
-        ctx.fillText('Cubra cámara y flash con la yema del dedo', plot.x + plot.width / 2, plot.centerY + 14);
+        ctx.fillText('Cubra la cámara con la yema del dedo', plot.x + plot.width / 2, plot.centerY + 14);
         ctx.restore();
         animationRef.current = requestAnimationFrame(render);
         return;
