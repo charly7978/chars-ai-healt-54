@@ -760,21 +760,19 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     this.blueDC = this.blueBuf.mean(n);
     if (this.redDC < 5 || this.greenDC < 5) return;
     const computeAC = (buf: RingBuffer, dc: number): number => {
-      // Optimizado para mejor sensibilidad con señales débiles
-      // Usar percentiles más agresivos (p2-p98) para capturar mejor la variabilidad
-      const p2 = buf.percentile(0.02, n);
-      const p98 = buf.percentile(0.98, n);
-      const p2p = p98 - p2;
+      // Valores originales probados - evita sensibilidad excesiva
+      const p5 = buf.percentile(0.05, n);
+      const p95 = buf.percentile(0.95, n);
+      const p2p = p95 - p5;
       const v = buf.variance(n);
       const rms = Math.sqrt(v) * Math.sqrt(2);
-      // Ponderar más el peak-to-peak para señales débiles
-      return (rms * 0.3 + p2p * 0.7);
+      return (rms + p2p * 0.5) / 2;
     };
     this.redAC = computeAC(this.redBuf, this.redDC);
     this.greenAC = computeAC(this.greenBuf, this.greenDC);
     this.blueAC = computeAC(this.blueBuf, this.blueDC);
-    // Reducir threshold de detección mínima para señales muy débiles
-    if (this.redAC / this.redDC < 0.00005 && this.greenAC / this.greenDC < 0.00005) {
+    // Threshold original - rechaza señales muy débiles
+    if (this.redAC / this.redDC < 0.0001 && this.greenAC / this.greenDC < 0.0001) {
       this.redAC = 0;
       this.greenAC = 0;
     }

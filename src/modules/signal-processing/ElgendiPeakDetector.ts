@@ -58,8 +58,8 @@ const DEFAULT: ElgendiPeakConfig = {
   sampleRate: 30,
   peakWindowMs: 111,
   beatWindowMs: 667,
-  alpha: 0.015,      // Reducido de 0.02 a 0.015 para mayor sensibilidad con señales débiles
-  refractoryMs: 280,  // Reducido de 300ms a 280ms para mejor detección en taquicardia
+  alpha: 0.02,        // Valores originales probados - evita falsos positivos
+  refractoryMs: 300,  // Refractory period original - previene dobles detecciones
   meanWindowMs: 4000,
 };
 
@@ -204,10 +204,10 @@ export class ElgendiPeakDetector {
         }
       } else {
         if (this.inBlock) {
-          // Block terminado: confirmar pico si duración ≥ 80% de peakWindow (THR2).
-          // Reducido de 0.9 a 0.8 para mayor sensibilidad con señales débiles
+          // Block terminado: confirmar pico si duración ≥ 90% de peakWindow (THR2).
+          // Valores originales probados - rechaza falsos positivos
           const durationMs = timestampMs - this.blockStartTs;
-          if (durationMs >= this.cfg.peakWindowMs * 0.8) {
+          if (durationMs >= this.cfg.peakWindowMs * 0.9) {
             // Refractory check
             if (this.blockMaxTs - this.lastPeakTs >= this.cfg.refractoryMs) {
               isPeak = true;

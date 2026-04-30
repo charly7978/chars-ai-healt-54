@@ -355,10 +355,10 @@ export const PEAK_AUTOCRR_FUSION_PEAK_WEIGHT = 0.8;
 export const PEAK_AUTOCRR_FUSION_AUTO_WEIGHT = 0.2;
 
 /** Diferencia relativa para EMA conservador */
-export const EMA_DIFF_HIGH = 0.25;
+export const EMA_DIFF_HIGH = 0.20;  // Reducido de 0.25 para mayor estabilidad
 
 /** Diferencia relativa para EMA moderado */
-export const EMA_DIFF_MED = 0.12;
+export const EMA_DIFF_MED = 0.10;   // Reducido de 0.12 para mayor estabilidad
 
 /** Agreement para EMA conservador */
 export const EMA_AGREEMENT_LOW = 0.25;
@@ -440,22 +440,22 @@ export const TEMPLATE_EMA_ALPHA = 0.15;
 export const EMA_DIFF_THRESHOLD_SLOW = 0.25;
 
 /** Alpha EMA lento */
-export const EMA_ALPHA_SLOW = 0.08;
+export const EMA_ALPHA_SLOW = 0.05;  // Reducido de 0.08 para mayor estabilidad
 
 /** Umbral de diferencia relativa para EMA medio */
 export const EMA_DIFF_THRESHOLD_MED = 0.12;
 
 /** Alpha EMA medio */
-export const EMA_ALPHA_MED = 0.18;
+export const EMA_ALPHA_MED = 0.12;   // Reducido de 0.18 para mayor estabilidad
 
 /** Alpha EMA rápido */
-export const EMA_ALPHA_FAST = 0.28;
+export const EMA_ALPHA_FAST = 0.20;  // Reducido de 0.28 para mayor estabilidad
 
 /** Min alpha para EMA adaptativo */
-export const EMA_ALPHA_MIN = 0.08;
+export const EMA_ALPHA_MIN = 0.05;   // Reducido de 0.08 para mayor estabilidad
 
 /** Max alpha para EMA adaptativo */
-export const EMA_ALPHA_MAX = 0.12;
+export const EMA_ALPHA_MAX = 0.10;   // Reducido de 0.12 para mayor estabilidad
 
 // ═════════════════════════════════════════════════════════════════════════════
 // EVIDENCIA Y GATES
@@ -683,25 +683,25 @@ export const TRIMMED_MEAN_FACTOR = 0.2;
 // ═════════════════════════════════════════════════════════════════════════════
 
 /** Alpha por defecto para EMA de BPM */
-export const BPM_EMA_ALPHA_DEFAULT = 0.25;
+export const BPM_EMA_ALPHA_DEFAULT = 0.15;  // Reducido de 0.25 para mayor estabilidad
 
 /** Alpha lento para EMA (cambios grandes) */
-export const BPM_EMA_ALPHA_SLOW = 0.06;
+export const BPM_EMA_ALPHA_SLOW = 0.04;    // Reducido de 0.06 para mayor estabilidad
 
 /** Alpha medio para EMA (cambios moderados) */
-export const BPM_EMA_ALPHA_MED = 0.12;
+export const BPM_EMA_ALPHA_MED = 0.08;     // Reducido de 0.12 para mayor estabilidad
 
 /** Umbral de diferencia relativa para EMA lento */
-export const BPM_EMA_DIFF_SLOW_THRESHOLD = 0.30;
+export const BPM_EMA_DIFF_SLOW_THRESHOLD = 0.25;  // Reducido de 0.30 para mayor estabilidad
 
 /** Umbral de diferencia relativa para EMA medio */
-export const BPM_EMA_DIFF_MED_THRESHOLD = 0.18;
+export const BPM_EMA_DIFF_MED_THRESHOLD = 0.15;   // Reducido de 0.18 para mayor estabilidad
 
 /** Alpha mínimo para EMA con pocos picos */
-export const BPM_EMA_ALPHA_MIN = 0.05;
+export const BPM_EMA_ALPHA_MIN = 0.03;    // Reducido de 0.05 para mayor estabilidad
 
 /** Decremento de alpha con pocos picos */
-export const BPM_EMA_ALPHA_DECREMENT = 0.06;
+export const BPM_EMA_ALPHA_DECREMENT = 0.04; // Reducido de 0.06 para mayor estabilidad
 
 /** Umbral de picos consecutivos para EMA normal */
 export const BPM_EMA_CONSECUTIVE_PEAKS_THRESHOLD = 5;
