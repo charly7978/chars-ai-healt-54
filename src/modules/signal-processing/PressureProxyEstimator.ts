@@ -95,9 +95,13 @@ export class PressureProxyEstimator {
         ? 'REDUZCA LA PRESIÓN — DEMASIADO FUERTE'
         : 'PRESIÓN CORRECTA — MANTENGA ASÍ';
 
+    // Penalty optimizado: menos agresivo para LOW_PRESSURE
+    // LOW_PRESSURE: 0.7 (antes 0.5) - permite calidad aceptable con presión leve
+    // OPTIMAL_PRESSURE: 1.0 - sin penalización
+    // HIGH_PRESSURE: 0.4 (antes 0.3) - penalización moderada por sobre-presión
     const penalty = this.currentState === 'OPTIMAL_PRESSURE' ? 1.0
-      : this.currentState === 'LOW_PRESSURE' ? 0.5
-        : 0.3; // HIGH_PRESSURE kills signal
+      : this.currentState === 'LOW_PRESSURE' ? 0.7
+        : 0.4;
 
     return {
       state: this.currentState,

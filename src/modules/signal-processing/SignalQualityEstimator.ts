@@ -62,9 +62,10 @@ export function computeGlobalSQI(params: {
   // Gate: no perfusion = no signal
   // Threshold según Cannesson et al. 2008: PI < 0.4% = mediciones no confiables
   // Sensibilidad 0.91, especificidad 0.82 para detectar SpO2 degradada
+  // Optimizado: permitir hasta 25 puntos (antes 15) para mejor calidad con perfusion moderada
   if (perfusionIndex < 0.4) {
     // Señal extremadamente débil pero con algún contacto
-    return Math.min(15, coverageRatio * 20 + perfusionIndex * 10);
+    return Math.min(25, coverageRatio * 25 + perfusionIndex * 15);
   }
 
   // --- Component scores ---
