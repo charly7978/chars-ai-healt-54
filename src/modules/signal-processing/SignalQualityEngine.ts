@@ -84,8 +84,17 @@ export class SignalQualityEngine {
     const skew = m3 / (std * std * std + 1e-12);
     const kurt = m4 / (m2 * m2 + 1e-12) - 3;
 
-    const skewPen = Math.min(1, Math.abs(skew) / 1.8) * 0.08;
-    const kurtPen = Math.min(1, Math.abs(kurt) / 6) * 0.06;
+    // Optimizado según literatura (Krishnan et al. 2010, ChatPPG):
+    // - PPG limpio: skewness ∈ [-1.5, -0.3] (asimetría negativa por upstroke rápido)
+    // - PPG limpio: kurtosis ∈ [2.5, 6.0] (forma peaked)
+    // Valores fuera de estos rangos indican distorsión o artefacto
+    const skewIdeal = -0.9; // Centro del rango ideal
+    const skewDev = Math.abs(skew - skewIdeal);
+    const skewPen = skewDev > 0.9 ? Math.min(0.15, (skewDev - 0.9) / 3 * 0.15) : 0;
+    
+    // Kurtosis: penalizar valores < 2 (plano) o > 7 (demasiado peaked)
+    const kurtPen = kurt < 2.0 ? (2.0 - kurt) / 2 * 0.12 : 
+                    kurt > 7.0 ? (kurt - 7.0) / 3 * 0.08 : 0;
 
     let ent = 0;
     const bins = 16;
