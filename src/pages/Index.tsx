@@ -1290,7 +1290,7 @@ const Index = () => {
                         .join(" | ")}
                     </div>
                     <div className="mt-1">
-                      BPM_ui: {heartRate || "—"} | calidad_proc: {(lastSignal.quality ?? 0).toFixed(0)} | LIVE_PPG:{" "}
+                      BPM_ui: {typeof heartRate === 'number' ? Math.round(heartRate) : heartRate || "—"} | calidad_proc: {(lastSignal.quality ?? 0).toFixed(0)} | LIVE_PPG:{" "}
                       {stableHumanSignal ? "✓" : "✗"}
                     </div>
                   </div>

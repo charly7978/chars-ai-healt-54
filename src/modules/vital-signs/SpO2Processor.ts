@@ -62,11 +62,11 @@ export class SpO2Processor {
 
     const { redAC, redDC, greenAC, greenDC } = input;
 
-    if (redDC < 8 || greenDC < 8) {
+    if (redDC < 5 || greenDC < 5) {
       this.consecutiveValidFrames = 0;
       return withheld;
     }
-    if (redAC < 0.03 || greenAC < 0.03) {
+    if (redAC < 0.02 || greenAC < 0.02) {
       this.consecutiveValidFrames = 0;
       return withheld;
     }
@@ -74,13 +74,13 @@ export class SpO2Processor {
     const piRed = (redAC / redDC) * 100;
     const piGreen = (greenAC / greenDC) * 100;
 
-    if (piRed < 0.03 || piGreen < 0.03) {
+    if (piRed < 0.02 || piGreen < 0.02) {
       this.consecutiveValidFrames = 0;
       return withheld;
     }
 
     const R = ratioOfRatios(redAC, redDC, greenAC, greenDC);
-    if (!isFinite(R) || R <= 0.1 || R > 3.0) {
+    if (!isFinite(R) || R <= 0.08 || R > 4.0) {
       this.consecutiveValidFrames = 0;
       return withheld;
     }
@@ -138,9 +138,9 @@ export class SpO2Processor {
     this.consecutiveValidFrames++;
 
     const strongContext =
-      input.contactStable && input.pressureOptimal && input.beatCount >= 5 && input.avgBeatSQI >= 38;
-    const minFrames = strongContext ? 3 : 5;
-    const qTh = strongContext ? 20 : 24;
+      input.contactStable && input.pressureOptimal && input.beatCount >= 4 && input.avgBeatSQI >= 30;
+    const minFrames = strongContext ? 2 : 4;
+    const qTh = strongContext ? 15 : 18;
 
     if (this.consecutiveValidFrames < minFrames || quality < qTh) {
       return {
@@ -169,9 +169,9 @@ export class SpO2Processor {
     this.lastValue = value;
 
     let enabledState: SpO2Result['enabledState'];
-    if (confidence >= 0.62 && quality >= 55) enabledState = 'ENABLED_HIGH_CONFIDENCE';
-    else if (confidence >= 0.38 && quality >= 32) enabledState = 'ENABLED_MEDIUM_CONFIDENCE';
-    else if (confidence >= 0.18) enabledState = 'ENABLED_LOW_CONFIDENCE';
+    if (confidence >= 0.55 && quality >= 45) enabledState = 'ENABLED_HIGH_CONFIDENCE';
+    else if (confidence >= 0.30 && quality >= 25) enabledState = 'ENABLED_MEDIUM_CONFIDENCE';
+    else if (confidence >= 0.12) enabledState = 'ENABLED_LOW_CONFIDENCE';
     else enabledState = 'WITHHELD_LOW_QUALITY';
 
     return {

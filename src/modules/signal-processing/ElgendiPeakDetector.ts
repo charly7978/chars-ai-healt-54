@@ -58,8 +58,8 @@ const DEFAULT: ElgendiPeakConfig = {
   sampleRate: 30,
   peakWindowMs: 111,
   beatWindowMs: 667,
-  alpha: 0.02,        // Valores originales probados - evita falsos positivos
-  refractoryMs: 300,  // Refractory period original - previene dobles detecciones
+  alpha: 0.018,       // Punto medio balanceado - sensibilidad sin falsos positivos
+  refractoryMs: 290,  // Punto medio - previene dobles detecciones
   meanWindowMs: 4000,
 };
 
@@ -204,10 +204,10 @@ export class ElgendiPeakDetector {
         }
       } else {
         if (this.inBlock) {
-          // Block terminado: confirmar pico si duración ≥ 90% de peakWindow (THR2).
-          // Valores originales probados - rechaza falsos positivos
+          // Block terminado: confirmar pico si duración ≥ 85% de peakWindow (THR2).
+          // Punto medio balanceado - sensibilidad sin falsos positivos
           const durationMs = timestampMs - this.blockStartTs;
-          if (durationMs >= this.cfg.peakWindowMs * 0.9) {
+          if (durationMs >= this.cfg.peakWindowMs * 0.85) {
             // Refractory check
             if (this.blockMaxTs - this.lastPeakTs >= this.cfg.refractoryMs) {
               isPeak = true;
