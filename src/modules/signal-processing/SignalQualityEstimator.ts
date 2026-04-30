@@ -281,7 +281,7 @@ export function getAdvancedSQIGuidance(
     reasons.push('Presión insuficiente: aumentar contacto con flash');
   }
   
-  // Template correlation check (Li & Bhatt 2014: r > 0.9 es óptimo)
+  // Template correlation check (Li & Bhatt 2014: r > TEMPLATE_CORRELATION_THRESHOLD es óptimo)
   if (templateCorrelation < 0.7) {
     reasons.push('Forma de pulso irregular: mantener dedo estable');
   }

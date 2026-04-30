@@ -2,6 +2,8 @@
  * requestVideoFrameCallback con fallback RAF + métricas de intervalo/jitter.
  */
 
+import { EWMA_DECAY_FAST, EWMA_DECAY_MEDIUM } from '@/constants/processing';
+
 export type VideoSchedulerMode = 'RVFC' | 'RAF_FALLBACK';
 
 export interface VideoFrameSchedulerMetrics {
@@ -118,7 +120,7 @@ export class VideoFrameScheduler {
       if (typeof meta.presentedFrames === 'number' && this.presentedFramesPrev !== undefined) {
         const skipped = meta.presentedFrames - this.presentedFramesPrev - 1;
         if (skipped > 0) {
-          this.droppedEwma = this.droppedEwma * 0.85 + Math.min(6, skipped) * 0.15;
+          this.droppedEwma = this.droppedEwma * EWMA_DECAY_FAST + Math.min(6, skipped) * (1 - EWMA_DECAY_FAST);
         }
       }
       if (typeof meta.presentedFrames === 'number') this.presentedFramesPrev = meta.presentedFrames;
@@ -129,7 +131,7 @@ export class VideoFrameScheduler {
       if (dt >= 5 && dt < 200) {
         const prev = this.intervalEwma;
         this.intervalEwma = prev * 0.88 + dt * 0.12;
-        this.jitterEwma = this.jitterEwma * 0.9 + Math.abs(dt - prev) * 0.1;
+        this.jitterEwma = this.jitterEwma * EWMA_DECAY_MEDIUM + Math.abs(dt - prev) * (1 - EWMA_DECAY_MEDIUM);
         if (dt > this.intervalEwma * 1.75) {
           this.droppedEwma = Math.min(8, this.droppedEwma + 0.35);
         }

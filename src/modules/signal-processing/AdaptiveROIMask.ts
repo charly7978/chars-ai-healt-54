@@ -10,6 +10,8 @@
  * 6. Detailed telemetry for debugging
  */
 
+import { SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD } from '@/constants/processing';
+
 export interface TileMetrics {
   meanR: number;
   meanG: number;
@@ -272,7 +274,7 @@ export class AdaptiveROIMask {
     // Adaptive thresholding
     allScores.sort((a, b) => a - b);
     const p50 = allScores.length > 0 ? allScores[Math.floor(allScores.length * 0.5)] : 0;
-    const fingerThreshold = Math.max(0.25, p50 * 0.85);
+    const fingerThreshold = Math.max(0.25, p50 * SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD);
 
     // Identify valid finger tiles
     const coarseMask = new Uint8Array(this.totalTiles);

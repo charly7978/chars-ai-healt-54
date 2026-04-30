@@ -5,6 +5,7 @@
 import { RingBuffer } from './RingBuffer';
 import type { SQICategory, SQIGating, WindowSQIMetrics, WindowSpectralSQISlice } from './pipeline-types';
 import { computeSpectralWindowFeatures } from './SpectralFusionSupport';
+import { DOMINANT_FREQ_DECAY_FACTOR } from '@/constants/processing';
 
 export class SignalQualityEngine {
   private vBuf: RingBuffer;
@@ -168,7 +169,7 @@ export class SignalQualityEngine {
 
     const temporalPeakHz = bestLagAc > 0 ? fsEff / bestLagAc : null;
     const spec = computeSpectralWindowFeatures(vals, fsEff, this.welchSegments, this.prevDominantHz, temporalPeakHz);
-    this.prevDominantHz = spec.dominantFrequencyHz > 0.2 ? spec.dominantFrequencyHz : this.prevDominantHz * 0.92;
+    this.prevDominantHz = spec.dominantFrequencyHz > 0.2 ? spec.dominantFrequencyHz : this.prevDominantHz * DOMINANT_FREQ_DECAY_FACTOR;
 
     const specAgg = Math.max(
       0,

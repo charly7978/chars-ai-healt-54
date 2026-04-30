@@ -7,6 +7,7 @@
  */
 
 import type { PressureState } from '../../types/signal';
+import { SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD } from '@/constants/processing';
 
 export interface PressureEstimate {
   state: PressureState;
@@ -47,7 +48,7 @@ export class PressureProxyEstimator {
     const clipFactor = clamp(clipHighRatio * 3, 0, 1) * 0.25;
 
     // Very high uniformity = blanching (capillary compression)
-    const uniformityFactor = clamp((spatialUniformity - 0.85) / 0.15, 0, 1) * 0.15;
+    const uniformityFactor = clamp((spatialUniformity - SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD) / 0.15, 0, 1) * 0.15;
 
     // Low pulsatility = over-compression (AC component crushed)
     const pulsatilityCollapse = clamp(1 - perfusionIndex * 5, 0, 1) * 0.2;

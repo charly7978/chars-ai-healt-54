@@ -1,5 +1,6 @@
 import type { DeviceProfile, DeviceProfileManager } from './DeviceProfileManager';
 import { trimmedMedian } from '../vital-signs/OpticalRatioEngine';
+import { EWMA_DECAY_SLOW, SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD } from '@/constants/processing';
 
 export interface SessionOpticalStats {
   medianR: number;
@@ -39,8 +40,8 @@ export class DeviceCalibrationEngine {
 
     if (this.rHistory.length >= 8) {
       const med = trimmedMedian(this.rHistory, 0.1);
-      const popRef = 0.85;
-      merged.opticalBiasR = p.opticalBiasR * 0.92 + (popRef - med) * 0.08;
+      const popRef = SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD;
+      merged.opticalBiasR = p.opticalBiasR * EWMA_DECAY_SLOW + (popRef - med) * (1 - EWMA_DECAY_SLOW);
     }
 
     this.profiles.save(merged);

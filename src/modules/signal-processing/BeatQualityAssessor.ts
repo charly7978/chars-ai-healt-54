@@ -2,6 +2,8 @@
  * SQI por latido a partir de morfología y contexto (sin heurísticas triviales).
  */
 
+import { TEMPLATE_CORRELATION_THRESHOLD } from '@/constants/processing';
+
 export interface BeatQualityInput {
   prominence: number;
   widthMs: number;
@@ -34,7 +36,7 @@ export class BeatQualityAssessor {
 
     const wOk = input.widthMs >= 60 && input.widthMs <= 520 ? 1 : 0.40;
     s += wOk * 0.14;
-    if (wOk < 0.9) reasons.push('ancho implausible');
+    if (wOk < TEMPLATE_CORRELATION_THRESHOLD) reasons.push('ancho implausible');
 
     const slope = Math.min(1, (input.upSlope + input.downSlope) / 4);
     s += slope * 0.18;

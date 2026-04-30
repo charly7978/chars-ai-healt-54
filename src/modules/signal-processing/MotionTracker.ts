@@ -2,6 +2,8 @@
  * Aceleración / giro — compartible entre main thread y bridge al worker.
  */
 
+import { EWMA_DECAY_FAST } from '@/constants/processing';
+
 export class MotionTracker {
   private motionScore = 0;
   private lastAccel = { x: 0, y: 0, z: 0 };
@@ -21,7 +23,7 @@ export class MotionTracker {
     if (rot && rot.alpha !== null && rot.beta !== null && rot.gamma !== null) {
       gyroRMS = Math.sqrt((rot.alpha ?? 0) ** 2 + (rot.beta ?? 0) ** 2 + (rot.gamma ?? 0) ** 2) / 120;
     }
-    this.motionScore = this.motionScore * 0.85 + (accelRMS * 0.5 + gyroRMS * 0.3) * 0.15;
+    this.motionScore = this.motionScore * EWMA_DECAY_FAST + (accelRMS * 0.5 + gyroRMS * 0.3) * (1 - EWMA_DECAY_FAST);
   };
 
   getScore(): number {

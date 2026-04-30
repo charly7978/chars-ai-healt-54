@@ -3,6 +3,7 @@
  */
 
 import type { ROICellMetrics } from './MultiROIExtractor';
+import { EWMA_DECAY_SLOW, EWMA_DECAY_MEDIUM } from '@/constants/processing';
 
 export interface ROIReputationDebug {
   reputation: Float64Array;
@@ -65,10 +66,10 @@ export class ROIReputationModel {
     for (let i = 0; i < cells.length; i++) {
       const c = cells[i];
       const clip = c.clipRatio;
-      this.clipEwma[i] = this.clipEwma[i] * 0.92 + clip * 0.08;
+      this.clipEwma[i] = this.clipEwma[i] * EWMA_DECAY_SLOW + clip * (1 - EWMA_DECAY_SLOW);
 
       const flip = Math.abs(scores[i] - (this.rep[i] > 0 ? this.rep[i] : scores[i]));
-      this.flipEwma[i] = this.flipEwma[i] * 0.9 + flip * 0.1;
+      this.flipEwma[i] = this.flipEwma[i] * EWMA_DECAY_MEDIUM + flip * (1 - EWMA_DECAY_MEDIUM);
 
       const stability = Math.max(0, 1 - this.flipEwma[i] * 4);
       const clipPen = Math.min(0.6, this.clipEwma[i] * 1.4);

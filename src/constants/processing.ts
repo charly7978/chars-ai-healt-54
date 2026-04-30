@@ -1167,6 +1167,33 @@ export const PERCENTILE_10 = 0.1;
 /** Percentil 90 para cálculo de rango */
 export const PERCENTILE_90 = 0.9;
 
+/** Factor EWMA para decaimiento rápido (0.85) - usado en motion y dropped frames */
+export const EWMA_DECAY_FAST = 0.85;
+
+/** Factor EWMA para decaimiento medio (0.9) - usado en jitter y flip */
+export const EWMA_DECAY_MEDIUM = 0.9;
+
+/** Factor EWMA para decaimiento lento (0.92) - usado en clip y optical bias */
+export const EWMA_DECAY_SLOW = 0.92;
+
+/** Umbral de movimiento inestable (0.85) - FingerMeasurementStateMachine */
+export const MOTION_UNSTABLE_THRESHOLD = 0.85;
+
+/** Factor de penalización por clipping (0.85) - FingerFrameFeatures */
+export const CLIPPING_STRESS_PENALTY_FACTOR = 0.85;
+
+/** Factor de duración de bloque para detección de picos (0.85) - ElgendiPeakDetector */
+export const PEAK_BLOCK_DURATION_FACTOR = 0.85;
+
+/** Umbral de uniformidad espacial para presión óptima (0.85) - PressureProxyEstimator */
+export const SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD = 0.85;
+
+/** Umbral de correlación de template (0.9) - SignalQualityEstimator */
+export const TEMPLATE_CORRELATION_THRESHOLD = 0.9;
+
+/** Factor de decaimiento de frecuencia dominante (0.92) - SignalQualityEngine */
+export const DOMINANT_FREQ_DECAY_FACTOR = 0.92;
+
 /** Rango mínimo de señal */
 export const SIGNAL_RANGE_MIN = 0.2;
 

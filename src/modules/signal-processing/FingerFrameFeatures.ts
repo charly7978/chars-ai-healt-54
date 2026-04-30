@@ -1,3 +1,5 @@
+import { CLIPPING_STRESS_PENALTY_FACTOR } from '@/constants/processing';
+
 /**
  * Agrega métricas por frame para la máquina de estados de contacto.
  * Todas las entradas provienen de medición real sobre píxeles / ROIs.
@@ -44,7 +46,7 @@ export function buildFingerFrameFeatures(input: FingerFrameFeatureInput): Finger
 
   const satPenalty = input.globalBrightness > 720 ? clamp01((input.globalBrightness - 720) / 200) : 0;
   const uniformityQuality = clamp01(
-    input.spatialUniformity * (1 - satPenalty) * (1 - clippingStress * 0.85)
+    input.spatialUniformity * (1 - satPenalty) * (1 - clippingStress * CLIPPING_STRESS_PENALTY_FACTOR)
   );
 
   const chromaFinger =

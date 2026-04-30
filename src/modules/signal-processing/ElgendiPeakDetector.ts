@@ -10,7 +10,7 @@
  * Sensibilidad ~99.9% en bases de datos clínicas estándar.
  *
  * Algoritmo (streaming/online):
- *  1. Squaring de la señal filtrada (band-pass 0.5-8 Hz aplicada upstream).
+ *  1. Squaring de la señal filtrada (banda 0.5-8 Hz aplicada upstream).
  *  2. MApeak = moving-average de 111 ms — emfatiza picos sistólicos.
  *  3. MAbeat = moving-average de 667 ms — emfatiza el latido completo.
  *  4. Threshold THR1 = MAbeat + α · mean(squared)   con α = 0.02
@@ -23,6 +23,8 @@
  * `isPeak: true` cuando confirma un sistólico, sin necesidad de un
  * buffer global ni de procesar la señal en bloque.
  */
+
+import { PEAK_BLOCK_DURATION_FACTOR } from '@/constants/processing';
 
 export interface ElgendiPeakResult {
   /** True si en este sample se confirmó un pico sistólico. */
@@ -207,7 +209,7 @@ export class ElgendiPeakDetector {
           // Block terminado: confirmar pico si duración ≥ 85% de peakWindow (THR2).
           // Punto medio balanceado - sensibilidad sin falsos positivos
           const durationMs = timestampMs - this.blockStartTs;
-          if (durationMs >= this.cfg.peakWindowMs * 0.85) {
+          if (durationMs >= this.cfg.peakWindowMs * PEAK_BLOCK_DURATION_FACTOR) {
             // Refractory check
             if (this.blockMaxTs - this.lastPeakTs >= this.cfg.refractoryMs) {
               isPeak = true;

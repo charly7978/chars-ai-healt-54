@@ -1,4 +1,5 @@
 import type { SpO2CalibrationCurve } from '../vital-signs/SpO2Calibrator';
+import { SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD } from '@/constants/processing';
 
 const STORAGE_KEY = 'ppg_device_profile_v2';
 
@@ -43,7 +44,7 @@ function defaultProfile(id: string): DeviceProfile {
     spo2Curve: { A: 104.0, B: 4.2, C: -28.5 },
     bpOffset: { systolic: 0, diastolic: 0 },
     torchStabilityScore: 0.5,
-    medianRatioBehavior: 0.85,
+    medianRatioBehavior: SPATIAL_UNIFORMITY_OPTIMAL_THRESHOLD,
     ratioVarianceEma: 0.02,
     lastUpdated: Date.now(),
   };

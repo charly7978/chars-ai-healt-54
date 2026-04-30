@@ -16,6 +16,8 @@ export interface FingerStateMachineOutput {
   reason: string;
 }
 
+import { MOTION_UNSTABLE_THRESHOLD, CLIPPING_STRESS_PENALTY_FACTOR } from '@/constants/processing';
+
 // Tiempos / umbrales relajados para que el contacto sea robusto en uso real:
 // el operador suele tener el dedo correctamente sobre lente+flash pero con
 // pequeñas variaciones de posición y presión. Antes el FSM tardaba >3s en
@@ -24,7 +26,7 @@ const WARMUP_MIN_MS = 1200;
 const DEGRADED_RECOVER_SQI = 0.30;
 const DEGRADED_ENTER_WINDOW_SQI = 0.18;
 const MOTION_DEGRADED = 1.20;
-const MOTION_UNSTABLE = 0.85;
+const MOTION_UNSTABLE = MOTION_UNSTABLE_THRESHOLD;
 
 function clamp01(x: number): number {
   if (x <= 0) return 0;
@@ -63,7 +65,7 @@ export class FingerMeasurementStateMachine {
       f.redDominance > 4 &&
       f.rgRatio > 1.01 &&
       f.centerCoverage > 0.06 &&
-      f.clippingStress < 0.85;
+      f.clippingStress < CLIPPING_STRESS_PENALTY_FACTOR;
 
     const stableGeometry =
       f.spatialUniformity > 0.25 &&
