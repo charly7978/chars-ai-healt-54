@@ -939,7 +939,7 @@ const Index = () => {
     emaRef.current.bpm = smoothedBPM;
     if (smoothedBPM > 0) {
       lastValidBpmRef.current = { bpm: smoothedBPM, ts: nowMs };
-      setHeartRate(smoothedBPM);
+      setHeartRate(Math.round(smoothedBPM)); // Redondear a entero
     } else {
       // Hold breve del último BPM válido (parpadeo evitado).
       const heldFresh = lv.bpm > 0 && nowMs - lv.ts < BPM_HOLD_MS;

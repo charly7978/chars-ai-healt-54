@@ -17,15 +17,15 @@ export interface BandpassConfig {
   smoothAlpha: number;  // Optional smoothing (0 = disabled)
 }
 
-// Banda PPG OPTIMIZADA según especificaciones forenses y literatura:
-// - HPF 0.6 Hz: elimina deriva DC y baseline wander sin distorsionar onda PPG
-// - LPF 5.0 Hz: cubre hasta 300 BPM (5 Hz × 60) con margen para taquicardias
+// Banda PPG OPTIMIZADA según ChatPPG y literatura actualizada:
+// - HPF 0.5 Hz: estándar para heart rate extraction (ChatPPG)
+// - LPF 8.0 Hz: preserva armónicos cardíacos (ChatPPG: 0.5-8 Hz para HR)
 // - Butterworth 2° orden (4 polos efectivos cascadeados)
 // - detrendAlpha 0.01: EWMA suave para deriva lenta (~100s constante de tiempo)
-// Referencias: van Gastel 2023, ISO 80601-2-61, Elgendi 2013
+// Referencias: ChatPPG 2024, van Gastel 2023, ISO 80601-2-61, Elgendi 2013
 const DEFAULT_CONFIG: BandpassConfig = {
-  hpfFreq: 0.6,        // Optimizado: 0.6 Hz mejor rechazo de deriva
-  lpfFreq: 5.0,        // Optimizado: 5 Hz cubre rango cardíaco completo
+  hpfFreq: 0.5,        // ChatPPG: 0.5 Hz estándar para HR extraction
+  lpfFreq: 8.0,        // ChatPPG: 8 Hz preserva armónicos cardíacos (hasta 480 BPM)
   detrendAlpha: 0.01,  // Suavizado: 0.01 para eliminación gradual de baseline
   winsorize: false,    // Desactivado: preserva picos sistólicos
   winsorizePct: 0.04,
