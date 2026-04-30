@@ -2,7 +2,16 @@ import type { ProcessedSignal, ProcessingError, SignalProcessor as SignalProcess
 import { RingBuffer } from './RingBuffer';
 import { AdaptiveROIMask, type ROIMaskResult } from './AdaptiveROIMask';
 import { PressureProxyEstimator, type PressureEstimate } from './PressureProxyEstimator';
-import { computeGlobalSQI } from './SignalQualityEstimator';
+import { 
+  computeGlobalSQI,
+  calculateTemplateCorrelation,
+  calculateSkewness,
+  calculateKurtosis,
+  calculateZeroCrossingRate,
+  calculateMorphologySQI,
+  getAdvancedSQIGuidance,
+  type SQIReport
+} from './SignalQualityEstimator';
 import { MultiROIExtractor, type ROICellMetrics } from './MultiROIExtractor';
 import { ROIScorer } from './ROIScorer';
 import { GreenChannelTriad } from './GreenChannelTriad';
@@ -168,6 +177,20 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
   private lastWindowSqi: WindowSQIMetrics | null = null;
   private lastFingerFeatures: FingerFrameFeatures | null = null;
   private lastTiming = { intervalMs: 0, effectiveFps: 0, droppedEstimate: 0 };
+
+  // Template matching SQI - Li & Bhatt 2014
+  private pulseTemplate: number[] = [];
+  private templateBuffer: number[] = [];
+  private readonly TEMPLATE_SIZE = 30; // ~1 segundo a 30fps
+  private templateCorrelation = 0;
+  
+  // Métricas SQI avanzadas
+  private advancedSQI: {
+    skewness: number;
+    kurtosis: number;
+    zeroCrossingRate: number;
+    morphologyScore: number;
+  } = { skewness: 0, kurtosis: 0, zeroCrossingRate: 0, morphologyScore: 0 };
   private lastRoiCells: ROICellMetrics[] = [];
   private lastRoiScores: Float64Array<ArrayBufferLike> = new Float64Array(25);
 
@@ -463,6 +486,28 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     const signalRange = this.getSignalRange();
     const redDominance = this.smoothedRed - (this.smoothedGreen + this.smoothedBlue) / 2;
     const periodicityScore = this.lastAutocorrPeak;
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    // CÁLCULO DE MÉTRICAS SQI AVANZADAS - Basadas en literatura médica
+    // ═════════════════════════════════════════════════════════════════════════════
+    // Obtener ventana reciente de señal filtrada para análisis morfológico
+    const recentSignal = this.getRecentFilteredSignal(this.TEMPLATE_SIZE);
+    
+    if (recentSignal.length >= this.TEMPLATE_SIZE * 0.8) {
+      // Calcular métricas SQI avanzadas
+      this.advancedSQI.skewness = calculateSkewness(recentSignal);
+      this.advancedSQI.kurtosis = calculateKurtosis(recentSignal);
+      this.advancedSQI.zeroCrossingRate = calculateZeroCrossingRate(recentSignal);
+      this.advancedSQI.morphologyScore = calculateMorphologySQI(recentSignal);
+      
+      // Actualizar template buffer para template matching
+      this.updatePulseTemplate(recentSignal, perfusionIndex);
+      
+      // Calcular correlación con template si existe template válido
+      if (this.pulseTemplate.length >= this.TEMPLATE_SIZE * 0.8) {
+        this.templateCorrelation = calculateTemplateCorrelation(recentSignal, this.pulseTemplate);
+      }
+    }
 
     const contactForSqi: ContactState = this.exportedContactState;
 
@@ -771,6 +816,60 @@ export class PPGSignalProcessor implements SignalProcessorInterface {
     }
     const d = Math.sqrt(a * b);
     return d > 1e-9 ? c / d : 0;
+  }
+
+  /**
+   * Obtiene las últimas N muestras de la señal filtrada.
+   * Usado para calcular métricas SQI avanzadas (template matching, skewness, kurtosis).
+   */
+  private getRecentFilteredSignal(count: number): number[] {
+    if (this.filteredBuf.length < count * 0.5) return [];
+    
+    const result: number[] = [];
+    const startIdx = Math.max(0, this.filteredBuf.length - count);
+    for (let i = startIdx; i < this.filteredBuf.length; i++) {
+      result.push(this.filteredBuf.get(i));
+    }
+    return result;
+  }
+
+  /**
+   * Actualiza el template de pulso usando promedio adaptativo.
+   * Según Li & Bhatt 2014: promediar los últimos N pulsos limpios crea
+   * un template adaptativo que maximiza el AUC del SQI (0.943).
+   * 
+   * Solo actualiza si la señal es de buena calidad (PI > 0.5%).
+   */
+  private updatePulseTemplate(recentSignal: number[], perfusionIndex: number): void {
+    // Solo actualizar template con señales de buena calidad
+    if (perfusionIndex < 0.5) return;
+    
+    // Agregar señal al buffer circular de template
+    this.templateBuffer.push(...recentSignal);
+    
+    // Mantener buffer limitado (últimos 5-10 segundos)
+    const maxBufferSize = this.TEMPLATE_SIZE * 5;
+    while (this.templateBuffer.length > maxBufferSize) {
+      this.templateBuffer.shift();
+    }
+    
+    // Actualizar template promediado si tenemos suficientes muestras
+    if (this.templateBuffer.length >= this.TEMPLATE_SIZE * 2) {
+      // Calcular promedio móvil para crear template suavizado
+      this.pulseTemplate = [];
+      for (let i = 0; i < this.TEMPLATE_SIZE; i++) {
+        let sum = 0;
+        let count = 0;
+        // Promediar muestras espaciadas en el buffer
+        for (let j = i; j < this.templateBuffer.length; j += this.TEMPLATE_SIZE) {
+          sum += this.templateBuffer[this.templateBuffer.length - 1 - j];
+          count++;
+        }
+        if (count > 0) {
+          this.pulseTemplate.unshift(sum / count);
+        }
+      }
+    }
   }
 
   getRGBStats() {
