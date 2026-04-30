@@ -552,7 +552,9 @@ export class HeartBeatProcessor {
         this.lastPeakTime = now;
         this.lastPeakValue = candidate.amplitude;
 
-        currentBeatSQI = this.computeBeatSQI(candidate, this.lastPeakTime > 0 ? timeSinceLastPeak : DEFAULT_IBI_MS);
+        // Primer latido: sin IBI previo real, no usar valor inventado
+        const ibiForSQI = this.lastPeakTime > 0 ? timeSinceLastPeak : 0;
+        currentBeatSQI = this.computeBeatSQI(candidate, ibiForSQI);
         currentFlags = this.computeFlags(candidate, timeSinceLastPeak, expectedRR);
 
         const accepted: AcceptedBeat = {

@@ -321,8 +321,10 @@ export const PT_REFRACTORY_MS = 300;
 /** Factor de límite suave de refractario */
 export const SOFT_REFRACTORY_FACTOR = 0.55;
 
-/** Límite suave por defecto sin RR esperado (ms) */
-export const SOFT_REFRACTORY_DEFAULT_MS = 380;
+/** Límite refractario fisiológico mínimo (ms) - fallback cuando no hay RR previo
+ * Basado en refractario cardíaco fisiológico real ~200-300ms (FC máxima ~200 BPM)
+ */
+export const SOFT_REFRACTORY_DEFAULT_MS = PT_REFRACTORY_MS;  // 300ms, no valor inventado
 
 // ═════════════════════════════════════════════════════════════════════════════
 // FUSIÓN DE BPM Y CONFIANZA
@@ -462,14 +464,14 @@ export const EMA_ALPHA_MAX = 0.12;
 /** Streak máximo de frames sin evidencia antes de hard reset */
 export const INVALID_EVIDENCE_HARD_RESET = 30;
 
-/** SQI upstream por defecto */
-export const WINDOW_SQI_UPSTREAM_DEFAULT = 0.45;
+/** SQI upstream inicial - 0 hasta tener evidencia real (fail-closed) */
+export const WINDOW_SQI_UPSTREAM_DEFAULT = 0;
 
-/** Phase alignment por defecto */
-export const PHASE_ALIGN_DEFAULT = 0.55;
+/** Phase alignment inicial - 0 sin datos reales */
+export const PHASE_ALIGN_DEFAULT = 0;
 
-/** Spectral aggregate por defecto */
-export const SPECTRAL_AGG_DEFAULT = 0.45;
+/** Spectral aggregate inicial - 0 sin datos reales */
+export const SPECTRAL_AGG_DEFAULT = 0;
 
 /** Penalty por motion artifact */
 export const MOTION_PENALTY = 0.3;
@@ -483,8 +485,8 @@ export const HIGH_PRESSURE_PENALTY = 0.4;
 /** Penalty por low pressure */
 export const LOW_PRESSURE_PENALTY = 0.15;
 
-/** SQI upstream por defecto para beats */
-export const UPSTREAM_SQI_DEFAULT = 50;
+/** SQI upstream inicial para beats - 0 hasta tener señal válida */
+export const UPSTREAM_SQI_DEFAULT = 0;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // CORRELACIÓN Y VALIDACIÓN
