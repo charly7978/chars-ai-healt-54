@@ -9,12 +9,16 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
+    "type-check": "tsc --noEmit",
+    "verify:all": "npm run lint && npm run type-check && npm run build",
     "audit:simulation": "powershell -Command Get-ChildItem -Recurse -Include *.ts,*.tsx | Select-String -Pattern 'simulate|mock|fake|dummy|demo|Math.random|placeholder|fallback|default.vital|synthetic'",
     "audit:duplicates": "powershell -Command Get-ChildItem -Recurse -Include *.ts | Group-Object Name | Where-Object Count -gt 1",
     "audit:hardcoded": "powershell -Command Get-ChildItem -Recurse -Include *.ts,*.tsx | Select-String -Pattern '120|80|98|99|95|72|70|60|90'",
     "audit:dead-code": "powershell -Command Get-ChildItem -Recurse -Include *.ts,*.tsx | Select-String -Pattern 'unused|dead.code'",
-    "verify:build": "tsc --noEmit && vite build",
-    "test": "echo 'Tests: Run manual verification of camera-based PPG signal processing'"
+    "audit:all": "echo '=== AUDITORIA FORENSE PPG ===' && npm run audit:simulation && npm run audit:hardcoded",
+    "test": "echo 'Forensic validation tests: Run vitest src/tests/ppgForensicValidation.test.ts'",
+    "test:unit": "vitest run src/tests/",
+    "validate:ppg": "echo 'Validating PPG system integrity...' && npm run type-check && npm run build && npm run audit:all"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.0",
