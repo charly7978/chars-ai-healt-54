@@ -8,7 +8,13 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:simulation": "powershell -Command Get-ChildItem -Recurse -Include *.ts,*.tsx | Select-String -Pattern 'simulate|mock|fake|dummy|demo|Math.random|placeholder|fallback|default.vital|synthetic'",
+    "audit:duplicates": "powershell -Command Get-ChildItem -Recurse -Include *.ts | Group-Object Name | Where-Object Count -gt 1",
+    "audit:hardcoded": "powershell -Command Get-ChildItem -Recurse -Include *.ts,*.tsx | Select-String -Pattern '120|80|98|99|95|72|70|60|90'",
+    "audit:dead-code": "powershell -Command Get-ChildItem -Recurse -Include *.ts,*.tsx | Select-String -Pattern 'unused|dead.code'",
+    "verify:build": "tsc --noEmit && vite build",
+    "test": "echo 'Tests: Run manual verification of camera-based PPG signal processing'"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.0",
