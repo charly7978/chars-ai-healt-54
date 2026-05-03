@@ -1,6 +1,7 @@
 {
     "recommendations": [
         "ramgopal.flutter-assets-generator",
-        "codium.codium"
+        "codium.codium",
+        "genieai.chatgpt-vscode"
     ]
 }
